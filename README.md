@@ -1,2 +1,2 @@
-# new-career-copilot
-career-copilot-v2 with improved UI
+# reference-UI-for-ccp
+Reference UI for ccp from Replit
