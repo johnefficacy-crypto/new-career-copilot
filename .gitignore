@@ -1,0 +1,21 @@
+# dependencies / generated folders
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+
+# build outputs
+build/
+dist/
+.next/
+.cache/
+
+# env files
+.env
+.env.local
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

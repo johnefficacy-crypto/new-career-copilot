@@ -1,4 +1,4 @@
-"@tailwind base;
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -52,16 +52,16 @@
 html, body, #root { min-height: 100%; }
 
 body {
-  font-family: \"Satoshi\", ui-sans-serif, system-ui, sans-serif;
+  font-family: "Satoshi", ui-sans-serif, system-ui, sans-serif;
   background: hsl(var(--background));
   color: hsl(var(--foreground));
   -webkit-font-smoothing: antialiased;
-  font-feature-settings: \"ss01\", \"ss02\", \"cv11\";
+  font-feature-settings: "ss01", "ss02", "cv11";
   letter-spacing: -0.005em;
 }
 
 h1, h2, h3, h4, h5 {
-  font-family: \"Cabinet Grotesk\", Satoshi, sans-serif;
+  font-family: "Cabinet Grotesk", Satoshi, sans-serif;
   letter-spacing: -0.025em;
   font-weight: 800;
 }
@@ -70,13 +70,13 @@ h1, h2, h3, h4, h5 {
 
 /* Noise / grain overlay */
 .grain::before {
-  content: \"\";
+  content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
   opacity: 0.06;
   mix-blend-mode: multiply;
-  background-image: url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>\");
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
 }
 
 /* Glass surface */
@@ -137,7 +137,7 @@ h1, h2, h3, h4, h5 {
   overflow: hidden;
 }
 .btn-shine::after {
-  content: \"\";
+  content: "";
   position: absolute;
   top: 0;
   left: -120%;
@@ -171,7 +171,7 @@ h1, h2, h3, h4, h5 {
   background: white;
 }
 .gradient-border::before {
-  content: \"\";
+  content: "";
   position: absolute;
   inset: 0;
   border-radius: 20px;
@@ -192,4 +192,3 @@ h1, h2, h3, h4, h5 {
   transition: background-size 300ms;
 }
 .link-under:hover { background-size: 0 1px; }
-"
