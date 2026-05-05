@@ -235,11 +235,95 @@ Schema fixes during the session:
 - `profiles` has both `dob` and `date_of_birth` columns; runner
   prefers `dob` then falls back.
 
+### ✅ Session (iii) — Scraper trust gate (Jan 2026)
+
+Direct port of `UI-career-copilot/lib/scraping/{extractor,runner,alerts}.ts`
+(master). Two governance gates now exist in the data plane:
+
+    source_registry  ─►  scrape_runs  ─►  scrape_queue  ─►  recruitments
+                                                  │
+                                                  └──►  notification_alerts
+
+Files:
+- `backend/app/scraping/schemas.py` — `ExtractedRecruitment`,
+  `ExtractedPost` (mirrors `types/scraping.ts`).
+- `backend/app/scraping/extractor.py` — HTML fetch + Claude extractor +
+  **deterministic mock fallback** when `ANTHROPIC_API_KEY` is empty/
+  placeholder/`mock`. Mock encodes the source URL into the synthesised
+  output so dedup keys are stable across runs. Confidence is calibrated
+  to 0.7 for mocks (forces admin review).
+- `backend/app/scraping/runner.py` — `run_scraping_pass` (loads active
+  `scrape_sources`, dedups against existing `recruitments` + open
+  `scrape_queue`, inserts every new item with **`status='pending'`**
+  per the May-2026 hardening), `promote_to_recruitments` (writes
+  organisations/recruitments/posts/age_criteria/education_criteria with
+  `publish_status='needs_review'`), `promote_run` (per-run promotion).
+- `backend/app/scraping/alerts.py` — `alert_users_for_new_recruitment`,
+  `send_deadline_alerts` (3-day + 1-day windows). Idempotent on
+  `(user_id, recruitment_id, alert_type)`.
+- `backend/app/api/admin_scrape.py` — admin router with audit logging
+  on every write:
+  - `GET  /api/sources` + `/api/admin/sources` — source registry list
+    (falls back to `scrape_sources` when registry is empty).
+  - `POST /api/admin/scrape/run-dry` — mock pass, no model call.
+  - `POST /api/admin/scrape/run` — real Claude pass.
+  - `GET  /api/admin/scrape/runs` — recent `scrape_runs` rows.
+  - `GET  /api/admin/scrape/queue` — pending queue items (paginated).
+  - `POST /api/admin/scrape/promote/{run_id}` — promote all pending
+    items from a run.
+  - `POST /api/admin/scrape/items/{queue_id}/{promote,reject}` —
+    per-item review.
+  - `GET  /api/admin/eligibility-queue` — KPI view (pending count,
+    promoted_24h, rejected_24h, recompute_backlog).
+  - Auto-bootstraps an `admin_role`-tagged `profiles` row on first
+    admin call (the `scrape_runs.triggered_by_user` FK requires it).
+- `frontend/src/pages/admin/Scraper.jsx` — rewritten with "Run dry-scrape"
+  + "Reload" buttons, status pills (completed/failed/partial), per-run
+  trigger/sources/seen/new/dup columns, runs sourced from
+  `/api/admin/scrape/runs`.
+- `frontend/src/pages/admin/EligibilityQueue.jsx` — rewritten with live
+  per-item Reject/Promote buttons calling
+  `/api/admin/scrape/items/{id}/{promote,reject}`, success toast showing
+  the new recruitment id + alerts-fanned-out count, "queue is empty"
+  state, "canonical" header pill (replaced "placeholder").
+- `frontend/src/pages/admin/Sources.jsx` — already wired to
+  `/api/admin/sources` (no changes needed).
+
+Tested:
+- Live Supabase end-to-end (UI + API): created admin user with
+  `app_metadata.role='super_admin'` → logged in → visited
+  `/admin/sources` (rendered all 109 entries from `source_registry`),
+  `/admin/scraper`, `/admin/eligibility-queue` → clicked **Run
+  dry-scrape** → backend ran the runner over active `scrape_sources`,
+  the mock extractor produced one ExtractedRecruitment per source, all
+  inserted into `scrape_queue` with `status='pending'` → toast
+  "Dry-run XXX… completed · found N, new N, dup 0" → switched to the
+  Eligibility queue → 50 fresh items rendered with confidence 70% and
+  the source name → `admin_audit_logs` captured `scrape.run_dry`
+  → API-level promote test promoted one item to canonical:
+  `recruitments` row created with `publish_status='needs_review'`
+  + `status='upcoming'` (correctly derived from apply dates) +
+  posts (Inspector + Junior Assistant) + age_criteria +
+  education_criteria → `scrape_queue.status='approved'` →
+  `admin_audit_logs` captured `scrape.promote_run`.
+- Dedup verified: a second dry-run for the same source produced
+  `items_duplicate=1` (the in-queue similarity key catches it).
+- Per-item reject + per-item promote endpoints both 200 + audit-logged
+  + emit `notification_alerts`.
+
+Schema reconciliation:
+- `scrape_runs.triggered_by_user` FKs into `profiles.id` (not
+  `auth.users.id`), so `_require_admin` lazily upserts a profile row
+  when the admin first acts. The same upsert sets `is_admin=true` and
+  `admin_role` so RLS policies key off the right column.
+- `scrape_sources.base_url` is `UNIQUE`, so test harnesses must use a
+  unique suffix when seeding fixture sources (this was a one-time
+  E2E-test fix, not a runtime concern).
+- `recruitments.publish_status` is the trust gate (verified/published
+  visible to engine; needs_review for newly promoted items).
+
 ### ⏳ Remaining
 
-- **Session (iii)** — Scraper trust gate (source_registry → scrape_runs
-  → scrape_queue → admin promote). Reference:
-  `UI-career-copilot/lib/scraping/{extractor,alerts,runner}.ts`.
 - **Session (iv)** — Razorpay payments (order/verify/webhook +
   subscription_plans / user_subscriptions sync). Backend secrets only.
 - **Session (v)** — Cron + email/notification dispatch (Resend +

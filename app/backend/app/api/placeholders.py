@@ -963,8 +963,8 @@ async def admin_audit(_admin: dict = Depends(_require_admin)):
     }
 
 
-@router_admin.get("/sources")
-async def admin_sources(_admin: dict = Depends(_require_admin)):
+@router_admin.get("/sources-static")
+async def admin_sources_static(_admin: dict = Depends(_require_admin)):
     return {
         "items": [
             {"id": "src-ssc", "name": "ssc.gov.in", "trust": "official", "last_run": _now(), "queue_depth": 2},
@@ -974,8 +974,8 @@ async def admin_sources(_admin: dict = Depends(_require_admin)):
     }
 
 
-@router_admin.get("/scraper/runs")
-async def admin_scraper_runs(_admin: dict = Depends(_require_admin)):
+@router_admin.get("/scraper/runs-static")
+async def admin_scraper_runs_static(_admin: dict = Depends(_require_admin)):
     return {
         "items": [
             {"id": "run-12", "source": "ssc.gov.in", "status": "ok", "items_found": 4, "promoted": 2, "at": _now()},
@@ -984,8 +984,8 @@ async def admin_scraper_runs(_admin: dict = Depends(_require_admin)):
     }
 
 
-@router_admin.get("/eligibility-queue")
-async def admin_eligibility_queue(_admin: dict = Depends(_require_admin)):
+@router_admin.get("/eligibility-queue-static")
+async def admin_eligibility_queue_static(_admin: dict = Depends(_require_admin)):
     return {
         "items": [
             {"id": "eq-1", "user_id": "u-101", "recruitment": "ssc-cgl-2026", "verdict": "conditional", "reason": "qualification missing", "at": _now()},

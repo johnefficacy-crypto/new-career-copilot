@@ -25,6 +25,7 @@ from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from app.api.admin_scrape import router as admin_scrape_router
 from app.api.auth import router as auth_router
 from app.api.canonical import router as canonical_router
 from app.api.eligibility import router as eligibility_router
@@ -127,6 +128,7 @@ async def db_health() -> DbHealth:
 
 api.include_router(auth_router)
 api.include_router(eligibility_router)
+api.include_router(admin_scrape_router)  # admin scraper trust-gate routes
 api.include_router(canonical_router)  # canonical Supabase routes — must precede placeholders
 api.include_router(placeholders_router)
 app.include_router(api)

@@ -1,0 +1,260 @@
+"""HTML fetcher + Claude extractor (port of ``lib/scraping/extractor.ts``).
+
+Behaviour parity with the TS reference:
+
+* Fetch page text with a 15-second timeout and a Career-Copilot UA.
+* Strip script/style tags; collapse whitespace.
+* Send the first 16 000 chars to Claude with a strict system prompt.
+* Confidence defaults to 0.5 if missing; clipped to [0, 1].
+* On any failure the pipeline returns ``None`` (caller logs and continues).
+
+Mock mode:
+    If ``ANTHROPIC_API_KEY`` is empty/placeholder/explicitly set to ``mock``,
+    or if the caller passes ``mock=True``, the extractor returns a
+    deterministic synthetic ExtractedRecruitment for testing without
+    burning model credits. The mock encodes the source URL into the
+    output so dedup keys are stable across runs.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import os
+import re
+from datetime import date, timedelta
+from typing import Any
+
+import httpx
+
+from .schemas import ExtractedPost, ExtractedRecruitment
+
+logger = logging.getLogger("career_copilot.scraping.extractor")
+
+
+SYSTEM_PROMPT = """You are a specialist data extraction agent for Indian government recruitment notifications.
+You receive raw HTML or text scraped from official government job portals.
+Your job is to extract structured recruitment information and return ONLY valid JSON.
+
+HARD RULES:
+- Extract ONLY factual information present in the text. Never fabricate data.
+- Dates → ISO 8601 (YYYY-MM-DD). If only a month is known use the 1st.
+- If a field is genuinely not mentioned, set it to null. Do NOT guess.
+- But DO search the ENTIRE document before returning null — eligibility details
+  are often in a separate "Eligibility Criteria" / "Age Limit" / "Educational
+  Qualification" section far from the post list.
+- Vacancies = total across all categories unless the text clearly separates posts.
+- org_type must be one of: UPSC, SSC, Banking, Railway, State, Insurance, Defence, Other.
+- Return ONLY JSON. No markdown, no explanation, no preamble.
+
+Use the GENERAL / unreserved category for min_age and max_age. The downstream
+engine applies category relaxations separately.
+
+Put the RAW education phrase into education_required so the downstream mapper
+can classify it (class_10, class_12, diploma, graduate, postgraduate, phd).
+If specific disciplines are listed (Civil Engineering, Computer Science,
+Economics, Law, etc.), put them into the "disciplines" array.
+
+CONFIDENCE CALIBRATION:
+  1.0 — title, org, all three dates, total_vacancies, AND every post has min_age/max_age/education_required.
+  0.7 — title, org, dates, vacancies, but some posts missing age or education.
+  0.5 — only title/org/dates — post-level data missing or ambiguous.
+  <0.3 — text appears to be a listing/index page, not a real notification."""
+
+
+# ─── HTML / page text ───────────────────────────────────────────────────────
+
+
+_DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; CareerCopilot-Scraper/1.0; +https://careercopilot.in/bot)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-IN,en;q=0.9",
+}
+
+
+def fetch_page_text(url: str, *, timeout: float = 15.0) -> str | None:
+    try:
+        resp = httpx.get(url, headers=_DEFAULT_HEADERS, timeout=timeout, follow_redirects=True)
+        resp.raise_for_status()
+        return _strip_html(resp.text)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] failed %s: %s", url, exc)
+        return None
+
+
+def _strip_html(html: str) -> str:
+    text = re.sub(r"<script[^>]*>[\s\S]*?</script>", " ", html, flags=re.IGNORECASE)
+    text = re.sub(r"<style[^>]*>[\s\S]*?</style>", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = (
+        text.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+    )
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
+# ─── Mock-aware Claude extractor ────────────────────────────────────────────
+
+
+def _is_mock_mode(explicit: bool | None) -> bool:
+    if explicit is True:
+        return True
+    if explicit is False:
+        return False
+    key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip().lower()
+    return key in {"", "mock", "test", "fake", "placeholder"} or key.startswith("xxx")
+
+
+def extract_recruitment_data(
+    raw_text: str,
+    source_url: str,
+    source_name: str,
+    *,
+    mock: bool | None = None,
+) -> dict[str, Any] | None:
+    """Returns ``{"data": ExtractedRecruitment, "confidence": float}`` or ``None``."""
+    truncated = raw_text[:16000]
+
+    if _is_mock_mode(mock):
+        return _mock_extract(truncated, source_url, source_name)
+
+    try:
+        import anthropic
+    except ImportError:
+        logger.warning("[extractor] anthropic SDK not installed; falling back to mock")
+        return _mock_extract(truncated, source_url, source_name)
+
+    user_prompt = (
+        f"Extract all recruitment notification data from the following text scraped from "
+        f"{source_name} ({source_url}).\n\n"
+        f'Return a JSON object matching this EXACT shape:\n'
+        f'{{\n'
+        f'  "title": "string",\n'
+        f'  "organization_name": "string",\n'
+        f'  "org_type": "UPSC|SSC|Banking|Railway|State|Insurance|Defence|Other",\n'
+        f'  "notification_date": "YYYY-MM-DD or null",\n'
+        f'  "apply_start_date": "YYYY-MM-DD or null",\n'
+        f'  "apply_end_date":   "YYYY-MM-DD or null",\n'
+        f'  "total_vacancies":  number or null,\n'
+        f'  "year":             number,\n'
+        f'  "source_pdf_url":   "string or null",\n'
+        f'  "official_notification_url": "{source_url}",\n'
+        f'  "posts": [{{ "post_name": "string", "group_type": "A|B|C|D or null", '
+        f'"pay_level": "string or null", "vacancies": number or null, '
+        f'"min_age": number or null, "max_age": number or null, '
+        f'"education_required": "string or null", "disciplines": ["string"] or null }}],\n'
+        f'  "confidence": 0.0-1.0\n'
+        f'}}\n\nSCRAPED TEXT:\n{truncated}'
+    )
+
+    try:
+        client = anthropic.Anthropic()
+        resp = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4000,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        text = "".join(
+            getattr(b, "text", "") for b in resp.content if getattr(b, "type", None) == "text"
+        ).strip()
+        clean = re.sub(r"^```json\s*", "", text)
+        clean = re.sub(r"\s*```$", "", clean).strip()
+        parsed = json.loads(clean)
+        confidence = parsed.pop("confidence", 0.5)
+        confidence = max(0.0, min(1.0, float(confidence)))
+        data = ExtractedRecruitment(**parsed)
+        return {"data": data, "confidence": confidence}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[extractor] Claude call failed: %s", exc)
+        return None
+
+
+def _mock_extract(raw_text: str, source_url: str, source_name: str) -> dict[str, Any]:
+    """Deterministic synthetic extraction for tests + dry runs without a model."""
+    digest = hashlib.sha1(f"{source_url}|{source_name}".encode()).hexdigest()
+    today = date.today()
+    apply_start = today + timedelta(days=14)
+    apply_end = today + timedelta(days=44)
+
+    title = f"{source_name} Recruitment {today.year}"
+    if "ssc" in source_name.lower():
+        title = f"SSC CGL {today.year}"
+    elif "ibps" in source_name.lower():
+        title = f"IBPS PO {today.year}"
+    elif "rbi" in source_name.lower():
+        title = f"RBI Grade B {today.year}"
+
+    data = ExtractedRecruitment(
+        title=title,
+        organization_name=source_name,
+        org_type=_guess_org_type(source_name),
+        notification_date=today.isoformat(),
+        apply_start_date=apply_start.isoformat(),
+        apply_end_date=apply_end.isoformat(),
+        total_vacancies=int(digest[:3], 16) % 5000 + 100,
+        year=today.year,
+        official_notification_url=source_url,
+        source_pdf_url=None,
+        posts=[
+            ExtractedPost(
+                post_name="Inspector",
+                group_type="B",
+                pay_level="7",
+                vacancies=int(digest[3:6], 16) % 800 + 50,
+                min_age=18,
+                max_age=32,
+                education_required="Bachelor's degree from a recognised university",
+                disciplines=None,
+            ),
+            ExtractedPost(
+                post_name="Junior Assistant",
+                group_type="C",
+                pay_level="2",
+                vacancies=int(digest[6:9], 16) % 1500 + 100,
+                min_age=18,
+                max_age=27,
+                education_required="12th pass / Senior Secondary",
+                disciplines=None,
+            ),
+        ],
+    )
+    confidence = 0.7  # mocks are mid-confidence to force admin review
+    return {"data": data, "confidence": confidence, "is_mock": True}
+
+
+def _guess_org_type(source_name: str) -> str:
+    s = source_name.lower()
+    if "upsc" in s:
+        return "UPSC"
+    if "ssc" in s:
+        return "SSC"
+    if "ibps" in s or "rbi" in s or "sbi" in s or "bank" in s:
+        return "Banking"
+    if "rrb" in s or "railway" in s:
+        return "Railway"
+    if "lic" in s or "insurance" in s:
+        return "Insurance"
+    if "defence" in s or "navy" in s or "army" in s or "air force" in s:
+        return "Defence"
+    if "psc" in s or "state" in s:
+        return "State"
+    return "Other"
+
+
+# ─── Dedup key ──────────────────────────────────────────────────────────────
+
+
+def compute_similarity_key(data: ExtractedRecruitment) -> str:
+    org = re.sub(r"[^a-z0-9]", "", (data.organization_name or "").lower())
+    year = str(data.year or 0)
+    title_words = "".join((data.title or "").lower().split()[:4])
+    return f"{org}-{year}-{title_words}"
+
+
+def build_recruitment_key(org_name: str, year: int | None, name: str) -> str:
+    norm = lambda s: re.sub(r"[^a-z0-9]", "", (s or "").lower())  # noqa: E731
+    return f"{norm(org_name)}-{year or 0}-{norm(name)[:30]}"
