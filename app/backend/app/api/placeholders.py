@@ -1043,12 +1043,6 @@ async def admin_ai_policy(_admin: dict = Depends(_require_admin)):
 
 # Aggregate router for easy include
 router = APIRouter()
-router.include_router(router_recruitments)
-router.include_router(router_profile)
-router.include_router(router_tracker)
-router.include_router(router_community)
-router.include_router(router_marketplace)
-router.include_router(router_study)
 router.include_router(router_acc)
 router.include_router(router_ai)
 router.include_router(router_admin)

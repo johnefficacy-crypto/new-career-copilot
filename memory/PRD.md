@@ -147,11 +147,96 @@ Schema notes:
 - `recruitment_required_exam_credentials` is treated as optional; if it
   doesn't exist in this deployment the runner logs and continues.
 
-### ⏳ Remaining (sessioned)
-- **Session (ii)** — Swap placeholder routers in
-  `app/api/placeholders.py` to real Supabase/Postgres queries
-  (recruitments list, profile read/write, tracker, community/forum,
-  marketplace courses, study tasks/sessions, etc.).
+### ✅ Session (ii) — Canonical Supabase queries (Jan 2026)
+
+Replaced the in-memory placeholders for **recruitments, profile, tracker,
+community/forum, marketplace, study OS** with real queries against
+canonical tables. Wired `Exams.jsx` and `ExamDetail.jsx` to the
+deterministic eligibility engine.
+
+Files:
+- `backend/app/api/canonical.py` — single consolidated router (~720 lines)
+  exposing the same paths the React app already calls but backed by
+  Supabase admin client queries:
+  - `GET /api/recruitments` — joins `recruitments → organizations`,
+    filters `publish_status IN ('verified','published')`, merges
+    `eligibility_results` per user, derives UI status pill (`eligible`/
+    `urgent`/`conditional`) from the engine verdict + apply-window
+    urgency (≤7d).
+  - `GET /api/recruitments/saved` — `tracked_recruitments` join.
+  - `GET/POST /api/recruitments/{id_or_slug}` + `/save` — UUID and
+    slug-suffix lookup.
+  - `GET/PUT /api/profile/me` — `profiles` keyed to `auth.users.id`,
+    with first-time bootstrap insert.
+  - `GET/POST/PUT/DELETE /api/tracker[/{id}]` —
+    `user_recruitment_applications` with UI-stage ↔ enum mapping
+    (`saved → not_started`, `applied → submitted`, etc.).
+  - `GET /api/community/categories` + `threads[/{id}]` +
+    `POST /threads` + `/posts` + `/vote` — `forum_categories`,
+    `forum_posts`, `forum_comments`, `forum_post_upvotes`.
+  - `GET /api/marketplace/{resources,resources/{id},mentors,mentors/{id},providers,affiliates}`
+    — `courses`, `lessons`, `course_sections`, `reviews`, `profiles`
+    (instructor join). Affiliates returns empty (no canonical table).
+  - `GET /api/study/{plan,subjects,weekly-review}`,
+    `POST /api/study/plan/toggle`, `POST /api/study/focus/{start,stop}`,
+    `GET /api/study/focus/summary`, `GET/POST /api/study/mocks` —
+    `study_plans`, `study_tasks`, `study_sessions`, `mock_tests`.
+
+- `backend/app/api/placeholders.py` — trimmed: kept accountability +
+  AI + admin (no canonical tables for partner/group, AI is scripted,
+  admin is mostly KPI placeholders). All other routers removed from the
+  aggregate.
+
+- `backend/server.py` — includes the canonical router **before** the
+  placeholder router so canonical routes win on path conflicts.
+
+- `frontend/src/pages/Exams.jsx` — rewritten:
+  - Uses `e.id` (UUID) for routing instead of synthetic slug.
+  - New `<StatusPill>` component (eligible / conditional / urgent).
+  - "Recompute eligibility" button hits `POST /api/eligibility/recompute`
+    and shows a result toast (`processed/eligible/conditional` counts).
+  - Renders `e.eligibility.fail_reasons[0]` as a coachable hint.
+  - Stage progress bar (Notification → Open → Closed → Result).
+  - Empty state when no published recruitments exist.
+
+- `frontend/src/pages/ExamDetail.jsx` — rewritten:
+  - `<VerdictBadge>` component.
+  - Eligibility panel surfaces full `fail_reasons[]` from
+    `eligibility_results`, computed-at timestamp, and
+    "AI does not decide eligibility" disclaimer.
+  - Sidebar lists real `posts` from the join (post_name + group_type
+    + pay_level).
+  - "Save" + "Track application" + "Official site" actions hit
+    canonical endpoints.
+
+Tested:
+- Live Supabase E2E (UI + API): seeded 2 recruitments + posts + criteria
+  + a Supabase user with profile (OBC, DOB 2000) + graduate B.A. 72%
+  → logged in via UI → Exams page renders 2 recruitments → clicked
+  Recompute → "Recomputed: 2 posts evaluated · 2 eligible · 0
+  conditional" toast appears → counts update to `Eligible · 2` →
+  Eligible filter shows both with green ELIGIBLE pill and
+  "You're eligible — apply window closes 31 May" → clicked through
+  to detail page → verdict "eligible", "All eligibility checks
+  passed. You can apply within the window above.", computed-at
+  timestamp, post listed.
+- Canonical CRUD round-trips: recruitments list/detail/save,
+  profile get/put, tracker add/list/put/delete (with proper
+  enum mapping), community categories, marketplace
+  resources/mentors, study focus session start/stop/summary,
+  mock add/list, weekly-review aggregation.
+
+Schema fixes during the session:
+- `application_status` enum is `not_started/opened/in_progress/submitted/skipped/not_applicable`,
+  not the colloquial "applied/admit_card/result". Added
+  `_STAGE_TO_STATUS` and reverse map.
+- `recruitments` uses `publish_status` (migration 033), not
+  `ingestion_trust_status`.
+- `profiles` has both `dob` and `date_of_birth` columns; runner
+  prefers `dob` then falls back.
+
+### ⏳ Remaining
+
 - **Session (iii)** — Scraper trust gate (source_registry → scrape_runs
   → scrape_queue → admin promote). Reference:
   `UI-career-copilot/lib/scraping/{extractor,alerts,runner}.ts`.

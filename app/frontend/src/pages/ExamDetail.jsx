@@ -1,7 +1,31 @@
 import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Bookmark, CheckCircle2, ExternalLink, ShieldCheck, ListChecks } from "lucide-react";
+import {
+  ArrowLeft,
+  Bookmark,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  ExternalLink,
+  ListChecks,
+  ShieldCheck,
+} from "lucide-react";
 import { api } from "../lib/api";
+
+function VerdictBadge({ verdict }) {
+  const map = {
+    eligible: { cls: "pill-sage", icon: ShieldCheck, label: "Eligible" },
+    conditional: { cls: "pill-dusk", icon: AlertCircle, label: "Conditionally eligible" },
+    pending: { cls: "pill-clay", icon: AlertCircle, label: "Awaiting computation" },
+  };
+  const cfg = map[verdict] || map.pending;
+  const Icon = cfg.icon;
+  return (
+    <span className={`pill ${cfg.cls} inline-flex items-center gap-1`}>
+      <Icon className="h-3 w-3" /> {cfg.label}
+    </span>
+  );
+}
 
 export default function ExamDetail() {
   const { slug } = useParams();
@@ -27,7 +51,7 @@ export default function ExamDetail() {
   async function trackApplication() {
     setBusy(true);
     try {
-      await api.post(`/api/tracker`, { recruitment_slug: slug, stage: "notified" });
+      await api.post(`/api/tracker`, { recruitment_id: r.id, stage: "saved" });
     } finally {
       setBusy(false);
     }
@@ -35,9 +59,20 @@ export default function ExamDetail() {
 
   if (!r) return <div data-testid="exam-loading">Loading…</div>;
 
+  const orgCode = r.organization_code || (r.organization || "—").slice(0, 4).toUpperCase();
+  const elig = r.eligibility_preview || { verdict: "pending", fail_reasons: [] };
+  const failReasons = elig.fail_reasons || [];
+  const isEligible = elig.verdict === "eligible";
+  const isConditional = elig.verdict === "conditional";
+  const formatDate = (d) =>
+    d ? new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—";
+
   return (
-    <div className="space-y-6" data-testid={`exam-detail-${slug}`}>
-      <Link to="/app/exams" className="inline-flex items-center gap-1 text-sm text-muted-foreground link-under">
+    <div className="space-y-6" data-testid={`exam-detail-${r.id}`}>
+      <Link
+        to="/app/exams"
+        className="inline-flex items-center gap-1 text-sm text-muted-foreground link-under"
+      >
         <ArrowLeft className="h-4 w-4" /> All recruitments
       </Link>
 
@@ -45,18 +80,23 @@ export default function ExamDetail() {
         <div className="flex flex-wrap items-start gap-6 justify-between">
           <div className="flex items-start gap-4">
             <div className="h-14 w-14 rounded-2xl bg-clay-100 grid place-items-center font-heading font-semibold text-clay-700">
-              {r.organization_code}
+              {orgCode}
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="font-heading text-3xl md:text-4xl font-semibold tracking-tight">{r.name}</h1>
-                <span className="pill pill-sage inline-flex items-center gap-1"><ShieldCheck className="h-3 w-3" /> Official</span>
+                <h1 className="font-heading text-3xl md:text-4xl font-semibold tracking-tight">
+                  {r.name}
+                </h1>
+                <VerdictBadge verdict={elig.verdict} />
               </div>
-              <div className="text-muted-foreground text-sm">{r.organization}</div>
-              <p className="mt-3 text-foreground/80 max-w-2xl">{r.summary}</p>
+              <div className="text-muted-foreground text-sm">
+                {r.organization}
+                {r.year ? ` · ${r.year}` : ""}
+                {r.state ? ` · ${r.state}` : ""}
+              </div>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <button
               onClick={toggleSave}
               disabled={busy}
@@ -65,7 +105,12 @@ export default function ExamDetail() {
             >
               <Bookmark className="h-4 w-4" /> {r.saved ? "Saved" : "Save"}
             </button>
-            <button onClick={trackApplication} disabled={busy} className="btn btn-ghost" data-testid="detail-track-btn">
+            <button
+              onClick={trackApplication}
+              disabled={busy}
+              className="btn btn-ghost"
+              data-testid="detail-track-btn"
+            >
               <ListChecks className="h-4 w-4" /> Track application
             </button>
             {r.notification_url && (
@@ -84,13 +129,18 @@ export default function ExamDetail() {
 
         <div className="mt-8 grid md:grid-cols-4 gap-4">
           {[
-            { label: "Vacancies", val: r.vacancies?.toLocaleString() },
-            { label: "Posts matched", val: `${r.posts_matched} / ${r.posts_total}` },
-            { label: "Age window", val: `${r.min_age}–${r.max_age}` },
-            { label: "Pay band", val: r.pay_band },
+            { label: "Vacancies", val: r.vacancies?.toLocaleString() || "—" },
+            { label: "Posts evaluated", val: `${elig.matched_posts || 0} / ${elig.total_posts || 0}` },
+            { label: "Apply opens", val: formatDate(r.apply_window?.open) },
+            { label: "Apply closes", val: formatDate(r.apply_window?.close) },
           ].map((s) => (
-            <div key={s.label} className="rounded-xl bg-clay-50/70 border border-clay-100 p-4">
-              <div className="text-[10px] uppercase tracking-widest text-clay-700">{s.label}</div>
+            <div
+              key={s.label}
+              className="rounded-xl bg-clay-50/70 border border-clay-100 p-4"
+            >
+              <div className="text-[10px] uppercase tracking-widest text-clay-700">
+                {s.label}
+              </div>
               <div className="mt-2 font-heading text-2xl font-semibold">{s.val}</div>
             </div>
           ))}
@@ -98,36 +148,86 @@ export default function ExamDetail() {
       </div>
 
       <div className="grid lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 soft-card rounded-2xl p-6">
-          <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">Eligibility preview · placeholder</div>
-          <h2 className="font-heading text-xl font-semibold mt-1">Verdict: <span className="italic text-clay-700">{r.eligibility_preview.verdict}</span></h2>
-          <ul className="mt-4 space-y-2">
-            {r.eligibility_preview.reasons.map((reason) => (
-              <li key={reason.field} className="flex items-start gap-2.5">
-                <CheckCircle2 className="h-4 w-4 text-sage-500 mt-0.5" />
-                <div>
-                  <div className="text-sm font-medium capitalize">{reason.field}</div>
-                  <div className="text-xs text-muted-foreground">{reason.note}</div>
-                </div>
-              </li>
-            ))}
-          </ul>
-          <div className="mt-5 text-[11px] text-muted-foreground">Source: {r.eligibility_preview.source}. Phase-2 replaces this with deterministic engine.</div>
+        <div
+          className="lg:col-span-2 soft-card rounded-2xl p-6"
+          data-testid="eligibility-panel"
+        >
+          <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">
+            Eligibility · deterministic engine
+          </div>
+          <h2 className="font-heading text-xl font-semibold mt-1">
+            Verdict:{" "}
+            <span
+              className={
+                isEligible
+                  ? "text-sage-700"
+                  : isConditional
+                  ? "text-dusk-700"
+                  : "text-clay-700"
+              }
+            >
+              {elig.verdict}
+            </span>
+          </h2>
+          {isEligible && failReasons.length === 0 && (
+            <p className="mt-3 text-sm text-foreground/80">
+              All eligibility checks passed. You can apply within the window above.
+            </p>
+          )}
+          {isConditional && (
+            <p className="mt-3 text-sm text-foreground/80">
+              You'll qualify on completion of your current qualification. Confirm
+              eligibility once your final-year results are out.
+            </p>
+          )}
+          {failReasons.length > 0 && (
+            <ul className="mt-4 space-y-2.5" data-testid="fail-reasons">
+              {failReasons.map((reason, idx) => (
+                <li key={idx} className="flex items-start gap-2.5">
+                  <XCircle className="h-4 w-4 text-clay-600 mt-0.5 shrink-0" />
+                  <div className="text-sm text-foreground/85">{reason}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {elig.computed_at && (
+            <div className="mt-5 text-[11px] text-muted-foreground">
+              Computed at {new Date(elig.computed_at).toLocaleString("en-IN")} · source:
+              deterministic-engine. AI does not decide eligibility.
+            </div>
+          )}
+          {elig.verdict === "pending" && (
+            <div className="mt-5 text-[11px] text-muted-foreground">
+              No eligibility result yet. Hit "Recompute eligibility" on the
+              Exams list to evaluate this recruitment.
+            </div>
+          )}
         </div>
 
         <aside className="soft-card rounded-2xl p-6">
-          <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">Exam pattern</div>
-          <ul className="mt-3 space-y-2 text-sm">
-            {(r.exam_pattern || []).map((p) => (
-              <li key={p} className="inline-flex items-start gap-2"><span className="timeline-dot mt-1.5" /> {p}</li>
-            ))}
-          </ul>
-          <div className="mt-6 text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">Syllabus snapshot</div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {(r.syllabus_snapshot || []).map((s) => (
-              <span key={s} className="pill pill-dusk">{s}</span>
-            ))}
+          <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">
+            Posts in this recruitment
           </div>
+          {(r.posts || []).length === 0 ? (
+            <p className="mt-3 text-sm text-muted-foreground">No posts ingested yet.</p>
+          ) : (
+            <ul className="mt-3 space-y-2 text-sm">
+              {(r.posts || []).map((p) => (
+                <li key={p.id} className="flex items-start gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-sage-500 mt-0.5 shrink-0" />
+                  <div>
+                    <div className="font-medium">{p.post_name}</div>
+                    {p.group_type && (
+                      <div className="text-xs text-muted-foreground">
+                        Group {p.group_type}
+                        {p.pay_level ? ` · Pay level ${p.pay_level}` : ""}
+                      </div>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </aside>
       </div>
     </div>
