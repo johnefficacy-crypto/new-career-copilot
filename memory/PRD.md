@@ -322,12 +322,80 @@ Schema reconciliation:
 - `recruitments.publish_status` is the trust gate (verified/published
   visible to engine; needs_review for newly promoted items).
 
-### ⏳ Remaining
+### ✅ Session (v) — Cron + email/notification dispatch (Jan 2026)
 
-- **Session (iv)** — Razorpay payments (order/verify/webhook +
-  subscription_plans / user_subscriptions sync). Backend secrets only.
-- **Session (v)** — Cron + email/notification dispatch (Resend +
-  in-process APScheduler with kill switch).
+In-process APScheduler with three jobs, a Resend dispatcher (log-only
+fallback when `RESEND_API_KEY` is unset), and an `admin_settings`
+kill switch.
+
+Files:
+- `backend/app/notifications/dispatcher.py` — pulls `notification_alerts`
+  with `email_sent=false`, filters by `notification_preferences`
+  (in_app_enabled / email_enabled / min_priority_*), renders subject +
+  text body for `new_match` / `deadline_3day` / `deadline_1day`, sends
+  via Resend if configured else logs to `backend.err.log`, marks
+  `email_sent=true` on success or opt-out.
+- `backend/app/notifications/recompute_worker.py` — drains
+  `eligibility_recompute_queue` (oldest first, respects
+  `next_attempt_at`), runs the deterministic engine via
+  `app.eligibility.runner.run_eligibility_for_user`, marks
+  `status='completed'` on success or exponential backoff on failure
+  (max 5 attempts).
+- `backend/app/notifications/scheduler.py` — APScheduler singleton,
+  three jobs:
+  - `notif:dispatch` every 2m (interval)
+  - `notif:deadline_sweep` daily 06:00 IST = 00:30 UTC (cron)
+  - `elig:recompute` every 5m (interval)
+  All job runs land in an in-memory `_last_run` map for the admin UI.
+- `backend/app/api/notifications.py` — REST surface:
+  - `GET /api/notifications/me`, `/me/unread-count`
+  - `POST /api/notifications/me/read` (all or specific ids)
+  - `GET/PUT /api/notifications/preferences/me`
+  - `GET /api/admin/notifications` (pending count, sent_24h, channels,
+    kill switch state)
+  - `POST /api/admin/notifications/kill-switch` ({paused: bool})
+  - `GET /api/admin/jobs` — APScheduler-backed job listing with
+    next/last-run state.
+  - `POST /api/admin/jobs/run/{job_id}` — manual trigger; audited.
+- `backend/server.py` — scheduler started in lifespan startup,
+  shut down in lifespan teardown.
+- `frontend/src/pages/admin/Notifications.jsx` — rewritten:
+  Kill-switch toggle with PAUSED/ACTIVE pill, success toast, three
+  KPI cards (pending dispatch / sent 24h / channels active), per-channel
+  status (in-app · email · WhatsApp Phase-3), per-job table with
+  "Run now" button + next/last-run timestamps + ok/failed badge.
+
+Tested:
+- E2E (API): admin user → eligibility recompute created 2
+  `notification_alerts` → user feed returned them → unread count = 2 →
+  preferences GET/PUT round-trip → manual dispatch with email_enabled=false
+  → `checked=N, emailed=0` (correctly skipped) → re-enabled email →
+  `checked=2, emailed=2` (logged-only fallback worked) → kill switch ON
+  → `checked=0, killed=1` (dispatch correctly paused) → kill switch OFF
+  → resumed → mark-all-read updated 2, unread = 0.
+- E2E (UI): admin/notifications page rendered all three jobs with
+  next-run timestamps; kill-switch toggle worked + showed banner +
+  flipped pill colour; manual `Run now` on `notif:dispatch` while paused
+  returned `killed:1` and updated last-run cell.
+- Scheduler started cleanly in lifespan (`APScheduler started:
+  ['notif:dispatch', 'elig:recompute', 'notif:deadline_sweep']`).
+
+Notes:
+- `RESEND_API_KEY` is unset → dispatcher uses **log-only fallback**.
+  Bodies appear in `backend.err.log` with subject + recipient. Plug a
+  real key into `backend/.env` and restart — no code change.
+- `notification_preferences.min_priority_*` storage was `"medium"` not
+  the enum I assumed; pattern relaxed to accept low|normal|medium|high|critical.
+- `eligibility_recompute_queue.recruitment_id` is NOT NULL (per-user
+  per-recruitment), so manual queue inserts must specify both. The
+  worker handles whatever is queued.
+- `DISABLE_SCHEDULER=1` env var disables APScheduler boot for tests/
+  multi-worker setups.
+
+### ⏳ Remaining
+- **Session (iv)** — Razorpay payments. Order create + verify + webhook
+  + `subscription_plans` / `user_subscriptions` / `payment_history` sync.
+  Backend secrets only. (Skipped earlier; user can pick this up next.)
 
 ## Files to know
 - Backend auth: `backend/app/core/auth.py`, `backend/app/api/auth.py`,

@@ -29,7 +29,9 @@ from app.api.admin_scrape import router as admin_scrape_router
 from app.api.auth import router as auth_router
 from app.api.canonical import router as canonical_router
 from app.api.eligibility import router as eligibility_router
+from app.api.notifications import router as notifications_router
 from app.api.placeholders import router as placeholders_router
+from app.notifications.scheduler import start_scheduler, stop_scheduler
 from app.core.config import get_settings
 from app.db.postgres import close_pool, get_pool
 
@@ -45,7 +47,13 @@ async def lifespan(app: FastAPI):
         logger.info("Postgres pool connected")
     except Exception as exc:  # noqa: BLE001
         logger.warning("Postgres pool not available at startup: %s", exc)
+    # APScheduler — in-process cron for notifications + recompute worker.
+    try:
+        start_scheduler()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Scheduler did not start: %s", exc)
     yield
+    stop_scheduler()
     await close_pool()
 
 
@@ -128,6 +136,7 @@ async def db_health() -> DbHealth:
 
 api.include_router(auth_router)
 api.include_router(eligibility_router)
+api.include_router(notifications_router)
 api.include_router(admin_scrape_router)  # admin scraper trust-gate routes
 api.include_router(canonical_router)  # canonical Supabase routes — must precede placeholders
 api.include_router(placeholders_router)
