@@ -15,7 +15,7 @@ import AdminCommunity from "./pages/admin/Community";
 import AdminAIPolicy from "./pages/admin/AIPolicy";
 import AdminOverview from "./pages/admin/Overview";
 import DashShell from "./pages/DashShell";
-
+import AuthTest from "./AuthTest";
 export default function App() {
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -37,6 +37,7 @@ export default function App() {
           <Route path="/admin/community" element={<AdminCommunity />} />
           <Route path="/admin/ai-policy" element={<AdminAIPolicy />} />
         </Route>
+        <Route path="/auth-test" element={<AuthTest />} />
       </Routes>
     </div>
   );
