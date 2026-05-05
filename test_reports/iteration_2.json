@@ -1,0 +1,43 @@
+{
+  "summary": "End-to-end testing of Razorpay subscriptions/payments (Phase 2 · session iv). Backend: 23/23 pytest cases passed against the public preview URL covering public /api/plans, admin plan CRUD + RBAC, /payments/order (paid plan + free-plan rejection + auth-required), /payments/verify (valid HMAC activates sub, bad signature → 400, plan switching cancels prior sub), /payments/webhook (bad signature → 400, unknown order → 200 idempotent ack), /subscriptions/me (auth required, +30 day period), /payments/me, /admin/subscriptions and /admin/payments RBAC. Frontend: /app/pricing renders 3 plan cards (free/pro/elite) with correct buttons (Free='Included' disabled, Pro='Active' since sub already active, Elite='Subscribe'), active banner shows current period end, /admin/plans table renders with all rows including disabled, Edit modal updates price_inr in paise (changed Pro 24900→25000 and verified row reflected ₹250.00, then restored to 24900), 'Pricing & plans' sidebar link is visible and highlighted between Marketplace and RBAC & users (confirmed via screenshot), 'See plans' upgrade card present in user sidebar.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/app/backend/tests/test_razorpay_payments.py",
+    "/app/test_reports/pytest/razorpay_results.xml"
+  ],
+  "action_items": [
+    "(Out of scope but worth noting) /admin overview (AdminOverview component) crashes with 'data.kpis.map is not a function' — backend /api/admin/overview seemingly returns kpis as something other than an array. NOT related to this session's Razorpay scope, but it currently shows the red 'Uncaught runtime errors' overlay when an admin lands on /admin. Suggest a follow-up to coerce data.kpis to an array or handle the object shape in AdminOverview.jsx."
+  ],
+  "critical_code_review_comments": [
+    "payments.py uses get_supabase_admin() everywhere — fine for now but means RLS is fully bypassed on every read. The admin/_require_admin gate plus user_id filter on /me endpoints is the only thing protecting data isolation; consider a service-role-aware client only for write paths and the user-bound anon client for /me reads if/when RLS policies are hardened.",
+    "_deactivate_other_active() is best-effort (try/except logs warning). With the partial unique index on user_subscriptions(user_id) WHERE status IN ('active','past_due'), a failure here would make the subsequent activate update violate the constraint. In practice it silently swallows the exception and the next update would 23505. Worth surfacing the error to the caller (or letting it propagate).",
+    "Webhook for unknown order_id: spec says 'silently skip insert and return 200'. Implementation does that, but it also means a malicious actor with the webhook secret could spam 200s. Acceptable for an idempotent ACK but worth rate-limiting at the ingress.",
+    "verify_payment unconditionally inserts a payment_history row with status='captured' even if _deactivate_other_active fails or the auth.admin.update_user_by_id metadata mirror fails. The metadata mirror has a try/except (good); the deactivate path also has try/except. Net: a successful verify can leave the auth metadata stale. Frontend already re-reads /subscriptions/me so user-visible plan stays correct; just call it out.",
+    "PlanIn.id has no slug regex validation server-side beyond _slugify on insert; PlanPatch silently accepts an id field via model_dump but never updates the PK. That is fine but confusing — strip id on patch explicitly.",
+    "Admin Plans.jsx 'features' parsing accepts JSON object or newline-separated array; the seeded 'pro'/'elite' plans store features as an object map (e.g. {ai_career_chat:true}). Editing such a plan and saving will preserve the JSON because the form keeps it as JSON text — verified manually.",
+    "/api/payments/webhook accepts request.json() AFTER reading raw body for HMAC, which is correct. Good."
+  ],
+  "updated_files": [
+    "/app/app/backend/tests/test_razorpay_payments.py (created)",
+    "/app/test_reports/pytest/razorpay_results.xml (generated)",
+    "/app/test_reports/iteration_2.json (this report)"
+  ],
+  "success_rate": {
+    "backend": "100% (23/23)",
+    "frontend": "100% on Razorpay scope (Pricing + Admin Plans + sidebar nav). One unrelated bug on /admin overview (data.kpis.map) is pre-existing and out of scope."
+  },
+  "test_credentials": "Super Admin used: razortest+1778018301@inbox.testreal.dev / RazorPass@2026 (from /app/memory/test_credentials.md). A throwaway non-admin user is created per test session via Supabase admin API (rzp_user_<uuid>@inbox.testreal.dev / UserPass@2026).",
+  "seed_data_creation": "Each test run creates: (1) one fresh non-admin Supabase user, (2) one TEST_ prefixed plan that is then disabled (soft-delete leaves a row in subscription_plans with is_active=false). Pro plan price is mutated by ±100 paise then restored. Two user_subscriptions rows (pro→cancelled, elite→active) and matching payment_history entries are written for the throwaway user. Cleanup of the throwaway user and disabled test plans is left to manual sweep, but data is clearly tagged.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Razorpay backend regression suite is /app/app/backend/tests/test_razorpay_payments.py (23 tests, ~28s). It signs in via Supabase password grant directly so it doesn't depend on the legacy /api/auth/login. To re-verify a subscribe flow end-to-end without Razorpay's hosted checkout, compute HMAC-SHA256 of `${order_id}|${payment_id}` with RAZORPAY_KEY_SECRET (=WpKuJ0QztLbV0aXPK4mk1cwG) — see test_verify_valid_signature_activates_sub for the exact construction. Frontend sidebar nav 'Pricing & plans' is visually confirmed in admin shell on /admin/plans (highlighted), and 'See plans' upgrade card is present on /app aspirant sidebar.",
+  "rca of the issue": "No new bugs found in Razorpay scope. Pre-existing /admin overview crash ('data.kpis.map is not a function') is unrelated to this session — it points at AdminOverview.jsx assuming an array shape from /api/admin/overview that the API now returns differently. Mitigation for follow-up: in AdminOverview.jsx, replace `data.kpis.map(...)` with `(Array.isArray(data.kpis) ? data.kpis : Object.values(data.kpis || {})).map(...)` or fix the API to always return an array."
+}
