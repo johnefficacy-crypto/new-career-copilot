@@ -422,11 +422,93 @@ spec). Apply manually in Supabase SQL Editor:
 APScheduler `elig:recompute` job is already polling every 5 minutes
 and will drain new rows automatically.
 
+### ✅ Session (iv) — Razorpay subscriptions (Feb 2026)
+
+Subscription plans + Razorpay Checkout + signed verify + webhook +
+admin price/plan editor.
+
+Migration: `054_razorpay_subscriptions.sql` — additive ALTERs on the
+existing `subscription_plans` (id is `text`), `user_subscriptions`
+(partial unique on `user_id WHERE status IN ('active','past_due')`),
+and `payment_history` tables. Adds `description / interval / sort_order /
+created_at / updated_at` to plans, `razorpay_order_id / razorpay_payment_id /
+amount_paid_inr / currency / cancelled_at` to subscriptions, and
+`plan_id / currency / method / source / event / raw_event` to history.
+Three RLS policies per table (read own / service-role write). Default
+plan rows normalised to paise: free=0, pro=24900 (₹249/mo),
+elite=49900 (₹499/yr).
+
+Files:
+- `backend/app/api/payments.py` — single router, ~570 lines, every endpoint.
+  - `GET  /api/plans` (public) — only `is_active=true`, sorted by `sort_order`.
+  - `GET    /api/admin/plans`, `POST/PUT/DELETE /api/admin/plans[/{id}]` —
+    admin CRUD; DELETE is soft-disable.
+  - `POST /api/payments/order` — creates real Razorpay order via
+    `razorpay.Client(...)` with `RAZORPAY_KEY_ID/SECRET`. Inserts
+    `user_subscriptions` (status='created') + `payment_history`
+    (status='created'). Returns `{order, key_id, plan, user}` — frontend
+    feeds `key_id` into Razorpay Checkout.
+  - `POST /api/payments/verify` — HMAC-SHA256 of `${order_id}|${payment_id}`
+    with `RAZORPAY_KEY_SECRET`. Calls `_deactivate_other_active(user_id,
+    except_id=...)` to cancel any prior active sub (the partial unique
+    index would otherwise reject the new row), flips current sub to
+    'active', inserts `payment_history` (status='captured'), mirrors
+    `plan` onto `auth.users.user_metadata`.
+  - `POST /api/payments/webhook` — HMAC-SHA256 of raw body with
+    `RAZORPAY_WEBHOOK_SECRET`. Idempotent ACK for unknown order_ids
+    (skips insert, returns 200). Handles `payment.captured`
+    (activate + period dates), `payment.failed` (status='failed'),
+    `refund.created/processed` (status='cancelled', cancelled_at=now).
+  - `GET /api/subscriptions/me`, `GET /api/payments/me` — user views.
+  - `GET /api/admin/subscriptions`, `GET /api/admin/payments` — admin.
+
+- `frontend/src/pages/Pricing.jsx` — user-facing pricing page mounted
+  at `/app/pricing`. Loads Razorpay's `checkout.js` on demand, opens the
+  hosted checkout, calls `/payments/verify` from the success handler,
+  shows an active-plan banner, supports the legacy object-shape features
+  (translates `{ai_career_chat:true,...}` into chips).
+- `frontend/src/pages/admin/Plans.jsx` — admin CRUD page at
+  `/admin/plans`. Table with Edit + Disable/Enable buttons. Modal form
+  takes price in **paise** with a live ₹ preview, supports features as
+  newline list or JSON.
+- `frontend/src/App.js` — routes `/app/pricing` and `/admin/plans`
+  registered.
+- `frontend/src/pages/admin/AdminShell.jsx` — `Pricing & plans` nav item
+  added (between Marketplace and RBAC & users).
+- `frontend/src/pages/DashShell.jsx` — sidebar 'See plans' upgrade card
+  links to `/app/pricing` (replaces the old static button).
+
+Tested:
+- `tests/test_razorpay_payments.py` — **23/23** pytest cases pass.
+  Covers: public plans, admin plan CRUD + RBAC (403 for normal user),
+  order creation (paid + free-plan rejection), valid HMAC verify
+  activates sub with +30d period, invalid signature 400, plan-switch
+  cancels prior sub, webhook bad-sig 400, webhook unknown-order 200
+  idempotent ACK, webhook captured activates, /me endpoints scoped to
+  caller, admin read-only views.
+- E2E (UI): /app/pricing renders 3 cards (Free='Included' disabled,
+  Pro='Active' when sub already active, Elite='Subscribe'); active
+  banner shows current period end. /admin/plans table renders all rows;
+  Edit modal updates price_inr in paise (24900↔25000) with the row
+  reflecting ₹250.00 immediately. Sidebar entries highlighted correctly.
+
+Schema notes:
+- `subscription_plans.id` is `text` not uuid. Existing seed used
+  IDs `free / pro / elite` so the migration kept that surface.
+- `user_subscriptions.status` accepts `created / active / cancelled /
+  expired / failed / past_due`. Switching plans cancels the previous
+  active row before activating the new one.
+- `payment_history.user_id` is `NOT NULL`. Webhooks for unknown
+  order_ids skip the insert and just return `{ok:true}`.
+- `RAZORPAY_WEBHOOK_SECRET` placeholder is fine for HMAC verification
+  in tests (the secret is only matched against the same value).
+  Replace with the real secret from Razorpay Dashboard before going
+  live and register
+  `${REACT_APP_BACKEND_URL}/api/payments/webhook` as the endpoint.
+
 ### ⏳ Remaining
-- **Session (iv) — Razorpay** (skipped during sequencing). Order
-  create + verify + webhook + `subscription_plans`/`user_subscriptions`/
-  `payment_history` sync. Backend secrets already in `backend/.env`
-  (test keys).
+- WhatsApp dispatch channel (Phase 3, deferred).
+- Real `RESEND_API_KEY` if email send-out (currently log-only fallback).
 
 ## Files to know
 - Backend auth: `backend/app/core/auth.py`, `backend/app/api/auth.py`,

@@ -19,7 +19,7 @@ export default function AdminOverview() {
       </div>
 
       <div className="grid md:grid-cols-3 lg:grid-cols-6 gap-4">
-        {data.kpis.map((k) => (
+        {(Array.isArray(data.kpis) ? data.kpis : Object.values(data.kpis || {})).map((k) => (
           <div key={k.label} className="soft-card rounded-2xl p-5">
             <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">{k.label}</div>
             <div className="mt-3 font-heading text-3xl font-semibold tracking-tight">{k.value}</div>
