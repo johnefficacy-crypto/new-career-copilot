@@ -392,10 +392,41 @@ Notes:
 - `DISABLE_SCHEDULER=1` env var disables APScheduler boot for tests/
   multi-worker setups.
 
+### ✅ Session (v.1) — Recompute triggers SQL (Jan 2026 · generate-only)
+
+`/app/supabase/migrations/048_eligibility_recompute_triggers.sql`
+
+- Helper function `public.enqueue_user_recompute(user_id, reason)` —
+  idempotent insert into `eligibility_recompute_queue`. Picks an
+  arbitrary `recruitment_id` as a placeholder (FK is NOT NULL but the
+  worker recomputes the whole user, so the choice is irrelevant). If a
+  `status='queued'` row already exists for the user, returns without
+  inserting (dedup).
+- Trigger `profiles_recompute_trigger` on `INSERT/UPDATE` of
+  `public.profiles`. Only enqueues when an engine-relevant column
+  actually changes: `dob`, `date_of_birth`, `category`, `pwbd_status`,
+  `ex_serviceman`, `service_years`, `govt_employee`, `domicile_state`,
+  `nationality`.
+- Trigger `aspirant_education_recompute_trigger` on
+  `INSERT/UPDATE/DELETE` of `public.aspirant_education` — any add /
+  edit / remove flips the verdict.
+- Trigger `aspirant_exam_creds_recompute_trigger` on
+  `INSERT/UPDATE/DELETE` of `public.aspirant_exam_credentials` — covers
+  the "required exam credential" engine rule.
+- Partial index `idx_eligibility_recompute_queue_user_queued ON (user_id)
+  WHERE status = 'queued'` — keeps the dedup lookup cheap.
+
+Status: **migration written, NOT applied** (per the visible-migrations
+spec). Apply manually in Supabase SQL Editor:
+`supabase/migrations/048_eligibility_recompute_triggers.sql`. The
+APScheduler `elig:recompute` job is already polling every 5 minutes
+and will drain new rows automatically.
+
 ### ⏳ Remaining
-- **Session (iv)** — Razorpay payments. Order create + verify + webhook
-  + `subscription_plans` / `user_subscriptions` / `payment_history` sync.
-  Backend secrets only. (Skipped earlier; user can pick this up next.)
+- **Session (iv) — Razorpay** (skipped during sequencing). Order
+  create + verify + webhook + `subscription_plans`/`user_subscriptions`/
+  `payment_history` sync. Backend secrets already in `backend/.env`
+  (test keys).
 
 ## Files to know
 - Backend auth: `backend/app/core/auth.py`, `backend/app/api/auth.py`,
