@@ -1,86 +1,154 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { auth as authApi, setToken, getToken } from "./api";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
+import { auth as authApi } from "./api";
+import { supabase } from "./supabase";
 
 const AuthCtx = createContext(null);
+
+function mergeUser(supabaseUser, backendUser) {
+  if (!supabaseUser && !backendUser) return null;
+  const meta = supabaseUser?.user_metadata || {};
+  const appMeta = supabaseUser?.app_metadata || {};
+  return {
+    id: supabaseUser?.id || backendUser?.id,
+    email: supabaseUser?.email || backendUser?.email,
+    name: backendUser?.name || meta.name || meta.full_name || null,
+    role: backendUser?.role || appMeta.role || meta.role || "user",
+    avatar: backendUser?.avatar || meta.avatar_url || null,
+    onboarded: backendUser?.onboarded ?? Boolean(meta.onboarded),
+    plan: backendUser?.plan || meta.plan || "free",
+    goal_exams: backendUser?.goal_exams || meta.goal_exams || [],
+    created_at: backendUser?.created_at || supabaseUser?.created_at || null,
+  };
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [status, setStatus] = useState("checking"); // checking | authed | guest
 
-  const bootstrap = useCallback(async () => {
-    const token = getToken();
-    if (!token) {
+  const hydrate = useCallback(async (session) => {
+    if (!session?.user) {
+      setUser(null);
       setStatus("guest");
       return;
     }
     try {
-      const { user } = await authApi.me();
-      setUser(user);
-      setStatus("authed");
-    } catch (err) {
-      setToken(null);
-      setUser(null);
-      setStatus("guest");
+      const { user: backendUser } = await authApi.me();
+      setUser(mergeUser(session.user, backendUser));
+    } catch {
+      // Backend unreachable — still treat as authed via Supabase session.
+      setUser(mergeUser(session.user, null));
     }
+    setStatus("authed");
   }, []);
 
   useEffect(() => {
-    bootstrap();
-  }, [bootstrap]);
+    let mounted = true;
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        if (mounted) hydrate(data.session);
+      })
+      .catch(() => {
+        if (mounted) {
+          setUser(null);
+          setStatus("guest");
+        }
+      });
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      hydrate(session);
+    });
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, [hydrate]);
 
   const login = useCallback(async (email, password) => {
-    const data = await authApi.login({ email, password });
-    setToken(data.access_token);
-    setUser(data.user);
-    setStatus("authed");
-    return data.user;
-  }, []);
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw new Error(error.message || "Unable to sign in");
+    await hydrate(data.session);
+    // Re-read merged user from state (await async setState by recomputing).
+    return mergeUser(data.user, null);
+  }, [hydrate]);
 
-  const register = useCallback(async ({ email, password, name }) => {
-    const data = await authApi.register({ email, password, name });
-    setToken(data.access_token);
-    setUser(data.user);
-    setStatus("authed");
-    return data.user;
-  }, []);
+  const register = useCallback(
+    async ({ email, password, name }) => {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { name } },
+      });
+      if (error) throw new Error(error.message || "Unable to create account");
+      // If email confirmation is required, session may be null.
+      if (data.session) {
+        await hydrate(data.session);
+      } else {
+        setUser(null);
+        setStatus("guest");
+      }
+      return mergeUser(data.user, null);
+    },
+    [hydrate]
+  );
 
   const logout = useCallback(async () => {
-    try {
-      await authApi.logout();
-    } catch (err) {
-      // ignore
-    }
-    setToken(null);
+    await supabase.auth.signOut();
     setUser(null);
     setStatus("guest");
   }, []);
 
   const refreshUser = useCallback(async () => {
     try {
-      const { user } = await authApi.me();
-      setUser(user);
-      return user;
-    } catch (err) {
-      setToken(null);
-      setUser(null);
-      setStatus("guest");
+      const { user: backendUser } = await authApi.me();
+      const { data } = await supabase.auth.getSession();
+      const merged = mergeUser(data.session?.user, backendUser);
+      setUser(merged);
+      return merged;
+    } catch {
       return null;
     }
   }, []);
 
-  const value = {
-    user,
-    status,
-    isAuthed: status === "authed",
-    isChecking: status === "checking",
-    isAdmin: user && (user.role === "admin" || user.role === "super_admin"),
-    isSuperAdmin: user && user.role === "super_admin",
-    login,
-    register,
-    logout,
-    refreshUser,
-    setUser,
-  };
+  const sendPasswordReset = useCallback(async (email) => {
+    const redirectTo = `${window.location.origin}/reset-password`;
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    if (error) throw new Error(error.message || "Unable to send reset link");
+    return { ok: true };
+  }, []);
+
+  const updatePassword = useCallback(async (password) => {
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) throw new Error(error.message || "Unable to update password");
+    return { ok: true };
+  }, []);
+
+  const value = useMemo(
+    () => ({
+      user,
+      status,
+      isAuthed: status === "authed",
+      isChecking: status === "checking",
+      isAdmin: user && (user.role === "admin" || user.role === "super_admin"),
+      isSuperAdmin: user && user.role === "super_admin",
+      login,
+      register,
+      logout,
+      refreshUser,
+      sendPasswordReset,
+      updatePassword,
+      setUser,
+    }),
+    [user, status, login, register, logout, refreshUser, sendPasswordReset, updatePassword]
+  );
 
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }

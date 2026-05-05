@@ -12,22 +12,31 @@ IMPORTANT: Emergent workspace may be rooted at `/app`. If so, this file is inten
 - Auth: Supabase Auth
 - Backend DB: `asyncpg` and Supabase admin client
 
-## Already working
+## Already working (Phase 1.5 — MongoDB removed)
 
-- FastAPI backend starts from `backend` with `uvicorn server:app --reload --host 127.0.0.1 --port 8000`
+- FastAPI backend starts under supervisor on port 8001 from `backend`
+  (`uvicorn server:app --host 0.0.0.0 --port 8001`)
 - `/api/health` works
-- `/api/db-health` works
-- Supabase Auth loop works
+- `/api/db-health` reports Supabase + Postgres status (no Mongo)
+- `/api/auth/me` validates Supabase Bearer tokens
+- Supabase Auth loop works end-to-end (signup, login, logout, session
+  restore, password reset)
+- MongoDB is no longer a runtime dependency. `motor`/`pymongo` were
+  uninstalled and the Mongo-backed routers (`app/api_v1/*`) were
+  deleted.
 - Frontend has:
-  - `frontend/src/lib/supabase.js`
-  - `frontend/src/lib/auth.js`
-  - `frontend/src/lib/api.js`
+  - `frontend/src/lib/supabase.js` (browser client)
+  - `frontend/src/lib/auth.js` (signUp/signIn/signOut/getSession helpers)
+  - `frontend/src/lib/authContext.jsx` (Supabase-driven AuthProvider)
+  - `frontend/src/lib/api.js` (attaches Supabase access token automatically)
 - Backend has:
   - `backend/app/core/config.py`
-  - `backend/app/core/auth.py`
-  - `backend/app/db/postgres.py`
+  - `backend/app/core/auth.py` (Supabase admin token verification)
+  - `backend/app/db/postgres.py` (asyncpg pool)
   - `backend/app/db/supabase_client.py`
-  - `backend/app/api/auth.py`
+  - `backend/app/api/auth.py` (`/api/auth/me`)
+  - `backend/app/api/placeholders.py` (Phase-1 placeholder endpoints,
+    in-memory only — to be swapped for Supabase queries in Phase 2)
 
 ## Product doctrine
 

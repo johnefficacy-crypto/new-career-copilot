@@ -1,12 +1,12 @@
-"""Career Copilot backend (Phase 1).
+"""Career Copilot backend (Phase 1.5).
 
-Provides authentication (custom JWT + bcrypt, MongoDB-backed), RBAC,
-and the mock/placeholder product APIs consumed by the React app.
+Authentication is delegated to Supabase Auth; the canonical database is
+Supabase Postgres (accessed via asyncpg + the supabase-py admin client).
 
-The original Supabase + asyncpg scaffolding is preserved in
-`app/core/config.py`, `app/db/postgres.py`, and `app/db/supabase_client.py`
-but is not used in Phase 1 runtime. To switch to Supabase, set
-AUTH_MODE=supabase in the backend .env and wire the Supabase router.
+MongoDB and the local JWT/bcrypt shim from Phase 1 have been fully removed.
+Phase-1 placeholder endpoints continue to serve the React app from
+deterministic in-memory data; Phase 2 will swap each surface to its real
+Supabase-backed implementation.
 """
 from __future__ import annotations
 
@@ -18,24 +18,17 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env before importing anything that reads settings.
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
-from fastapi import FastAPI, APIRouter
+from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app.server_deps import db_state, get_db
-from app.api_v1.auth import router as auth_router
-from app.api_v1.recruitments import router as recruitments_router
-from app.api_v1.profile import router as profile_router
-from app.api_v1.tracker import router as tracker_router
-from app.api_v1.community import router as community_router
-from app.api_v1.marketplace import router as marketplace_router
-from app.api_v1.study import router as study_router
-from app.api_v1.accountability import router as accountability_router
-from app.api_v1.ai import router as ai_router
-from app.api_v1.admin import router as admin_router
-from app.api_v1 import seed
+from app.api.auth import router as auth_router
+from app.api.placeholders import router as placeholders_router
+from app.core.config import get_settings
+from app.db.postgres import close_pool, get_pool
 
 logger = logging.getLogger("career_copilot")
 logging.basicConfig(level=logging.INFO)
@@ -43,35 +36,21 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await db_state.connect()
-    db = db_state.db
-    # Indexes
-    await db.users.create_index("email", unique=True)
-    await db.login_attempts.create_index("identifier")
-    await db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
-    await db.recruitments.create_index("slug", unique=True)
-    await db.saved_recruitments.create_index([("user_id", 1), ("recruitment_id", 1)], unique=True)
-    await db.tracker_items.create_index("user_id")
-    await db.community_threads.create_index("category")
-    await db.community_posts.create_index("thread_id")
-    await db.focus_sessions.create_index("user_id")
-    await db.study_tasks.create_index([("user_id", 1), ("date", 1)])
-    await db.mock_tests.create_index("user_id")
-    await db.audit_logs.create_index("created_at")
-
-    await seed.seed_all(db)
-    seed.write_test_credentials()
-    logger.info("Career Copilot backend started. DB=%s", os.environ.get("DB_NAME"))
+    # Try to bring up the asyncpg pool eagerly so /api/db-health is cheap.
+    try:
+        await get_pool()
+        logger.info("Postgres pool connected")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Postgres pool not available at startup: %s", exc)
     yield
-    await db_state.close()
+    await close_pool()
 
 
-app = FastAPI(title="Career Copilot API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Career Copilot API", version="0.2.0", lifespan=lifespan)
 
-# CORS
-cors_env = os.environ.get("CORS_ORIGINS", "http://localhost:3000")
+# CORS — frontend origin + emergent preview by default.
+cors_env = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
 cors_origins = [o.strip() for o in cors_env.split(",") if o.strip()]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
@@ -93,7 +72,9 @@ class Health(BaseModel):
 
 class DbHealth(BaseModel):
     status: str
-    mongo: str
+    postgres: str
+    supabase: str
+    supabase_url: str | None = None
     ts: str
 
 
@@ -108,26 +89,42 @@ async def health() -> Health:
 
 @api.get("/db-health", response_model=DbHealth)
 async def db_health() -> DbHealth:
-    db = get_db()
-    await db.command("ping")
+    settings = get_settings()
+    supabase_status = "unreachable"
+    try:
+        # Authoritative liveness check — Supabase REST is the production path.
+        from app.db.supabase_client import get_supabase_admin
+
+        admin = get_supabase_admin()
+        # Lightweight call against an existing canonical table; LIMIT 0 avoids
+        # paying for a real read and works even if profiles is empty.
+        admin.table("profiles").select("id").limit(1).execute()
+        supabase_status = "connected"
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Supabase unreachable: {exc}")
+
+    # asyncpg is best-effort. Direct Postgres hostnames are IPv6-only on
+    # some Supabase tiers; if it fails we still report Supabase as healthy.
+    postgres_status = "skipped"
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("SELECT 1")
+        postgres_status = "connected"
+    except Exception as exc:  # noqa: BLE001
+        postgres_status = f"unreachable ({type(exc).__name__})"
+
     return DbHealth(
         status="ok",
-        mongo="connected",
+        postgres=postgres_status,
+        supabase=supabase_status,
+        supabase_url=settings.NEXT_PUBLIC_SUPABASE_URL or None,
         ts=datetime.now(timezone.utc).isoformat(),
     )
 
 
 api.include_router(auth_router)
-api.include_router(recruitments_router)
-api.include_router(profile_router)
-api.include_router(tracker_router)
-api.include_router(community_router)
-api.include_router(marketplace_router)
-api.include_router(study_router)
-api.include_router(accountability_router)
-api.include_router(ai_router)
-api.include_router(admin_router)
-
+api.include_router(placeholders_router)
 app.include_router(api)
 
 

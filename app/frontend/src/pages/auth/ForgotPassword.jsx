@@ -1,19 +1,21 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import AuthLayout from "./AuthLayout";
-import { auth as authApi } from "../../lib/api";
+import { useAuth } from "../../lib/authContext";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const auth = useAuth();
 
   async function onSubmit(e) {
     e.preventDefault();
     setLoading(true);
+    setError(null);
     try {
-      await authApi.forgot(email.trim());
+      await auth.sendPasswordReset(email.trim());
       setSent(true);
     } catch (err) {
       setError(err.message);
@@ -25,12 +27,12 @@ export default function ForgotPassword() {
   return (
     <AuthLayout
       title="Reset your password."
-      subtitle="Enter your email and we'll send a secure reset link."
+      subtitle="Enter your email and we'll send a secure reset link via Supabase."
       footer={<Link to="/login" className="link-under font-semibold">Back to sign in</Link>}
     >
       {sent ? (
         <div data-testid="forgot-sent" className="rounded-xl bg-sage-100/60 border border-sage-200 p-4 text-sm">
-          If an account exists with that email, a reset link has been sent. (Phase-1: check server logs.)
+          If an account exists with that email, a reset link has been sent. Check your inbox.
         </div>
       ) : (
         <form onSubmit={onSubmit} className="space-y-5" data-testid="forgot-form">
@@ -45,7 +47,7 @@ export default function ForgotPassword() {
               className="w-full px-4 py-3 rounded-xl bg-white/80 border border-border focus:border-clay-400 outline-none text-sm"
             />
           </div>
-          {error && <div className="text-destructive text-sm">{error}</div>}
+          {error && <div className="text-destructive text-sm" data-testid="forgot-error">{error}</div>}
           <button
             disabled={loading}
             data-testid="forgot-submit"

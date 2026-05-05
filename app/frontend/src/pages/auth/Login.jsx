@@ -5,8 +5,8 @@ import AuthLayout from "./AuthLayout";
 import { useAuth } from "../../lib/authContext";
 
 export default function Login() {
-  const [email, setEmail] = useState("aspirant@careercopilot.in");
-  const [password, setPassword] = useState("Aspirant@2026");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const auth = useAuth();
@@ -85,7 +85,8 @@ export default function Login() {
           {loading && <Loader2 className="h-4 w-4 animate-spin" />} Sign in
         </button>
         <div className="text-[11px] text-muted-foreground text-center">
-          Demo accounts: aspirant@careercopilot.in · superadmin@careercopilot.in
+          Auth powered by Supabase. New here?{" "}
+          <Link to="/signup" className="link-under">Create an account</Link>.
         </div>
       </form>
     </AuthLayout>

@@ -1,103 +1,133 @@
 # Career Copilot — Product Requirements Document
 
-_Last updated: 2026-01 (Phase 1 commercial build)_
+_Last updated: 2026-01 — Phase 1.5 (Supabase canonical, MongoDB removed)_
 
-## Original problem statement
-> Read EMERGENT_START_HERE.md and implement Phase 1; expand creatively across Study OS, Community, Marketplace, Exam Intelligence, Accountability, Mentor sessions.
+## Original problem statement (Phase 1.5)
+> Phase 1.5 — Remove MongoDB and restore Supabase/Postgres canonical
+> architecture. Keep all Phase 1 frontend screens, routes, layouts, and
+> UI; replace the backend so authentication uses Supabase Auth and the
+> canonical database is Supabase Postgres.
 
-The repo is the new commercial full-stack build of Career Copilot, an "exam preparation operating system" for Indian government-job aspirants on the `commercial/main-build` branch.
+The repo on `commercial/main-build` is the new commercial build of Career
+Copilot, an exam-preparation OS for Indian government-job aspirants.
 
-## Product doctrine (from `EMERGENT_START_HERE.md`)
-- Canonical entity is `recruitment` (frontend may label as "exam"). FKs: `recruitment_id`, `post_id`, `organization_id`.
-- Eligibility must be **deterministic**. AI explains, never overrides.
-- Scraper output must clear source registry → queue → review → promotion.
-- Never expose service-role keys, DB URLs, AI keys, payment secrets, or webhook secrets to the frontend.
-- Two phases: Phase 1 = commercial app shell, Phase 2 = engines & automation.
+## Architecture (Phase 1.5)
+- **Frontend** — React 18 + Create React App, react-router v6, Tailwind 3,
+  Recharts, lucide-react, framer-motion. Soft clay/sage/dusk palette with
+  Fraunces serif headings + Satoshi/Cabinet body.
+- **Backend** — FastAPI 0.110 + asyncpg + supabase-py admin client. Runs
+  via supervisor on port 8001 (`uvicorn server:app --host 0.0.0.0 --port 8001`).
+- **Auth** — Supabase Auth (email/password). Frontend calls
+  `@supabase/supabase-js` directly for `signUp`, `signInWithPassword`,
+  `signOut`, `resetPasswordForEmail`, `onAuthStateChange`. Backend
+  validates the Supabase access token via `admin.auth.get_user(token)` on
+  every protected route.
+- **Database** — Supabase Postgres. `asyncpg` is used for direct queries
+  where needed; the supabase-py admin client is the production path for
+  health checks. Direct `db.<project>.supabase.co` hostnames are
+  IPv6-only in this environment, so `/api/db-health` reports both the
+  primary Supabase REST connection and best-effort `asyncpg`.
+- **Supervisor layout** — backend at `/app/backend → /app/app/backend`,
+  frontend at `/app/frontend → /app/app/frontend` (symlinks). MongoDB
+  supervisor program is stopped and unused.
 
-## Architecture (Phase 1)
-- **Frontend**: React 18 + CRA, react-router v6, Tailwind 3, Recharts, lucide-react. Soft clay/sage/dusk palette with Fraunces serif headings + Inter body.
-- **Backend**: FastAPI + Motor (MongoDB) + bcrypt + PyJWT. Cookies (SameSite=None) and Bearer tokens both supported.
-- **Auth shim**: Local JWT auth using MongoDB. Supabase scaffolding (`app/db/supabase_client.py`, `app/core/auth.py`) preserved but unused; `AUTH_MODE=local` in backend `.env`. To switch to Supabase, plug in env vars and re-route the `/api/auth/*` router.
-- **Service layout**: supervisor runs backend on port 8001 from `/app/backend` and frontend on 3000 from `/app/frontend`. Both are symlinks to `/app/app/backend` and `/app/app/frontend`.
+### What was removed in Phase 1.5
+- `motor`, `pymongo`, `bson` (uninstalled and removed from
+  `requirements.txt`).
+- `MONGO_URL` / `DB_NAME` runtime requirement (gone from `.env` and code).
+- Local JWT/bcrypt auth (`app/security.py`, `app/api_v1/auth.py`,
+  `app/server_deps.py` deleted).
+- Mongo-backed routers (`app/api_v1/*` deleted).
+- The Phase-1 demo seed (super-admin / mentor / aspirant accounts in
+  Mongo). Roles now live in Supabase Auth `app_metadata.role` /
+  `user_metadata.role` and are surfaced through `/api/auth/me`.
 
-## Roles seeded on startup (idempotent)
-| Role | Email | Password |
-|---|---|---|
-| `super_admin` | superadmin@careercopilot.in | SuperAdmin@2026 |
-| `mentor` | mentor@careercopilot.in | Mentor@2026 |
-| `user` (demo) | aspirant@careercopilot.in | Aspirant@2026 |
+### What replaced it
+- `app/core/auth.py` — Supabase Bearer-token verification using the
+  service-role admin client.
+- `app/api/auth.py` — `/api/auth/me` returning the resolved Supabase user.
+- `app/api/placeholders.py` — Phase-1 placeholder routers that keep all
+  ~45 frontend endpoints navigable using deterministic in-memory data.
+  Will be swapped to Supabase-backed implementations during Phase 2.
+- `app/db/postgres.py` — asyncpg pool factory.
+- `app/db/supabase_client.py` — admin/public Supabase clients.
 
-`super_admin` can create scoped admins (`scope` array — e.g. `["scraper"]`, `["content"]`) via `/api/admin/users/create`. Phase-2 will gate mutations by scope.
+> Note: MongoDB and the local JWT shim were a temporary Phase-1 prototype.
+> The commercial product targets Supabase Auth + Supabase Postgres only.
 
-## Phase 1 — implemented (Jan 2026)
-### Auth UX
-- /login, /signup, /forgot-password, /reset-password, /app/onboarding (4-step wizard)
-- AuthProvider with `null|guest|authed` states + `ProtectedRoute` (loading state, role gate)
-- JWT (1d access + 30d refresh) stored in localStorage; cookies also issued
+## Environment variables
 
-### User app surface (24 screens)
-- Mission control dashboard (KPIs, recruitments, focus widget, weekly truth panel, today's plan)
-- Today, Profile, Onboarding
-- Exams listing (filters + status pills + 5-stage timeline) + Exam detail with eligibility preview
-- Saved recruitments, Application tracker (6-stage history)
-- Study OS: Plan, **functional Pomodoro timer** (start/pause/reset/preset, persists session), Mocks logger with trend, Subjects gauge, Weekly truth panel
-- Community: channel list, hot/new/unanswered sort, thread detail with reply + vote, create thread
-- Marketplace: resource cards, resource detail (curriculum + reviews), Mentors (browse + filter), mentor detail (availability slots + booking flow)
-- Accountability: partner suggestions + request, study groups + join, mentor bookings list
-- AI Copilot: scripted multi-turn chat with quick prompts and history persistence
+### Backend (`backend/.env`)
+| Var | Purpose |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL (shared with frontend). |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key (frontend-safe). |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Backend only.** Validates JWTs, manages users. |
+| `DATABASE_URL` | Postgres DSN for asyncpg. |
+| `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` | Phase-2 only. Backend only. |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | Phase-2. Backend only. |
+| `NEXT_PUBLIC_RAZORPAY_KEY_ID` | Frontend-safe Razorpay key id. |
+| `CORS_ORIGINS` | Comma-separated list of allowed origins. |
 
-### Admin / RBAC (12 screens)
-- Overview (KPIs from real Mongo counters + recent audit)
-- Recruitments review, Eligibility queue placeholder (promote/reject UI), Source registry, Scraper monitor
-- Notification controls + kill switch placeholder
-- Marketplace admin (counts + flag queue)
-- RBAC & users — table with role dropdown + Invite admin/mentor (super_admin only)
-- Mentor verification, Community moderation, AI policy panel
-- Audit log (real Mongo collection)
+### Frontend (`frontend/.env`)
+| Var | Purpose |
+|---|---|
+| `REACT_APP_BACKEND_URL` | FastAPI base URL. |
+| `REACT_APP_SUPABASE_URL` | Mirrors `NEXT_PUBLIC_SUPABASE_URL`. |
+| `REACT_APP_SUPABASE_ANON_KEY` | Mirrors `NEXT_PUBLIC_SUPABASE_ANON_KEY`. |
 
-### Backend APIs (~45 endpoints)
-- `/api/health`, `/api/db-health`
-- `/api/auth/{register,login,logout,me,refresh,forgot-password,reset-password}` with brute-force lockout
-- `/api/recruitments` list/detail/save + `/saved`
-- `/api/profile/me` get/put + `/api/tracker` CRUD
-- `/api/community/{categories,threads,threads/{slug},posts,vote}`
-- `/api/marketplace/{resources,resources/{id},mentors,mentors/{id},providers,affiliates}`
-- `/api/study/{plan,plan/toggle,focus/start,focus/stop,focus/summary,mocks,subjects,weekly-review}`
-- `/api/accountability/{partners,partners/request,groups,groups/join,mentors/book,mentors/bookings}`
-- `/api/ai/{guidance,chat,history}` (scripted)
-- `/api/admin/{overview,users,users/create,users/{id}/role,audit,sources,scraper/runs,eligibility-queue,notifications,marketplace,community/flags,ai-policy}`
+`.env` files are gitignored; only `.env.example` is committed.
 
-### Test status (iteration 1)
-- Backend: **32/32 pytest pass** (full auth + RBAC + route coverage)
-- Frontend: ~95% — one bug found and fixed (`ThreadDetail` wrong endpoint), reverified manually with playwright (reply flow now works end-to-end).
+## Routes (frontend) — preserved from Phase 1
+- Public: `/`, `/login`, `/signup`, `/forgot-password`, `/reset-password`
+- User app (`/app/...`): mission control, today, profile, onboarding,
+  exams, exam detail, saved, tracker, study-plan, focus, mocks,
+  subjects, weekly review, community, thread detail, create thread,
+  marketplace, resource detail, mentors, mentor detail, accountability,
+  ai chat
+- Admin (`/admin/...`): overview, recruitments, eligibility queue,
+  sources, scraper, notifications, marketplace, audit, RBAC, mentors,
+  community, AI policy
 
-## Phase 2 — backlog (do not start until Phase 1 reviewed)
-- **Eligibility engine**: deterministic rules ported from `docs/migration-reference/eligibility/`. Endpoints `POST /api/eligibility/recompute`, `GET /api/eligibility/results/me`, `GET /api/eligibility/results/me/all`.
-- **Scraper trust gate**: source registry, dry run, queue writes, admin promote (`POST /api/admin/scrape/promote`).
-- **Razorpay payments**: order/verify/webhook + plan entitlement sync; Pro/Elite gating.
-- **Cron + idempotent jobs**: scraper schedule, deadline checks, eligibility recompute, notification fanout.
-- **Email/SMS**: templates, preferences, kill switch (live), deadline alerts.
-- **Real AI**: swap scripted `/api/ai/chat` for Claude Sonnet (already verified Emergent LLM key flow); preserve "AI never overrides" guardrails.
-- **Supabase Auth swap**: drop `AUTH_MODE=local` for `AUTH_MODE=supabase`; reuse the existing Supabase client + JWT verification. Frontend stays untouched.
-- **Mobile-only sidebar polish**: current overlay works; needs swipe & focus trap.
-- **Audit redaction**: surface IP and user-agent on audit entries; redact before showing to non-super_admin.
+## Backend endpoints
+- `GET /api/health` — service heartbeat.
+- `GET /api/db-health` — Supabase + Postgres status.
+- `GET /api/auth/me` — Supabase-authenticated current user.
+- `GET/POST /api/recruitments[/saved/{slug}/save]`, `/api/profile/me`,
+  `/api/tracker`, `/api/community/...`, `/api/marketplace/...`,
+  `/api/study/...`, `/api/accountability/...`, `/api/ai/{guidance,chat,history}`,
+  `/api/admin/...` — Phase-1 placeholder endpoints (in-memory or static).
 
-## Backlog ideas (P2)
-- Eligibility "what-if" simulator UI (frontend exists; needs backend recompute hook in Phase 2).
-- Mentor hourly Razorpay flow + post-session feedback.
-- Scoped admin badges everywhere a scope is required.
-- Topper AMA scheduling within community.
-- Public-facing /exams browsable as SEO landing pages.
+## Phase 2 — backlog (not started)
+- Eligibility engine (deterministic) → `app/eligibility/`.
+- Scraper trust gate (source registry → queue → review → promote) →
+  `app/scraping/`.
+- Razorpay payments (order/verify/webhook) — secrets backend-only.
+- Cron + idempotent jobs (scrape, deadline, eligibility, fanout).
+- Email/SMS dispatch with kill switch + preferences.
+- Real AI (Claude Sonnet via Emergent integrations) replacing scripted
+  `/api/ai/chat`, with deterministic-eligibility guardrails.
+- Migrate placeholder routers to Supabase/Postgres-backed implementations
+  using the existing canonical tables (`recruitments`, `posts`,
+  `organizations`, `profiles`, `eligibility_results`, `source_registry`,
+  `scrape_queue`, `scrape_runs`, `notification_alerts`).
 
 ## Files to know
-- Auth: `backend/app/api_v1/auth.py`, `backend/app/security.py`, `frontend/src/lib/{api,authContext,ProtectedRoute}.{js,jsx}`
-- Routers: `backend/app/api_v1/{recruitments,profile,tracker,community,marketplace,study,accountability,ai,admin,seed}.py`
-- Pages: `frontend/src/pages/*.jsx` and `frontend/src/pages/admin/*.jsx`
-- Layout: `frontend/src/pages/DashShell.jsx`, `frontend/src/pages/admin/AdminShell.jsx`
-- Theme: `frontend/src/index.css`, `frontend/tailwind.config.js`
+- Backend auth: `backend/app/core/auth.py`, `backend/app/api/auth.py`,
+  `backend/app/db/supabase_client.py`
+- Backend DB: `backend/app/db/postgres.py`, `backend/app/core/config.py`
+- Backend placeholders: `backend/app/api/placeholders.py`
+- Backend entrypoint: `backend/server.py`
+- Frontend auth: `frontend/src/lib/{supabase,auth,api,authContext,ProtectedRoute}.{js,jsx}`
+- Frontend pages: `frontend/src/pages/**/*.jsx`
 
 ## Notes for future contributors
-- Don't import `frontend/src/lib/supabase.js` until Supabase env vars are added — it throws at import time.
-- `requirements.txt` was rewritten as UTF-8 (was UTF-16 BOM).
-- All `_id` ObjectIds are stringified before returning JSON.
-- `datetime.now(timezone.utc)` used everywhere; never `utcnow()`.
+- Never create `public.exams` — recruitment is the canonical entity.
+- Never expose `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`, AI keys,
+  Razorpay secrets, or webhook secrets to the frontend.
+- Existing migrations live in `/app/supabase/migrations/`. Inspect them
+  before generating new ones; new migrations should be added there for
+  manual review (do not auto-apply).
+- Supabase Auth in this project rejects disposable TLDs (`.test`, etc.)
+  and currently requires email confirmation for sign-ups. For local
+  testing, create users via the admin API with `email_confirm: true`.

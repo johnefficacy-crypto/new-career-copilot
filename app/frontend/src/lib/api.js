@@ -1,16 +1,22 @@
-// Thin API client for Career Copilot backend (Phase 1).
-// Stores JWT in localStorage and attaches Authorization: Bearer.
+// Thin API client for Career Copilot backend.
+// Auth tokens come from Supabase Auth (managed by lib/supabase.js).
 
-const API_URL = process.env.REACT_APP_BACKEND_URL || "http://localhost:8001";
-const TOKEN_KEY = "cc.access_token";
+import { supabase } from "./supabase";
 
-export function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
+const API_URL = process.env.REACT_APP_BACKEND_URL;
+
+if (!API_URL) {
+  // eslint-disable-next-line no-console
+  console.warn("Missing REACT_APP_BACKEND_URL — frontend cannot reach the API.");
 }
 
-export function setToken(token) {
-  if (token) localStorage.setItem(TOKEN_KEY, token);
-  else localStorage.removeItem(TOKEN_KEY);
+async function getAccessToken() {
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data?.session?.access_token || null;
+  } catch {
+    return null;
+  }
 }
 
 function formatApiErrorDetail(detail) {
@@ -26,14 +32,13 @@ function formatApiErrorDetail(detail) {
 }
 
 export async function apiFetch(path, options = {}) {
-  const token = getToken();
+  const token = await getAccessToken();
   const headers = {
     "Content-Type": "application/json",
     ...(options.headers || {}),
   };
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${API_URL}${path}`, {
-    credentials: "include",
     ...options,
     headers,
   });
@@ -56,13 +61,7 @@ export const api = {
   del: (p) => apiFetch(p, { method: "DELETE" }),
 };
 
-// Auth endpoints
+// Backend exposes Supabase-validated /api/auth/me.
 export const auth = {
-  register: (body) => api.post("/api/auth/register", body),
-  login: (body) => api.post("/api/auth/login", body),
-  logout: () => api.post("/api/auth/logout", {}),
   me: () => api.get("/api/auth/me"),
-  refresh: () => api.post("/api/auth/refresh", {}),
-  forgot: (email) => api.post("/api/auth/forgot-password", { email }),
-  reset: (token, password) => api.post("/api/auth/reset-password", { token, password }),
 };
