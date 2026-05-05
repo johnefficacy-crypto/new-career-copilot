@@ -12,7 +12,7 @@ export default function ThreadDetail() {
   const auth = useAuth();
 
   async function load() {
-    const d = await api.get(`/api/community/${slug}`);
+    const d = await api.get(`/api/community/threads/${slug}`);
     setData(d);
   }
   useEffect(() => {
