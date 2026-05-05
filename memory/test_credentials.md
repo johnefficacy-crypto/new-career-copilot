@@ -1,8 +1,23 @@
-# Career Copilot · Test Credentials (Phase 1.5)
+# Career Copilot · Test Credentials (Phase 1.5 + Phase 2)
 
-Authentication is now handled by **Supabase Auth**. There are no seeded
-demo accounts on the backend anymore — every account is a real Supabase
+Authentication is handled by **Supabase Auth**. There are no seeded
+demo accounts on the backend — every account is a real Supabase
 Auth user.
+
+## Test admin / payments user
+
+Created during Razorpay end-to-end tests. Already promoted to
+`super_admin` and has at least one paid subscription on file.
+
+```
+email:    razortest+1778018301@inbox.testreal.dev
+password: RazorPass@2026
+role:     super_admin
+user_id:  9ea717da-6b10-408e-a1fd-04a633a16b88
+```
+
+> If this user has been deleted, the test scripts in this repo can
+> recreate it via the Supabase admin API (see snippets below).
 
 ## How to sign in for testing
 
@@ -43,6 +58,20 @@ curl -X PUT "$SUPABASE_URL/auth/v1/admin/users/<user_id>" \
 ```
 
 Allowed values: `user` (default), `mentor`, `admin`, `super_admin`.
+
+## Razorpay test cards (Razorpay Checkout)
+
+Test mode keys are already wired into `backend/.env` and
+`NEXT_PUBLIC_RAZORPAY_KEY_ID`. Use any of:
+
+- Card: `4111 1111 1111 1111` · CVV `123` · any future expiry
+- UPI:  `success@razorpay`
+- Netbanking: pick any test bank → "Success"
+
+The webhook secret is intentionally a placeholder
+(`XXXXXXXXXXXXXXXXXXXXXXXX`); set a real one in `backend/.env` and
+register `${REACT_APP_BACKEND_URL}/api/payments/webhook` in the
+Razorpay dashboard before going live.
 
 ## Auth endpoints
 

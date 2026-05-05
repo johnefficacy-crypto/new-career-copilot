@@ -44,6 +44,8 @@ import AdminSources from "./pages/admin/Sources";
 import AdminScraper from "./pages/admin/Scraper";
 import AdminNotifications from "./pages/admin/Notifications";
 import AdminMarketplace from "./pages/admin/Marketplace";
+import AdminPlans from "./pages/admin/Plans";
+import Pricing from "./pages/Pricing";
 
 import { ProtectedRoute, GuestOnly } from "./lib/ProtectedRoute";
 
@@ -83,6 +85,7 @@ export default function App() {
         <Route path="/app/mentors/:id" element={<MentorDetail />} />
         <Route path="/app/accountability" element={<Accountability />} />
         <Route path="/app/ai" element={<AIChat />} />
+        <Route path="/app/pricing" element={<Pricing />} />
       </Route>
 
       {/* Admin */}
@@ -98,6 +101,7 @@ export default function App() {
         <Route path="/admin/scraper" element={<AdminScraper />} />
         <Route path="/admin/notifications" element={<AdminNotifications />} />
         <Route path="/admin/marketplace" element={<AdminMarketplace />} />
+        <Route path="/admin/plans" element={<AdminPlans />} />
         <Route path="/admin/audit" element={<AdminAudit />} />
         <Route path="/admin/rbac" element={<AdminRBAC />} />
         <Route path="/admin/mentors" element={<AdminMentorsPg />} />

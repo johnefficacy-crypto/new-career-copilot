@@ -2,7 +2,7 @@ import React from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
 import {
   Compass, LayoutGrid, FileSearch, GaugeCircle, ShieldCheck, Users2,
-  MessagesSquare, Bot, ScrollText, ExternalLink, Database, Radar, Bell, ShoppingBag, LogOut,
+  MessagesSquare, Bot, ScrollText, ExternalLink, Database, Radar, Bell, ShoppingBag, CreditCard, LogOut,
 } from "lucide-react";
 import { useAuth } from "../../lib/authContext";
 
@@ -14,6 +14,7 @@ const NAV = [
   { to: "/admin/scraper", label: "Scraper monitor", icon: Radar },
   { to: "/admin/notifications", label: "Notifications", icon: Bell },
   { to: "/admin/marketplace", label: "Marketplace", icon: ShoppingBag },
+  { to: "/admin/plans", label: "Pricing & plans", icon: CreditCard },
   { to: "/admin/rbac", label: "RBAC & users", icon: ShieldCheck },
   { to: "/admin/mentors", label: "Mentor verification", icon: Users2 },
   { to: "/admin/community", label: "Community moderation", icon: MessagesSquare },

@@ -129,9 +129,16 @@ function Sidebar({ user, onClose }) {
 
       <div className="p-4 border-t border-border">
         <div className="rounded-xl bg-clay-100/70 border border-clay-200 p-4">
-          <div className="text-[10px] uppercase tracking-[0.22em] text-clay-700">On Free plan</div>
-          <div className="font-heading font-semibold mt-1 text-clay-800">Unlock full eligibility</div>
-          <button className="mt-3 w-full bg-clay-500 text-white rounded-lg py-2 text-xs font-semibold">Upgrade to Pro · ₹399/mo</button>
+          <div className="text-[10px] uppercase tracking-[0.22em] text-clay-700">Upgrade</div>
+          <div className="font-heading font-semibold mt-1 text-clay-800">Unlock the full study OS</div>
+          <Link
+            to="/app/pricing"
+            onClick={onClose}
+            data-testid="sidebar-upgrade"
+            className="mt-3 w-full bg-clay-500 text-white rounded-lg py-2 text-xs font-semibold inline-block text-center"
+          >
+            See plans
+          </Link>
         </div>
       </div>
     </aside>
