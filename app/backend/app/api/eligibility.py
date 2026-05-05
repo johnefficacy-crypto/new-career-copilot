@@ -1,0 +1,90 @@
+"""Eligibility API.
+
+Endpoints (mirrors the reference repo):
+    POST /api/eligibility/recompute
+        - Service-role: body must include ``user_id``; runs for that user.
+        - Supabase Bearer (regular user): always runs for the caller's
+          own user id (body's ``user_id`` is ignored — users may not
+          recompute for someone else).
+    GET  /api/eligibility/results/me      → eligible + conditional only
+    GET  /api/eligibility/results/me/all  → every row
+
+All writes go through the deterministic engine (`app.eligibility.engine`).
+AI never decides eligibility.
+"""
+from __future__ import annotations
+
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
+
+from app.core.auth import get_current_user
+from app.core.config import get_settings
+from app.db.supabase_client import get_supabase_admin
+from app.eligibility.runner import (
+    get_all_eligibility_results,
+    get_eligible_recruitments,
+    run_eligibility_for_user,
+)
+
+router = APIRouter(prefix="/eligibility", tags=["eligibility"])
+_bearer = HTTPBearer(auto_error=False)
+
+
+class RecomputeBody(BaseModel):
+    user_id: str | None = None
+
+
+def _is_service_role(token: str) -> bool:
+    if not token:
+        return False
+    return token.strip() == (get_settings().SUPABASE_SERVICE_ROLE_KEY or "").strip()
+
+
+@router.post("/recompute")
+async def recompute(
+    request: Request,
+    creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    body: RecomputeBody = Body(default_factory=RecomputeBody),
+) -> dict[str, Any]:
+    presented = creds.credentials if creds else ""
+
+    if _is_service_role(presented):
+        # Service-to-service path (Edge Function consumer / cron worker).
+        if not body.user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Body must include { user_id: string } for service-role calls",
+            )
+            # type: ignore[unreachable]
+        target_user_id = body.user_id
+    else:
+        # Regular user path — token must be a Supabase access token.
+        try:
+            user = get_current_user(creds)  # type: ignore[arg-type]
+        except HTTPException:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Unauthorized — provide a Supabase access token or service-role key",
+            )
+        target_user_id = user["id"]
+
+    supabase = get_supabase_admin()
+    result = run_eligibility_for_user(target_user_id, supabase)
+    return {"ok": True, "user_id": target_user_id, **result}
+
+
+@router.get("/results/me")
+def results_me(user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    supabase = get_supabase_admin()
+    items = get_eligible_recruitments(user["id"], supabase)
+    return {"items": items, "count": len(items)}
+
+
+@router.get("/results/me/all")
+def results_me_all(user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    supabase = get_supabase_admin()
+    items = get_all_eligibility_results(user["id"], supabase)
+    return {"items": items, "count": len(items)}

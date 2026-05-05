@@ -26,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.api.auth import router as auth_router
+from app.api.eligibility import router as eligibility_router
 from app.api.placeholders import router as placeholders_router
 from app.core.config import get_settings
 from app.db.postgres import close_pool, get_pool
@@ -124,6 +125,7 @@ async def db_health() -> DbHealth:
 
 
 api.include_router(auth_router)
+api.include_router(eligibility_router)
 api.include_router(placeholders_router)
 app.include_router(api)
 

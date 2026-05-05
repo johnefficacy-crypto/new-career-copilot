@@ -98,19 +98,67 @@ Copilot, an exam-preparation OS for Indian government-job aspirants.
   `/api/study/...`, `/api/accountability/...`, `/api/ai/{guidance,chat,history}`,
   `/api/admin/...` — Phase-1 placeholder endpoints (in-memory or static).
 
-## Phase 2 — backlog (not started)
-- Eligibility engine (deterministic) → `app/eligibility/`.
-- Scraper trust gate (source registry → queue → review → promote) →
-  `app/scraping/`.
-- Razorpay payments (order/verify/webhook) — secrets backend-only.
-- Cron + idempotent jobs (scrape, deadline, eligibility, fanout).
-- Email/SMS dispatch with kill switch + preferences.
-- Real AI (Claude Sonnet via Emergent integrations) replacing scripted
-  `/api/ai/chat`, with deterministic-eligibility guardrails.
-- Migrate placeholder routers to Supabase/Postgres-backed implementations
-  using the existing canonical tables (`recruitments`, `posts`,
-  `organizations`, `profiles`, `eligibility_results`, `source_registry`,
-  `scrape_queue`, `scrape_runs`, `notification_alerts`).
+## Phase 2 — backlog
+
+### ✅ Session (i) — Eligibility engine (Jan 2026)
+Direct port of the reference TypeScript engine
+(`UI-career-copilot/lib/eligibility/engine.ts` master). Pure, deterministic,
+fully unit-tested.
+
+Files:
+- `backend/app/eligibility/schemas.py` — Pydantic shapes (UserProfile,
+  UserEducation, PostCriteria, EligibilityCheckResult, …).
+- `backend/app/eligibility/engine.py` — `check_eligibility` +
+  `check_eligibility_batch`. Six rules: age (with category, PwBD
+  max-replace, ex-serviceman formula), education (level rank, percentage,
+  cgpa→pct fallback, allowed disciplines, appearing → conditional),
+  attempts, required exam credentials, nationality, domicile (state PSC).
+- `backend/app/eligibility/runner.py` — Supabase-admin runner. Joins
+  `posts → recruitments → organizations`, fetches
+  `age_criteria`/`education_criteria`/`attempt_limits` per post, runs
+  the engine, upserts to `eligibility_results` (`on_conflict=user_id,post_id`),
+  emits one `notification_alerts` row per matched recruitment
+  (`on_conflict=user_id,recruitment_id,alert_type`).
+- `backend/app/api/eligibility.py` — three endpoints:
+  - `POST /api/eligibility/recompute` — `Authorization: Bearer <service_role>`
+    accepts `{ user_id }` in body. With a regular Supabase access token,
+    body's `user_id` is ignored and the caller's own id is used.
+  - `GET  /api/eligibility/results/me` — eligible + conditional rows
+    only, eligible first.
+  - `GET  /api/eligibility/results/me/all` — every row.
+
+Tested:
+- `tests/test_engine.py` — **16/16 unit tests pass** covering every rule
+  (basic eligible, age below min, OBC relaxation, PwBD-replace-not-stack,
+  ex-serviceman formula, appearing-candidate conditional, education
+  below required, percentage below min, cgpa→pct fallback, attempts
+  exceeded, exam credential missing, state PSC match/mismatch, central
+  post skipping domicile, non-Indian nationality, batch).
+- Live Supabase end-to-end: seeded recruitment → post → criteria →
+  user with profile + graduate edu → `recompute` returned
+  `processed=1 eligible=1 conditional=0 alerts_inserted=1`; user token
+  read `/results/me` and got the row back with full nested join data.
+
+Schema notes:
+- The reference repo filtered by `recruitments.ingestion_trust_status`;
+  this Supabase project uses `publish_status` (per migration 033). The
+  runner now filters `publish_status IN ('verified','published')` —
+  i.e. only trust-gated rows are visible to the engine.
+- `recruitment_required_exam_credentials` is treated as optional; if it
+  doesn't exist in this deployment the runner logs and continues.
+
+### ⏳ Remaining (sessioned)
+- **Session (ii)** — Swap placeholder routers in
+  `app/api/placeholders.py` to real Supabase/Postgres queries
+  (recruitments list, profile read/write, tracker, community/forum,
+  marketplace courses, study tasks/sessions, etc.).
+- **Session (iii)** — Scraper trust gate (source_registry → scrape_runs
+  → scrape_queue → admin promote). Reference:
+  `UI-career-copilot/lib/scraping/{extractor,alerts,runner}.ts`.
+- **Session (iv)** — Razorpay payments (order/verify/webhook +
+  subscription_plans / user_subscriptions sync). Backend secrets only.
+- **Session (v)** — Cron + email/notification dispatch (Resend +
+  in-process APScheduler with kill switch).
 
 ## Files to know
 - Backend auth: `backend/app/core/auth.py`, `backend/app/api/auth.py`,
