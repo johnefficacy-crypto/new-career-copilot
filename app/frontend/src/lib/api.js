@@ -1,80 +1,68 @@
-import { supabase } from "./supabase";
+// Thin API client for Career Copilot backend (Phase 1).
+// Stores JWT in localStorage and attaches Authorization: Bearer.
 
-const API_URL =
-  process.env.REACT_APP_BACKEND_URL || "http://127.0.0.1:8000";
+const API_URL = process.env.REACT_APP_BACKEND_URL || "http://localhost:8001";
+const TOKEN_KEY = "cc.access_token";
 
-async function getAccessToken() {
-  const { data, error } = await supabase.auth.getSession();
+export function getToken() {
+  return localStorage.getItem(TOKEN_KEY);
+}
 
-  if (error) {
-    throw error;
-  }
+export function setToken(token) {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
 
-  return data.session?.access_token || null;
+function formatApiErrorDetail(detail) {
+  if (detail == null) return "Something went wrong. Please try again.";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail))
+    return detail
+      .map((e) => (e && typeof e.msg === "string" ? e.msg : JSON.stringify(e)))
+      .filter(Boolean)
+      .join(" ");
+  if (detail && typeof detail.msg === "string") return detail.msg;
+  return String(detail);
 }
 
 export async function apiFetch(path, options = {}) {
-  const token = await getAccessToken();
-
+  const token = getToken();
   const headers = {
     "Content-Type": "application/json",
     ...(options.headers || {}),
   };
-
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-
-  const response = await fetch(`${API_URL}${path}`, {
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${API_URL}${path}`, {
+    credentials: "include",
     ...options,
     headers,
   });
-
-  const contentType = response.headers.get("content-type");
-  const isJson = contentType && contentType.includes("application/json");
-
-  const data = isJson ? await response.json() : await response.text();
-
-  if (!response.ok) {
-    const message =
-      typeof data === "string"
-        ? data
-        : data?.detail || data?.message || `API error ${response.status}`;
-
-    throw new Error(message);
+  const ct = res.headers.get("content-type") || "";
+  const data = ct.includes("application/json") ? await res.json() : await res.text();
+  if (!res.ok) {
+    const detail = typeof data === "object" ? data?.detail || data?.message : data;
+    const err = new Error(formatApiErrorDetail(detail) || `API ${res.status}`);
+    err.status = res.status;
+    err.data = data;
+    throw err;
   }
-
   return data;
 }
 
-export async function getHealth() {
-  return apiFetch("/api/health");
-}
+export const api = {
+  get: (p) => apiFetch(p),
+  post: (p, body) => apiFetch(p, { method: "POST", body: JSON.stringify(body || {}) }),
+  put: (p, body) => apiFetch(p, { method: "PUT", body: JSON.stringify(body || {}) }),
+  del: (p) => apiFetch(p, { method: "DELETE" }),
+};
 
-export async function getDbHealth() {
-  return apiFetch("/api/db-health");
-}
-
-export async function getMe() {
-  return apiFetch("/api/auth/me");
-}
-
-export async function postJson(path, body) {
-  return apiFetch(path, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function putJson(path, body) {
-  return apiFetch(path, {
-    method: "PUT",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function deleteRequest(path) {
-  return apiFetch(path, {
-    method: "DELETE",
-  });
-}
+// Auth endpoints
+export const auth = {
+  register: (body) => api.post("/api/auth/register", body),
+  login: (body) => api.post("/api/auth/login", body),
+  logout: () => api.post("/api/auth/logout", {}),
+  me: () => api.get("/api/auth/me"),
+  refresh: () => api.post("/api/auth/refresh", {}),
+  forgot: (email) => api.post("/api/auth/forgot-password", { email }),
+  reset: (token, password) => api.post("/api/auth/reset-password", { token, password }),
+};

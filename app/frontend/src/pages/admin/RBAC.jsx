@@ -1,74 +1,163 @@
-import React from "react";
-import { ShieldCheck } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Plus, ShieldCheck } from "lucide-react";
+import { api } from "../../lib/api";
+import { useAuth } from "../../lib/authContext";
 
-const PEOPLE = [
-  { n: "Kavya Menon", e: "kavya@careercopilot.in", r: "super_admin", since: "2024-11-02" },
-  { n: "Rahul Dey", e: "rahul@careercopilot.in", r: "admin", since: "2025-02-14" },
-  { n: "Sneha Kapoor", e: "sneha@careercopilot.in", r: "moderator", since: "2025-06-08" },
-  { n: "Aarav Joshi", e: "aarav@careercopilot.in", r: "content_editor", since: "2025-09-21" },
-  { n: "Mira Khan", e: "mira@careercopilot.in", r: "analyst", since: "2025-12-01" },
-];
-
-const ROLES = [
-  { key: "super_admin", perms: ["*"], color: "bg-[#F56A3F]/20 text-[#FFAB00]" },
-  { key: "admin", perms: ["recruitment.*", "notifications.*", "mentor.verify"], color: "bg-emerald-500/20 text-emerald-300" },
-  { key: "moderator", perms: ["community.moderate", "community.hide"], color: "bg-indigo-500/20 text-indigo-300" },
-  { key: "content_editor", perms: ["resource.edit", "template.edit"], color: "bg-amber-500/20 text-amber-300" },
-  { key: "analyst", perms: ["read-only"], color: "bg-white/10 text-white/70" },
-];
+const ROLE_OPTIONS = ["user", "mentor", "admin", "super_admin"];
 
 export default function AdminRBAC() {
+  const [items, setItems] = useState([]);
+  const [form, setForm] = useState({ email: "", password: "", name: "", role: "admin", scope: "" });
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState(null);
+  const auth = useAuth();
+
+  async function load() {
+    const d = await api.get("/api/admin/users");
+    setItems(d.items);
+  }
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function updateRole(id, role) {
+    await api.put(`/api/admin/users/${id}/role`, { role });
+    load();
+  }
+
+  async function createAdmin(e) {
+    e.preventDefault();
+    try {
+      const payload = {
+        email: form.email.trim(),
+        password: form.password,
+        name: form.name.trim(),
+        role: form.role === "admin" || form.role === "mentor" ? form.role : "admin",
+        scope: form.scope ? form.scope.split(",").map((s) => s.trim()) : [],
+      };
+      await api.post("/api/admin/users/create", payload);
+      setForm({ email: "", password: "", name: "", role: "admin", scope: "" });
+      setOpen(false);
+      setNote(`Created ${payload.email}`);
+      load();
+    } catch (err) {
+      setNote(err.message);
+    }
+  }
+
+  const canManage = auth.user?.role === "super_admin";
+
   return (
-    <div className="space-y-5">
-      <div>
-        <div className="text-[11px] uppercase tracking-[0.22em] text-white/40 font-semibold">RBAC</div>
-        <h1 className="mt-1 font-heading text-3xl font-black tracking-tighter">Who can do what.</h1>
+    <div className="space-y-6" data-testid="admin-rbac">
+      <div className="flex items-end justify-between flex-wrap gap-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">RBAC · users</div>
+          <h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight">Who can do what.</h1>
+        </div>
+        {canManage && (
+          <button onClick={() => setOpen(true)} className="btn btn-primary" data-testid="create-admin-btn">
+            <Plus className="h-4 w-4" /> Invite admin / mentor
+          </button>
+        )}
       </div>
+      {note && <div className="soft-card rounded-xl p-3 text-sm bg-sage-50 border-sage-200">{note}</div>}
 
-      <div className="grid lg:grid-cols-3 gap-5">
-        <div className="lg:col-span-2 rounded-2xl glass-dark p-2">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-[10px] uppercase tracking-[0.22em] text-white/40 font-semibold">
-                <th className="text-left px-4 py-3">Name</th>
-                <th className="text-left px-4 py-3">Role</th>
-                <th className="text-left px-4 py-3">Since</th>
-                <th />
+      <div className="soft-card rounded-2xl overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
+              <th className="text-left px-4 py-3">Name</th>
+              <th className="text-left px-4 py-3">Role</th>
+              <th className="text-left px-4 py-3">Plan</th>
+              <th className="text-left px-4 py-3">Joined</th>
+              <th className="text-left px-4 py-3">Last login</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((p) => (
+              <tr key={p.id} className="border-t border-border hover:bg-clay-50/50" data-testid={`user-row-${p.email}`}>
+                <td className="px-4 py-3">
+                  <div className="font-semibold">{p.name || "—"}</div>
+                  <div className="text-[11px] text-muted-foreground font-mono">{p.email}</div>
+                </td>
+                <td className="px-4 py-3">
+                  {canManage ? (
+                    <select
+                      value={p.role}
+                      onChange={(e) => updateRole(p.id, e.target.value)}
+                      className="px-2 py-1 rounded-full border border-border bg-white/80 text-xs font-semibold"
+                      data-testid={`role-select-${p.email}`}
+                    >
+                      {ROLE_OPTIONS.map((r) => <option key={r}>{r}</option>)}
+                    </select>
+                  ) : (
+                    <span className="pill pill-dusk">{p.role}</span>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-xs">{p.plan}</td>
+                <td className="px-4 py-3 text-xs text-muted-foreground">{(p.created_at || "").slice(0, 10)}</td>
+                <td className="px-4 py-3 text-xs text-muted-foreground">{(p.last_login_at || "—").slice(0, 16).replace("T", " ")}</td>
+                <td className="px-4 py-3" />
               </tr>
-            </thead>
-            <tbody>
-              {PEOPLE.map((p) => (
-                <tr key={p.e} className="border-t border-white/5 hover:bg-white/5">
-                  <td className="px-4 py-3">
-                    <div className="font-bold">{p.n}</div>
-                    <div className="text-[11px] text-white/50 font-mono">{p.e}</div>
-                  </td>
-                  <td className="px-4 py-3"><span className="text-[11px] font-mono">{p.r}</span></td>
-                  <td className="px-4 py-3 text-white/50 text-[12px] font-mono">{p.since}</td>
-                  <td className="px-4 py-3 text-right"><button className="text-[11px] font-bold text-[#FFAB00] hover:underline">Edit</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
-        <div className="rounded-2xl glass-dark p-5 space-y-3">
-          <div className="text-[11px] uppercase tracking-[0.22em] text-white/40 font-semibold">Roles</div>
-          {ROLES.map((r) => (
-            <div key={r.key} className="rounded-xl border border-white/10 p-3">
-              <div className="flex items-center justify-between">
-                <div className="inline-flex items-center gap-2 font-semibold"><ShieldCheck className="h-3.5 w-3.5" /> {r.key}</div>
-                <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${r.color}`}>{r.perms.length} perms</span>
-              </div>
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                {r.perms.map((p) => (
-                  <span key={p} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/5 text-white/60">{p}</span>
-                ))}
-              </div>
-            </div>
-          ))}
+      <div className="grid md:grid-cols-2 gap-4">
+        <div className="soft-card rounded-2xl p-5">
+          <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Roles</div>
+          <ul className="mt-3 space-y-2 text-sm">
+            <li><span className="pill pill-sage">user</span> Aspirant — study, community, marketplace.</li>
+            <li><span className="pill pill-amber">mentor</span> User perms + mentor dashboard, session acceptance.</li>
+            <li><span className="pill pill-clay">admin</span> Full governance except RBAC writes.</li>
+            <li><span className="pill pill-dusk">super_admin</span> Everything. Create other admins.</li>
+          </ul>
+        </div>
+        <div className="soft-card rounded-2xl p-5">
+          <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Scoped admin (planned)</div>
+          <p className="text-sm mt-2 text-foreground/80">
+            Super admin can create admins with a <code className="font-mono">scope</code> list — e.g. <code className="font-mono">["content"]</code>,
+            <code className="font-mono">["scraper"]</code>, or <code className="font-mono">["community","notifications"]</code>. In Phase-2 the
+            scope gates mutation endpoints; Phase-1 stores the scope on the user document so the UI can show differentiated menus.
+          </p>
         </div>
       </div>
+
+      {open && (
+        <div className="fixed inset-0 z-50 bg-black/30 grid place-items-center p-4">
+          <form onSubmit={createAdmin} className="w-full max-w-lg soft-card rounded-2xl p-6 space-y-4" data-testid="create-admin-form">
+            <h2 className="font-heading text-xl font-semibold">Create admin or mentor</h2>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Email"><input type="email" required className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
+              <Field label="Password"><input type="password" minLength={8} required className="input" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
+              <Field label="Name"><input required className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+              <Field label="Role">
+                <select className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+                  <option>admin</option>
+                  <option>mentor</option>
+                </select>
+              </Field>
+              <Field label="Scope (comma)" cls="col-span-2"><input className="input" placeholder="content, scraper" value={form.scope} onChange={(e) => setForm({ ...form, scope: e.target.value })} /></Field>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setOpen(false)} className="btn btn-ghost">Cancel</button>
+              <button className="btn btn-primary">Create</button>
+            </div>
+            <style>{`.input { width:100%; padding: 0.55rem 0.9rem; border-radius: 0.75rem; background: rgba(255,255,255,0.85); border: 1px solid hsl(var(--border)); font-size: 14px; }`}</style>
+          </form>
+        </div>
+      )}
     </div>
+  );
+}
+
+function Field({ label, children, cls = "" }) {
+  return (
+    <label className={`block ${cls}`}>
+      <div className="text-[11px] uppercase tracking-widest text-muted-foreground mb-1">{label}</div>
+      {children}
+    </label>
   );
 }
