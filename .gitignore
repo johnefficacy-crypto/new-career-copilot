@@ -21,3 +21,8 @@ yarn-debug.log*
 yarn-error.log*
 
 node_modules/
+
+.env
+.env.local
+app/frontend/.env
+app/backend/.env
