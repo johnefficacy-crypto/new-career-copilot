@@ -4,7 +4,7 @@ The queue is populated by RLS triggers when a profile/education/exam-credential
 field changes (out of scope here) or by manual admin re-queueing. This
 worker:
 
-    1. Claims a batch of ``status='queued'`` rows (oldest first).
+    1. Claims a batch of ``status='pending'`` rows (oldest first).
     2. For each row, runs ``run_eligibility_for_user`` (the deterministic
        engine) — which already upserts ``eligibility_results`` and writes
        ``notification_alerts`` for matched recruitments.
@@ -41,7 +41,7 @@ def drain_recompute_queue(supabase: Client, *, limit: int = 25) -> dict[str, Any
         rows = (
             supabase.table("eligibility_recompute_queue")
             .select("id, user_id, attempt_count, next_attempt_at")
-            .eq("status", "queued")
+            .eq("status", "pending")
             .or_(f"next_attempt_at.is.null,next_attempt_at.lte.{now_iso}")
             .order("queued_at")
             .limit(limit)
@@ -91,7 +91,7 @@ def drain_recompute_queue(supabase: Client, *, limit: int = 25) -> dict[str, Any
             patch = {
                 "attempt_count": attempts,
                 "last_error": str(exc),
-                "status": "failed" if done else "queued",
+                "status": "failed" if done else "pending",
                 "next_attempt_at": (
                     datetime.now(timezone.utc) + timedelta(minutes=backoff_min)
                 ).isoformat(),
