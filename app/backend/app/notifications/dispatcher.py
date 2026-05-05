@@ -153,7 +153,11 @@ _RESEND_ENDPOINT = "https://api.resend.com/emails"
 def _send_email(*, to: str, subject: str, body: str) -> dict[str, Any]:
     """Send via Resend if configured, otherwise log and return a mock id."""
     api_key = os.environ.get("RESEND_API_KEY", "").strip()
-    from_addr = os.environ.get("RESEND_FROM", "Career Copilot <onboarding@resend.dev>")
+    from_addr = (
+        os.environ.get("RESEND_FROM_EMAIL")
+        or os.environ.get("RESEND_FROM")
+        or "Career Copilot <onboarding@resend.dev>"
+    )
 
     if not api_key:
         logger.info("[email:LOG-ONLY] to=%s subject=%s body=%r", to, subject, body[:200])
