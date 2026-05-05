@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from app.api.auth import router as auth_router
 
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,7 +26,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Career Copilot API", lifespan=lifespan)
 api = APIRouter(prefix="/api")
-
+api.include_router(auth_router)
 
 class Health(BaseModel):
     status: str
