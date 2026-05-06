@@ -7,11 +7,11 @@ import {
   Clock,
   Compass,
   ShieldCheck,
-  Sparkles,
+  // Sparkles,
   Users,
   BookOpenCheck,
   LineChart,
-  BotMessageSquare,
+  // BotMessageSquare,
   GraduationCap,
 } from "lucide-react";
 import { useAuth } from "../lib/authContext";
@@ -386,8 +386,10 @@ function Footer() {
           <div>
             <div className="text-[11px] uppercase tracking-widest mb-2 text-foreground/60">Company</div>
             <ul className="space-y-1.5">
-              <li><a className="link-under" href="#">About</a></li>
-              <li><a className="link-under" href="#">Careers</a></li>
+              {/* <li><a className="link-under" href="#">About</a></li> */}
+              {/* <li><a className="link-under" href="#">Careers</a></li> */}
+              <li><Link className="link-under" to="/">About</Link></li>
+              <li><Link className="link-under" to="/">Careers</Link></li>
               <li><Link className="link-under" to="/admin">Admin console →</Link></li>
             </ul>
           </div>

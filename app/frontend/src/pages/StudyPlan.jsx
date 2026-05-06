@@ -30,7 +30,8 @@ export default function StudyPlan() {
         <div>
           <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Study OS · 90-day plan</div>
           <h1 className="font-heading text-4xl font-semibold tracking-tight mt-1">Day {plan.plan?.day || 41} · "{plan.plan?.theme || 'Arithmetic Sprint'}"</h1>
-          <p className="text-muted-foreground mt-1">Your plan adapted yesterday after the Tue 4h gap. <a href="#" className="link-under font-semibold">Why changed →</a></p>
+          {/* <p className="text-muted-foreground mt-1">Your plan adapted yesterday after the Tue 4h gap. <a href="#" className="link-under font-semibold">Why changed →</a></p> */}
+          <p className="text-muted-foreground mt-1">Your plan adapted yesterday after the Tue 4h gap. <button type="button" className="link-under font-semibold">Why changed →</button></p>
         </div>
         <button className="btn btn-primary"><Sparkles className="h-3.5 w-3.5" /> Regenerate with AI</button>
       </div>

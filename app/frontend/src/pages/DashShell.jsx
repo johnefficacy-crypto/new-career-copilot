@@ -10,7 +10,7 @@ import {
   Timer,
   Trophy,
   LineChart,
-  Users,
+  // Users,
   MessagesSquare,
   ShoppingBag,
   GraduationCap,
@@ -22,7 +22,7 @@ import {
   LogOut,
   UserCircle,
   Menu,
-  X,
+  // X,
   Shield,
 } from "lucide-react";
 import { useAuth } from "../lib/authContext";

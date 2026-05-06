@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Loader2, Save, User } from "lucide-react";
+import { Loader2, Save /* User */ } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/authContext";
 
@@ -62,7 +62,7 @@ export default function Profile() {
 
   if (loading) return <div data-testid="profile-loading">Loading…</div>;
 
-  const field = "w-full px-4 py-2.5 rounded-xl bg-white/80 border border-border text-sm";
+  // const field = "w-full px-4 py-2.5 rounded-xl bg-white/80 border border-border text-sm";
 
   return (
     <div className="space-y-6" data-testid="profile-page">
