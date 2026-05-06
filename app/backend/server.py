@@ -61,8 +61,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Career Copilot API", version="0.2.0", lifespan=lifespan)
 
 # CORS — frontend origin + emergent preview by default.
-cors_env = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
-cors_origins = [o.strip() for o in cors_env.split(",") if o.strip()]
+settings = get_settings()
+cors_env = os.environ.get("CORS_ORIGINS", "")
+if cors_env.strip():
+    cors_origins = [o.strip() for o in cors_env.split(",") if o.strip()]
+else:
+    cors_origins = settings.BACKEND_CORS_ORIGINS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
