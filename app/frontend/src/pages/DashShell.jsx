@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   Compass,
@@ -10,7 +10,7 @@ import {
   Timer,
   Trophy,
   LineChart,
-  Users,
+  // Users,
   MessagesSquare,
   ShoppingBag,
   GraduationCap,
@@ -22,7 +22,7 @@ import {
   LogOut,
   UserCircle,
   Menu,
-  X,
+  // X,
   Shield,
 } from "lucide-react";
 import { useAuth } from "../lib/authContext";
@@ -146,7 +146,17 @@ function Sidebar({ user, onClose }) {
 }
 
 function UserMenu({ user, onLogout }) {
+  const { pathname } = useLocation();
+  const rootRef = useRef(null);
   const [open, setOpen] = useState(false);
+  useEffect(() => { setOpen(false); }, [pathname]);
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && setOpen(false);
+    const onDown = (e) => { if (open && rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    return () => { document.removeEventListener("keydown", onKey); document.removeEventListener("mousedown", onDown); };
+  }, [open]);
   const initials = (user?.name || user?.email || "U")
     .split(" ")
     .map((w) => w[0])
@@ -154,7 +164,7 @@ function UserMenu({ user, onLogout }) {
     .slice(0, 2)
     .toUpperCase();
   return (
-    <div className="relative">
+    <div className="relative" ref={rootRef}>
       <button
         data-testid="user-menu-btn"
         onClick={() => setOpen((v) => !v)}
@@ -205,6 +215,13 @@ export default function DashShell() {
   const { pathname } = useLocation();
   const auth = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  useEffect(() => { setSidebarOpen(false); }, [pathname]);
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && setSidebarOpen(false);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <div className="min-h-screen flex paper-bg">

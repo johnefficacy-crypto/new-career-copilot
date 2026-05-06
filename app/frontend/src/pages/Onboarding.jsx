@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { /* useEffect, */ useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChevronRight, CheckCircle2 } from "lucide-react";
 import { api } from "../lib/api";

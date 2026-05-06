@@ -10,9 +10,9 @@ export default function Marketplace() {
   const [filter, setFilter] = useState("all");
 
   useEffect(() => {
-    api.get("/api/marketplace/resources").then((d) => setResources(d.items)).catch(() => {});
-    api.get("/api/marketplace/providers").then((d) => setProviders(d.items)).catch(() => {});
-    api.get("/api/marketplace/affiliates").then((d) => setAffiliates(d.items)).catch(() => {});
+    api.get("/api/marketplace/resources").then((d) => setResources(Array.isArray(d?.items) ? d.items : [])).catch(() => {});
+    api.get("/api/marketplace/providers").then((d) => setProviders(Array.isArray(d?.items) ? d.items : [])).catch(() => {});
+    api.get("/api/marketplace/affiliates").then((d) => setAffiliates(Array.isArray(d?.items) ? d.items : [])).catch(() => {});
   }, []);
 
   const filtered = filter === "all" ? resources : resources.filter((r) => r.type === filter);

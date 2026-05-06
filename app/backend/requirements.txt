@@ -22,7 +22,6 @@ distro==1.9.0
 dnspython==2.8.0
 ecdsa==0.19.2
 email-validator==2.3.0
-emergentintegrations==0.1.0
 fastapi==0.110.1
 fastuuid==0.14.0
 filelock==3.29.0
@@ -141,4 +140,3 @@ yarl==1.23.0
 zipp==3.23.1
 zstandard==0.25.0
 
-APScheduler>=3.10.4

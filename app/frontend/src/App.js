@@ -48,6 +48,7 @@ import AdminPlans from "./pages/admin/Plans";
 import Pricing from "./pages/Pricing";
 
 import { ProtectedRoute, GuestOnly } from "./lib/ProtectedRoute";
+import RouteErrorBoundary from "./components/RouteErrorBoundary";
 
 export default function App() {
   return (
@@ -62,7 +63,7 @@ export default function App() {
       <Route path="/reset-password" element={<ResetPassword />} />
 
       {/* User app */}
-      <Route element={<ProtectedRoute><DashShell /></ProtectedRoute>}>
+      <Route element={<ProtectedRoute><DashShell /></ProtectedRoute>}><Route element={<RouteErrorBoundary />}>
         <Route path="/app" element={<Dashboard />} />
         <Route path="/app/today" element={<Today />} />
         <Route path="/app/profile" element={<Profile />} />
@@ -86,6 +87,7 @@ export default function App() {
         <Route path="/app/accountability" element={<Accountability />} />
         <Route path="/app/ai" element={<AIChat />} />
         <Route path="/app/pricing" element={<Pricing />} />
+      </Route>
       </Route>
 
       {/* Admin */}

@@ -32,6 +32,9 @@ function formatApiErrorDetail(detail) {
 }
 
 export async function apiFetch(path, options = {}) {
+  if (!API_URL) {
+    throw new Error("Missing REACT_APP_BACKEND_URL. Set it in frontend .env before running the app.");
+  }
   const token = await getAccessToken();
   const headers = {
     "Content-Type": "application/json",
