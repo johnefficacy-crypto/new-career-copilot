@@ -404,6 +404,22 @@ async def update_profile(body: ProfileUpdate, user: dict = Depends(get_current_u
     return await get_profile(user)
 
 
+@router_profile.get("/completion")
+async def profile_completion(user: dict = Depends(get_current_user)):
+    supabase = get_supabase_admin()
+    profile = _ensure_profile_row(supabase, user["id"], user.get("email"))
+    checks = {
+        "eligibility_profile": ["date_of_birth", "category", "domicile_state", "graduation_year"],
+        "study_profile": ["weekly_hours_goal", "target_exam", "career_goal"],
+        "application_profile": ["phone", "full_name", "nationality"],
+    }
+    out = {}
+    for k, fields in checks.items():
+        missing = [f for f in fields if not profile.get(f)]
+        out[k] = {"missing_fields": missing, "completion_pct": int(round(((len(fields) - len(missing)) / len(fields)) * 100))}
+    return out
+
+
 # ════════════════════════════════════════════════════════════════════════════
 #  TRACKER (user_recruitment_applications)
 # ════════════════════════════════════════════════════════════════════════════
@@ -416,6 +432,17 @@ class TrackerCreate(BaseModel):
     recruitment_slug: str | None = None
     stage: str = "saved"  # → maps to application_status enum
     note: str | None = None
+
+
+class ApplicationUpsert(BaseModel):
+    status: str | None = None
+    application_number: str | None = None
+    fee_paid: bool | None = None
+    fee_amount: float | None = None
+    documents_pending: list[str] | None = None
+    notes: str | None = None
+    submitted_at: str | None = None
+    clicked_apply_at: str | None = None
 
 
 _STAGE_TO_STATUS: dict[str, str] = {
@@ -522,6 +549,48 @@ async def delete_tracker(item_id: str, user: dict = Depends(get_current_user)):
         "user_id", user["id"]
     ).execute()
     return {"ok": True}
+
+
+router_applications = APIRouter(prefix="/applications", tags=["applications"])
+
+
+@router_applications.get("/me")
+async def my_applications(user: dict = Depends(get_current_user)):
+    supabase = get_supabase_admin()
+    rows = _safe(
+        lambda: supabase.table("user_recruitment_applications")
+        .select("id,recruitment_id,status,application_number,fee_paid,fee_amount,documents_pending,notes,submitted_at,clicked_apply_at,updated_at")
+        .eq("user_id", user["id"])
+        .order("updated_at", desc=True)
+        .execute()
+        .data,
+        default=[],
+    ) or []
+    return {"items": rows}
+
+
+@router_applications.put("/{recruitment_id}")
+async def upsert_application(recruitment_id: str, body: ApplicationUpsert, user: dict = Depends(get_current_user)):
+    supabase = get_supabase_admin()
+    payload = {k: v for k, v in body.model_dump(exclude_none=True).items()}
+    if body.status:
+        payload["status"] = body.status
+    payload["updated_at"] = _now_iso()
+    existing = _safe(lambda: supabase.table("user_recruitment_applications").select("id").eq("user_id", user["id"]).eq("recruitment_id", recruitment_id).limit(1).execute().data, default=[]) or []
+    if existing:
+        rows = supabase.table("user_recruitment_applications").update(payload).eq("id", existing[0]["id"]).eq("user_id", user["id"]).execute().data or []
+    else:
+        rows = supabase.table("user_recruitment_applications").insert({"user_id": user["id"], "recruitment_id": recruitment_id, "status": body.status or "not_started", **payload}).execute().data or []
+    return rows[0] if rows else {"ok": True}
+
+
+@router_applications.post("/{recruitment_id}/clicked-apply")
+async def clicked_apply(recruitment_id: str, user: dict = Depends(get_current_user)):
+    return await upsert_application(
+        recruitment_id,
+        ApplicationUpsert(clicked_apply_at=_now_iso()),
+        user,
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1281,6 +1350,7 @@ router = APIRouter()
 router.include_router(router_recruitments)
 router.include_router(router_profile)
 router.include_router(router_tracker)
+router.include_router(router_applications)
 router.include_router(router_community)
 router.include_router(router_marketplace)
 router.include_router(router_study)
