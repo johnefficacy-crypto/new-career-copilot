@@ -57,6 +57,15 @@ export default function ExamDetail() {
     }
   }
 
+  async function openOfficialApply() {
+    if (!r?.notification_url) return;
+    try {
+      await api.post(`/api/applications/${r.id}/clicked-apply`, {});
+    } finally {
+      window.open(r.notification_url, "_blank", "noopener,noreferrer");
+    }
+  }
+
   if (!r) return <div data-testid="exam-loading">Loading…</div>;
 
   const orgCode = r.organization_code || (r.organization || "—").slice(0, 4).toUpperCase();
@@ -114,15 +123,13 @@ export default function ExamDetail() {
               <ListChecks className="h-4 w-4" /> Track application
             </button>
             {r.notification_url && (
-              <a
-                href={r.notification_url}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                onClick={openOfficialApply}
                 className="btn btn-primary"
                 data-testid="detail-official-link"
               >
                 Official site <ExternalLink className="h-4 w-4" />
-              </a>
+              </button>
             )}
           </div>
         </div>

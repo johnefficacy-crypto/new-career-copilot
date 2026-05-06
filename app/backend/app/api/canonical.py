@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from supabase import Client
 
 from app.core.auth import get_current_user, get_optional_user
@@ -326,7 +326,9 @@ _PROFILE_COLS = (
 
 
 class ProfileUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=120)
     full_name: str | None = Field(default=None, max_length=120)
+    state: str | None = None
     phone: str | None = Field(default=None, max_length=20)
     gender: str | None = None
     category: str | None = None
@@ -339,6 +341,10 @@ class ProfileUpdate(BaseModel):
     date_of_birth: str | None = None
     dob: str | None = None
     graduation_year: int | None = Field(default=None, ge=1990, le=2035)
+    qualification_year: int | None = Field(default=None, ge=1990, le=2035)
+    weekly_hours_goal: int | None = Field(default=None, ge=0, le=120)
+    target_exam_year: int | None = Field(default=None, ge=2024, le=2040)
+    goal_exams: list[str] | None = None
     career_stage: str | None = None
     career_goal: str | None = None
     target_type: str | None = None
@@ -387,9 +393,31 @@ async def update_profile(body: ProfileUpdate, user: dict = Depends(get_current_u
     supabase = get_supabase_admin()
     _ensure_profile_row(supabase, user["id"], user.get("email"))
     patch = {k: v for k, v in body.model_dump(exclude_none=True).items()}
+    if "name" in patch and "full_name" not in patch:
+        patch["full_name"] = patch.pop("name")
+    if "state" in patch and "domicile_state" not in patch:
+        patch["domicile_state"] = patch.pop("state")
+    if "qualification_year" in patch and "graduation_year" not in patch:
+        patch["graduation_year"] = patch.pop("qualification_year")
     if patch:
         supabase.table("profiles").update(patch).eq("id", user["id"]).execute()
     return await get_profile(user)
+
+
+@router_profile.get("/completion")
+async def profile_completion(user: dict = Depends(get_current_user)):
+    supabase = get_supabase_admin()
+    profile = _ensure_profile_row(supabase, user["id"], user.get("email"))
+    checks = {
+        "eligibility_profile": ["date_of_birth", "category", "domicile_state", "graduation_year"],
+        "study_profile": ["weekly_hours_goal", "target_exam", "career_goal"],
+        "application_profile": ["phone", "full_name", "nationality"],
+    }
+    out = {}
+    for k, fields in checks.items():
+        missing = [f for f in fields if not profile.get(f)]
+        out[k] = {"missing_fields": missing, "completion_pct": int(round(((len(fields) - len(missing)) / len(fields)) * 100))}
+    return out
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -404,6 +432,27 @@ class TrackerCreate(BaseModel):
     recruitment_slug: str | None = None
     stage: str = "saved"  # → maps to application_status enum
     note: str | None = None
+
+
+class ApplicationUpsert(BaseModel):
+    status: str | None = None
+    application_number: str | None = None
+    fee_paid: bool | None = None
+    fee_amount: float | None = Field(default=None, ge=0)
+    documents_pending: list[str] | None = None
+    notes: str | None = None
+    submitted_at: str | None = None
+    clicked_apply_at: str | None = None
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v):
+        if v is None:
+            return v
+        allowed = {"not_started", "opened", "in_progress", "submitted", "skipped", "not_applicable"}
+        if v not in allowed:
+            raise ValueError("Invalid status")
+        return v
 
 
 _STAGE_TO_STATUS: dict[str, str] = {
@@ -510,6 +559,48 @@ async def delete_tracker(item_id: str, user: dict = Depends(get_current_user)):
         "user_id", user["id"]
     ).execute()
     return {"ok": True}
+
+
+router_applications = APIRouter(prefix="/applications", tags=["applications"])
+
+
+@router_applications.get("/me")
+async def my_applications(user: dict = Depends(get_current_user)):
+    supabase = get_supabase_admin()
+    rows = _safe(
+        lambda: supabase.table("user_recruitment_applications")
+        .select("id,recruitment_id,status,application_number,fee_paid,fee_amount,documents_pending,notes,submitted_at,clicked_apply_at,updated_at,recruitment:recruitments(id,slug,name,organization,organization_code,apply_end_date,notification_url)")
+        .eq("user_id", user["id"])
+        .order("updated_at", desc=True)
+        .execute()
+        .data,
+        default=[],
+    ) or []
+    return {"items": rows}
+
+
+@router_applications.put("/{recruitment_id}")
+async def upsert_application(recruitment_id: str, body: ApplicationUpsert, user: dict = Depends(get_current_user)):
+    supabase = get_supabase_admin()
+    payload = {k: v for k, v in body.model_dump(exclude_none=True).items()}
+    if body.status:
+        payload["status"] = body.status
+    payload["updated_at"] = _now_iso()
+    existing = _safe(lambda: supabase.table("user_recruitment_applications").select("id").eq("user_id", user["id"]).eq("recruitment_id", recruitment_id).limit(1).execute().data, default=[]) or []
+    if existing:
+        rows = supabase.table("user_recruitment_applications").update(payload).eq("id", existing[0]["id"]).eq("user_id", user["id"]).execute().data or []
+    else:
+        rows = supabase.table("user_recruitment_applications").insert({"user_id": user["id"], "recruitment_id": recruitment_id, "status": body.status or "not_started", **payload}).execute().data or []
+    return rows[0] if rows else {"ok": True}
+
+
+@router_applications.post("/{recruitment_id}/clicked-apply")
+async def clicked_apply(recruitment_id: str, user: dict = Depends(get_current_user)):
+    return await upsert_application(
+        recruitment_id,
+        ApplicationUpsert(clicked_apply_at=_now_iso()),
+        user,
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -984,12 +1075,16 @@ async def get_plan(user: dict = Depends(get_current_user)):
         .data,
         default=[],
     ) or []
-    out_tasks = [{"id": t.get("id"), "title": t.get("title") or t.get("topic") or t.get("subject"), "time": t.get("day_label") or "Today", "duration": t.get("duration_mins"), "done": t.get("status") == "completed"} for t in tasks]
+    out_tasks = [{"id": t.get("id"), "title": t.get("title") or t.get("topic") or t.get("subject"), "time": t.get("day_label") or "Today", "duration": t.get("duration_mins"), "done": t.get("status") == "completed", "status": t.get("status") or "planned"} for t in tasks]
     return {"date": today, "plan": {"id": plan_id, "theme": "Adaptive weekly plan", "target": "Complete planned blocks", "day": None}, "tasks": out_tasks}
 
 
 class PlanToggle(BaseModel):
     task_id: str
+    status: str | None = None
+
+
+TASK_STATES = {"planned", "in_progress", "completed", "skipped", "missed", "rescheduled", "carried_forward"}
 
 
 @router_study.post("/plan/toggle")
@@ -1005,6 +1100,62 @@ async def toggle_task(body: PlanToggle, user: dict = Depends(get_current_user)):
     patch = {"status": new_status, "completed_at": _now_iso() if new_status == "completed" else None}
     supabase.table("study_tasks").update(patch).eq("id", body.task_id).execute()
     return {"id": body.task_id, "done": new_status == "completed"}
+
+
+class TaskPatch(BaseModel):
+    status: str | None = None
+    scheduled_date: str | None = None
+    day_label: str | None = None
+
+
+@router_study.put("/tasks/{task_id}")
+async def update_task(task_id: str, body: TaskPatch, user: dict = Depends(get_current_user)):
+    supabase = get_supabase_admin()
+    patch = {k: v for k, v in body.model_dump(exclude_none=True).items()}
+    if patch.get("status") and patch["status"] not in TASK_STATES:
+        raise HTTPException(status_code=400, detail="Invalid task status")
+    if patch.get("status") == "completed":
+        patch["completed_at"] = _now_iso()
+    patch["updated_at"] = _now_iso()
+    rows = supabase.table("study_tasks").update(patch).eq("id", task_id).execute().data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return rows[0]
+
+
+@router_study.post("/tasks/{task_id}/complete")
+async def complete_task(task_id: str, user: dict = Depends(get_current_user)):
+    return await update_task(task_id, TaskPatch(status="completed"), user)
+
+
+@router_study.post("/tasks/{task_id}/skip")
+async def skip_task(task_id: str, user: dict = Depends(get_current_user)):
+    return await update_task(task_id, TaskPatch(status="skipped"), user)
+
+
+class RescheduleBody(BaseModel):
+    scheduled_date: str | None = None
+    day_label: str | None = None
+
+
+@router_study.post("/tasks/{task_id}/reschedule")
+async def reschedule_task(task_id: str, body: RescheduleBody, user: dict = Depends(get_current_user)):
+    return await update_task(task_id, TaskPatch(status="rescheduled", scheduled_date=body.scheduled_date, day_label=body.day_label), user)
+
+
+@router_study.post("/tasks/carry-forward")
+async def carry_forward_tasks(user: dict = Depends(get_current_user)):
+    supabase = get_supabase_admin()
+    today = datetime.now(timezone.utc).date().isoformat()
+    plan_id = _ensure_active_plan(supabase, user["id"])
+    if not plan_id:
+        return {"updated": 0}
+    rows = supabase.table("study_tasks").select("id").eq("plan_id", plan_id).lt("scheduled_date", today).in_("status", ["planned", "in_progress", "missed"]).execute().data or []
+    updated = 0
+    for r in rows:
+        supabase.table("study_tasks").update({"status": "carried_forward", "scheduled_date": today, "day_label": "Today", "updated_at": _now_iso()}).eq("id", r["id"]).execute()
+        updated += 1
+    return {"updated": updated}
 
 
 class FocusStart(BaseModel):
@@ -1215,6 +1366,8 @@ async def weekly_review(user: dict = Depends(get_current_user)):
     ) or []
     plan_id = _ensure_active_plan(supabase, user["id"])
     closed = 0
+    skipped_tasks = 0
+    missed_tasks = 0
     if plan_id:
         closed_rows = _safe(
             lambda: supabase.table("study_tasks")
@@ -1227,18 +1380,44 @@ async def weekly_review(user: dict = Depends(get_current_user)):
             default=[],
         ) or []
         closed = len(closed_rows)
+        skipped_tasks = len(_safe(lambda: supabase.table("study_tasks").select("id").eq("plan_id", plan_id).eq("status", "skipped").gte("updated_at", week_start).execute().data, default=[]) or [])
+        missed_tasks = len(_safe(lambda: supabase.table("study_tasks").select("id").eq("plan_id", plan_id).in_("status", ["missed", "carried_forward"]).gte("updated_at", week_start).execute().data, default=[]) or [])
     hours = round(sum((s.get("duration_mins") or 0) for s in sessions) / 60.0, 1)
-    hours_planned = 35
+    profile = _ensure_profile_row(supabase, user["id"], user.get("email"))
+    hours_planned = float(profile.get("weekly_hours_goal") or 0)
+    if not hours_planned and plan_id:
+        planned_rows = _safe(
+            lambda: supabase.table("study_tasks")
+            .select("planned_minutes")
+            .eq("plan_id", plan_id)
+            .gte("scheduled_date", week_start)
+            .execute()
+            .data,
+            default=[],
+        ) or []
+        hours_planned = round(sum((r.get("planned_minutes") or 0) for r in planned_rows) / 60.0, 1)
+    total_tasks = 0
+    if plan_id:
+        total_tasks = len(_safe(lambda: supabase.table("study_tasks").select("id").eq("plan_id", plan_id).gte("scheduled_date", week_start).execute().data, default=[]) or [])
     adherence = (hours / hours_planned) if hours_planned else 0
     return {
         "week_of": week_start or "This week",
         "hours_studied": hours,
         "hours_planned": hours_planned,
         "adherence": round(adherence, 3),
+        "completed_tasks": closed,
+        "planned_tasks": total_tasks,
+        "skipped_tasks": skipped_tasks,
+        "missed_tasks": missed_tasks,
+        "task_completion_rate": round((closed / total_tasks), 3) if total_tasks else 0,
         "mocks_taken": len(mocks),
         "mock_trend": [],
         "highlights": [],
         "corrections": [],
+        "correction_actions": [],
+        "backlog_count": None,
+        "backlog_topics": [],
+        "revision_coverage": None,
     }
 
 
@@ -1248,6 +1427,7 @@ router = APIRouter()
 router.include_router(router_recruitments)
 router.include_router(router_profile)
 router.include_router(router_tracker)
+router.include_router(router_applications)
 router.include_router(router_community)
 router.include_router(router_marketplace)
 router.include_router(router_study)
