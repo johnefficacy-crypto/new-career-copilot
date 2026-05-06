@@ -24,7 +24,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, require_permission
 from app.db.supabase_client import get_supabase_admin
 from app.scraping.alerts import alert_users_for_new_recruitment
 from app.scraping.runner import promote_run, run_scraping_pass
@@ -145,7 +145,7 @@ def _list_sources() -> dict[str, Any]:
 @router.post("/admin/scrape/run-dry")
 def scrape_run_dry(
     body: dict | None = None,
-    admin: dict = Depends(_require_admin),
+    admin: dict = Depends(require_permission("scraper.manage")),
 ) -> dict[str, Any]:
     """Run a scrape pass in mock mode (no model call, deterministic output).
 
@@ -168,7 +168,7 @@ def scrape_run_dry(
 @router.post("/admin/scrape/run")
 def scrape_run(
     body: dict | None = None,
-    admin: dict = Depends(_require_admin),
+    admin: dict = Depends(require_permission("scraper.manage")),
 ) -> dict[str, Any]:
     """Run a real scrape pass (Claude extraction). Requires ANTHROPIC_API_KEY."""
     body = body or {}
@@ -247,7 +247,7 @@ def list_scrape_queue(
 @router.post("/admin/scrape/items/{queue_id}/promote")
 def promote_queue_item(
     queue_id: str,
-    admin: dict = Depends(_require_admin),
+    admin: dict = Depends(require_permission("recruitments.manage")),
 ) -> dict[str, Any]:
     from app.scraping.runner import promote_to_recruitments
     from app.scraping.schemas import ExtractedRecruitment
@@ -288,7 +288,7 @@ def promote_queue_item(
 @router.post("/admin/scrape/promote/{run_id}")
 def promote_run_endpoint(
     run_id: str,
-    admin: dict = Depends(_require_admin),
+    admin: dict = Depends(require_permission("recruitments.manage")),
 ) -> dict[str, Any]:
     supabase = get_supabase_admin()
     result = promote_run(run_id, supabase, reviewer_id=admin["id"])
@@ -308,7 +308,7 @@ def promote_run_endpoint(
 def reject_queue_item(
     queue_id: str,
     body: dict | None = None,
-    admin: dict = Depends(_require_admin),
+    admin: dict = Depends(require_permission("scraper.manage")),
 ) -> dict[str, Any]:
     body = body or {}
     supabase = get_supabase_admin()

@@ -5,16 +5,24 @@ import { Clock, Flame, Target, AlertTriangle, ChevronRight, Play, CheckCircle2 }
 import { api } from "../lib/api";
 import { useAuth } from "../lib/authContext";
 
-function scoreRecruitment(r) {
+function scoreRecruitment(r, user) {
   let score = 0;
   const reasons = [];
   const risks = [];
-  if (r?.eligibility?.eligible || r?.status === "eligible") { score += 40; reasons.push("Deterministically eligible"); }
-  if (r?.status === "urgent") { score += 25; reasons.push("Deadline is near"); }
-  if ((r?.vacancies || 0) > 1000) { score += 10; reasons.push("High vacancies"); }
+  const prefs = user?.profile || {};
+  const goals = new Set(user?.goal_exams || []);
+  if (r?.eligibility?.eligible || r?.status === "eligible") { score += 35; reasons.push("Eligibility confirmed"); }
+  else if (r?.eligibility?.conditional) { score += 16; reasons.push("Eligibility conditional"); risks.push("Eligibility has conditions"); }
+  else { risks.push("Eligibility pending"); }
+  if (r?.status === "urgent") { score += 20; reasons.push("Deadline is near"); }
   if (r?.saved) { score += 8; reasons.push("Already tracked"); }
-  if (!r?.eligibility?.eligible && !r?.eligibility?.conditional) risks.push("Eligibility not confirmed");
-  return { ...r, match_score: score, match_reasons: reasons, risk_flags: risks, next_action: r?.saved ? "Review posts" : "Open and track" };
+  if ((r?.vacancies || 0) > 500) { score += 8; reasons.push("Higher vacancy volume"); }
+  if (goals.size && (goals.has(r?.slug) || goals.has(r?.exam_code) || goals.has(r?.exam_family))) { score += 10; reasons.push("Matches your target exams"); }
+  if (prefs?.domicile_state && r?.state && String(r.state).toLowerCase() === String(prefs.domicile_state).toLowerCase()) { score += 6; reasons.push("Matches domicile preference"); }
+  if (prefs?.target_type && r?.sector && String(r.sector).toLowerCase().includes(String(prefs.target_type).toLowerCase())) { score += 4; reasons.push("Matches preferred sector"); }
+  if (!prefs?.date_of_birth || !prefs?.category || !prefs?.graduation_year) risks.push("Complete profile fields for stronger matching");
+  const next_action = (r?.eligibility?.eligible || r?.status === "eligible") ? (r?.saved ? "Review and apply" : "Track and apply") : (!prefs?.date_of_birth ? "Complete profile" : "Run eligibility check");
+  return { ...r, match_score: Math.max(0, Math.min(100, score)), match_reasons: reasons, risk_flags: risks, next_action };
 }
 
 export default function Dashboard() {
@@ -31,7 +39,7 @@ export default function Dashboard() {
     api.get("/api/study/weekly-review").then((d) => setReview(d || {})).catch(() => setReview({ hours_studied: 0, hours_planned: 0, adherence: 0, mocks_taken: 0, highlights: [], corrections: [] }));
   }, []);
 
-  const topMatches = useMemo(() => (Array.isArray(recruitments.items) ? recruitments.items : []).map(scoreRecruitment).sort((a, b) => b.match_score - a.match_score).slice(0, 4), [recruitments.items]);
+  const topMatches = useMemo(() => (Array.isArray(recruitments.items) ? recruitments.items : []).map((r) => scoreRecruitment(r, auth.user)).sort((a, b) => b.match_score - a.match_score).slice(0, 4), [recruitments.items, auth.user]);
   const streak = useMemo(() => {
     const week = Array.isArray(focus.week) ? focus.week : [];
     let s = 0;

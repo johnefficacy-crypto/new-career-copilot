@@ -43,7 +43,7 @@ try:
 except Exception:  # noqa: BLE001
     razorpay = None  # type: ignore
 
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, require_permission
 from app.core.config import get_settings
 from app.db.supabase_client import get_supabase_admin
 
@@ -208,7 +208,7 @@ def admin_list_plans(_: dict = Depends(_require_admin)):
 
 
 @router.post("/admin/plans")
-def admin_create_plan(payload: PlanIn, _: dict = Depends(_require_admin)):
+def admin_create_plan(payload: PlanIn, _: dict = Depends(require_permission("payments.manage"))):
     sb = get_supabase_admin()
     plan_id = _slugify(payload.id)
     record = {
@@ -229,7 +229,7 @@ def admin_create_plan(payload: PlanIn, _: dict = Depends(_require_admin)):
 
 
 @router.put("/admin/plans/{plan_id}")
-def admin_update_plan(plan_id: str, patch: PlanPatch, _: dict = Depends(_require_admin)):
+def admin_update_plan(plan_id: str, patch: PlanPatch, _: dict = Depends(require_permission("payments.manage"))):
     sb = get_supabase_admin()
     update = {k: v for k, v in patch.model_dump(exclude_none=True).items()}
     if not update:
@@ -248,7 +248,7 @@ def admin_update_plan(plan_id: str, patch: PlanPatch, _: dict = Depends(_require
 
 
 @router.delete("/admin/plans/{plan_id}")
-def admin_disable_plan(plan_id: str, _: dict = Depends(_require_admin)):
+def admin_disable_plan(plan_id: str, _: dict = Depends(require_permission("payments.manage"))):
     sb = get_supabase_admin()
     rows = (
         sb.table("subscription_plans")
