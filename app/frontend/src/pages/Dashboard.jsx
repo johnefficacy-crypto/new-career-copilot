@@ -85,6 +85,26 @@ export default function Dashboard() {
           {urgentForms.map((a) => <li key={a.id}>Urgent: {(a.recruitment?.name || a.recruitment_id)} closes {new Date(a.recruitment.apply_end_date).toLocaleDateString()}</li>)}
         </ul>}
       </div>
+      <div className="soft-card rounded-2xl p-4 text-sm">
+        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Study recovery</div>
+        <ul className="mt-2 space-y-1 text-muted-foreground">
+          <li>Today's planned tasks: {review.planned_tasks || 0}</li>
+          <li>Overdue / missed tasks: {review.missed_tasks || 0}</li>
+          <li>Backlog risk: {(review.backlog_count || 0) > 3 ? "High" : "Manageable"}</li>
+          <li>Next correction action: {(review.correction_actions || [])[0] || "Complete one missed task and reschedule one block."}</li>
+        </ul>
+      </div>
+      {profileCompletion && <div className="soft-card rounded-2xl p-4 text-sm text-muted-foreground">Profile gaps: eligibility {profileCompletion?.eligibility_profile?.completion_pct || 0}% · study {profileCompletion?.study_profile?.completion_pct || 0}% · application {profileCompletion?.application_profile?.completion_pct || 0}% complete.</div>}
+      <div className="soft-card rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Next actions · forms</div>
+        {apps.length === 0 ? <div className="mt-2 text-sm text-muted-foreground">No applications tracked yet. Open a recruitment and click Apply to start tracking.</div> : <ul className="mt-3 text-sm space-y-1">
+          <li>In-progress forms: {inProgressForms}</li>
+          <li>Submitted forms: {submittedForms}</li>
+          <li>Missing documents: {pendingDocs}</li>
+          <li>Clicked but not submitted: {clickedNotSubmitted.length}</li>
+          {urgentForms.map((a) => <li key={a.id}>Urgent: {(a.recruitment?.name || a.recruitment_id)} closes {new Date(a.recruitment.apply_end_date).toLocaleDateString()}</li>)}
+        </ul>}
+      </div>
       {profileCompletion && <div className="soft-card rounded-2xl p-4 text-sm text-muted-foreground">Profile gaps: eligibility {profileCompletion?.eligibility_profile?.completion_pct || 0}% · study {profileCompletion?.study_profile?.completion_pct || 0}% · application {profileCompletion?.application_profile?.completion_pct || 0}% complete.</div>}
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 soft-card rounded-2xl p-5">

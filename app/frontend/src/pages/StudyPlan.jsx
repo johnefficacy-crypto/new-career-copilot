@@ -15,9 +15,17 @@ export default function StudyPlan() {
   }, []);
 
   async function toggle(t) {
-    const next = !t.done;
-    setPlan((p) => ({ ...p, tasks: p.tasks.map((x) => (x.id === t.id ? { ...x, done: next } : x)) }));
-    await api.post("/api/study/plan/toggle", { task_id: t.id, done: next });
+    const nextStatus = t.status === "completed" ? "planned" : "completed";
+    setPlan((p) => ({ ...p, tasks: p.tasks.map((x) => (x.id === t.id ? { ...x, done: nextStatus === "completed", status: nextStatus } : x)) }));
+    await api.put(`/api/study/tasks/${t.id}`, { status: nextStatus });
+  }
+  async function updateStatus(t, status) {
+    await api.put(`/api/study/tasks/${t.id}`, { status });
+    await api.get("/api/study/plan").then((d) => setPlan({ plan: d?.plan || null, tasks: Array.isArray(d?.tasks) ? d.tasks : [] }));
+  }
+  async function carryForward() {
+    await api.post("/api/study/tasks/carry-forward", {});
+    await api.get("/api/study/plan").then((d) => setPlan({ plan: d?.plan || null, tasks: Array.isArray(d?.tasks) ? d.tasks : [] }));
   }
 
   const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
@@ -65,6 +73,7 @@ export default function StudyPlan() {
         <div className="lg:col-span-2 soft-card rounded-2xl p-5">
           <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Today's schedule</div>
           <div className="font-heading text-xl font-semibold mt-0.5">{tasks.length} blocks</div>
+          <button type="button" className="text-xs mt-2 link-under" onClick={carryForward}>Carry forward backlog</button>
           <ul className="mt-4 space-y-2.5">
             {tasks.map((t) => (
               <li key={t.id} className="flex items-start gap-3 rounded-xl p-3 hover:bg-clay-50 transition">
@@ -74,6 +83,12 @@ export default function StudyPlan() {
                 <div className="flex-1">
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">{t.time}</div>
                   <div className={`text-[15px] ${t.done ? "line-through text-muted-foreground" : "font-semibold"}`}>{t.title}</div>
+                  <div className="text-[11px] text-muted-foreground">Status: {t.status || "planned"}</div>
+                  <div className="mt-1 flex gap-2">
+                    <button type="button" className="text-[11px] link-under" onClick={() => updateStatus(t, "skipped")}>Skip</button>
+                    <button type="button" className="text-[11px] link-under" onClick={() => updateStatus(t, "missed")}>Mark missed</button>
+                    <button type="button" className="text-[11px] link-under" onClick={() => updateStatus(t, "in_progress")}>In progress</button>
+                  </div>
                 </div>
               </li>
             ))}
