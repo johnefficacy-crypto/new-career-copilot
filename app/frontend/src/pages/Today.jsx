@@ -4,9 +4,10 @@ import { api } from "../lib/api";
 
 export default function Today() {
   const [plan, setPlan] = useState({ tasks: [], plan: null, date: "" });
+  const [err, setErr] = useState("");
 
   useEffect(() => {
-    api.get("/api/study/plan").then(setPlan).catch(() => {});
+    api.get("/api/study/plan").then((d) => setPlan({ date: d?.date || "", plan: d?.plan || null, tasks: Array.isArray(d?.tasks) ? d.tasks : [] })).catch((e) => { setErr("Could not load today's plan."); if (process.env.NODE_ENV !== "production") console.error(e); });
   }, []);
 
   async function toggle(t) {
@@ -15,18 +16,20 @@ export default function Today() {
     try {
       await api.post("/api/study/plan/toggle", { task_id: t.id, done: next });
     } catch (e) {
-      /* revert silently */
+      if (process.env.NODE_ENV !== "production") console.error(e);
     }
   }
 
-  const done = plan.tasks.filter((t) => t.done).length;
+  const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
+  const done = tasks.filter((t) => t.done).length;
 
   return (
     <div className="space-y-6" data-testid="today-page">
+      {err && <div className="text-xs text-clay-700">{err}</div>}
       <div>
         <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Today · {plan.date}</div>
         <h1 className="font-heading text-4xl font-semibold tracking-tight mt-1">Today's plan</h1>
-        <p className="text-muted-foreground mt-1">{done} of {plan.tasks.length} tasks complete</p>
+        <p className="text-muted-foreground mt-1">{done} of {tasks.length} tasks complete</p>
       </div>
 
       <div className="soft-card rounded-2xl p-6">
@@ -37,7 +40,7 @@ export default function Today() {
           <span className="text-muted-foreground">{plan.plan?.target}</span>
         </div>
         <ul className="mt-5 space-y-2">
-          {plan.tasks.map((t) => (
+          {tasks.map((t) => (
             <li key={t.id} className="flex items-start gap-3 rounded-xl p-3 hover:bg-clay-50 transition">
               <button onClick={() => toggle(t)} data-testid={`toggle-${t.id}`} className="mt-0.5">
                 {t.done ? <CheckCircle2 className="h-5 w-5 text-sage-500" /> : <Circle className="h-5 w-5 text-muted-foreground" />}

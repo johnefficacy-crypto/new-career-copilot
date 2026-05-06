@@ -4,9 +4,10 @@ import { api } from "../lib/api";
 
 export default function StudyPlan() {
   const [plan, setPlan] = useState({ tasks: [], plan: null });
+  const [err, setErr] = useState("");
 
   useEffect(() => {
-    api.get("/api/study/plan").then(setPlan).catch(() => {});
+    api.get("/api/study/plan").then((d) => setPlan({ plan: d?.plan || null, tasks: Array.isArray(d?.tasks) ? d.tasks : [] })).catch((e) => { setErr("Study plan is temporarily unavailable."); if (process.env.NODE_ENV !== "production") console.error(e); });
   }, []);
 
   const week = [
@@ -20,8 +21,11 @@ export default function StudyPlan() {
     await api.post("/api/study/plan/toggle", { task_id: t.id, done: next });
   }
 
+  const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
+
   return (
     <div className="space-y-6" data-testid="study-plan-page">
+      {err && <div className="text-xs text-clay-700">{err}</div>}
       <div className="flex items-end justify-between flex-wrap gap-3">
         <div>
           <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Study OS · 90-day plan</div>
@@ -55,9 +59,9 @@ export default function StudyPlan() {
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 soft-card rounded-2xl p-5">
           <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Today's schedule</div>
-          <div className="font-heading text-xl font-semibold mt-0.5">{plan.tasks.length} blocks</div>
+          <div className="font-heading text-xl font-semibold mt-0.5">{tasks.length} blocks</div>
           <ul className="mt-4 space-y-2.5">
-            {plan.tasks.map((t) => (
+            {tasks.map((t) => (
               <li key={t.id} className="flex items-start gap-3 rounded-xl p-3 hover:bg-clay-50 transition">
                 <button onClick={() => toggle(t)}>
                   {t.done ? <CheckCircle2 className="h-5 w-5 text-sage-500" /> : <Circle className="h-5 w-5 text-muted-foreground" />}
