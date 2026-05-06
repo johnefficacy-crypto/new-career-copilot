@@ -31,12 +31,16 @@ export default function Dashboard() {
   const [plan, setPlan] = useState({ tasks: [], plan: null, date: "" });
   const [focus, setFocus] = useState({ total_hours_7d: 0, week: [] });
   const [review, setReview] = useState({ hours_studied: 0, hours_planned: 0, adherence: 0, mocks_taken: 0, highlights: [], corrections: [] });
+  const [apps, setApps] = useState([]);
+  const [profileCompletion, setProfileCompletion] = useState(null);
 
   useEffect(() => {
     api.get("/api/recruitments").then((d) => setRecruitments(d || { items: [], counts: {} })).catch(() => setRecruitments({ items: [], counts: {} }));
     api.get("/api/study/plan").then((d) => setPlan({ date: d?.date || "", plan: d?.plan || null, tasks: Array.isArray(d?.tasks) ? d.tasks : [] })).catch(() => setPlan({ tasks: [], plan: null, date: "" }));
     api.get("/api/study/focus/summary").then((d) => setFocus({ total_hours_7d: d?.total_hours_7d || 0, week: Array.isArray(d?.week) ? d.week : [] })).catch(() => setFocus({ total_hours_7d: 0, week: [] }));
     api.get("/api/study/weekly-review").then((d) => setReview(d || {})).catch(() => setReview({ hours_studied: 0, hours_planned: 0, adherence: 0, mocks_taken: 0, highlights: [], corrections: [] }));
+    api.get("/api/applications/me").then((d) => setApps(Array.isArray(d?.items) ? d.items : [])).catch(() => setApps([]));
+    api.get("/api/profile/completion").then((d) => setProfileCompletion(d || null)).catch(() => setProfileCompletion(null));
   }, []);
 
   const topMatches = useMemo(() => (Array.isArray(recruitments.items) ? recruitments.items : []).map((r) => scoreRecruitment(r, auth.user)).sort((a, b) => b.match_score - a.match_score).slice(0, 4), [recruitments.items, auth.user]);
@@ -48,6 +52,9 @@ export default function Dashboard() {
   }, [focus.week]);
   const todayMins = (Array.isArray(focus.week) ? focus.week[focus.week.length - 1]?.minutes : 0) || 0;
   const studyData = (focus.week || []).map((x) => ({ d: (x?.date || "").slice(5), h: Number(((x?.minutes || 0) / 60).toFixed(1)) }));
+  const inProgressForms = apps.filter((a) => a.status === "in_progress").length;
+  const submittedForms = apps.filter((a) => a.status === "submitted").length;
+  const pendingDocs = apps.reduce((n, a) => n + (Array.isArray(a.documents_pending) ? a.documents_pending.length : 0), 0);
 
   const firstName = (auth.user?.name || "there").split(" ")[0];
   const today = new Date().toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "long" });
@@ -63,8 +70,9 @@ export default function Dashboard() {
         <Link to="/app/study/focus" className="btn btn-primary" data-testid="start-focus-btn"><Play className="h-4 w-4" /> Start focus</Link>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[{ label: "Eligible posts", val: recruitments.counts?.eligible || 0, tone: "text-sage-600", icon: Target, delta: `${recruitments.counts?.conditional || 0} conditional` }, { label: "Urgent deadlines", val: recruitments.counts?.urgent || 0, tone: "text-clay-600", icon: AlertTriangle, delta: "Needs action this week" }, { label: "Focus hrs · week", val: focus.total_hours_7d || 0, tone: "text-dusk-600", icon: Clock, delta: `${review.hours_planned || 0}h planned` }, { label: "Current streak", val: streak, tone: "text-clay-600", icon: Flame, delta: `${todayMins} min today` }].map((k) => <div key={k.label} className="soft-card rounded-2xl p-5"><div className="flex items-center justify-between"><div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">{k.label}</div><k.icon className={`h-4 w-4 ${k.tone}`} strokeWidth={1.8} /></div><div className={`mt-3 font-heading text-4xl font-semibold tracking-tight ${k.tone}`}>{k.val}</div><div className="mt-1 text-xs text-muted-foreground">{k.delta}</div></div>)}
+        {[{ label: "Eligible posts", val: recruitments.counts?.eligible || 0, tone: "text-sage-600", icon: Target, delta: `${recruitments.counts?.conditional || 0} conditional` }, { label: "In-progress forms", val: inProgressForms, tone: "text-clay-600", icon: AlertTriangle, delta: `${pendingDocs} documents pending` }, { label: "Focus hrs · week", val: focus.total_hours_7d || 0, tone: "text-dusk-600", icon: Clock, delta: `${review.hours_planned || 0}h planned` }, { label: "Submitted forms", val: submittedForms, tone: "text-clay-600", icon: Flame, delta: `${todayMins} min today` }].map((k) => <div key={k.label} className="soft-card rounded-2xl p-5"><div className="flex items-center justify-between"><div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">{k.label}</div><k.icon className={`h-4 w-4 ${k.tone}`} strokeWidth={1.8} /></div><div className={`mt-3 font-heading text-4xl font-semibold tracking-tight ${k.tone}`}>{k.val}</div><div className="mt-1 text-xs text-muted-foreground">{k.delta}</div></div>)}
       </div>
+      {profileCompletion && <div className="soft-card rounded-2xl p-4 text-sm text-muted-foreground">Profile gaps: eligibility {profileCompletion?.eligibility_profile?.completion_pct || 0}% · study {profileCompletion?.study_profile?.completion_pct || 0}% · application {profileCompletion?.application_profile?.completion_pct || 0}% complete.</div>}
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 soft-card rounded-2xl p-5">
           <div className="flex items-center justify-between"><div><div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Recruitments for you</div><div className="font-heading text-xl font-semibold mt-0.5">{recruitments.counts?.all || 0} active</div></div><Link to="/app/exams" className="text-xs font-semibold link-under" data-testid="see-all-exams">See all →</Link></div>
