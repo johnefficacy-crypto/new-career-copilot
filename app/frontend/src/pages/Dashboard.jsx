@@ -5,16 +5,24 @@ import { Clock, Flame, Target, AlertTriangle, ChevronRight, Play, CheckCircle2 }
 import { api } from "../lib/api";
 import { useAuth } from "../lib/authContext";
 
-function scoreRecruitment(r) {
+function scoreRecruitment(r, user) {
   let score = 0;
   const reasons = [];
   const risks = [];
-  if (r?.eligibility?.eligible || r?.status === "eligible") { score += 40; reasons.push("Deterministically eligible"); }
-  if (r?.status === "urgent") { score += 25; reasons.push("Deadline is near"); }
-  if ((r?.vacancies || 0) > 1000) { score += 10; reasons.push("High vacancies"); }
+  const prefs = user?.profile || {};
+  const goals = new Set(user?.goal_exams || []);
+  if (r?.eligibility?.eligible || r?.status === "eligible") { score += 35; reasons.push("Eligibility confirmed"); }
+  else if (r?.eligibility?.conditional) { score += 16; reasons.push("Eligibility conditional"); risks.push("Eligibility has conditions"); }
+  else { risks.push("Eligibility pending"); }
+  if (r?.status === "urgent") { score += 20; reasons.push("Deadline is near"); }
   if (r?.saved) { score += 8; reasons.push("Already tracked"); }
-  if (!r?.eligibility?.eligible && !r?.eligibility?.conditional) risks.push("Eligibility not confirmed");
-  return { ...r, match_score: score, match_reasons: reasons, risk_flags: risks, next_action: r?.saved ? "Review posts" : "Open and track" };
+  if ((r?.vacancies || 0) > 500) { score += 8; reasons.push("Higher vacancy volume"); }
+  if (goals.size && (goals.has(r?.slug) || goals.has(r?.exam_code) || goals.has(r?.exam_family))) { score += 10; reasons.push("Matches your target exams"); }
+  if (prefs?.domicile_state && r?.state && String(r.state).toLowerCase() === String(prefs.domicile_state).toLowerCase()) { score += 6; reasons.push("Matches domicile preference"); }
+  if (prefs?.target_type && r?.sector && String(r.sector).toLowerCase().includes(String(prefs.target_type).toLowerCase())) { score += 4; reasons.push("Matches preferred sector"); }
+  if (!prefs?.date_of_birth || !prefs?.category || !prefs?.graduation_year) risks.push("Complete profile fields for stronger matching");
+  const next_action = (r?.eligibility?.eligible || r?.status === "eligible") ? (r?.saved ? "Review and apply" : "Track and apply") : (!prefs?.date_of_birth ? "Complete profile" : "Run eligibility check");
+  return { ...r, match_score: Math.max(0, Math.min(100, score)), match_reasons: reasons, risk_flags: risks, next_action };
 }
 
 export default function Dashboard() {
@@ -23,15 +31,19 @@ export default function Dashboard() {
   const [plan, setPlan] = useState({ tasks: [], plan: null, date: "" });
   const [focus, setFocus] = useState({ total_hours_7d: 0, week: [] });
   const [review, setReview] = useState({ hours_studied: 0, hours_planned: 0, adherence: 0, mocks_taken: 0, highlights: [], corrections: [] });
+  const [apps, setApps] = useState([]);
+  const [profileCompletion, setProfileCompletion] = useState(null);
 
   useEffect(() => {
     api.get("/api/recruitments").then((d) => setRecruitments(d || { items: [], counts: {} })).catch(() => setRecruitments({ items: [], counts: {} }));
     api.get("/api/study/plan").then((d) => setPlan({ date: d?.date || "", plan: d?.plan || null, tasks: Array.isArray(d?.tasks) ? d.tasks : [] })).catch(() => setPlan({ tasks: [], plan: null, date: "" }));
     api.get("/api/study/focus/summary").then((d) => setFocus({ total_hours_7d: d?.total_hours_7d || 0, week: Array.isArray(d?.week) ? d.week : [] })).catch(() => setFocus({ total_hours_7d: 0, week: [] }));
     api.get("/api/study/weekly-review").then((d) => setReview(d || {})).catch(() => setReview({ hours_studied: 0, hours_planned: 0, adherence: 0, mocks_taken: 0, highlights: [], corrections: [] }));
+    api.get("/api/applications/me").then((d) => setApps(Array.isArray(d?.items) ? d.items : [])).catch(() => setApps([]));
+    api.get("/api/profile/completion").then((d) => setProfileCompletion(d || null)).catch(() => setProfileCompletion(null));
   }, []);
 
-  const topMatches = useMemo(() => (Array.isArray(recruitments.items) ? recruitments.items : []).map(scoreRecruitment).sort((a, b) => b.match_score - a.match_score).slice(0, 4), [recruitments.items]);
+  const topMatches = useMemo(() => (Array.isArray(recruitments.items) ? recruitments.items : []).map((r) => scoreRecruitment(r, auth.user)).sort((a, b) => b.match_score - a.match_score).slice(0, 4), [recruitments.items, auth.user]);
   const streak = useMemo(() => {
     const week = Array.isArray(focus.week) ? focus.week : [];
     let s = 0;
@@ -40,6 +52,11 @@ export default function Dashboard() {
   }, [focus.week]);
   const todayMins = (Array.isArray(focus.week) ? focus.week[focus.week.length - 1]?.minutes : 0) || 0;
   const studyData = (focus.week || []).map((x) => ({ d: (x?.date || "").slice(5), h: Number(((x?.minutes || 0) / 60).toFixed(1)) }));
+  const inProgressForms = apps.filter((a) => a.status === "in_progress").length;
+  const submittedForms = apps.filter((a) => a.status === "submitted").length;
+  const pendingDocs = apps.reduce((n, a) => n + (Array.isArray(a.documents_pending) ? a.documents_pending.length : 0), 0);
+  const clickedNotSubmitted = apps.filter((a) => a.clicked_apply_at && !a.submitted_at);
+  const urgentForms = apps.filter((a) => a.recruitment?.apply_end_date).sort((a, b) => new Date(a.recruitment.apply_end_date) - new Date(b.recruitment.apply_end_date)).slice(0, 3);
 
   const firstName = (auth.user?.name || "there").split(" ")[0];
   const today = new Date().toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "long" });
@@ -55,7 +72,18 @@ export default function Dashboard() {
         <Link to="/app/study/focus" className="btn btn-primary" data-testid="start-focus-btn"><Play className="h-4 w-4" /> Start focus</Link>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[{ label: "Eligible posts", val: recruitments.counts?.eligible || 0, tone: "text-sage-600", icon: Target, delta: `${recruitments.counts?.conditional || 0} conditional` }, { label: "Urgent deadlines", val: recruitments.counts?.urgent || 0, tone: "text-clay-600", icon: AlertTriangle, delta: "Needs action this week" }, { label: "Focus hrs · week", val: focus.total_hours_7d || 0, tone: "text-dusk-600", icon: Clock, delta: `${review.hours_planned || 0}h planned` }, { label: "Current streak", val: streak, tone: "text-clay-600", icon: Flame, delta: `${todayMins} min today` }].map((k) => <div key={k.label} className="soft-card rounded-2xl p-5"><div className="flex items-center justify-between"><div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">{k.label}</div><k.icon className={`h-4 w-4 ${k.tone}`} strokeWidth={1.8} /></div><div className={`mt-3 font-heading text-4xl font-semibold tracking-tight ${k.tone}`}>{k.val}</div><div className="mt-1 text-xs text-muted-foreground">{k.delta}</div></div>)}
+        {[{ label: "Eligible posts", val: recruitments.counts?.eligible || 0, tone: "text-sage-600", icon: Target, delta: `${recruitments.counts?.conditional || 0} conditional` }, { label: "In-progress forms", val: inProgressForms, tone: "text-clay-600", icon: AlertTriangle, delta: `${pendingDocs} documents pending` }, { label: "Focus hrs · week", val: focus.total_hours_7d || 0, tone: "text-dusk-600", icon: Clock, delta: `${review.hours_planned || 0}h planned` }, { label: "Submitted forms", val: submittedForms, tone: "text-clay-600", icon: Flame, delta: `${todayMins} min today` }].map((k) => <div key={k.label} className="soft-card rounded-2xl p-5"><div className="flex items-center justify-between"><div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">{k.label}</div><k.icon className={`h-4 w-4 ${k.tone}`} strokeWidth={1.8} /></div><div className={`mt-3 font-heading text-4xl font-semibold tracking-tight ${k.tone}`}>{k.val}</div><div className="mt-1 text-xs text-muted-foreground">{k.delta}</div></div>)}
+      </div>
+      {profileCompletion && <div className="soft-card rounded-2xl p-4 text-sm text-muted-foreground">Profile gaps: eligibility {profileCompletion?.eligibility_profile?.completion_pct || 0}% · study {profileCompletion?.study_profile?.completion_pct || 0}% · application {profileCompletion?.application_profile?.completion_pct || 0}% complete.</div>}
+      <div className="soft-card rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Next actions · forms</div>
+        {apps.length === 0 ? <div className="mt-2 text-sm text-muted-foreground">No applications tracked yet. Open a recruitment and click Apply to start tracking.</div> : <ul className="mt-3 text-sm space-y-1">
+          <li>In-progress forms: {inProgressForms}</li>
+          <li>Submitted forms: {submittedForms}</li>
+          <li>Missing documents: {pendingDocs}</li>
+          <li>Clicked but not submitted: {clickedNotSubmitted.length}</li>
+          {urgentForms.map((a) => <li key={a.id}>Urgent: {(a.recruitment?.name || a.recruitment_id)} closes {new Date(a.recruitment.apply_end_date).toLocaleDateString()}</li>)}
+        </ul>}
       </div>
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 soft-card rounded-2xl p-5">
