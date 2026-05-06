@@ -94,6 +94,18 @@ export default function Dashboard() {
           <li>Next correction action: {(review.correction_actions || [])[0] || "Complete one missed task and reschedule one block."}</li>
         </ul>
       </div>
+      {profileCompletion && <div className="soft-card rounded-2xl p-4 text-sm text-muted-foreground">Profile gaps: eligibility {profileCompletion?.eligibility_profile?.completion_pct || 0}% · study {profileCompletion?.study_profile?.completion_pct || 0}% · application {profileCompletion?.application_profile?.completion_pct || 0}% complete.</div>}
+      <div className="soft-card rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Next actions · forms</div>
+        {apps.length === 0 ? <div className="mt-2 text-sm text-muted-foreground">No applications tracked yet. Open a recruitment and click Apply to start tracking.</div> : <ul className="mt-3 text-sm space-y-1">
+          <li>In-progress forms: {inProgressForms}</li>
+          <li>Submitted forms: {submittedForms}</li>
+          <li>Missing documents: {pendingDocs}</li>
+          <li>Clicked but not submitted: {clickedNotSubmitted.length}</li>
+          {urgentForms.map((a) => <li key={a.id}>Urgent: {(a.recruitment?.name || a.recruitment_id)} closes {new Date(a.recruitment.apply_end_date).toLocaleDateString()}</li>)}
+        </ul>}
+      </div>
+      {profileCompletion && <div className="soft-card rounded-2xl p-4 text-sm text-muted-foreground">Profile gaps: eligibility {profileCompletion?.eligibility_profile?.completion_pct || 0}% · study {profileCompletion?.study_profile?.completion_pct || 0}% · application {profileCompletion?.application_profile?.completion_pct || 0}% complete.</div>}
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 soft-card rounded-2xl p-5">
           <div className="flex items-center justify-between"><div><div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Recruitments for you</div><div className="font-heading text-xl font-semibold mt-0.5">{recruitments.counts?.all || 0} active</div></div><Link to="/app/exams" className="text-xs font-semibold link-under" data-testid="see-all-exams">See all →</Link></div>
