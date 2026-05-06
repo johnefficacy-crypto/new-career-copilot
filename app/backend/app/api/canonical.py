@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from supabase import Client
 
 from app.core.auth import get_current_user, get_optional_user
@@ -438,11 +438,21 @@ class ApplicationUpsert(BaseModel):
     status: str | None = None
     application_number: str | None = None
     fee_paid: bool | None = None
-    fee_amount: float | None = None
+    fee_amount: float | None = Field(default=None, ge=0)
     documents_pending: list[str] | None = None
     notes: str | None = None
     submitted_at: str | None = None
     clicked_apply_at: str | None = None
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v):
+        if v is None:
+            return v
+        allowed = {"not_started", "opened", "in_progress", "submitted", "skipped", "not_applicable"}
+        if v not in allowed:
+            raise ValueError("Invalid status")
+        return v
 
 
 _STAGE_TO_STATUS: dict[str, str] = {
@@ -559,7 +569,7 @@ async def my_applications(user: dict = Depends(get_current_user)):
     supabase = get_supabase_admin()
     rows = _safe(
         lambda: supabase.table("user_recruitment_applications")
-        .select("id,recruitment_id,status,application_number,fee_paid,fee_amount,documents_pending,notes,submitted_at,clicked_apply_at,updated_at")
+        .select("id,recruitment_id,status,application_number,fee_paid,fee_amount,documents_pending,notes,submitted_at,clicked_apply_at,updated_at,recruitment:recruitments(id,slug,name,organization,organization_code,apply_end_date,notification_url)")
         .eq("user_id", user["id"])
         .order("updated_at", desc=True)
         .execute()

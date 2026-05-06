@@ -55,6 +55,8 @@ export default function Dashboard() {
   const inProgressForms = apps.filter((a) => a.status === "in_progress").length;
   const submittedForms = apps.filter((a) => a.status === "submitted").length;
   const pendingDocs = apps.reduce((n, a) => n + (Array.isArray(a.documents_pending) ? a.documents_pending.length : 0), 0);
+  const clickedNotSubmitted = apps.filter((a) => a.clicked_apply_at && !a.submitted_at);
+  const urgentForms = apps.filter((a) => a.recruitment?.apply_end_date).sort((a, b) => new Date(a.recruitment.apply_end_date) - new Date(b.recruitment.apply_end_date)).slice(0, 3);
 
   const firstName = (auth.user?.name || "there").split(" ")[0];
   const today = new Date().toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "long" });
@@ -71,6 +73,17 @@ export default function Dashboard() {
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[{ label: "Eligible posts", val: recruitments.counts?.eligible || 0, tone: "text-sage-600", icon: Target, delta: `${recruitments.counts?.conditional || 0} conditional` }, { label: "In-progress forms", val: inProgressForms, tone: "text-clay-600", icon: AlertTriangle, delta: `${pendingDocs} documents pending` }, { label: "Focus hrs · week", val: focus.total_hours_7d || 0, tone: "text-dusk-600", icon: Clock, delta: `${review.hours_planned || 0}h planned` }, { label: "Submitted forms", val: submittedForms, tone: "text-clay-600", icon: Flame, delta: `${todayMins} min today` }].map((k) => <div key={k.label} className="soft-card rounded-2xl p-5"><div className="flex items-center justify-between"><div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">{k.label}</div><k.icon className={`h-4 w-4 ${k.tone}`} strokeWidth={1.8} /></div><div className={`mt-3 font-heading text-4xl font-semibold tracking-tight ${k.tone}`}>{k.val}</div><div className="mt-1 text-xs text-muted-foreground">{k.delta}</div></div>)}
+      </div>
+      {profileCompletion && <div className="soft-card rounded-2xl p-4 text-sm text-muted-foreground">Profile gaps: eligibility {profileCompletion?.eligibility_profile?.completion_pct || 0}% · study {profileCompletion?.study_profile?.completion_pct || 0}% · application {profileCompletion?.application_profile?.completion_pct || 0}% complete.</div>}
+      <div className="soft-card rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Next actions · forms</div>
+        {apps.length === 0 ? <div className="mt-2 text-sm text-muted-foreground">No applications tracked yet. Open a recruitment and click Apply to start tracking.</div> : <ul className="mt-3 text-sm space-y-1">
+          <li>In-progress forms: {inProgressForms}</li>
+          <li>Submitted forms: {submittedForms}</li>
+          <li>Missing documents: {pendingDocs}</li>
+          <li>Clicked but not submitted: {clickedNotSubmitted.length}</li>
+          {urgentForms.map((a) => <li key={a.id}>Urgent: {(a.recruitment?.name || a.recruitment_id)} closes {new Date(a.recruitment.apply_end_date).toLocaleDateString()}</li>)}
+        </ul>}
       </div>
       {profileCompletion && <div className="soft-card rounded-2xl p-4 text-sm text-muted-foreground">Profile gaps: eligibility {profileCompletion?.eligibility_profile?.completion_pct || 0}% · study {profileCompletion?.study_profile?.completion_pct || 0}% · application {profileCompletion?.application_profile?.completion_pct || 0}% complete.</div>}
       <div className="grid lg:grid-cols-3 gap-4">
