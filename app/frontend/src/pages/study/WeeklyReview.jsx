@@ -3,14 +3,16 @@ import { AlertCircle, CheckCircle2 } from "lucide-react";
 import { api } from "../../lib/api";
 
 export default function WeeklyReview() {
-  const [d, setD] = useState(null);
+  const [d, setD] = useState({ week_of: "This week", hours_studied: 0, hours_planned: 0, adherence: 0, mocks_taken: 0, mock_trend: [], highlights: [], corrections: [] });
+  const [err, setErr] = useState("");
   useEffect(() => {
-    api.get("/api/study/weekly-review").then(setD).catch(() => {});
+    api.get("/api/study/weekly-review").then((res) => setD({ week_of: res?.week_of || "This week", hours_studied: res?.hours_studied || 0, hours_planned: res?.hours_planned || 0, adherence: res?.adherence || 0, mocks_taken: res?.mocks_taken || 0, mock_trend: Array.isArray(res?.mock_trend) ? res.mock_trend : [], highlights: Array.isArray(res?.highlights) ? res.highlights : [], corrections: Array.isArray(res?.corrections) ? res.corrections : [] })).catch((e) => { setErr("Weekly review unavailable right now."); if (process.env.NODE_ENV !== "production") console.error(e); });
   }, []);
-  if (!d) return <div>Loading…</div>;
+  
 
   return (
     <div className="space-y-6" data-testid="weekly-review-page">
+      {err && <div className="text-xs text-clay-700">{err}</div>}
       <div>
         <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Weekly review · {d.week_of}</div>
         <h1 className="font-heading text-4xl font-semibold tracking-tight mt-1">The honest panel.</h1>

@@ -247,24 +247,14 @@ async def toggle_save(rec_ref: str, user: dict = Depends(get_current_user)):
 
 
 def _resolve_rec_id(supabase: Client, ref: str) -> str:
-    """Accept a UUID or a slug `name-XXXXXXXX` (last 8 chars of the id)."""
-    # Direct UUID
+    """Accept a UUID or exact text slug from recruitments.slug (if present)."""
     if len(ref) == 36 and ref.count("-") == 4:
-        return ref
-    # Slug → suffix lookup
-    suffix = ref.rsplit("-", 1)[-1]
-    if len(suffix) >= 6:
-        rows = _safe(
-            lambda: supabase.table("recruitments")
-            .select("id")
-            .ilike("id", f"{suffix}%")
-            .limit(1)
-            .execute()
-            .data,
-            default=[],
-        ) or []
+        rows = _safe(lambda: supabase.table("recruitments").select("id").eq("id", ref).limit(1).execute().data, default=[]) or []
         if rows:
             return rows[0]["id"]
+    rows = _safe(lambda: supabase.table("recruitments").select("id").eq("slug", ref).limit(1).execute().data, default=[]) or []
+    if rows:
+        return rows[0]["id"]
     raise HTTPException(status_code=404, detail="Recruitment not found")
 
 
@@ -604,7 +594,7 @@ async def list_threads(
 
     q = supabase.table("forum_posts").select(
         "id, title, body, exam_tags, is_pinned, upvote_count, reply_count, created_at, "
-        "forum_categories ( slug, name ), profiles ( full_name )"
+        "forum_categories ( slug, name ), profiles!forum_posts_user_id_fkey ( full_name )"
     )
     if cat_id:
         q = q.eq("category_id", cat_id)
@@ -626,7 +616,7 @@ async def thread_detail(post_id: str):
         lambda: supabase.table("forum_posts")
         .select(
             "id, title, body, exam_tags, is_pinned, upvote_count, reply_count, created_at, "
-            "forum_categories ( slug, name ), profiles ( full_name )"
+            "forum_categories ( slug, name ), profiles!forum_posts_user_id_fkey ( full_name )"
         )
         .eq("id", post_id)
         .limit(1)
@@ -640,7 +630,7 @@ async def thread_detail(post_id: str):
 
     posts = _safe(
         lambda: supabase.table("forum_comments")
-        .select("id, body, upvote_count, is_accepted, created_at, profiles ( full_name )")
+        .select("id, body, upvote_count, is_accepted, created_at, profiles!forum_comments_user_id_fkey ( full_name )")
         .eq("post_id", post_id)
         .order("created_at")
         .execute()
@@ -838,7 +828,7 @@ async def resource_detail(rid: str):
     ]
     review_rows = _safe(
         lambda: supabase.table("reviews")
-        .select("rating, body, created_at, profiles ( full_name )")
+        .select("rating, body, created_at, profiles!reviews_user_id_fkey ( full_name )")
         .eq("course_id", rid)
         .order("created_at", desc=True)
         .limit(20)
@@ -981,9 +971,10 @@ def _ensure_active_plan(supabase: Client, user_id: str) -> str | None:
 @router_study.get("/plan")
 async def get_plan(user: dict = Depends(get_current_user)):
     supabase = get_supabase_admin()
+    today = datetime.now(timezone.utc).date().isoformat()
     plan_id = _ensure_active_plan(supabase, user["id"])
     if not plan_id:
-        return {"days": [], "plan_id": None}
+        return {"date": today, "plan": None, "tasks": []}
     tasks = _safe(
         lambda: supabase.table("study_tasks")
         .select("id, day_label, subject, topic, microtopic, task_type, title, duration_mins, status, completed_at")
@@ -993,18 +984,8 @@ async def get_plan(user: dict = Depends(get_current_user)):
         .data,
         default=[],
     ) or []
-    by_day: dict[str, list[dict[str, Any]]] = {}
-    for t in tasks:
-        by_day.setdefault(t.get("day_label") or "Mon", []).append(
-            {
-                "id": t["id"],
-                "title": t.get("title") or t.get("topic") or t.get("subject"),
-                "duration": t.get("duration_mins"),
-                "done": t.get("status") == "completed",
-            }
-        )
-    days = [{"day": d, "tasks": ts} for d, ts in by_day.items()]
-    return {"plan_id": plan_id, "days": days}
+    out_tasks = [{"id": t.get("id"), "title": t.get("title") or t.get("topic") or t.get("subject"), "time": t.get("day_label") or "Today", "duration": t.get("duration_mins"), "done": t.get("status") == "completed"} for t in tasks]
+    return {"date": today, "plan": {"id": plan_id, "theme": "Adaptive weekly plan", "target": "Complete planned blocks", "day": None}, "tasks": out_tasks}
 
 
 class PlanToggle(BaseModel):
@@ -1106,11 +1087,20 @@ async def focus_summary(user: dict = Depends(get_current_user)):
     completed = [s for s in sessions if s.get("ended_at")]
     active = next((s for s in sessions if not s.get("ended_at")), None)
     total_minutes = sum((s.get("duration_mins") or 0) for s in completed)
+    from datetime import timedelta
+    today = datetime.now(timezone.utc).date()
+    week = []
+    for i in range(6,-1,-1):
+        d = today - timedelta(days=i)
+        mins = sum((s.get("duration_mins") or 0) for s in completed if str(s.get("started_at", "")).startswith(d.isoformat()))
+        week.append({"date": d.isoformat(), "minutes": mins})
     return {
         "active": active,
         "completed": completed[:10],
         "total_minutes": total_minutes,
         "streak_days": min(7, len({s.get("started_at", "")[:10] for s in completed})),
+        "total_hours_7d": round(sum(x["minutes"] for x in week)/60, 2),
+        "week": week,
     }
 
 
@@ -1238,15 +1228,17 @@ async def weekly_review(user: dict = Depends(get_current_user)):
         ) or []
         closed = len(closed_rows)
     hours = round(sum((s.get("duration_mins") or 0) for s in sessions) / 60.0, 1)
+    hours_planned = 35
+    adherence = (hours / hours_planned) if hours_planned else 0
     return {
-        "week_of": week_start,
-        "kpis": {
-            "hours_studied": hours,
-            "mocks_taken": len(mocks),
-            "focus_streak_days": min(7, len({s.get("started_at", "")[:10] for s in sessions})),
-            "topics_closed": closed,
-        },
-        "insights": [],  # Phase-2 AI hook lives here
+        "week_of": week_start or "This week",
+        "hours_studied": hours,
+        "hours_planned": hours_planned,
+        "adherence": round(adherence, 3),
+        "mocks_taken": len(mocks),
+        "mock_trend": [],
+        "highlights": [],
+        "corrections": [],
     }
 
 
