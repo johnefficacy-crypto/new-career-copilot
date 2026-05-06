@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Plus, ShieldCheck } from "lucide-react";
+import { Plus } from "lucide-react";
 import { api } from "../../lib/api";
 import { useAuth } from "../../lib/authContext";
 
