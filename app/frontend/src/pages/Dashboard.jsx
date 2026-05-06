@@ -85,6 +85,7 @@ export default function Dashboard() {
           {urgentForms.map((a) => <li key={a.id}>Urgent: {(a.recruitment?.name || a.recruitment_id)} closes {new Date(a.recruitment.apply_end_date).toLocaleDateString()}</li>)}
         </ul>}
       </div>
+      {profileCompletion && <div className="soft-card rounded-2xl p-4 text-sm text-muted-foreground">Profile gaps: eligibility {profileCompletion?.eligibility_profile?.completion_pct || 0}% · study {profileCompletion?.study_profile?.completion_pct || 0}% · application {profileCompletion?.application_profile?.completion_pct || 0}% complete.</div>}
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 soft-card rounded-2xl p-5">
           <div className="flex items-center justify-between"><div><div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Recruitments for you</div><div className="font-heading text-xl font-semibold mt-0.5">{recruitments.counts?.all || 0} active</div></div><Link to="/app/exams" className="text-xs font-semibold link-under" data-testid="see-all-exams">See all →</Link></div>
