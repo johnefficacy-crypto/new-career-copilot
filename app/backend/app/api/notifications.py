@@ -22,7 +22,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, require_permission
 from app.db.supabase_client import get_supabase_admin
 from app.notifications.dispatcher import (
     kill_switch_enabled,
@@ -178,7 +178,7 @@ class KillSwitchBody(BaseModel):
 
 
 @router.post("/admin/notifications/kill-switch")
-def toggle_kill(body: KillSwitchBody, admin: dict = Depends(_require_admin)) -> dict[str, Any]:
+def toggle_kill(body: KillSwitchBody, admin: dict = Depends(require_permission("notifications.manage"))) -> dict[str, Any]:
     sb = get_supabase_admin()
     set_kill_switch(sb, paused=body.paused, actor_id=admin["id"])
     try:
@@ -203,7 +203,7 @@ def admin_jobs(_admin: dict = Depends(_require_admin)) -> dict[str, Any]:
 
 
 @router.post("/admin/jobs/run/{job_id}")
-def admin_run_job(job_id: str, admin: dict = Depends(_require_admin)) -> dict[str, Any]:
+def admin_run_job(job_id: str, admin: dict = Depends(require_permission("notifications.manage"))) -> dict[str, Any]:
     if job_id not in JOBS:
         raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}")
     result = run_job_now(job_id)
