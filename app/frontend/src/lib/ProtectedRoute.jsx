@@ -2,7 +2,7 @@ import React from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./authContext";
 
-export function ProtectedRoute({ children, role }) {
+export function ProtectedRoute({ children, role, permission }) {
   const auth = useAuth();
   const location = useLocation();
 
@@ -26,6 +26,12 @@ export function ProtectedRoute({ children, role }) {
     const min = Math.min(...allowed.map((r) => hierarchy[r] ?? 99));
     const currentLevel = hierarchy[auth.user?.role] ?? 0;
     if (currentLevel < min && !allowed.includes(auth.user?.role)) {
+      return <Navigate to="/app" replace />;
+    }
+  }
+  if (permission) {
+    const perms = auth.user?.permissions || [];
+    if (!perms.includes(permission) && auth.user?.role !== "super_admin") {
       return <Navigate to="/app" replace />;
     }
   }

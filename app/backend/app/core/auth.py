@@ -35,6 +35,9 @@ def _serialize_user(user: Any, claims: dict | None = None) -> dict:
         or claims.get("role")
         or "user"
     )
+    permissions = app_metadata.get("permissions") or []
+    if isinstance(permissions, str):
+        permissions = [permissions]
     return {
         "id": getattr(user, "id", None) or claims.get("sub"),
         "email": getattr(user, "email", None) or claims.get("email"),
@@ -44,9 +47,22 @@ def _serialize_user(user: Any, claims: dict | None = None) -> dict:
         "onboarded": bool(metadata.get("onboarded", False)),
         "plan": metadata.get("plan", "free"),
         "goal_exams": metadata.get("goal_exams", []),
+        "permissions": permissions,
         "created_at": getattr(user, "created_at", None),
         "claims": claims,
     }
+
+
+def require_permission(permission: str):
+    def _dep(user: dict = Depends(get_current_user)) -> dict:
+        perms = set(user.get("permissions") or [])
+        if permission not in perms and user.get("role") not in {"super_admin"}:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Missing permission: {permission}",
+            )
+        return user
+    return _dep
 
 
 def get_current_user(

@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { /* useEffect, */ useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChevronRight, CheckCircle2 } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/authContext";
+import { CATEGORY_OPTIONS, EXAM_OPTIONS } from "../lib/profileFields";
 
 const STEPS = [
   { id: "basics", title: "Who are you?", subtitle: "So we can match recruitments accurately." },
@@ -11,10 +12,6 @@ const STEPS = [
   { id: "rhythm", title: "Your rhythm", subtitle: "We'll build the plan around your weeks." },
 ];
 
-const EXAMS = [
-  "ssc-cgl-2026", "ibps-po-xv", "rbi-grade-b-2026", "upsc-cse-2026",
-  "sbi-clerk-2026", "railway-ntpc-2026",
-];
 
 export default function Onboarding() {
   const auth = useAuth();
@@ -85,7 +82,7 @@ export default function Onboarding() {
             <Field label="Date of birth"><input className="input" placeholder="YYYY-MM-DD" value={form.date_of_birth} onChange={(e) => set("date_of_birth", e.target.value)} /></Field>
             <Field label="Category">
               <select className="input" value={form.category} onChange={(e) => set("category", e.target.value)}>
-                {["general", "obc", "sc", "st", "ews"].map((c) => <option key={c}>{c.toUpperCase()}</option>)}
+                {CATEGORY_OPTIONS.map((c) => <option key={c}>{c.toUpperCase()}</option>)}
               </select>
             </Field>
             <Field label="State"><input className="input" value={form.state} onChange={(e) => set("state", e.target.value)} /></Field>
@@ -100,7 +97,7 @@ export default function Onboarding() {
         )}
         {step === 2 && (
           <div className="grid md:grid-cols-2 gap-3">
-            {EXAMS.map((e) => {
+            {EXAM_OPTIONS.map((e) => {
               const active = form.goal_exams.includes(e);
               return (
                 <button

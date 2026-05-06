@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Star, MessageCircle } from "lucide-react";
+import { Star /* MessageCircle */ } from "lucide-react";
 import { api } from "../lib/api";
 
 export default function Mentors() {
