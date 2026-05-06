@@ -10,13 +10,13 @@ export default function Community() {
   const [sort, setSort] = useState("hot");
 
   useEffect(() => {
-    api.get("/api/community/categories").then((d) => setCategories(d.items)).catch(() => {});
+    api.get("/api/community/categories").then((d) => setCategories(Array.isArray(d?.items) ? d.items : [])).catch(() => {});
   }, []);
 
   useEffect(() => {
     const qs = new URLSearchParams({ sort });
     if (category) qs.set("category", category);
-    api.get(`/api/community/threads?${qs.toString()}`).then((d) => setThreads(d.items)).catch(() => {});
+    api.get(`/api/community/threads?${qs.toString()}`).then((d) => setThreads(Array.isArray(d?.items) ? d.items : [])).catch(() => {});
   }, [sort, category]);
 
   return (

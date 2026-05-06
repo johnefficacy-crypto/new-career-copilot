@@ -12,7 +12,7 @@ export default function Mocks() {
 
   async function load() {
     const d = await api.get("/api/study/mocks");
-    setItems(d.items);
+    setItems(Array.isArray(d?.items) ? d.items : []);
   }
   useEffect(() => { load(); }, []);
 

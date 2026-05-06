@@ -16,7 +16,9 @@ import uuid
 from pathlib import Path
 
 import pytest
-import requests
+
+requests = pytest.importorskip("requests")
+pytestmark = pytest.mark.integration
 
 
 def _load_env(path: str) -> dict:
