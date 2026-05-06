@@ -17,6 +17,17 @@ function loadRazorpay() {
   });
 }
 
+function paymentMessageFromError(err, fallback) {
+  const detail = String(err?.message || err?.detail || "").toLowerCase();
+  if (err?.status === 503 && detail.includes("not configured")) return "Payments are not configured in this environment.";
+  if (detail.includes("sdk not installed")) return "Payments are temporarily unavailable right now.";
+  if (detail.includes("credentials")) return "Payments are temporarily unavailable right now.";
+  if (detail.includes("network") || detail.includes("failed to fetch")) return "We couldn't reach payments right now. Please try again.";
+  if (detail.includes("signature")) return "Payment confirmation failed. If money was debited, support will help.";
+  if (detail.includes("order")) return "Could not start payment. Please try again.";
+  return fallback || "Something went wrong with payment. Please try again.";
+}
+
 function rupees(p) {
   return ((p || 0) / 100).toLocaleString("en-IN");
 }
@@ -86,7 +97,7 @@ export default function Pricing() {
     setMsg(null);
     try {
       const ok = await loadRazorpay();
-      if (!ok) throw new Error("Failed to load Razorpay checkout. Check your network.");
+      if (!ok) throw new Error("Razorpay SDK missing");
 
       const { order, key_id } = await api.post("/api/payments/order", {
         plan_id: plan.id,
@@ -114,7 +125,7 @@ export default function Pricing() {
             setMsg(`Subscription active · ${v.plan_id}`);
             await load();
           } catch (e) {
-            setMsg(`Verify failed: ${e.message}`);
+            setMsg(paymentMessageFromError(e, "Payment confirmation failed."));
           }
         },
         modal: {
@@ -124,17 +135,13 @@ export default function Pricing() {
       const rzp = new window.Razorpay(options);
       rzp.on("payment.failed", (resp) => {
         setMsg(
-          `Payment failed: ${resp?.error?.description || resp?.error?.reason || "unknown"}`
+          "Payment was not completed. Please try again."
         );
         setBusyId(null);
       });
       rzp.open();
     } catch (e) {
-      if (e?.status === 503) {
-        setMsg("Payments are not configured in this environment.");
-      } else {
-        setMsg(`Checkout failed: ${e.message}`);
-      }
+      setMsg(paymentMessageFromError(e, "Could not start checkout."));
       setBusyId(null);
     }
   }
