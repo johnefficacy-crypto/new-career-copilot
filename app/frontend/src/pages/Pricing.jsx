@@ -130,7 +130,11 @@ export default function Pricing() {
       });
       rzp.open();
     } catch (e) {
-      setMsg(`Checkout failed: ${e.message}`);
+      if (e?.status === 503) {
+        setMsg("Payments are not configured in this environment.");
+      } else {
+        setMsg(`Checkout failed: ${e.message}`);
+      }
       setBusyId(null);
     }
   }

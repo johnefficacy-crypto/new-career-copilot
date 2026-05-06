@@ -2,8 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Loader2, Save /* User */ } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/authContext";
-
-const CATEGORIES = ["general", "obc", "sc", "st", "ews"];
+import { CATEGORY_OPTIONS, GENDER_OPTIONS } from "../lib/profileFields";
 
 export default function Profile() {
   const auth = useAuth();
@@ -80,13 +79,8 @@ export default function Profile() {
             <Input label="Email" value={form.email} disabled />
             <Input label="Phone" value={form.phone} onChange={(v) => set("phone", v)} />
             <Input label="Date of birth" value={form.date_of_birth} onChange={(v) => set("date_of_birth", v)} placeholder="YYYY-MM-DD" />
-            <Select label="Category" value={form.category} onChange={(v) => set("category", v)} options={CATEGORIES.map((c) => ({ value: c, label: c.toUpperCase() }))} />
-            <Select label="Gender" value={form.gender} onChange={(v) => set("gender", v)} options={[
-              { value: "", label: "Prefer not to say" },
-              { value: "female", label: "Female" },
-              { value: "male", label: "Male" },
-              { value: "other", label: "Other" },
-            ]} />
+            <Select label="Category" value={form.category} onChange={(v) => set("category", v)} options={CATEGORY_OPTIONS.map((c) => ({ value: c, label: c.toUpperCase() }))} />
+            <Select label="Gender" value={form.gender} onChange={(v) => set("gender", v)} options={GENDER_OPTIONS} />
             <Input label="State / domicile" value={form.state} onChange={(v) => set("state", v)} />
           </div>
 
