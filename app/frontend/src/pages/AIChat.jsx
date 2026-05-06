@@ -7,11 +7,12 @@ export default function AIChat() {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const normalize = (m) => ({ message: typeof m?.message === "string" ? m.message : (typeof m?.content === "string" ? m.content : ""), reply: typeof m?.reply === "string" ? m.reply : (m?.role === "assistant" ? (m?.content || "") : (typeof m?.assistant === "string" ? m.assistant : null)) });
   const endRef = useRef(null);
 
   useEffect(() => {
     api.get("/api/ai/guidance").then(setGuidance).catch(() => {});
-    api.get("/api/ai/history").then((d) => setMessages(d.items || [])).catch(() => {});
+    api.get("/api/ai/history").then((d) => setMessages((Array.isArray(d?.items) ? d.items : []).map(normalize).filter((m) => m.message || m.reply))).catch((e) => { if (process.env.NODE_ENV !== "production") console.error(e); });
   }, []);
 
   useEffect(() => {
@@ -81,12 +82,12 @@ export default function AIChat() {
           {messages.map((m, i) => (
             <div key={i}>
               <div className="flex justify-end">
-                <div className="max-w-lg bg-clay-500 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm">{m.message}</div>
+                <div className="max-w-lg bg-clay-500 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm">{String(m.message || "")}</div>
               </div>
               {m.reply != null ? (
                 <div className="flex justify-start mt-2">
                   <div className="max-w-2xl bg-clay-50 border border-clay-100 text-foreground rounded-2xl rounded-tl-sm px-4 py-3 text-sm whitespace-pre-wrap">
-                    {m.reply}
+                    {String(m.reply || "")}
                   </div>
                 </div>
               ) : (

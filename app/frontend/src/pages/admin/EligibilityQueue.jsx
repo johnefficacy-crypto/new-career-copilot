@@ -21,7 +21,7 @@ export default function AdminEligibilityQueue() {
       if (action === "promote") {
         const r = await api.post(`/api/admin/scrape/items/${item.id}/promote`, {});
         setMsg(
-          `Promoted "${item.recruitment}" → recruitment ${r.recruitment_id.slice(
+          `Promoted "${item.recruitment}" → recruitment ${(r.recruitment_id || "unknown").slice(
             0,
             8
           )}… · ${r.alerts_sent} alerts sent`
