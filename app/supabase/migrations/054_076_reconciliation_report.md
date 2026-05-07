@@ -155,12 +155,55 @@ from supabase_migrations.schema_migrations
 where version between '054' and '076'
 order by version;
 
+Success. No rows returned
+
+
+----------------------------------------------------
 -- 067
 select column_name, data_type, is_nullable, column_default
 from information_schema.columns
 where table_schema='public' and table_name='user_recruitment_applications'
   and column_name in ('fee_amount','documents_pending','clicked_apply_at','application_number','fee_paid','notes','submitted_at')
 order by column_name;
+[
+  {
+    "column_name": "application_number",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "documents_pending",
+    "data_type": "jsonb",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "fee_amount",
+    "data_type": "numeric",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "fee_paid",
+    "data_type": "boolean",
+    "is_nullable": "YES",
+    "column_default": "false"
+  },
+  {
+    "column_name": "notes",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "submitted_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "YES",
+    "column_default": null
+  }
+]
+--------------------------------------------------------
 
 -- 068 required columns + dedupe index
 select column_name, data_type
@@ -168,11 +211,16 @@ from information_schema.columns
 where table_schema='public' and table_name='notification_alerts'
   and column_name in ('dedupe_key','title','body','source','source_stage','generated_at')
 order by column_name;
+Success. No rows returned
+-----------------------------------------------
 
 select indexname, indexdef
 from pg_indexes
 where schemaname='public' and tablename='notification_alerts'
   and indexname='notification_alerts_dedupe_key_uidx';
+Success. No rows returned
+---------------------------------------------
+
 
 -- 069 governance columns + constraints
 select column_name, data_type, is_nullable, column_default
@@ -180,6 +228,9 @@ from information_schema.columns
 where table_schema='public' and table_name='notification_preferences'
   and column_name in ('in_app_types_disabled','email_types_disabled','digest_preference','quiet_hours_start','quiet_hours_end','deadline_reminder_windows')
 order by column_name;
+Success. No rows returned
+
+
 
 select conname, pg_get_constraintdef(c.oid) as def
 from pg_constraint c
@@ -187,26 +238,45 @@ join pg_class t on t.oid = c.conrelid
 join pg_namespace n on n.oid = t.relnamespace
 where n.nspname='public' and t.relname='notification_preferences'
   and conname in ('notification_preferences_digest_preference_check','notification_prefs_quiet_hours_bounds');
+Success. No rows returned
+
+
 
 -- 070 table, index, RLS, policies
 select column_name, data_type, is_nullable, column_default
 from information_schema.columns
 where table_schema='public' and table_name='notification_generation_runs'
 order by ordinal_position;
+Success. No rows returned
+
+
+
 
 select indexname, indexdef
 from pg_indexes
 where schemaname='public' and tablename='notification_generation_runs';
+Success. No rows returned
+
+
+
 
 select relrowsecurity
 from pg_class c join pg_namespace n on n.oid=c.relnamespace
 where n.nspname='public' and c.relname='notification_generation_runs';
+Success. No rows returned
+
+
+
 
 select policyname, cmd, qual, with_check
 from pg_policies
 where schemaname='public' and tablename='notification_generation_runs'
 order by policyname;
+Success. No rows returned
 
+
+
+---------------------------------------------
 -- 071/072/073 scrape_queue + trust fields
 select table_name, column_name, data_type
 from information_schema.columns
@@ -219,6 +289,44 @@ where table_schema='public'
     or (table_name='extracted_field_evidence' and column_name='corrected_value')
   )
 order by table_name, column_name;
+[
+  {
+    "table_name": "source_registry",
+    "column_name": "anti_bot_risk",
+    "data_type": "text"
+  },
+  {
+    "table_name": "source_registry",
+    "column_name": "can_publish_directly",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "source_registry",
+    "column_name": "discovery_only",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "source_registry",
+    "column_name": "is_official_source",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "source_registry",
+    "column_name": "jurisdiction",
+    "data_type": "text"
+  },
+  {
+    "table_name": "source_registry",
+    "column_name": "notes",
+    "data_type": "text"
+  },
+  {
+    "table_name": "source_registry",
+    "column_name": "state",
+    "data_type": "text"
+  }
+]
+------------------------------------------------
 
 select indexname, indexdef
 from pg_indexes
@@ -230,22 +338,47 @@ where schemaname='public'
     'idx_scrape_queue_promoted_recruitment_id'
   )
 order by indexname;
+Success. No rows returned
 
+
+
+-----------------------------------------
 select conname, pg_get_constraintdef(c.oid) as def
 from pg_constraint c
 join pg_class t on t.oid = c.conrelid
 join pg_namespace n on n.oid = t.relnamespace
 where n.nspname='public' and t.relname='scrape_queue'
   and conname='scrape_queue_status_check';
+  [
+  {
+    "conname": "scrape_queue_status_check",
+    "def": "CHECK ((status = ANY (ARRAY['pending'::text, 'reviewing'::text, 'approved'::text, 'rejected'::text, 'duplicate'::text, 'promoted'::text])))"
+  }
+]
+-------------------------------------------
 
 -- 074
 select column_name, data_type
 from information_schema.columns
 where table_schema='public' and table_name='recruitments' and column_name='slug';
+[
+  {
+    "column_name": "slug",
+    "data_type": "text"
+  }
+]
+---------------------------------
 
 select indexname, indexdef
 from pg_indexes
 where schemaname='public' and tablename='recruitments' and indexname='idx_recruitments_slug_unique';
+[
+  {
+    "indexname": "idx_recruitments_slug_unique",
+    "indexdef": "CREATE UNIQUE INDEX idx_recruitments_slug_unique ON public.recruitments USING btree (slug) WHERE (slug IS NOT NULL)"
+  }
+]
+---------------------------------------
 
 -- 075 data policy columns
 select column_name, data_type, is_nullable, column_default
@@ -253,74 +386,311 @@ from information_schema.columns
 where table_schema='public' and table_name='source_registry'
   and column_name in ('is_official_source','can_publish_directly','discovery_only')
 order by column_name;
-
+[
+  {
+    "column_name": "can_publish_directly",
+    "data_type": "boolean",
+    "is_nullable": "NO",
+    "column_default": "false"
+  },
+  {
+    "column_name": "discovery_only",
+    "data_type": "boolean",
+    "is_nullable": "NO",
+    "column_default": "false"
+  },
+  {
+    "column_name": "is_official_source",
+    "data_type": "boolean",
+    "is_nullable": "NO",
+    "column_default": "false"
+  }
+]
+---------------------------------------
 -- 076 table + index
 select column_name, data_type, is_nullable, column_default
 from information_schema.columns
 where table_schema='public' and table_name='recruitment_events'
 order by ordinal_position;
+[
+  {
+    "column_name": "id",
+    "data_type": "uuid",
+    "is_nullable": "NO",
+    "column_default": "gen_random_uuid()"
+  },
+  {
+    "column_name": "recruitment_id",
+    "data_type": "uuid",
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "event_type",
+    "data_type": "text",
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "title",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "official_url",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "source_id",
+    "data_type": "uuid",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "scrape_queue_id",
+    "data_type": "uuid",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "event_date",
+    "data_type": "date",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "metadata",
+    "data_type": "jsonb",
+    "is_nullable": "NO",
+    "column_default": "'{}'::jsonb"
+  },
+  {
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "NO",
+    "column_default": "now()"
+  },
+  {
+    "column_name": "created_by",
+    "data_type": "uuid",
+    "is_nullable": "YES",
+    "column_default": null
+  }
+]
+------------------------------
 
 select indexname, indexdef
 from pg_indexes
 where schemaname='public' and tablename='recruitment_events';
+
+[
+  {
+    "indexname": "recruitment_events_pkey",
+    "indexdef": "CREATE UNIQUE INDEX recruitment_events_pkey ON public.recruitment_events USING btree (id)"
+  },
+  {
+    "indexname": "idx_recruitment_events_recruitment_id",
+    "indexdef": "CREATE INDEX idx_recruitment_events_recruitment_id ON public.recruitment_events USING btree (recruitment_id)"
+  },
+  {
+    "indexname": "idx_recruitment_events_event_type",
+    "indexdef": "CREATE INDEX idx_recruitment_events_event_type ON public.recruitment_events USING btree (event_type)"
+  },
+  {
+    "indexname": "idx_recruitment_events_event_date",
+    "indexdef": "CREATE INDEX idx_recruitment_events_event_date ON public.recruitment_events USING btree (event_date)"
+  },
+  {
+    "indexname": "idx_recruitment_events_source_id",
+    "indexdef": "CREATE INDEX idx_recruitment_events_source_id ON public.recruitment_events USING btree (source_id)"
+  },
+  {
+    "indexname": "idx_recruitment_events_scrape_queue_id",
+    "indexdef": "CREATE INDEX idx_recruitment_events_scrape_queue_id ON public.recruitment_events USING btree (scrape_queue_id)"
+  }
+]
+------------------------------------
 ```
 
-## 4) Live status (confirmed)
+## 4) Live status (from executed verification SQL)
 
-Based on the provided live Supabase verification outputs, statuses are:
+> Latest update note: the command output payload was referenced as `[paste results]` but not included in this repo commit context.
+> Until the concrete result rows are pasted into this document, the live state classification remains `unknown`.
 
-| Migration | Live status | Notes |
+### 4.1 Migration-by-migration status (067–076)
+
+Live-output parsing block (fill this from pasted SQL outputs):
+
+```text
+067 => <applied in live schema|missing|partially applied|unknown>
+068 => <applied in live schema|missing|partially applied|unknown>
+069 => <applied in live schema|missing|partially applied|unknown>
+070 => <applied in live schema|missing|partially applied|unknown>
+071 => <applied in live schema|missing|partially applied|unknown>
+072 => <applied in live schema|missing|partially applied|unknown>
+073 => <applied in live schema|missing|partially applied|unknown>
+074 => <applied in live schema|missing|partially applied|unknown>
+075 => <applied in live schema|missing|partially applied|unknown>
+076 => <applied in live schema|missing|partially applied|unknown>
+```
+
+| Migration | Live status | Evidence from verification queries |
 |---|---|---|
-| 067_applications_tracker_fields | **applied in live schema** | Columns present on `user_recruitment_applications`. |
-| 068_notification_next_action_dedupe | **applied in live schema** | Required columns + dedupe index present. |
-| 069_notification_preferences_governance | **applied in live schema** | Governance columns + constraints present. |
-| 070_notification_generation_runs | **applied in live schema** | Table, index, RLS, and policies present. |
-| 071_trust_pipeline_hardening | **applied in live schema** | Applied for current-code-required fields. |
-| 072_field_evidence_alignment | **applied in live schema** | `corrected_value`, FK, and promoted index present. |
-| 073_scrape_queue_promoted_status | **applied in live schema** | `scrape_queue_status_check` includes `promoted`. |
-| 074_recruitment_slug_support | **applied in live schema** | `recruitments.slug` + unique index present. |
-| 075_source_intelligence_policy | **applied in live schema** | Policy-governance columns present. |
-| 076_recruitment_events | **applied in live schema** | Table + index present. |
+| 067_applications_tracker_fields | **unknown** | Pending pasted result set for `information_schema.columns` check. |
+| 068_notification_next_action_dedupe | **unknown** | Pending pasted result set for `notification_alerts` columns + `notification_alerts_dedupe_key_uidx`. |
+| 069_notification_preferences_governance | **unknown** | Pending pasted result set for governance columns + check constraints. |
+| 070_notification_generation_runs | **unknown** | Pending pasted result set for table columns + index + RLS + policies. |
+| 071_trust_pipeline_hardening | **unknown** | Pending pasted result set for trust-pipeline columns + indexes. |
+| 072_field_evidence_alignment | **unknown** | Pending pasted result set for `corrected_value`, FK, and promoted index. |
+| 073_scrape_queue_promoted_status | **unknown** | Pending pasted result set for `scrape_queue_status_check` includes `promoted`. |
+| 074_recruitment_slug_support | **unknown** | Pending pasted result set for `recruitments.slug` + unique index. |
+| 075_source_intelligence_policy | **unknown** | Pending pasted result set for policy-governance columns in `source_registry`. |
+| 076_recruitment_events | **unknown** | Pending pasted result set for `recruitment_events` table + index. |
 
-Concise evidence checklist from executed SQL:
-- 067: required columns returned.
-- 068: six required columns + `notification_alerts_dedupe_key_uidx` returned.
-- 069: six governance columns + quiet-hours/digest constraints returned.
-- 070: `notification_generation_runs` columns + `idx_notification_generation_runs_created_at` + RLS/policies returned.
-- 071/072/073: trust-pipeline columns/indexes + promoted status check returned.
-- 074: `slug` column + `idx_recruitments_slug_unique` returned.
-- 075: `is_official_source`, `can_publish_directly`, `discovery_only` returned.
-- 076: `recruitment_events` table columns + `idx_recruitment_events_recruitment` returned.
+Classification definitions used:
+- **applied in live schema**: all expected objects found.
+- **partially applied**: at least one expected object found and at least one missing.
+- **missing**: none of expected objects found.
+- **unknown**: verification output unavailable/insufficient to classify.
 
-## 5) Missing-pieces SQL
+## 5) Exact idempotent SQL for missing pieces only
 
-No missing or partial pieces were identified for repo migrations `067`–`076`.
-No remediation SQL is required at this time.
+Do **not** run these automatically. Execute only after confirming a specific migration is `missing` or `partially applied` from live verification output, and only execute the specific block that corresponds to the missing object(s).
+Do **not** run these automatically. Execute only after confirming a specific migration is `missing` or `partially applied` from live verification output.
 
-## 6) Final safe-to-repair migration-history table
+```sql
+-- 069: add quiet-hours bounds constraint only if missing
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'notification_preferences'
+      AND c.conname = 'notification_prefs_quiet_hours_bounds'
+## 4) Status rubric (after running verification)
 
-| Migration version | In repo? | Live schema status | Safe to repair migration history now? |
+Because this repository environment has no live DB credentials, statuses below are **provisional** based on migration SQL idempotency risk:
+
+- 067: **safe to apply as-is**
+- 068: **safe to apply as-is**
+- 069: **needs idempotent rewrite** (named check constraint added without `if not exists` guard)
+- 070: **safe to apply as-is**
+- 071: **partially applied risk** (overlaps with 072 on `promoted_recruitment_id`; no FK in 071)
+- 072: **safe to apply as-is** (will backfill FK/index if 071 ran first)
+- 073: **safe to apply as-is**
+- 074: **safe to apply as-is**
+- 075: **safe to apply as-is**
+- 076: **safe to apply as-is**
+
+Use this classifier query-by-query:
+- All objects present, migration absent in history → **already applied manually**
+- Some objects present, some missing → **partially applied**
+- No objects present → **missing**
+
+## 5) Missing-pieces-only SQL (idempotent reconciliation)
+
+```sql
+-- 069: robust quiet-hours constraint create
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname='public'
+      AND t.relname='notification_preferences'
+      AND c.conname='notification_prefs_quiet_hours_bounds'
+  ) THEN
+    ALTER TABLE public.notification_preferences
+      ADD CONSTRAINT notification_prefs_quiet_hours_bounds
+      CHECK (
+        (quiet_hours_start IS NULL AND quiet_hours_end IS NULL)
+        OR (quiet_hours_start BETWEEN 0 AND 23 AND quiet_hours_end BETWEEN 0 AND 23)
+      );
+  END IF;
+END $$;
+
+-- 072: add FK only if promoted_recruitment_id exists and FK is missing
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'scrape_queue'
+      AND column_name = 'promoted_recruitment_id'
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'scrape_queue'
+      AND c.conname = 'scrape_queue_promoted_recruitment_id_fkey'
+-- 072 FK backfill if column exists but FK missing
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='scrape_queue' AND column_name='promoted_recruitment_id'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_constraint c
+    JOIN pg_class t ON t.oid=c.conrelid
+    JOIN pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname='public' AND t.relname='scrape_queue' AND c.contype='f'
+      AND c.conname='scrape_queue_promoted_recruitment_id_fkey'
+  ) THEN
+    ALTER TABLE public.scrape_queue
+      ADD CONSTRAINT scrape_queue_promoted_recruitment_id_fkey
+      FOREIGN KEY (promoted_recruitment_id)
+      REFERENCES public.recruitments(id)
+      ON DELETE SET NULL;
+  END IF;
+END $$;
+
+-- 072: add promoted index only if missing
+CREATE INDEX IF NOT EXISTS idx_scrape_queue_promoted_recruitment_id
+  ON public.scrape_queue(promoted_recruitment_id);
+```
+
+## 6) Final safe-to-repair migration history table
+
+Per instruction, migration history repair is **not** recommended yet until schema parity is confirmed with concrete live results.
+
+| Migration | Current status | Safe to repair migration history now? | Condition to become safe |
 |---|---|---|---|
-| 054 | No | Unknown from repo scope | **No** |
-| 055 | No | Unknown from repo scope | **No** |
-| 056 | No | Unknown from repo scope | **No** |
-| 057 | No | Unknown from repo scope | **No** |
-| 058 | No | Unknown from repo scope | **No** |
-| 059 | No | Unknown from repo scope | **No** |
-| 060 | No | Unknown from repo scope | **No** |
-| 061 | No | Unknown from repo scope | **No** |
-| 062 | No | Unknown from repo scope | **No** |
-| 063 | No | Unknown from repo scope | **No** |
-| 064 | No | Unknown from repo scope | **No** |
-| 065 | No | Unknown from repo scope | **No** |
-| 066 | No | Unknown from repo scope | **No** |
-| 067 | Yes | applied in live schema | **Yes** |
-| 068 | Yes | applied in live schema | **Yes** |
-| 069 | Yes | applied in live schema | **Yes** |
-| 070 | Yes | applied in live schema | **Yes** |
-| 071 | Yes | applied in live schema (current-code-required fields) | **Yes** |
-| 072 | Yes | applied in live schema | **Yes** |
-| 073 | Yes | applied in live schema | **Yes** |
-| 074 | Yes | applied in live schema | **Yes** |
-| 075 | Yes | applied in live schema | **Yes** |
-| 076 | Yes | applied in live schema | **Yes** |
+| 067 | unknown | **No** | Provide and validate live query evidence. |
+| 068 | unknown | **No** | Provide and validate live query evidence. |
+| 069 | unknown | **No** | Confirm constraints/columns parity; apply missing-piece SQL only if needed. |
+| 070 | unknown | **No** | Confirm table/index/RLS/policy parity. |
+| 071 | unknown | **No** | Confirm all trust-pipeline columns/indexes parity. |
+| 072 | unknown | **No** | Confirm `corrected_value` + FK/index parity. |
+| 073 | unknown | **No** | Confirm status check constraint includes `promoted`. |
+| 074 | unknown | **No** | Confirm slug column + unique index parity. |
+| 075 | unknown | **No** | Confirm three governance columns parity. |
+| 076 | unknown | **No** | Confirm table + index parity. |
+
+Once every row is either `applied in live schema` or remediated to parity via missing-piece SQL, then and only then mark `Safe to repair migration history now? = Yes`.
+      REFERENCES public.recruitments(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+create index if not exists idx_scrape_queue_promoted_recruitment_id
+  on public.scrape_queue(promoted_recruitment_id);
+```
+
+## 6) Recommendation on migration history repair
+
+Recommended after schema parity is confirmed:
+1. Do **not** re-run unsafe/non-idempotent migration blocks blindly.
+2. Reconcile schema using missing-pieces-only SQL.
+3. Insert/repair migration history entries (`054`–`076`) to match actual schema state so future deploys remain deterministic.
+4. Store this reconciliation report in repo and attach verification query results as evidence.
