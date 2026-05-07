@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.core.auth import get_current_user, get_optional_user
+from app.core.auth import get_current_user, get_optional_user, require_permission
 
 
 # ───────────────────────────── Static seed data ─────────────────────────────
@@ -953,7 +953,7 @@ async def admin_create_user(body: CreateAdminBody, user: dict = Depends(_require
 
 
 @router_admin.get("/audit")
-async def admin_audit(_admin: dict = Depends(_require_admin)):
+async def admin_audit(_admin: dict = Depends(require_permission("audit.view"))):
     return {
         "items": [
             {"id": "a-1", "actor": "system", "action": "scrape.dry_run", "target": "ssc.gov.in", "at": _now()},

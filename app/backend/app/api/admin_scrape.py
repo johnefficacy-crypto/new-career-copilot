@@ -67,6 +67,7 @@ def _audit(supabase, actor: dict, action: str, *, entity_type: str | None = None
                 "entity_type": entity_type,
                 "entity_id": entity_id,
                 "new_value": new_value,
+                "notes": "legacy_admin_scrape" ,
             }
         ).execute()
     except Exception as exc:  # noqa: BLE001
@@ -85,16 +86,20 @@ def _shape_source(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row.get("id"),
         "org": row.get("source_name") or row.get("name"),
+        "official_url": row.get("official_url") or row.get("base_url"),
+        "notification_url": row.get("notification_url"),
         "url": row.get("notification_url") or row.get("base_url"),
         "kind": row.get("source_type") or row.get("adapter_type") or "html",
         "tier": row.get("tier"),
-        "trust": (
-            "verified"
-            if row.get("is_verified") or (row.get("trust_score") or 0) >= 0.85
-            else "tier-2"
-            if (row.get("trust_score") or 0) >= 0.6
-            else "tier-3"
-        ),
+        "verification_status": row.get("verification_status"),
+        "is_verified": row.get("is_verified"),
+        "trust_score": row.get("trust_score"),
+        "anti_bot_risk": row.get("anti_bot_risk"),
+        "has_captcha": row.get("has_captcha"),
+        "pdf_only": row.get("pdf_only"),
+        "notes": row.get("notes"),
+        "last_success_at": row.get("last_success_at"),
+        "last_error": row.get("last_error"),
         "last_run": row.get("last_scraped_at"),
         "status": "ok" if (row.get("consecutive_fails") or 0) == 0 else "degraded",
         "is_active": row.get("is_active"),
@@ -103,12 +108,12 @@ def _shape_source(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/sources")
-def public_sources(_admin: dict = Depends(_require_admin)) -> dict[str, Any]:
+def public_sources(_admin: dict = Depends(require_permission("sources.manage"))) -> dict[str, Any]:
     return _list_sources()
 
 
 @router.get("/admin/sources")
-def admin_sources(_admin: dict = Depends(_require_admin)) -> dict[str, Any]:
+def admin_sources(_admin: dict = Depends(require_permission("sources.manage"))) -> dict[str, Any]:
     return _list_sources()
 
 
@@ -188,7 +193,7 @@ def scrape_run(
 @router.get("/admin/scrape/runs")
 def list_scrape_runs(
     limit: int = Query(default=30, ge=1, le=100),
-    _admin: dict = Depends(_require_admin),
+    _admin: dict = Depends(require_permission("scraper.manage")),
 ) -> dict[str, Any]:
     supabase = get_supabase_admin()
     rows = (
@@ -223,7 +228,7 @@ def list_scrape_runs(
 def list_scrape_queue(
     status: str | None = Query(default="pending"),
     limit: int = Query(default=50, ge=1, le=200),
-    _admin: dict = Depends(_require_admin),
+    _admin: dict = Depends(require_permission("scraper.manage")),
 ) -> dict[str, Any]:
     supabase = get_supabase_admin()
     q = (
@@ -340,7 +345,7 @@ def reject_queue_item(
 
 
 @router.get("/admin/eligibility-queue")
-def eligibility_queue(_admin: dict = Depends(_require_admin)) -> dict[str, Any]:
+def eligibility_queue(_admin: dict = Depends(require_permission("scraper.manage"))) -> dict[str, Any]:
     """Two-pane KPI view consumed by ``EligibilityQueue.jsx``:
 
     * ``pending`` — scrape_queue rows awaiting promotion.
