@@ -428,8 +428,12 @@ def _assemble_profile_payload(profile: dict[str, Any], edu: dict[str, Any], pref
     if not assembled.get("graduation_year"):
         assembled["graduation_year"] = edu.get("graduation_year")
     assembled["qualification"] = edu.get("degree") or edu.get("level") or assembled.get("qualification")
+    # Progressive profile compatibility: expose normalized education row fields.
+    assembled["education_level"] = edu.get("level") or assembled.get("education_level")
+    assembled["stream"] = edu.get("stream") or assembled.get("stream")
     assembled["qualification_year"] = edu.get("graduation_year") or assembled.get("qualification_year")
     assembled["percentage"] = edu.get("percentage") if edu.get("percentage") is not None else assembled.get("percentage")
+    assembled["cgpa"] = edu.get("cgpa") if edu.get("cgpa") is not None else assembled.get("cgpa")
     assembled["goal_exams"] = prefs.get("target_exams") or assembled.get("goal_exams") or []
     if prefs.get("study_hours_per_day") is not None:
         assembled["weekly_hours_goal"] = int(round(float(prefs.get("study_hours_per_day")) * 7))
@@ -498,12 +502,20 @@ async def update_profile(body: ProfileUpdate, user: dict = Depends(get_current_u
     education_payload = {}
     if patch.get("qualification"):
         education_payload["degree"] = patch.get("qualification")
+    if patch.get("education_level") is not None:
+        education_payload["level"] = str(patch.get("education_level"))
+    elif patch.get("qualification") and "level" not in education_payload:
+        education_payload["level"] = str(patch.get("qualification"))
+    if patch.get("stream") is not None:
+        education_payload["stream"] = patch.get("stream")
         if "level" not in education_payload:
             education_payload["level"] = str(patch.get("qualification"))
     if patch.get("qualification_year") is not None:
         education_payload["graduation_year"] = patch.get("qualification_year")
     if patch.get("percentage") is not None:
         education_payload["percentage"] = patch.get("percentage")
+    if patch.get("cgpa") is not None:
+        education_payload["cgpa"] = patch.get("cgpa")
     if education_payload:
         education_payload["user_id"] = user["id"]
         education_payload.setdefault("is_completed", True)
