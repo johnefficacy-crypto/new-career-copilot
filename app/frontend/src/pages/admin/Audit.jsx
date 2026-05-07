@@ -2,40 +2,12 @@ import React, { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 
 export default function AdminAudit() {
-  const [items, setItems] = useState([]);
-  useEffect(() => {
-    api.get("/api/admin/audit").then((d) => setItems(d.items || [])).catch(() => {});
-  }, []);
-  return (
-    <div className="space-y-6" data-testid="admin-audit">
-      <div>
-        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Audit log</div>
-        <h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight">Every write, logged.</h1>
-      </div>
-      <div className="soft-card rounded-2xl overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
-              <th className="text-left px-4 py-3">Timestamp</th>
-              <th className="text-left px-4 py-3">Actor</th>
-              <th className="text-left px-4 py-3">Action</th>
-              <th className="text-left px-4 py-3">Meta</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.length === 0 ? (
-              <tr><td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">No events logged yet.</td></tr>
-            ) : items.map((a) => (
-              <tr key={a.id} className="border-t border-border font-mono text-[12.5px]">
-                <td className="px-4 py-2 text-muted-foreground">{(a.created_at || "").slice(0, 19).replace("T", " ")}</td>
-                <td className="px-4 py-2">{a.actor_email}</td>
-                <td className="px-4 py-2 text-clay-600">{a.action}</td>
-                <td className="px-4 py-2 text-muted-foreground">{JSON.stringify(a.meta)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
+  const [items, setItems] = useState([]); const [err,setErr]=useState(''); const [open,setOpen]=useState({});
+  useEffect(() => { api.get("/api/admin/audit").then((d) => setItems(d.items || [])).catch((e) => setErr(e.message||'Failed')); }, []);
+  if (err?.includes('403')) return <div className='soft-card p-4 text-sm'>You do not have <code>audit.view</code> permission.</div>;
+  return <div className="space-y-6" data-testid="admin-audit"><h1 className="font-heading text-2xl">Audit log</h1>
+    {err && <div className='soft-card p-2 text-xs'>{err}</div>}
+    <div className="soft-card rounded-2xl overflow-hidden"><table className="w-full text-sm"><thead><tr><th className='px-2 py-2 text-left'>created_at</th><th className='px-2 py-2 text-left'>actor</th><th className='px-2 py-2 text-left'>action</th><th className='px-2 py-2 text-left'>entity</th><th className='px-2 py-2 text-left'>payload</th></tr></thead><tbody>
+      {items.map((a) => (<tr key={a.id} className="border-t"><td className='px-2 py-2'>{a.created_at||a.at}</td><td>{a.actor_email||a.actor}</td><td>{a.action}</td><td>{a.entity_type||''}:{a.entity_id||a.target}</td><td><button className='btn btn-ghost' onClick={()=>setOpen(x=>({...x,[a.id]:!x[a.id]}))}>toggle</button>{open[a.id] && <pre className='text-[10px] whitespace-pre-wrap'>{JSON.stringify({old_value:a.old_value,new_value:a.new_value,notes:a.notes},null,2)}</pre>}</td></tr>))}
+    </tbody></table></div></div>
 }
