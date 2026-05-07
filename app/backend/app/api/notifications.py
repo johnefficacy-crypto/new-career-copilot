@@ -107,12 +107,13 @@ def my_mark_read(
 class Prefs(BaseModel):
     in_app_enabled: bool | None = None
     email_enabled: bool | None = None
-    email_digest_frequency: str | None = Field(default=None, pattern="^(immediate|daily|weekly|never)$")
-    whatsapp_enabled: bool | None = None
+    in_app_types_disabled: list[str] | None = None
+    email_types_disabled: list[str] | None = None
+    digest_preference: str | None = Field(default=None, pattern="^(off|daily|weekly)$")
+    quiet_hours_start: int | None = Field(default=None, ge=0, le=23)
+    quiet_hours_end: int | None = Field(default=None, ge=0, le=23)
     min_priority_in_app: str | None = Field(default=None, pattern="^(low|normal|medium|high|critical)$")
-    min_priority_email: str | None = Field(default=None, pattern="^(low|normal|medium|high|critical)$")
-    event_types_muted: list[str] | None = None
-    org_types_muted: list[str] | None = None
+    deadline_reminder_windows: list[str] | None = None
 
 
 @router.get("/notifications/preferences/me")
@@ -135,12 +136,13 @@ def get_prefs(user: dict = Depends(get_current_user)) -> dict[str, Any]:
             "user_id": user["id"],
             "in_app_enabled": True,
             "email_enabled": True,
-            "email_digest_frequency": "immediate",
-            "whatsapp_enabled": False,
+            "digest_preference": "off",
+            "in_app_types_disabled": [],
+            "email_types_disabled": [],
+            "quiet_hours_start": None,
+            "quiet_hours_end": None,
             "min_priority_in_app": "low",
-            "min_priority_email": "normal",
-            "event_types_muted": [],
-            "org_types_muted": [],
+            "deadline_reminder_windows": ["48h", "24h", "6h"],
         }
     }
 
@@ -185,10 +187,17 @@ def admin_notifications(_admin: dict = Depends(_require_admin)) -> dict[str, Any
         )
     except Exception:
         pass
+    recent_rows = sb.table("notification_alerts").select("alert_type,source,sent_at").eq("source", "next_action_engine").limit(200).execute().data or []
+    summary = {"created": len(recent_rows), "skipped": 0, "by_type": {}}
+    for r in recent_rows:
+        t = r.get("alert_type") or "unknown"
+        summary["by_type"][t] = summary["by_type"].get(t, 0) + 1
+
     return {
         "kill_switch": paused,
         "pending_dispatch": pending,
         "sent_24h": sent_24h,
+        "recent_generation": summary,
         "channels": [
             {"id": "in_app", "label": "In-app", "active": True},
             {"id": "email", "label": "Email (Resend)", "active": True},

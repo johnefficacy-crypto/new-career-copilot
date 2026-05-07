@@ -47,14 +47,14 @@ class _Query:
 
     def execute(self):
         rows = self.db[self.table_name]
-        if self.table_name == "notification_alerts" and self.filters:
+        if self.filters:
             rows = [r for r in rows if all(r.get(k) == v for k, v in self.filters.items())]
         return _Exec(rows)
 
 
 class FakeSupabase:
     def __init__(self):
-        self.db = {"notification_alerts": []}
+        self.db = {"notification_alerts": [], "notification_preferences": []}
 
     def table(self, name):
         return _Query(name, self.db)
@@ -130,3 +130,28 @@ def test_dry_run_creates_no_rows(monkeypatch):
     assert out["created"] == 0
     assert len(sb.db["notification_alerts"]) == 0
     assert out["by_type"]["continue_application"] == 1
+
+
+def test_disabled_type_is_skipped(monkeypatch):
+    sb = FakeSupabase()
+    sb.db["notification_preferences"].append({"user_id": "u4", "in_app_types_disabled": ["continue_application"], "min_priority_in_app": "low"})
+    async def fake_recs(user): return {"items": [_rec("continue_application")], "counts": {}}
+    async def fake_review(user): return {"backlog_count": 0, "missed_tasks": 0, "hours_planned": 0}
+    async def fake_completion(user): return {"eligibility_profile": {"completion_pct": 100}}
+    monkeypatch.setattr(next_actions, "my_recommendations", fake_recs)
+    monkeypatch.setattr(next_actions, "weekly_review", fake_review)
+    monkeypatch.setattr(next_actions, "profile_completion", fake_completion)
+    out = asyncio.run(next_actions.generate_next_actions_for_user(supabase=sb, user={"id": "u4"}))
+    assert out["created"] == 0
+
+def test_min_priority_skips_low(monkeypatch):
+    sb = FakeSupabase()
+    sb.db["notification_preferences"].append({"user_id": "u5", "min_priority_in_app": "high", "in_app_types_disabled": []})
+    async def fake_recs(user): return {"items": [_rec("prepare_after_submission", end_days=10)], "counts": {}}
+    async def fake_review(user): return {"backlog_count": 0, "missed_tasks": 0, "hours_planned": 0}
+    async def fake_completion(user): return {"eligibility_profile": {"completion_pct": 100}}
+    monkeypatch.setattr(next_actions, "my_recommendations", fake_recs)
+    monkeypatch.setattr(next_actions, "weekly_review", fake_review)
+    monkeypatch.setattr(next_actions, "profile_completion", fake_completion)
+    out = asyncio.run(next_actions.generate_next_actions_for_user(supabase=sb, user={"id": "u5"}))
+    assert out["created"] == 0

@@ -31,6 +31,7 @@ import MentorDetail from "./pages/MentorDetail";
 import Accountability from "./pages/Accountability";
 import AIChat from "./pages/AIChat";
 import Notifications from "./pages/Notifications";
+import NotificationPreferences from "./pages/NotificationPreferences";
 
 import AdminShell from "./pages/admin/AdminShell";
 import AdminOverview from "./pages/admin/Overview";
@@ -88,6 +89,7 @@ export default function App() {
         <Route path="/app/accountability" element={<Accountability />} />
         <Route path="/app/ai" element={<AIChat />} />
         <Route path="/app/notifications" element={<Notifications />} />
+        <Route path="/app/notifications/preferences" element={<NotificationPreferences />} />
         <Route path="/app/pricing" element={<Pricing />} />
       </Route>
       </Route>
