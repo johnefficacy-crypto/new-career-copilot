@@ -26,6 +26,7 @@ from supabase import Client
 
 from app.core.auth import get_current_user, get_optional_user
 from app.db.supabase_client import get_supabase_admin
+from app.profile.eligibility_mapper import build_user_eligibility_profile
 
 logger = logging.getLogger("career_copilot.canonical")
 
@@ -757,6 +758,12 @@ async def delete_exam_attempt(aid: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Exam attempt not found")
     sb.table("aspirant_exam_attempts").delete().eq("id", aid).eq("user_id", user["id"]).execute()
     return {"ok": True}
+
+
+@router_profile.get("/eligibility-input/me")
+async def eligibility_input_me(user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    return build_user_eligibility_profile(sb, user["id"])
 
 
 # ════════════════════════════════════════════════════════════════════════════

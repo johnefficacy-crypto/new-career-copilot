@@ -23,6 +23,7 @@ from typing import Any
 from supabase import Client
 
 from .engine import check_eligibility_batch
+from app.profile.eligibility_mapper import build_user_eligibility_profile
 from .schemas import (
     AgeCriteria,
     AttemptLimit,
@@ -68,8 +69,8 @@ def run_eligibility_for_user(
     errors: list[str] = []
 
     # ── 1. Load user data ──────────────────────────────────────────────────
-    profile_rows = _safe_select(supabase, "profiles", "*", id=user_id)
-    if not profile_rows:
+    mapped = build_user_eligibility_profile(supabase, user_id)
+    if not mapped.get("identity"):
         return {
             "processed": 0,
             "eligible": 0,
@@ -77,23 +78,11 @@ def run_eligibility_for_user(
             "alerts_inserted": 0,
             "errors": ["Profile not found"],
         }
-    profile = UserProfile(**profile_rows[0])
+    profile_rows = _safe_select(supabase, "profiles", "*", id=user_id)
+    profile = UserProfile(**(profile_rows[0] if profile_rows else {"id": user_id, "category": mapped.get("reservations", {}).get("category"), "domicile_state": mapped.get("location", {}).get("state"), "date_of_birth": mapped.get("identity", {}).get("dob"), "nationality": mapped.get("identity", {}).get("nationality")}))
 
-    education = [
-        UserEducation(**row)
-        for row in _safe_select(
-            supabase,
-            "aspirant_education",
-            "level, degree, stream, percentage, cgpa, is_completed",
-            user_id=user_id,
-        )
-    ]
-    attempt_rows = _safe_select(
-        supabase,
-        "aspirant_exam_attempts",
-        "exam_id, attempts_used",
-        user_id=user_id,
-    )
+    education = [UserEducation(**row) for row in (mapped.get("education") or [])]
+    attempt_rows = mapped.get("attempts") or []
     if not attempt_rows:
         # Compatibility fallback for legacy deployments.
         attempt_rows = _safe_select(
