@@ -198,3 +198,72 @@ def admin_organizations(_admin: dict = Depends(require_permission("organizations
         rec = sb.table("recruitments").select("id", count="exact").eq("organization_id", o["id"]).execute().count or 0
         items.append({**o, "linked_sources_count": src, "linked_recruitments_count": rec})
     return {"items": items}
+
+
+_ALLOWED_STATUS={"upcoming","open","closed","result_declared"}
+
+def _validate_common(payload: dict):
+    if "trust_score" in payload and payload.get("trust_score") is not None:
+        ts=float(payload["trust_score"])
+        if ts<0 or ts>1: raise HTTPException(status_code=400, detail="trust_score must be between 0 and 1")
+    if payload.get("apply_start_date") and payload.get("apply_end_date"):
+        if str(payload["apply_start_date"])>str(payload["apply_end_date"]):
+            raise HTTPException(status_code=400, detail="apply dates reversed")
+
+@router.post("/admin/sources")
+def create_source(body: dict, admin: dict = Depends(require_permission("sources.manage"))):
+    if not body.get("official_url"):
+        raise HTTPException(status_code=400, detail="official_url required")
+    _validate_common(body)
+    sb=get_supabase_admin()
+    ex=sb.table("source_registry").select("id").eq("official_url", body["official_url"]).limit(1).execute().data or []
+    if ex: raise HTTPException(status_code=409, detail="official_url must be unique")
+    payload={k:v for k,v in body.items() if k in {"source_name","short_code","source_type","category","jurisdiction","state","parent_org","official_url","notification_url","rss_url","api_url","pdf_bulletin_url","adapter_type","scrape_interval_hours","tier","trust_score","anti_bot_risk","requires_playwright","requires_login","has_captcha","pdf_only","is_active","is_verified","notes","org_state","insecure_tls","selectors","requires_official_confirmation"}}
+    row=(sb.table("source_registry").insert(payload).execute().data or [{}])[0]
+    _audit(sb, admin, "source.create", "source", row.get("id","new"), after_payload=payload)
+    return {"ok":True,"item":row}
+
+@router.put("/admin/sources/{source_id}")
+def update_source(source_id: str, body: dict, admin: dict = Depends(require_permission("sources.manage"))):
+    _validate_common(body); sb=get_supabase_admin(); old=(sb.table("source_registry").select("*").eq("id",source_id).limit(1).execute().data or [None])[0]
+    if not old: raise HTTPException(status_code=404, detail="Source not found")
+    payload={k:v for k,v in body.items() if k in old and k!="id"}
+    sb.table("source_registry").update(payload).eq("id",source_id).execute(); _audit(sb,admin,"source.update","source",source_id,before_payload=old,after_payload=payload)
+    return {"ok":True}
+
+@router.post("/admin/sources/{source_id}/deactivate")
+def deactivate_source(source_id: str, admin: dict = Depends(require_permission("sources.manage"))):
+    sb=get_supabase_admin(); old=(sb.table("source_registry").select("*").eq("id",source_id).limit(1).execute().data or [None])[0]
+    if not old: raise HTTPException(status_code=404, detail="Source not found")
+    sb.table("source_registry").update({"is_active":False}).eq("id",source_id).execute(); _audit(sb,admin,"source.deactivate","source",source_id,before_payload=old,after_payload={"is_active":False}); return {"ok":True}
+
+@router.post("/admin/sources/{source_id}/activate")
+def activate_source(source_id: str, admin: dict = Depends(require_permission("sources.manage"))):
+    sb=get_supabase_admin(); old=(sb.table("source_registry").select("*").eq("id",source_id).limit(1).execute().data or [None])[0]
+    if not old: raise HTTPException(status_code=404, detail="Source not found")
+    sb.table("source_registry").update({"is_active":True}).eq("id",source_id).execute(); _audit(sb,admin,"source.activate","source",source_id,before_payload=old,after_payload={"is_active":True}); return {"ok":True}
+
+@router.put("/admin/recruitments/{recruitment_id}")
+def update_recruitment(recruitment_id: str, body: dict, admin: dict = Depends(require_permission("recruitments.manage"))):
+    sb=get_supabase_admin(); old=(sb.table("recruitments").select("*").eq("id",recruitment_id).limit(1).execute().data or [None])[0]
+    if not old: raise HTTPException(status_code=404, detail="Recruitment not found")
+    if body.get("status") and body["status"] not in _ALLOWED_STATUS: raise HTTPException(status_code=400, detail="invalid status")
+    if body.get("year") and (int(body["year"])<2000 or int(body["year"])>2100): raise HTTPException(status_code=400, detail="invalid year")
+    _validate_common(body)
+    editable={"name","year","organization_id","notification_date","apply_start_date","apply_end_date","status","total_vacancies","official_notification_url","source_pdf_url","official_apply_url","source_id","review_notes"}
+    payload={k:v for k,v in body.items() if k in editable}
+    critical={"official_notification_url","official_apply_url","apply_start_date","apply_end_date","organization_id","total_vacancies"}
+    if old.get("publish_status")=="published" and any(k in payload and payload[k]!=old.get(k) for k in critical): payload["publish_status"]="needs_review"
+    sb.table("recruitments").update(payload).eq("id",recruitment_id).execute(); _audit(sb,admin,"recruitment.update","recruitment",recruitment_id,before_payload=old,after_payload=payload)
+    return {"ok":True}
+
+@router.put("/admin/organizations/{organization_id}")
+def update_organization(organization_id: str, body: dict, admin: dict = Depends(require_permission("organizations.manage"))):
+    sb=get_supabase_admin(); old=(sb.table("organizations").select("*").eq("id",organization_id).limit(1).execute().data or [None])[0]
+    if not old: raise HTTPException(status_code=404, detail="Organization not found")
+    editable={"name","type","state","website_url","official_domain","trust_tier","verification_notes"}
+    payload={k:v for k,v in body.items() if k in editable}
+    if ("website_url" in payload and payload["website_url"]!=old.get("website_url")) or ("official_domain" in payload and payload["official_domain"]!=old.get("official_domain")):
+        payload.update({"is_verified":False})
+    sb.table("organizations").update(payload).eq("id",organization_id).execute(); _audit(sb,admin,"organization.update","organization",organization_id,before_payload=old,after_payload=payload)
+    return {"ok":True}
