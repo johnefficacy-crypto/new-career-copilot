@@ -155,12 +155,55 @@ from supabase_migrations.schema_migrations
 where version between '054' and '076'
 order by version;
 
+Success. No rows returned
+
+
+----------------------------------------------------
 -- 067
 select column_name, data_type, is_nullable, column_default
 from information_schema.columns
 where table_schema='public' and table_name='user_recruitment_applications'
   and column_name in ('fee_amount','documents_pending','clicked_apply_at','application_number','fee_paid','notes','submitted_at')
 order by column_name;
+[
+  {
+    "column_name": "application_number",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "documents_pending",
+    "data_type": "jsonb",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "fee_amount",
+    "data_type": "numeric",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "fee_paid",
+    "data_type": "boolean",
+    "is_nullable": "YES",
+    "column_default": "false"
+  },
+  {
+    "column_name": "notes",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "submitted_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "YES",
+    "column_default": null
+  }
+]
+--------------------------------------------------------
 
 -- 068 required columns + dedupe index
 select column_name, data_type
@@ -168,11 +211,16 @@ from information_schema.columns
 where table_schema='public' and table_name='notification_alerts'
   and column_name in ('dedupe_key','title','body','source','source_stage','generated_at')
 order by column_name;
+Success. No rows returned
+-----------------------------------------------
 
 select indexname, indexdef
 from pg_indexes
 where schemaname='public' and tablename='notification_alerts'
   and indexname='notification_alerts_dedupe_key_uidx';
+Success. No rows returned
+---------------------------------------------
+
 
 -- 069 governance columns + constraints
 select column_name, data_type, is_nullable, column_default
@@ -180,6 +228,9 @@ from information_schema.columns
 where table_schema='public' and table_name='notification_preferences'
   and column_name in ('in_app_types_disabled','email_types_disabled','digest_preference','quiet_hours_start','quiet_hours_end','deadline_reminder_windows')
 order by column_name;
+Success. No rows returned
+
+
 
 select conname, pg_get_constraintdef(c.oid) as def
 from pg_constraint c
@@ -187,26 +238,45 @@ join pg_class t on t.oid = c.conrelid
 join pg_namespace n on n.oid = t.relnamespace
 where n.nspname='public' and t.relname='notification_preferences'
   and conname in ('notification_preferences_digest_preference_check','notification_prefs_quiet_hours_bounds');
+Success. No rows returned
+
+
 
 -- 070 table, index, RLS, policies
 select column_name, data_type, is_nullable, column_default
 from information_schema.columns
 where table_schema='public' and table_name='notification_generation_runs'
 order by ordinal_position;
+Success. No rows returned
+
+
+
 
 select indexname, indexdef
 from pg_indexes
 where schemaname='public' and tablename='notification_generation_runs';
+Success. No rows returned
+
+
+
 
 select relrowsecurity
 from pg_class c join pg_namespace n on n.oid=c.relnamespace
 where n.nspname='public' and c.relname='notification_generation_runs';
+Success. No rows returned
+
+
+
 
 select policyname, cmd, qual, with_check
 from pg_policies
 where schemaname='public' and tablename='notification_generation_runs'
 order by policyname;
+Success. No rows returned
 
+
+
+---------------------------------------------
 -- 071/072/073 scrape_queue + trust fields
 select table_name, column_name, data_type
 from information_schema.columns
@@ -219,6 +289,44 @@ where table_schema='public'
     or (table_name='extracted_field_evidence' and column_name='corrected_value')
   )
 order by table_name, column_name;
+[
+  {
+    "table_name": "source_registry",
+    "column_name": "anti_bot_risk",
+    "data_type": "text"
+  },
+  {
+    "table_name": "source_registry",
+    "column_name": "can_publish_directly",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "source_registry",
+    "column_name": "discovery_only",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "source_registry",
+    "column_name": "is_official_source",
+    "data_type": "boolean"
+  },
+  {
+    "table_name": "source_registry",
+    "column_name": "jurisdiction",
+    "data_type": "text"
+  },
+  {
+    "table_name": "source_registry",
+    "column_name": "notes",
+    "data_type": "text"
+  },
+  {
+    "table_name": "source_registry",
+    "column_name": "state",
+    "data_type": "text"
+  }
+]
+------------------------------------------------
 
 select indexname, indexdef
 from pg_indexes
@@ -230,22 +338,47 @@ where schemaname='public'
     'idx_scrape_queue_promoted_recruitment_id'
   )
 order by indexname;
+Success. No rows returned
 
+
+
+-----------------------------------------
 select conname, pg_get_constraintdef(c.oid) as def
 from pg_constraint c
 join pg_class t on t.oid = c.conrelid
 join pg_namespace n on n.oid = t.relnamespace
 where n.nspname='public' and t.relname='scrape_queue'
   and conname='scrape_queue_status_check';
+  [
+  {
+    "conname": "scrape_queue_status_check",
+    "def": "CHECK ((status = ANY (ARRAY['pending'::text, 'reviewing'::text, 'approved'::text, 'rejected'::text, 'duplicate'::text, 'promoted'::text])))"
+  }
+]
+-------------------------------------------
 
 -- 074
 select column_name, data_type
 from information_schema.columns
 where table_schema='public' and table_name='recruitments' and column_name='slug';
+[
+  {
+    "column_name": "slug",
+    "data_type": "text"
+  }
+]
+---------------------------------
 
 select indexname, indexdef
 from pg_indexes
 where schemaname='public' and tablename='recruitments' and indexname='idx_recruitments_slug_unique';
+[
+  {
+    "indexname": "idx_recruitments_slug_unique",
+    "indexdef": "CREATE UNIQUE INDEX idx_recruitments_slug_unique ON public.recruitments USING btree (slug) WHERE (slug IS NOT NULL)"
+  }
+]
+---------------------------------------
 
 -- 075 data policy columns
 select column_name, data_type, is_nullable, column_default
@@ -253,16 +386,133 @@ from information_schema.columns
 where table_schema='public' and table_name='source_registry'
   and column_name in ('is_official_source','can_publish_directly','discovery_only')
 order by column_name;
-
+[
+  {
+    "column_name": "can_publish_directly",
+    "data_type": "boolean",
+    "is_nullable": "NO",
+    "column_default": "false"
+  },
+  {
+    "column_name": "discovery_only",
+    "data_type": "boolean",
+    "is_nullable": "NO",
+    "column_default": "false"
+  },
+  {
+    "column_name": "is_official_source",
+    "data_type": "boolean",
+    "is_nullable": "NO",
+    "column_default": "false"
+  }
+]
+---------------------------------------
 -- 076 table + index
 select column_name, data_type, is_nullable, column_default
 from information_schema.columns
 where table_schema='public' and table_name='recruitment_events'
 order by ordinal_position;
+[
+  {
+    "column_name": "id",
+    "data_type": "uuid",
+    "is_nullable": "NO",
+    "column_default": "gen_random_uuid()"
+  },
+  {
+    "column_name": "recruitment_id",
+    "data_type": "uuid",
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "event_type",
+    "data_type": "text",
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "title",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "official_url",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "source_id",
+    "data_type": "uuid",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "scrape_queue_id",
+    "data_type": "uuid",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "event_date",
+    "data_type": "date",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "metadata",
+    "data_type": "jsonb",
+    "is_nullable": "NO",
+    "column_default": "'{}'::jsonb"
+  },
+  {
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "NO",
+    "column_default": "now()"
+  },
+  {
+    "column_name": "created_by",
+    "data_type": "uuid",
+    "is_nullable": "YES",
+    "column_default": null
+  }
+]
+------------------------------
 
 select indexname, indexdef
 from pg_indexes
 where schemaname='public' and tablename='recruitment_events';
+
+[
+  {
+    "indexname": "recruitment_events_pkey",
+    "indexdef": "CREATE UNIQUE INDEX recruitment_events_pkey ON public.recruitment_events USING btree (id)"
+  },
+  {
+    "indexname": "idx_recruitment_events_recruitment_id",
+    "indexdef": "CREATE INDEX idx_recruitment_events_recruitment_id ON public.recruitment_events USING btree (recruitment_id)"
+  },
+  {
+    "indexname": "idx_recruitment_events_event_type",
+    "indexdef": "CREATE INDEX idx_recruitment_events_event_type ON public.recruitment_events USING btree (event_type)"
+  },
+  {
+    "indexname": "idx_recruitment_events_event_date",
+    "indexdef": "CREATE INDEX idx_recruitment_events_event_date ON public.recruitment_events USING btree (event_date)"
+  },
+  {
+    "indexname": "idx_recruitment_events_source_id",
+    "indexdef": "CREATE INDEX idx_recruitment_events_source_id ON public.recruitment_events USING btree (source_id)"
+  },
+  {
+    "indexname": "idx_recruitment_events_scrape_queue_id",
+    "indexdef": "CREATE INDEX idx_recruitment_events_scrape_queue_id ON public.recruitment_events USING btree (scrape_queue_id)"
+  }
+]
+------------------------------------
 ```
 
 ## 4) Live status (from executed verification SQL)
