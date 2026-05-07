@@ -18,6 +18,7 @@ import logging
 import re
 from datetime import date, datetime, timezone
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
@@ -55,7 +56,7 @@ router_recruitments = APIRouter(prefix="/recruitments", tags=["recruitments"])
 
 
 _REC_SELECT = (
-    "id, name, year, status, publish_status, "
+    "id, slug, name, year, status, publish_status, "
     "notification_date, apply_start_date, apply_end_date, "
     "total_vacancies, official_notification_url, "
     "organizations ( id, name, type, state )"
@@ -67,7 +68,7 @@ def _shape_recruitment(row: dict[str, Any], saved_ids: set[str]) -> dict[str, An
     org = row.get("organizations") or {}
     if isinstance(org, list):
         org = org[0] if org else {}
-    slug = f"{_slug(row.get('name') or '')}-{(row.get('id') or '')[:8]}"
+    slug = row.get("slug") or f"{_slug(row.get('name') or '')}-{(row.get('id') or '')[:8]}"
     return {
         "id": row.get("id"),
         "slug": slug,
@@ -247,21 +248,23 @@ async def toggle_save(rec_ref: str, user: dict = Depends(get_current_user)):
 
 
 def _resolve_rec_id(supabase: Client, ref: str) -> str:
-    """Accept UUID or slug safely; never pattern-match UUID columns."""
-    if len(ref) == 36 and ref.count("-") == 4:
+    """Resolve recruitment deterministically: UUID->id, otherwise exact slug."""
+    is_uuid = False
+    try:
+        UUID(str(ref))
+        is_uuid = True
+    except Exception:
+        is_uuid = False
+
+    if is_uuid:
         rows = _safe(lambda: supabase.table("recruitments").select("id").eq("id", ref).limit(1).execute().data, default=[]) or []
         if rows:
             return rows[0]["id"]
+        raise HTTPException(status_code=404, detail="Recruitment not found")
+
     rows = _safe(lambda: supabase.table("recruitments").select("id").eq("slug", ref).limit(1).execute().data, default=[]) or []
     if rows:
         return rows[0]["id"]
-    # fallback: readable slug with trailing id prefix, e.g. name-2026-1a2b3c4d
-    tail = (ref or '').split('-')[-1]
-    if len(tail) == 8:
-        cand = _safe(lambda: supabase.table("recruitments").select("id").limit(200).execute().data, default=[]) or []
-        for r in cand:
-            if str(r.get('id','')).startswith(tail):
-                return r['id']
     raise HTTPException(status_code=404, detail="Recruitment not found")
 
 
