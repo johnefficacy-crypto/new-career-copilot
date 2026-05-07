@@ -28,6 +28,7 @@ from app.core.auth import get_current_user, require_permission
 from app.db.supabase_client import get_supabase_admin
 from app.scraping.alerts import alert_users_for_new_recruitment
 from app.scraping.runner import promote_run, run_scraping_pass
+from app.scraping.intelligence import classify_item, duplicate_candidates, BLOCKED
 
 logger = logging.getLogger("career_copilot.api.admin_scrape")
 
@@ -279,6 +280,18 @@ def list_scrape_queue(
     if status and status != "all":
         q = q.eq("status", status)
     rows = q.execute().data or []
+    supabase2 = get_supabase_admin()
+    existing = (supabase2.table("recruitments").select("id,name,year,official_notification_url").limit(400).execute().data or [])
+    for r in rows:
+        cls = classify_item(r)
+        r["relevance_category"] = r.get("relevance_category") or cls["relevance_category"]
+        r["lifecycle_event_type"] = cls["lifecycle_event_type"]
+        r["classifier_confidence"] = cls["confidence"]
+        r["classifier_reasons"] = cls["reasons"]
+        ext = r.get("extracted_data") or {}
+        dups = duplicate_candidates(ext if isinstance(ext, dict) else {}, existing)
+        r["duplicate_candidates"] = dups
+        r["multiple_posts_detected"] = bool((ext.get("posts") if isinstance(ext, dict) else None))
     return {"items": rows}
 
 
