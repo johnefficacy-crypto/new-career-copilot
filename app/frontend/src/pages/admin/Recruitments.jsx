@@ -1,44 +1,17 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
 
-export default function AdminRecruitments() {
-  const [items, setItems] = useState([]);
-  useEffect(() => {
-    api.get("/api/recruitments").then((d) => setItems(d.items)).catch(() => {});
-  }, []);
-  return (
-    <div className="space-y-6" data-testid="admin-recruitments">
-      <div>
-        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Recruitments</div>
-        <h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight">Canonical recruitments · Phase-1 read</h1>
-        <p className="text-muted-foreground mt-1">Phase-2 adds create/edit + scraper promotion.</p>
-      </div>
-      <div className="soft-card rounded-2xl overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
-              <th className="text-left px-4 py-3">Recruitment</th>
-              <th className="text-left px-4 py-3">Org</th>
-              <th className="text-left px-4 py-3">Stage</th>
-              <th className="text-left px-4 py-3">Posts</th>
-              <th className="text-left px-4 py-3">Vacancies</th>
-              <th className="text-left px-4 py-3">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((r) => (
-              <tr key={r.slug} className="border-t border-border">
-                <td className="px-4 py-3 font-semibold">{r.name}</td>
-                <td className="px-4 py-3 text-xs text-muted-foreground">{r.organization}</td>
-                <td className="px-4 py-3 text-xs">{r.stage}</td>
-                <td className="px-4 py-3 text-xs">{r.posts_matched} / {r.posts_total}</td>
-                <td className="px-4 py-3 text-xs">{r.vacancies?.toLocaleString()}</td>
-                <td className="px-4 py-3"><span className={`pill ${r.status === "eligible" ? "pill-sage" : r.status === "urgent" ? "pill-clay" : "pill-amber"}`}>{r.status}</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
+export default function AdminRecruitments(){
+  const [items,setItems]=useState([]); const [msg,setMsg]=useState(''); const [edit,setEdit]=useState({});
+  const load=()=>api.get('/api/admin/recruitments').then(d=>setItems(d.items||[]));
+  useEffect(()=>{load().catch(()=>{});},[]);
+  const act=async(id,a)=>{try{const r=await api.post(`/api/admin/recruitments/${id}/${a}`,{}); setMsg(`${a} ok: ${JSON.stringify(r)}`);}catch(e){setMsg(`${a} failed: ${e.message}`);} await load();};
+  const save=async(id)=>{try{await api.put(`/api/admin/recruitments/${id}`, edit[id]||{}); setMsg("recruitment saved (critical changes may move to needs_review)"); await load();}catch(e){setMsg(e.message);}};
+  const summary = useMemo(()=>({unpublished: items.filter(i=>i.publish_status!=='published').length, blocked: items.filter(i=>(i.blocking_issues||[]).length>0).length}),[items]);
+  return <div className='space-y-4'><h1 className='font-heading text-2xl'>Recruitment trust workflow</h1>
+  <div className='grid grid-cols-2 gap-3 text-xs'><div className='soft-card p-3'>Unpublished recruitments: <b>{summary.unpublished}</b></div><div className='soft-card p-3'>Publish blocked: <b>{summary.blocked}</b></div></div>
+  {msg && <div className='soft-card p-2 text-xs'>{msg}</div>}
+  <div className='soft-card rounded-2xl overflow-auto'><table className='w-full text-xs'><thead><tr>{['name','publish_status','lifecycle','org verified','notification','apply','provenance','blocked','warnings','published','review_notes','actions'].map(h=><th key={h} className='text-left px-2 py-2'>{h}</th>)}</tr></thead><tbody>
+  {items.map(r=>{const canPub=(r.blocking_issues||[]).length===0; return <tr key={r.id} className='border-t'><td>{r.name}<div className='text-muted-foreground'>{r.organization}</div></td><td><span className='pill pill-amber'>{r.publish_status}</span></td><td>{r.lifecycle_status}</td><td>{String(!!r.organization_verified)}</td><td>{r.official_notification_url||'—'}</td><td>{r.official_apply_url||'—'}</td><td>{r.source_provenance}</td><td>{(r.blocking_issues||[]).join(', ')||'—'}</td><td>{(r.warnings||[]).join(', ')||'—'}</td><td>{r.published_by||'—'}<div>{r.published_at||''}</div></td><td>{r.review_notes||'—'}<div className="flex gap-1"><input className="border px-1" placeholder="name" onChange={e=>setEdit({...edit,[r.id]:{...(edit[r.id]||{}),name:e.target.value}})}/><input className="border px-1" placeholder="official apply" onChange={e=>setEdit({...edit,[r.id]:{...(edit[r.id]||{}),official_apply_url:e.target.value}})}/><button className="btn btn-ghost" onClick={()=>save(r.id)}>Save</button></div></td><td className='space-x-1'><button className='btn btn-ghost' onClick={()=>act(r.id,'validate-publish')}>Validate</button><button className='btn btn-ghost' onClick={()=>act(r.id,'verify')}>Verify</button><button disabled={!canPub} className='btn btn-primary' onClick={()=>act(r.id,'publish')}>Publish</button><button className='btn btn-ghost' onClick={()=>act(r.id,'archive')}>Archive</button><button className='btn btn-ghost' onClick={()=>act(r.id,'withdraw')}>Withdraw</button></td></tr>})}
+  </tbody></table></div></div>
 }
