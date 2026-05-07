@@ -88,15 +88,28 @@ def run_eligibility_for_user(
             user_id=user_id,
         )
     ]
-    exam_attempts = [
-        UserExamAttempts(**row)
-        for row in _safe_select(
+    attempt_rows = _safe_select(
+        supabase,
+        "aspirant_exam_attempts",
+        "exam_id, attempts_used",
+        user_id=user_id,
+    )
+    if not attempt_rows:
+        # Compatibility fallback for legacy deployments.
+        attempt_rows = _safe_select(
             supabase,
             "user_exam_attempts",
             "recruitment_id, attempts_used",
             user_id=user_id,
         )
-    ]
+    exam_attempts = []
+    for row in attempt_rows:
+        mapped = {
+            "recruitment_id": row.get("recruitment_id") or row.get("exam_id"),
+            "attempts_used": row.get("attempts_used") or 0,
+        }
+        if mapped["recruitment_id"]:
+            exam_attempts.append(UserExamAttempts(**mapped))
     exam_credentials = [
         UserExamCredential(**row)
         for row in _safe_select(
