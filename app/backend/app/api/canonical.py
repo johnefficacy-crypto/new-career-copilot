@@ -626,6 +626,10 @@ def _rank_recruitment(
     application: dict[str, Any] | None,
     backlog_high: bool,
 ) -> dict[str, Any]:
+    # TODO(P1.5-B): add PwBD readiness scoring once normalized backend fields are available.
+    # TODO(P1.5-B): add education readiness scoring parity with full eligibility profile readiness.
+    # TODO(P1.5-B): add weekly_hours_goal capacity parity (currently backlog risk only).
+    # TODO(P1.5-B): tighten preferred sector/state normalization parity with frontend fallback heuristics.
     score = 0
     reasons: list[str] = []
     risks: list[str] = []
@@ -723,7 +727,7 @@ async def my_recommendations(user: dict = Depends(get_current_user)):
     supabase = get_supabase_admin()
     rec_data = await list_recruitments(user=user)
     rec_items = rec_data.get("items", [])
-    profile = await get_my_profile(user)
+    profile = await get_profile(user)
     eligibility = _eligibility_summary(supabase, user["id"])
     app_rows = _safe(
         lambda: supabase.table("user_recruitment_applications")

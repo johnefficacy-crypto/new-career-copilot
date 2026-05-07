@@ -46,7 +46,15 @@ export default function Dashboard() {
         setRecommendations(d || { items: [], counts: {} });
         setRecommendationsAvailable(true);
       })
-      .catch(() => setRecommendationsAvailable(false));
+      .catch(() => {
+        if (process.env.NODE_ENV === "development") {
+          // TODO(P1.5-B): remove frontend fallback once /api/recommendations/me is stable in production.
+          // Backend recommendation contract is the source of truth.
+          // eslint-disable-next-line no-console
+          console.warn("Recommendations API unavailable; using frontend fallback ranking.");
+        }
+        setRecommendationsAvailable(false);
+      });
     api.get("/api/recruitments").then((d) => setRecruitments(d || { items: [], counts: {} })).catch(() => setRecruitments({ items: [], counts: {} }));
     api.get("/api/study/plan").then((d) => setPlan({ date: d?.date || "", plan: d?.plan || null, tasks: Array.isArray(d?.tasks) ? d.tasks : [] })).catch(() => setPlan({ tasks: [], plan: null, date: "" }));
     api.get("/api/study/focus/summary").then((d) => setFocus({ total_hours_7d: d?.total_hours_7d || 0, week: Array.isArray(d?.week) ? d.week : [] })).catch(() => setFocus({ total_hours_7d: 0, week: [] }));
