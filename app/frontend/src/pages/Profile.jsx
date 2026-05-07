@@ -10,6 +10,8 @@ import {
   PREPARATION_MODE_OPTIONS,
   PWBD_OPTIONS,
   SECTOR_OPTIONS,
+  CERTIFICATION_TYPE_OPTIONS,
+  EXPERIENCE_SECTOR_OPTIONS,
 } from "../lib/profileFields";
 
 export default function Profile() {
@@ -19,10 +21,16 @@ export default function Profile() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [certs, setCerts] = useState([]);
+  const [expRows, setExpRows] = useState([]);
+  const [attemptRows, setAttemptRows] = useState([]);
+  const [newCert, setNewCert] = useState({ certification_name: "", issuing_body: "", year_completed: "" });
+  const [newExp, setNewExp] = useState({ sector: "", role: "", organization: "", start_date: "", end_date: "" });
+  const [newAttempt, setNewAttempt] = useState({ exam_id: "", attempts_used: 0 });
 
   useEffect(() => {
-    Promise.all([api.get("/api/profile/me"), api.get("/api/profile/completion")])
-      .then(([u, c]) => {
+    Promise.all([api.get("/api/profile/me"), api.get("/api/profile/completion"), api.get("/api/profile/certifications"), api.get("/api/profile/experience"), api.get("/api/profile/exam-attempts")])
+      .then(([u, c, cs, ex, at]) => {
         setForm({
           name: u.name || "",
           email: u.email || "",
@@ -51,6 +59,9 @@ export default function Profile() {
           target_exam_year: u.profile?.target_exam_year || "",
         });
         setCompletion(c || {});
+        setCerts(cs?.items || []);
+        setExpRows(ex?.items || []);
+        setAttemptRows(at?.items || []);
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -104,13 +115,26 @@ export default function Profile() {
           </Section>
 
           <Section title="Education" helper="Qualification and marks drive post-level matching.">
-            <Grid><Input label="Qualification" value={form.qualification} onChange={(v) => set("qualification", v)} placeholder="Not provided" /><Input label="Passing year" value={form.qualification_year} onChange={(v) => set("qualification_year", v)} placeholder="Not provided" /><Input label="Percentage" value={form.percentage} onChange={(v) => set("percentage", v)} placeholder="Not provided" /><Input label="CGPA" value={form.cgpa} onChange={(v) => set("cgpa", v)} placeholder="Not provided" /></Grid>
+            <Grid><Input label="Education level" value={form.education_level} onChange={(v) => set("education_level", v)} placeholder="Not provided" /><Input label="Qualification" value={form.qualification} onChange={(v) => set("qualification", v)} placeholder="Not provided" /><Input label="Stream" value={form.stream} onChange={(v) => set("stream", v)} placeholder="Not provided" /><Input label="Passing year" value={form.qualification_year} onChange={(v) => set("qualification_year", v)} placeholder="Not provided" /><Input label="Percentage" value={form.percentage} onChange={(v) => set("percentage", v)} placeholder="Not provided" /><Input label="CGPA" value={form.cgpa} onChange={(v) => set("cgpa", v)} placeholder="Not provided" /></Grid>
           </Section>
 
           <Section title="Preferences" helper="Preferences improve recommendation relevance only.">
             <div className="space-y-2"><div className="text-sm text-muted-foreground">Exam families</div><Chips options={EXAM_FAMILY_OPTIONS} values={form.goal_exams} onToggle={(v) => toggleArray("goal_exams", v)} /></div>
             <div className="space-y-2"><div className="text-sm text-muted-foreground">Preferred sectors</div><Chips options={SECTOR_OPTIONS} values={form.preferred_sectors} onToggle={(v) => toggleArray("preferred_sectors", v)} /></div>
-            <div className="space-y-2"><div className="text-sm text-muted-foreground">Preferred states</div><Chips options={INDIAN_STATE_OPTIONS} values={form.preferred_states} onToggle={(v) => toggleArray("preferred_states", v)} /></div>
+            <div className="space-y-2">
+              <div className="text-sm text-muted-foreground">Preferred states</div>
+              <select className="w-full px-3 py-2.5 rounded-xl bg-white/80 border border-border text-sm outline-none" onChange={(e) => e.target.value && !form.preferred_states.includes(e.target.value) && set("preferred_states", [...form.preferred_states, e.target.value])}>
+                <option value="">Select state to add</option>
+                {INDIAN_STATE_OPTIONS.map((s) => <option key={s} value={s}>{s.replaceAll("_", " ")}</option>)}
+              </select>
+              <div className="flex flex-wrap gap-2">
+                {(form.preferred_states || []).length ? form.preferred_states.map((s) => (
+                  <button key={s} type="button" onClick={() => set("preferred_states", form.preferred_states.filter((x) => x !== s))} className="px-3 py-1 rounded-full border border-clay-300 bg-clay-50 text-xs">
+                    {s.replaceAll("_", " ")} ×
+                  </button>
+                )) : <span className="text-xs text-muted-foreground">Not provided</span>}
+              </div>
+            </div>
             <Bool label="Willing to relocate" value={form.willing_to_relocate} onChange={(v) => set("willing_to_relocate", v)} />
           </Section>
 
@@ -120,6 +144,24 @@ export default function Profile() {
 
           <Section title="Application readiness" helper="Helps reduce form-filling friction for applications.">
             <Grid><Input label="Phone" value={form.phone} onChange={(v) => set("phone", v)} placeholder="Not provided" /><Input label="Nationality" value={form.nationality} onChange={(v) => set("nationality", v)} placeholder="Not provided" /><Bool label="Government employee" value={form.govt_employee} onChange={(v) => set("govt_employee", v)} /></Grid>
+          </Section>
+
+          <Section title="Professional certifications" helper="Add certifications relevant for eligibility filters.">
+            <Grid><Select label="Certification" value={newCert.certification_name} onChange={(v) => setNewCert({ ...newCert, certification_name: v })} options={[{ value: "", label: "Not provided" }, ...CERTIFICATION_TYPE_OPTIONS.map((v) => ({ value: v, label: v }))]} /><Input label="Issuing body" value={newCert.issuing_body} onChange={(v) => setNewCert({ ...newCert, issuing_body: v })} placeholder="Not provided" /><Input label="Year completed" value={newCert.year_completed} onChange={(v) => setNewCert({ ...newCert, year_completed: v })} placeholder="Not provided" /></Grid>
+            <button type="button" className="btn btn-secondary" onClick={async () => { const r = await api.post("/api/profile/certifications", { ...newCert, year_completed: newCert.year_completed ? Number(newCert.year_completed) : undefined, is_active: true }); setCerts((x) => [r.item, ...x]); }}>Add certification</button>
+            <SimpleList rows={certs} onDelete={async (id) => { await api.delete(`/api/profile/certifications/${id}`); setCerts((x) => x.filter((r) => r.id !== id)); }} render={(r) => `${r.certification_name} · ${r.issuing_body || "Not provided"} · ${r.year_completed || "Not provided"}`} />
+          </Section>
+
+          <Section title="Work experience" helper="Add experience to support role-specific eligibility.">
+            <Grid><Select label="Sector" value={newExp.sector} onChange={(v) => setNewExp({ ...newExp, sector: v })} options={[{ value: "", label: "Not provided" }, ...EXPERIENCE_SECTOR_OPTIONS.map((v) => ({ value: v, label: v }))]} /><Input label="Role" value={newExp.role} onChange={(v) => setNewExp({ ...newExp, role: v })} placeholder="Not provided" /><Input label="Organization" value={newExp.organization} onChange={(v) => setNewExp({ ...newExp, organization: v })} placeholder="Not provided" /><Input label="Start date" value={newExp.start_date} onChange={(v) => setNewExp({ ...newExp, start_date: v })} placeholder="YYYY-MM-DD" /><Input label="End date" value={newExp.end_date} onChange={(v) => setNewExp({ ...newExp, end_date: v })} placeholder="Not provided" /></Grid>
+            <button type="button" className="btn btn-secondary" onClick={async () => { const r = await api.post("/api/profile/experience", newExp); setExpRows((x) => [r.item, ...x]); }}>Add experience</button>
+            <SimpleList rows={expRows} onDelete={async (id) => { await api.delete(`/api/profile/experience/${id}`); setExpRows((x) => x.filter((r) => r.id !== id)); }} render={(r) => `${r.organization || "Not provided"} · ${r.role || "Not provided"} · ${r.sector || "Not provided"}`} />
+          </Section>
+
+          <Section title="Exam attempts" helper="Track attempts for attempt-limited exams.">
+            <Grid><Input label="Exam ID" value={newAttempt.exam_id} onChange={(v) => setNewAttempt({ ...newAttempt, exam_id: v })} placeholder="UUID or exam key" /><Input label="Attempts used" value={newAttempt.attempts_used} onChange={(v) => setNewAttempt({ ...newAttempt, attempts_used: v })} /></Grid>
+            <button type="button" className="btn btn-secondary" onClick={async () => { const r = await api.post("/api/profile/exam-attempts", { exam_id: newAttempt.exam_id, attempts_used: Number(newAttempt.attempts_used || 0) }); setAttemptRows((x) => [r.item, ...x]); }}>Add attempt</button>
+            <SimpleList rows={attemptRows} onDelete={async (id) => { await api.delete(`/api/profile/exam-attempts/${id}`); setAttemptRows((x) => x.filter((r) => r.id !== id)); }} render={(r) => `${r.exam_id} · attempts: ${r.attempts_used}`} />
           </Section>
 
           <div className="flex items-center gap-3 pt-2"><button disabled={saving} className="btn btn-primary" data-testid="profile-save">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save profile</button>{msg && <span className="text-sm text-muted-foreground">{msg}</span>}</div>
@@ -160,3 +202,4 @@ function CompletionCard({ title, data }) {
     </div>
   );
 }
+function SimpleList({ rows, onDelete, render }) { return <div className="space-y-2">{rows?.length ? rows.map((r) => <div key={r.id} className="flex items-center justify-between border rounded-lg px-3 py-2 text-sm"><span>{render(r)}</span><button type="button" className="text-xs link-under" onClick={() => onDelete(r.id)}>Remove</button></div>) : <div className="text-xs text-muted-foreground">Not provided</div>}</div>; }

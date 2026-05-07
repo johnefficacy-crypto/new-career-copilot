@@ -378,8 +378,8 @@ class ProfileUpdate(BaseModel):
     qualification: str | None = None
     education_level: str | None = None
     stream: str | None = None
-    cgpa: float | None = Field(default=None, ge=0, le=10)
     percentage: float | None = Field(default=None, ge=0, le=100)
+    cgpa: float | None = Field(default=None, ge=0, le=10)
     weekly_hours_goal: int | None = Field(default=None, ge=0, le=120)
     target_exam_year: int | None = Field(default=None, ge=2024, le=2040)
     goal_exams: list[str] | None = None
@@ -396,6 +396,27 @@ class ProfileUpdate(BaseModel):
     willing_to_relocate: bool | None = None
     study_mode: str | None = None
     study_hours_per_day: float | None = Field(default=None, ge=0, le=24)
+
+
+class CertificationIn(BaseModel):
+    certification_name: str = Field(min_length=1, max_length=120)
+    issuing_body: str | None = Field(default=None, max_length=120)
+    year_completed: int | None = Field(default=None, ge=1950, le=2100)
+    is_active: bool = True
+
+
+class ExperienceIn(BaseModel):
+    sector: str | None = None
+    role: str | None = None
+    organization: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    years_experience: float | None = Field(default=None, ge=0, le=80)
+
+
+class ExamAttemptIn(BaseModel):
+    exam_id: str
+    attempts_used: int = Field(default=0, ge=0)
 
 
 def _get_primary_education(supabase: Client, user_id: str) -> dict[str, Any]:
@@ -511,7 +532,6 @@ async def update_profile(body: ProfileUpdate, user: dict = Depends(get_current_u
         education_payload["level"] = str(patch.get("qualification"))
     if patch.get("stream") is not None:
         education_payload["stream"] = patch.get("stream")
-        
     if patch.get("qualification_year") is not None:
         education_payload["graduation_year"] = patch.get("qualification_year")
     if patch.get("percentage") is not None:
@@ -603,7 +623,140 @@ async def profile_completion(user: dict = Depends(get_current_user)):
         }
     # Backward compatibility for next-actions engine.
     out["eligibility_profile"] = out["identity_profile"]
+    certs = _safe(lambda: supabase.table("aspirant_certifications").select("id").eq("user_id", user["id"]).eq("is_active", True).execute().data, default=[]) or []
+    exp = _safe(lambda: supabase.table("aspirant_experience").select("id").eq("user_id", user["id"]).execute().data, default=[]) or []
+    attempts = _safe(lambda: supabase.table("aspirant_exam_attempts").select("id").eq("user_id", user["id"]).execute().data, default=[]) or []
+    out["certification_profile"] = {
+        "completion_pct": 100 if certs else 0,
+        "missing_fields": [] if certs else ["certification_name"],
+        "why_it_matters": "Some recruitments require or prioritize certifications.",
+        "next_action": "Add at least one active certification if applicable.",
+    }
+    out["experience_profile"] = {
+        "completion_pct": 100 if exp else 0,
+        "missing_fields": [] if exp else ["organization", "role"],
+        "why_it_matters": "Experience can unlock role-specific eligibility filters.",
+        "next_action": "Add a work experience row if you have relevant experience.",
+    }
+    out["attempts_profile"] = {
+        "completion_pct": 100 if attempts else 0,
+        "missing_fields": [] if attempts else ["exam_id", "attempts_used"],
+        "why_it_matters": "Attempts help the engine enforce attempt-limit criteria.",
+        "next_action": "Add exam attempts where limits are applicable.",
+    }
     return out
+
+
+@router_profile.get("/certifications")
+async def list_certifications(user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    rows = _safe(lambda: sb.table("aspirant_certifications").select("*").eq("user_id", user["id"]).order("year_completed", desc=True).execute().data, default=[]) or []
+    return {"items": rows}
+
+
+@router_profile.post("/certifications")
+async def create_certification(body: CertificationIn, user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    payload = {**body.model_dump(), "user_id": user["id"]}
+    row = sb.table("aspirant_certifications").insert(payload).execute().data
+    return {"item": (row or [payload])[0]}
+
+
+@router_profile.put("/certifications/{cid}")
+async def update_certification(cid: str, body: CertificationIn, user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    existing = _safe(lambda: sb.table("aspirant_certifications").select("id").eq("id", cid).eq("user_id", user["id"]).limit(1).execute().data, default=[]) or []
+    if not existing:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    row = sb.table("aspirant_certifications").update(body.model_dump()).eq("id", cid).eq("user_id", user["id"]).execute().data
+    return {"item": (row or [{}])[0]}
+
+
+@router_profile.delete("/certifications/{cid}")
+async def delete_certification(cid: str, user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    existing = _safe(lambda: sb.table("aspirant_certifications").select("id").eq("id", cid).eq("user_id", user["id"]).limit(1).execute().data, default=[]) or []
+    if not existing:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    sb.table("aspirant_certifications").update({"is_active": False}).eq("id", cid).eq("user_id", user["id"]).execute()
+    return {"ok": True}
+
+
+def _validate_date_order(start_date: str | None, end_date: str | None):
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=422, detail="end_date must be on/after start_date")
+
+
+@router_profile.get("/experience")
+async def list_experience(user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    rows = _safe(lambda: sb.table("aspirant_experience").select("*").eq("user_id", user["id"]).order("start_date", desc=True).execute().data, default=[]) or []
+    return {"items": rows}
+
+
+@router_profile.post("/experience")
+async def create_experience(body: ExperienceIn, user: dict = Depends(get_current_user)):
+    _validate_date_order(body.start_date, body.end_date)
+    sb = get_supabase_admin()
+    payload = {**body.model_dump(), "user_id": user["id"]}
+    row = sb.table("aspirant_experience").insert(payload).execute().data
+    return {"item": (row or [payload])[0]}
+
+
+@router_profile.put("/experience/{eid}")
+async def update_experience(eid: str, body: ExperienceIn, user: dict = Depends(get_current_user)):
+    _validate_date_order(body.start_date, body.end_date)
+    sb = get_supabase_admin()
+    existing = _safe(lambda: sb.table("aspirant_experience").select("id").eq("id", eid).eq("user_id", user["id"]).limit(1).execute().data, default=[]) or []
+    if not existing:
+        raise HTTPException(status_code=404, detail="Experience not found")
+    row = sb.table("aspirant_experience").update(body.model_dump()).eq("id", eid).eq("user_id", user["id"]).execute().data
+    return {"item": (row or [{}])[0]}
+
+
+@router_profile.delete("/experience/{eid}")
+async def delete_experience(eid: str, user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    existing = _safe(lambda: sb.table("aspirant_experience").select("id").eq("id", eid).eq("user_id", user["id"]).limit(1).execute().data, default=[]) or []
+    if not existing:
+        raise HTTPException(status_code=404, detail="Experience not found")
+    sb.table("aspirant_experience").delete().eq("id", eid).eq("user_id", user["id"]).execute()
+    return {"ok": True}
+
+
+@router_profile.get("/exam-attempts")
+async def list_exam_attempts(user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    rows = _safe(lambda: sb.table("aspirant_exam_attempts").select("*").eq("user_id", user["id"]).order("attempts_used", desc=True).execute().data, default=[]) or []
+    return {"items": rows}
+
+
+@router_profile.post("/exam-attempts")
+async def create_exam_attempt(body: ExamAttemptIn, user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    payload = {**body.model_dump(), "user_id": user["id"]}
+    row = sb.table("aspirant_exam_attempts").insert(payload).execute().data
+    return {"item": (row or [payload])[0]}
+
+
+@router_profile.put("/exam-attempts/{aid}")
+async def update_exam_attempt(aid: str, body: ExamAttemptIn, user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    existing = _safe(lambda: sb.table("aspirant_exam_attempts").select("id").eq("id", aid).eq("user_id", user["id"]).limit(1).execute().data, default=[]) or []
+    if not existing:
+        raise HTTPException(status_code=404, detail="Exam attempt not found")
+    row = sb.table("aspirant_exam_attempts").update(body.model_dump()).eq("id", aid).eq("user_id", user["id"]).execute().data
+    return {"item": (row or [{}])[0]}
+
+
+@router_profile.delete("/exam-attempts/{aid}")
+async def delete_exam_attempt(aid: str, user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    existing = _safe(lambda: sb.table("aspirant_exam_attempts").select("id").eq("id", aid).eq("user_id", user["id"]).limit(1).execute().data, default=[]) or []
+    if not existing:
+        raise HTTPException(status_code=404, detail="Exam attempt not found")
+    sb.table("aspirant_exam_attempts").delete().eq("id", aid).eq("user_id", user["id"]).execute()
+    return {"ok": True}
 
 
 # ════════════════════════════════════════════════════════════════════════════

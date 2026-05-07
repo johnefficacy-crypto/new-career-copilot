@@ -62,6 +62,8 @@ export const SECTOR_OPTIONS = [
 ];
 
 export const PREPARATION_MODE_OPTIONS = ["full_time", "part_time", "student", "working_professional"];
+export const CERTIFICATION_TYPE_OPTIONS = ["ca", "cs", "cma", "ctet", "tet", "gate", "net", "set", "typing", "stenography", "iti_trade", "computer_certificate", "other"];
+export const EXPERIENCE_SECTOR_OPTIONS = ["government", "psu", "private", "banking", "insurance", "education", "healthcare", "it", "finance", "legal", "other"];
 
 export const INDIAN_STATE_OPTIONS = [
   "andhra_pradesh", "arunachal_pradesh", "assam", "bihar", "chhattisgarh", "goa", "gujarat", "haryana",
