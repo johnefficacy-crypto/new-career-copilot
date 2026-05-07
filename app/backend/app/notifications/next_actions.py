@@ -86,7 +86,7 @@ def _already_exists_today(supabase: Client, *, user_id: str, recruitment_id: str
     return bool(rows)
 
 
-async def generate_next_actions_for_user(*, supabase: Client, user: dict[str, Any], day_bucket: str | None = None) -> dict[str, int]:
+async def generate_next_actions_for_user(*, supabase: Client, user: dict[str, Any], day_bucket: str | None = None, dry_run: bool = False) -> dict[str, Any]:
     bucket = day_bucket or _day_bucket()
     recs = await my_recommendations(user)
     review = await weekly_review(user)
@@ -106,6 +106,7 @@ async def generate_next_actions_for_user(*, supabase: Client, user: dict[str, An
         candidates.append({"notification_type": "complete_profile", "recruitment_id": None, "priority": 1, "title": "Complete your eligibility profile", "body": "Add missing profile details to improve recommendation quality."})
 
     created = skipped = 0
+    by_type: dict[str, int] = {}
     for c in candidates:
         if _already_exists_today(supabase, user_id=user["id"], recruitment_id=c.get("recruitment_id"), notification_type=c["notification_type"], bucket=bucket):
             skipped += 1
@@ -117,7 +118,18 @@ async def generate_next_actions_for_user(*, supabase: Client, user: dict[str, An
             "priority": c["priority"],
             "is_read": False,
             "sent_at": _now_iso(),
+            "generated_at": _now_iso(),
+            "title": c.get("title"),
+            "body": c.get("body"),
+            "source": "next_action_engine",
+            "source_stage": c.get("notification_type"),
+            "dedupe_key": _dedupe_key(user["id"], c.get("recruitment_id"), c["notification_type"], bucket),
         }
-        supabase.table("notification_alerts").insert(payload).execute()
+        if dry_run:
+            created += 0
+            by_type[c["notification_type"]] = by_type.get(c["notification_type"], 0) + 1
+            continue
+        supabase.table("notification_alerts").upsert(payload, on_conflict="dedupe_key").execute()
         created += 1
-    return {"created": created, "skipped": skipped, "candidates": len(candidates)}
+        by_type[c["notification_type"]] = by_type.get(c["notification_type"], 0) + 1
+    return {"created": created, "skipped": skipped, "candidates": len(candidates), "by_type": by_type}

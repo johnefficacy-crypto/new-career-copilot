@@ -36,6 +36,14 @@ class _Query:
     def insert(self, payload):
         self.db[self.table_name].append(payload)
         return self
+    def upsert(self, payload, on_conflict=None):
+        if on_conflict == "dedupe_key" and payload.get("dedupe_key"):
+            existing = [r for r in self.db[self.table_name] if r.get("dedupe_key") == payload["dedupe_key"]]
+            if not existing:
+                self.db[self.table_name].append(payload)
+        else:
+            self.db[self.table_name].append(payload)
+        return self
 
     def execute(self):
         rows = self.db[self.table_name]
@@ -65,7 +73,7 @@ def _rec(stage, end_days=5):
 
 def test_no_duplicate_notification_same_day(monkeypatch):
     sb = FakeSupabase()
-    sb.db["notification_alerts"].append({"user_id": "u1", "recruitment_id": "rec-continue_application", "alert_type": "continue_application", "sent_at": f"{date.today().isoformat()}T10:00:00"})
+    sb.db["notification_alerts"].append({"user_id": "u1", "recruitment_id": "rec-continue_application", "alert_type": "continue_application", "sent_at": f"{date.today().isoformat()}T10:00:00", "dedupe_key": "u1:rec-continue_application:continue_application:"+date.today().isoformat()})
 
     async def fake_recs(user):
         return {"items": [_rec("continue_application")], "counts": {}}
@@ -108,3 +116,17 @@ def test_priority_and_types(monkeypatch):
     assert "prepare_after_submission" in types
     assert "complete_profile" in types
     assert "study_backlog_recovery" in types
+
+
+def test_dry_run_creates_no_rows(monkeypatch):
+    sb = FakeSupabase()
+    async def fake_recs(user): return {"items": [_rec("continue_application")], "counts": {}}
+    async def fake_review(user): return {"backlog_count": 0, "missed_tasks": 0, "hours_planned": 0}
+    async def fake_completion(user): return {"eligibility_profile": {"completion_pct": 100}}
+    monkeypatch.setattr(next_actions, "my_recommendations", fake_recs)
+    monkeypatch.setattr(next_actions, "weekly_review", fake_review)
+    monkeypatch.setattr(next_actions, "profile_completion", fake_completion)
+    out = asyncio.run(next_actions.generate_next_actions_for_user(supabase=sb, user={"id": "u3"}, dry_run=True))
+    assert out["created"] == 0
+    assert len(sb.db["notification_alerts"]) == 0
+    assert out["by_type"]["continue_application"] == 1
