@@ -43,6 +43,7 @@ import AdminMentorsPg from "./pages/admin/Mentors";
 import AdminCommunity from "./pages/admin/Community";
 import AdminAIPolicy from "./pages/admin/AIPolicy";
 import AdminSources from "./pages/admin/Sources";
+import AdminOrganizations from "./pages/admin/Organizations";
 import AdminScraper from "./pages/admin/Scraper";
 import AdminNotifications from "./pages/admin/Notifications";
 import AdminMarketplace from "./pages/admin/Marketplace";
@@ -104,6 +105,7 @@ export default function App() {
         <Route path="/admin/recruitments" element={<AdminRecruitments />} />
         <Route path="/admin/eligibility-queue" element={<AdminEligibility />} />
         <Route path="/admin/sources" element={<AdminSources />} />
+        <Route path="/admin/organizations" element={<AdminOrganizations />} />
         <Route path="/admin/scraper" element={<AdminScraper />} />
         <Route path="/admin/notifications" element={<AdminNotifications />} />
         <Route path="/admin/marketplace" element={<AdminMarketplace />} />
