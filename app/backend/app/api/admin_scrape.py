@@ -80,6 +80,37 @@ def _audit(supabase, actor: dict, action: str, *, entity_type: str | None = None
 
 router = APIRouter(tags=["admin-scrape"])
 
+_HIGH_RISK_FIELDS={"apply_end_date","official_notification_url","official_apply_url","organization_name","total_vacancies","eligibility"}
+
+def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, admin: dict, notes: str | None=None, corrected_value=None):
+    payload={"queue_item_id": queue_id, "field_name": field_name, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat()}
+    if corrected_value is not None:
+        payload["corrected_value"]=corrected_value
+    supabase.table("extracted_field_evidence").upsert(payload, on_conflict="queue_item_id,field_name").execute()
+    return payload
+
+@router.post("/admin/scrape/items/{queue_id}/fields/{field_name}/verify")
+def verify_field(queue_id: str, field_name: str, body: dict | None = None, admin: dict = Depends(require_permission("scraper.manage"))):
+    body=body or {}
+    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "verified", admin, notes=body.get("notes"))
+    _audit(sb, admin, "scrape.field.verify", entity_type="scrape_field", entity_id=f"{queue_id}:{field_name}", new_value=data)
+    return {"ok": True, **data}
+
+@router.post("/admin/scrape/items/{queue_id}/fields/{field_name}/reject")
+def reject_field(queue_id: str, field_name: str, body: dict | None = None, admin: dict = Depends(require_permission("scraper.manage"))):
+    body=body or {}
+    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "rejected", admin, notes=body.get("notes"))
+    _audit(sb, admin, "scrape.field.reject", entity_type="scrape_field", entity_id=f"{queue_id}:{field_name}", new_value=data)
+    return {"ok": True, **data}
+
+@router.post("/admin/scrape/items/{queue_id}/fields/{field_name}/correct")
+def correct_field(queue_id: str, field_name: str, body: dict | None = None, admin: dict = Depends(require_permission("scraper.manage"))):
+    body=body or {}
+    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "corrected", admin, notes=body.get("notes"), corrected_value=body.get("corrected_value"))
+    _audit(sb, admin, "scrape.field.correct", entity_type="scrape_field", entity_id=f"{queue_id}:{field_name}", new_value=data)
+    return {"ok": True, **data}
+
+
 
 def _shape_source(row: dict[str, Any]) -> dict[str, Any]:
     """Return a UI-friendly source row (matches Sources.jsx)."""
@@ -272,6 +303,18 @@ def promote_queue_item(
     if item["status"] not in {"approved", "pending", "needs_review"}:
         raise HTTPException(status_code=409, detail=f"Item is already {item['status']}")
     try:
+        # High-risk fields should be reviewed before promotion where evidence table exists.
+        warnings=[]
+        try:
+            frows=(supabase.table("extracted_field_evidence").select("field_name, reviewer_status").eq("queue_item_id", queue_id).execute().data or [])
+            reviewed={r.get("field_name"):r.get("reviewer_status") for r in frows}
+            missing=[f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified","corrected"}]
+            if missing:
+                raise HTTPException(status_code=409, detail={"message":"High-risk fields unverified","unverified_fields":missing})
+        except HTTPException:
+            raise
+        except Exception:
+            warnings.append("field_evidence_table_unavailable")
         extracted = ExtractedRecruitment(**(item["extracted_data"] or {}))
         rec_id = promote_to_recruitments(extracted, supabase)
     except Exception as exc:  # noqa: BLE001

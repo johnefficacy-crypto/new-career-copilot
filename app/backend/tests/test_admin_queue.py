@@ -40,5 +40,42 @@ def test_promote_never_publishes(monkeypatch):
     monkeypatch.setattr(admin_scrape, 'alert_users_for_new_recruitment', lambda *a, **k: 0)
     # ensure pending accepted
     sb.state['queue'][0]['status']='pending'
-    out=admin_scrape.promote_queue_item('q1', {'id':'a','email':'e'})
-    assert out['publish_status'] in {'needs_review','draft'}
+    import pytest
+    with pytest.raises(Exception):
+        admin_scrape.promote_queue_item('q1', {'id':'a','email':'e'})
+
+def test_field_verify_reject_correct_audit(monkeypatch):
+    class SB2(SB):
+        def __init__(self): super().__init__(); self.state['field']=[]
+        def table(self,t):
+            if t=='extracted_field_evidence':
+                class FQ:
+                    def __init__(self,s): self.s=s; self.p=None
+                    def upsert(self,p, on_conflict=None): self.p=p; return self
+                    def execute(self): self.s.state['field'].append(self.p); return R([self.p])
+                    def select(self,*a,**k): return self
+                    def eq(self,*a,**k): return self
+                return FQ(self)
+            return super().table(t)
+    sb=SB2(); monkeypatch.setattr(admin_scrape,'get_supabase_admin',lambda:sb)
+    admin_scrape.verify_field('q1','apply_end_date',{'notes':'ok'},{'id':'a','email':'e'})
+    admin_scrape.reject_field('q1','apply_end_date',{'notes':'bad'},{'id':'a','email':'e'})
+    admin_scrape.correct_field('q1','apply_end_date',{'corrected_value':'2026-06-01'},{'id':'a','email':'e'})
+    assert any(x.get('reviewer_status')=='corrected' for x in sb.state['field'])
+
+
+def test_promote_blocks_unverified_high_risk(monkeypatch):
+    class SB3(SB):
+        def table(self,t):
+            if t=='extracted_field_evidence':
+                class FQ:
+                    def select(self,*a,**k): return self
+                    def eq(self,*a,**k): return self
+                    def execute(self): return R([{'field_name':'apply_end_date','reviewer_status':'unverified'}])
+                return FQ()
+            return super().table(t)
+    sb=SB3(); monkeypatch.setattr(admin_scrape,'get_supabase_admin',lambda:sb)
+    sb.state['queue'][0]['status']='pending'
+    import pytest
+    with pytest.raises(Exception):
+        admin_scrape.promote_queue_item('q1', {'id':'a','email':'e'})
