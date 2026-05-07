@@ -338,6 +338,8 @@ def promote_queue_item(
             warnings.append("field_evidence_table_unavailable")
         extracted = ExtractedRecruitment(**(item["extracted_data"] or {}))
         rec_id = promote_to_recruitments(extracted, supabase)
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Promote failed: {exc}")
     supabase.table("scrape_queue").update(
