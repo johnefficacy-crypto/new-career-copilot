@@ -18,6 +18,7 @@ import logging
 import re
 from datetime import date, datetime, timezone
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
@@ -25,6 +26,7 @@ from supabase import Client
 
 from app.core.auth import get_current_user, get_optional_user
 from app.db.supabase_client import get_supabase_admin
+from app.profile.eligibility_mapper import build_user_eligibility_profile
 
 logger = logging.getLogger("career_copilot.canonical")
 
@@ -55,7 +57,7 @@ router_recruitments = APIRouter(prefix="/recruitments", tags=["recruitments"])
 
 
 _REC_SELECT = (
-    "id, name, year, status, publish_status, "
+    "id, slug, name, year, status, publish_status, "
     "notification_date, apply_start_date, apply_end_date, "
     "total_vacancies, official_notification_url, "
     "organizations ( id, name, type, state )"
@@ -67,7 +69,7 @@ def _shape_recruitment(row: dict[str, Any], saved_ids: set[str]) -> dict[str, An
     org = row.get("organizations") or {}
     if isinstance(org, list):
         org = org[0] if org else {}
-    slug = f"{_slug(row.get('name') or '')}-{(row.get('id') or '')[:8]}"
+    slug = row.get("slug") or f"{_slug(row.get('name') or '')}-{(row.get('id') or '')[:8]}"
     return {
         "id": row.get("id"),
         "slug": slug,
@@ -247,21 +249,23 @@ async def toggle_save(rec_ref: str, user: dict = Depends(get_current_user)):
 
 
 def _resolve_rec_id(supabase: Client, ref: str) -> str:
-    """Accept UUID or slug safely; never pattern-match UUID columns."""
-    if len(ref) == 36 and ref.count("-") == 4:
+    """Resolve recruitment deterministically: UUID->id, otherwise exact slug."""
+    is_uuid = False
+    try:
+        UUID(str(ref))
+        is_uuid = True
+    except Exception:
+        is_uuid = False
+
+    if is_uuid:
         rows = _safe(lambda: supabase.table("recruitments").select("id").eq("id", ref).limit(1).execute().data, default=[]) or []
         if rows:
             return rows[0]["id"]
+        raise HTTPException(status_code=404, detail="Recruitment not found")
+
     rows = _safe(lambda: supabase.table("recruitments").select("id").eq("slug", ref).limit(1).execute().data, default=[]) or []
     if rows:
         return rows[0]["id"]
-    # fallback: readable slug with trailing id prefix, e.g. name-2026-1a2b3c4d
-    tail = (ref or '').split('-')[-1]
-    if len(tail) == 8:
-        cand = _safe(lambda: supabase.table("recruitments").select("id").limit(200).execute().data, default=[]) or []
-        for r in cand:
-            if str(r.get('id','')).startswith(tail):
-                return r['id']
     raise HTTPException(status_code=404, detail="Recruitment not found")
 
 
@@ -332,6 +336,28 @@ _PROFILE_COLS = (
     "is_admin, plan_id, avatar_url"
 )
 
+_PROFILE_IDENTITY_FIELDS = {
+    "full_name",
+    "phone",
+    "gender",
+    "category",
+    "pwbd_status",
+    "domicile_state",
+    "nationality",
+    "ex_serviceman",
+    "service_years",
+    "govt_employee",
+    "date_of_birth",
+    "dob",
+    "career_stage",
+    "career_goal",
+    "target_type",
+    "target_exam",
+    "onboarding_step",
+    "onboarding_completed",
+    "avatar_url",
+}
+
 
 class ProfileUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=120)
@@ -350,6 +376,11 @@ class ProfileUpdate(BaseModel):
     dob: str | None = None
     graduation_year: int | None = Field(default=None, ge=1990, le=2035)
     qualification_year: int | None = Field(default=None, ge=1990, le=2035)
+    qualification: str | None = None
+    education_level: str | None = None
+    stream: str | None = None
+    percentage: float | None = Field(default=None, ge=0, le=100)
+    cgpa: float | None = Field(default=None, ge=0, le=10)
     weekly_hours_goal: int | None = Field(default=None, ge=0, le=120)
     target_exam_year: int | None = Field(default=None, ge=2024, le=2040)
     goal_exams: list[str] | None = None
@@ -359,7 +390,85 @@ class ProfileUpdate(BaseModel):
     target_exam: str | None = None
     onboarding_step: int | None = Field(default=None, ge=0, le=10)
     onboarding_completed: bool | None = None
+    onboarded: bool | None = None
     avatar_url: str | None = None
+    preferred_states: list[str] | None = None
+    preferred_sectors: list[str] | None = None
+    willing_to_relocate: bool | None = None
+    study_mode: str | None = None
+    study_hours_per_day: float | None = Field(default=None, ge=0, le=24)
+
+
+class CertificationIn(BaseModel):
+    certification_name: str = Field(min_length=1, max_length=120)
+    issuing_body: str | None = Field(default=None, max_length=120)
+    year_completed: int | None = Field(default=None, ge=1950, le=2100)
+    is_active: bool = True
+
+
+class ExperienceIn(BaseModel):
+    sector: str | None = None
+    role: str | None = None
+    organization: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    years_experience: float | None = Field(default=None, ge=0, le=80)
+
+
+class ExamAttemptIn(BaseModel):
+    exam_id: str
+    attempts_used: int = Field(default=0, ge=0)
+
+
+def _get_primary_education(supabase: Client, user_id: str) -> dict[str, Any]:
+    rows = _safe(
+        lambda: supabase.table("aspirant_education")
+        .select("id, level, degree, stream, graduation_year, percentage, cgpa, is_completed")
+        .eq("user_id", user_id)
+        .order("is_completed", desc=True)
+        .order("graduation_year", desc=True)
+        .limit(1)
+        .execute()
+        .data,
+        default=[],
+    ) or []
+    return rows[0] if rows else {}
+
+
+def _get_preferences(supabase: Client, user_id: str) -> dict[str, Any]:
+    rows = _safe(
+        lambda: supabase.table("aspirant_preferences")
+        .select("target_exams, preferred_states, preferred_sectors, willing_to_relocate, study_mode, study_hours_per_day")
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+        .data,
+        default=[],
+    ) or []
+    return rows[0] if rows else {}
+
+
+def _assemble_profile_payload(profile: dict[str, Any], edu: dict[str, Any], prefs: dict[str, Any]) -> dict[str, Any]:
+    assembled = {k: v for k, v in profile.items() if k not in {"id"}}
+    if not assembled.get("graduation_year"):
+        assembled["graduation_year"] = edu.get("graduation_year")
+    assembled["qualification"] = edu.get("degree") or edu.get("level") or assembled.get("qualification")
+    # Progressive profile compatibility: expose normalized education row fields.
+    assembled["education_level"] = edu.get("level") or assembled.get("education_level")
+    assembled["stream"] = edu.get("stream") or assembled.get("stream")
+    assembled["qualification_year"] = edu.get("graduation_year") or assembled.get("qualification_year")
+    assembled["percentage"] = edu.get("percentage") if edu.get("percentage") is not None else assembled.get("percentage")
+    assembled["cgpa"] = edu.get("cgpa") if edu.get("cgpa") is not None else assembled.get("cgpa")
+    assembled["goal_exams"] = prefs.get("target_exams") or assembled.get("goal_exams") or []
+    if prefs.get("study_hours_per_day") is not None:
+        assembled["weekly_hours_goal"] = int(round(float(prefs.get("study_hours_per_day")) * 7))
+    assembled["preferred_states"] = prefs.get("preferred_states") or []
+    assembled["preferred_sectors"] = prefs.get("preferred_sectors") or []
+    if prefs.get("willing_to_relocate") is not None:
+        assembled["willing_to_relocate"] = prefs.get("willing_to_relocate")
+    if prefs.get("study_mode"):
+        assembled["study_mode"] = prefs.get("study_mode")
+    return assembled
 
 
 def _ensure_profile_row(supabase: Client, user_id: str, email: str | None) -> dict[str, Any]:
@@ -384,6 +493,9 @@ def _ensure_profile_row(supabase: Client, user_id: str, email: str | None) -> di
 async def get_profile(user: dict = Depends(get_current_user)):
     supabase = get_supabase_admin()
     profile = _ensure_profile_row(supabase, user["id"], user.get("email"))
+    education = _get_primary_education(supabase, user["id"])
+    prefs = _get_preferences(supabase, user["id"])
+    assembled = _assemble_profile_payload(profile, education, prefs)
     return {
         "id": user["id"],
         "email": user.get("email"),
@@ -392,7 +504,7 @@ async def get_profile(user: dict = Depends(get_current_user)):
         "onboarded": bool(profile.get("onboarding_completed")),
         "plan": profile.get("plan_id") or "free",
         "avatar": profile.get("avatar_url"),
-        "profile": {k: v for k, v in profile.items() if k not in {"id"}},
+        "profile": assembled,
     }
 
 
@@ -405,10 +517,64 @@ async def update_profile(body: ProfileUpdate, user: dict = Depends(get_current_u
         patch["full_name"] = patch.pop("name")
     if "state" in patch and "domicile_state" not in patch:
         patch["domicile_state"] = patch.pop("state")
-    if "qualification_year" in patch and "graduation_year" not in patch:
-        patch["graduation_year"] = patch.pop("qualification_year")
-    if patch:
-        supabase.table("profiles").update(patch).eq("id", user["id"]).execute()
+    if "onboarded" in patch and "onboarding_completed" not in patch:
+        patch["onboarding_completed"] = patch.pop("onboarded")
+
+    identity_patch = {k: v for k, v in patch.items() if k in _PROFILE_IDENTITY_FIELDS}
+    if identity_patch:
+        supabase.table("profiles").update(identity_patch).eq("id", user["id"]).execute()
+
+    education_payload = {}
+    if patch.get("qualification"):
+        education_payload["degree"] = patch.get("qualification")
+    if patch.get("education_level") is not None:
+        education_payload["level"] = str(patch.get("education_level"))
+    elif patch.get("qualification") and "level" not in education_payload:
+        education_payload["level"] = str(patch.get("qualification"))
+    if patch.get("stream") is not None:
+        education_payload["stream"] = patch.get("stream")
+    if patch.get("qualification_year") is not None:
+        education_payload["graduation_year"] = patch.get("qualification_year")
+    if patch.get("percentage") is not None:
+        education_payload["percentage"] = patch.get("percentage")
+    if patch.get("cgpa") is not None:
+        education_payload["cgpa"] = patch.get("cgpa")
+    if education_payload:
+        education_payload["user_id"] = user["id"]
+        education_payload.setdefault("is_completed", True)
+        existing = _safe(
+            lambda: supabase.table("aspirant_education")
+            .select("id")
+            .eq("user_id", user["id"])
+            .order("graduation_year", desc=True)
+            .limit(1)
+            .execute()
+            .data,
+            default=[],
+        ) or []
+        if existing:
+            supabase.table("aspirant_education").update(education_payload).eq("id", existing[0]["id"]).execute()
+        else:
+            supabase.table("aspirant_education").insert(education_payload).execute()
+
+    preferences_payload = {}
+    if patch.get("goal_exams") is not None:
+        preferences_payload["target_exams"] = patch.get("goal_exams")
+    if patch.get("preferred_states") is not None:
+        preferences_payload["preferred_states"] = patch.get("preferred_states")
+    if patch.get("preferred_sectors") is not None:
+        preferences_payload["preferred_sectors"] = patch.get("preferred_sectors")
+    if patch.get("willing_to_relocate") is not None:
+        preferences_payload["willing_to_relocate"] = patch.get("willing_to_relocate")
+    if patch.get("study_mode") is not None:
+        preferences_payload["study_mode"] = patch.get("study_mode")
+    if patch.get("study_hours_per_day") is not None:
+        preferences_payload["study_hours_per_day"] = patch.get("study_hours_per_day")
+    elif patch.get("weekly_hours_goal") is not None:
+        preferences_payload["study_hours_per_day"] = round(float(patch.get("weekly_hours_goal")) / 7.0, 2)
+    if preferences_payload:
+        preferences_payload["user_id"] = user["id"]
+        supabase.table("aspirant_preferences").upsert(preferences_payload, on_conflict="user_id").execute()
     return await get_profile(user)
 
 
@@ -416,16 +582,188 @@ async def update_profile(body: ProfileUpdate, user: dict = Depends(get_current_u
 async def profile_completion(user: dict = Depends(get_current_user)):
     supabase = get_supabase_admin()
     profile = _ensure_profile_row(supabase, user["id"], user.get("email"))
+    education = _get_primary_education(supabase, user["id"])
+    prefs = _get_preferences(supabase, user["id"])
     checks = {
-        "eligibility_profile": ["date_of_birth", "category", "domicile_state", "graduation_year"],
-        "study_profile": ["weekly_hours_goal", "target_exam", "career_goal"],
-        "application_profile": ["phone", "full_name", "nationality"],
+        "identity_profile": {
+            "fields": ["full_name", "phone", "date_of_birth", "category", "domicile_state"],
+            "why_it_matters": "Identity and reservation context drives deterministic eligibility checks.",
+            "next_action": "Add your personal and reservation basics.",
+        },
+        "education_profile": {
+            "fields": ["qualification", "qualification_year"],
+            "why_it_matters": "Education criteria is required for most post-level matching.",
+            "next_action": "Add your highest completed qualification details.",
+        },
+        "preferences_profile": {
+            "fields": ["goal_exams", "preferred_states"],
+            "why_it_matters": "Preferences improve ranking and relevance of recommendations.",
+            "next_action": "Select target exams and preferred states.",
+        },
+        "study_profile": {
+            "fields": ["weekly_hours_goal", "career_goal"],
+            "why_it_matters": "Study rhythm powers planning and backlog risk signals.",
+            "next_action": "Set study rhythm and target outcome.",
+        },
+        "application_profile": {
+            "fields": ["nationality", "govt_employee"],
+            "why_it_matters": "Application-readiness fields reduce submission friction.",
+            "next_action": "Complete application-readiness metadata.",
+        },
     }
+    assembled = _assemble_profile_payload(profile, education, prefs)
     out = {}
-    for k, fields in checks.items():
-        missing = [f for f in fields if not profile.get(f)]
-        out[k] = {"missing_fields": missing, "completion_pct": int(round(((len(fields) - len(missing)) / len(fields)) * 100))}
+    for k, meta in checks.items():
+        fields = meta["fields"]
+        missing = [f for f in fields if not assembled.get(f)]
+        out[k] = {
+            "missing_fields": missing,
+            "completion_pct": int(round(((len(fields) - len(missing)) / len(fields)) * 100)),
+            "why_it_matters": meta["why_it_matters"],
+            "next_action": meta["next_action"],
+        }
+    # Backward compatibility for next-actions engine.
+    out["eligibility_profile"] = out["identity_profile"]
+    certs = _safe(lambda: supabase.table("aspirant_certifications").select("id").eq("user_id", user["id"]).eq("is_active", True).execute().data, default=[]) or []
+    exp = _safe(lambda: supabase.table("aspirant_experience").select("id").eq("user_id", user["id"]).execute().data, default=[]) or []
+    attempts = _safe(lambda: supabase.table("aspirant_exam_attempts").select("id").eq("user_id", user["id"]).execute().data, default=[]) or []
+    out["certification_profile"] = {
+        "completion_pct": 100 if certs else 0,
+        "missing_fields": [] if certs else ["certification_name"],
+        "why_it_matters": "Some recruitments require or prioritize certifications.",
+        "next_action": "Add at least one active certification if applicable.",
+    }
+    out["experience_profile"] = {
+        "completion_pct": 100 if exp else 0,
+        "missing_fields": [] if exp else ["organization", "role"],
+        "why_it_matters": "Experience can unlock role-specific eligibility filters.",
+        "next_action": "Add a work experience row if you have relevant experience.",
+    }
+    out["attempts_profile"] = {
+        "completion_pct": 100 if attempts else 0,
+        "missing_fields": [] if attempts else ["exam_id", "attempts_used"],
+        "why_it_matters": "Attempts help the engine enforce attempt-limit criteria.",
+        "next_action": "Add exam attempts where limits are applicable.",
+    }
     return out
+
+
+@router_profile.get("/certifications")
+async def list_certifications(user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    rows = _safe(lambda: sb.table("aspirant_certifications").select("*").eq("user_id", user["id"]).order("year_completed", desc=True).execute().data, default=[]) or []
+    return {"items": rows}
+
+
+@router_profile.post("/certifications")
+async def create_certification(body: CertificationIn, user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    payload = {**body.model_dump(), "user_id": user["id"]}
+    row = sb.table("aspirant_certifications").insert(payload).execute().data
+    return {"item": (row or [payload])[0]}
+
+
+@router_profile.put("/certifications/{cid}")
+async def update_certification(cid: str, body: CertificationIn, user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    existing = _safe(lambda: sb.table("aspirant_certifications").select("id").eq("id", cid).eq("user_id", user["id"]).limit(1).execute().data, default=[]) or []
+    if not existing:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    row = sb.table("aspirant_certifications").update(body.model_dump()).eq("id", cid).eq("user_id", user["id"]).execute().data
+    return {"item": (row or [{}])[0]}
+
+
+@router_profile.delete("/certifications/{cid}")
+async def delete_certification(cid: str, user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    existing = _safe(lambda: sb.table("aspirant_certifications").select("id").eq("id", cid).eq("user_id", user["id"]).limit(1).execute().data, default=[]) or []
+    if not existing:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    sb.table("aspirant_certifications").update({"is_active": False}).eq("id", cid).eq("user_id", user["id"]).execute()
+    return {"ok": True}
+
+
+def _validate_date_order(start_date: str | None, end_date: str | None):
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=422, detail="end_date must be on/after start_date")
+
+
+@router_profile.get("/experience")
+async def list_experience(user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    rows = _safe(lambda: sb.table("aspirant_experience").select("*").eq("user_id", user["id"]).order("start_date", desc=True).execute().data, default=[]) or []
+    return {"items": rows}
+
+
+@router_profile.post("/experience")
+async def create_experience(body: ExperienceIn, user: dict = Depends(get_current_user)):
+    _validate_date_order(body.start_date, body.end_date)
+    sb = get_supabase_admin()
+    payload = {**body.model_dump(), "user_id": user["id"]}
+    row = sb.table("aspirant_experience").insert(payload).execute().data
+    return {"item": (row or [payload])[0]}
+
+
+@router_profile.put("/experience/{eid}")
+async def update_experience(eid: str, body: ExperienceIn, user: dict = Depends(get_current_user)):
+    _validate_date_order(body.start_date, body.end_date)
+    sb = get_supabase_admin()
+    existing = _safe(lambda: sb.table("aspirant_experience").select("id").eq("id", eid).eq("user_id", user["id"]).limit(1).execute().data, default=[]) or []
+    if not existing:
+        raise HTTPException(status_code=404, detail="Experience not found")
+    row = sb.table("aspirant_experience").update(body.model_dump()).eq("id", eid).eq("user_id", user["id"]).execute().data
+    return {"item": (row or [{}])[0]}
+
+
+@router_profile.delete("/experience/{eid}")
+async def delete_experience(eid: str, user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    existing = _safe(lambda: sb.table("aspirant_experience").select("id").eq("id", eid).eq("user_id", user["id"]).limit(1).execute().data, default=[]) or []
+    if not existing:
+        raise HTTPException(status_code=404, detail="Experience not found")
+    sb.table("aspirant_experience").delete().eq("id", eid).eq("user_id", user["id"]).execute()
+    return {"ok": True}
+
+
+@router_profile.get("/exam-attempts")
+async def list_exam_attempts(user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    rows = _safe(lambda: sb.table("aspirant_exam_attempts").select("*").eq("user_id", user["id"]).order("attempts_used", desc=True).execute().data, default=[]) or []
+    return {"items": rows}
+
+
+@router_profile.post("/exam-attempts")
+async def create_exam_attempt(body: ExamAttemptIn, user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    payload = {**body.model_dump(), "user_id": user["id"]}
+    row = sb.table("aspirant_exam_attempts").insert(payload).execute().data
+    return {"item": (row or [payload])[0]}
+
+
+@router_profile.put("/exam-attempts/{aid}")
+async def update_exam_attempt(aid: str, body: ExamAttemptIn, user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    existing = _safe(lambda: sb.table("aspirant_exam_attempts").select("id").eq("id", aid).eq("user_id", user["id"]).limit(1).execute().data, default=[]) or []
+    if not existing:
+        raise HTTPException(status_code=404, detail="Exam attempt not found")
+    row = sb.table("aspirant_exam_attempts").update(body.model_dump()).eq("id", aid).eq("user_id", user["id"]).execute().data
+    return {"item": (row or [{}])[0]}
+
+
+@router_profile.delete("/exam-attempts/{aid}")
+async def delete_exam_attempt(aid: str, user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    existing = _safe(lambda: sb.table("aspirant_exam_attempts").select("id").eq("id", aid).eq("user_id", user["id"]).limit(1).execute().data, default=[]) or []
+    if not existing:
+        raise HTTPException(status_code=404, detail="Exam attempt not found")
+    sb.table("aspirant_exam_attempts").delete().eq("id", aid).eq("user_id", user["id"]).execute()
+    return {"ok": True}
+
+
+@router_profile.get("/eligibility-input/me")
+async def eligibility_input_me(user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    return build_user_eligibility_profile(sb, user["id"])
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1213,6 +1551,7 @@ async def affiliates():
 # ════════════════════════════════════════════════════════════════════════════
 
 router_study = APIRouter(prefix="/study", tags=["study"])
+router_metadata = APIRouter(prefix="/metadata", tags=["metadata"])
 
 
 def _ensure_active_plan(supabase: Client, user_id: str) -> str | None:
@@ -1593,6 +1932,15 @@ async def weekly_review(user: dict = Depends(get_current_user)):
     }
 
 
+@router_metadata.get("/certifications")
+async def metadata_certifications():
+    sb = get_supabase_admin()
+    rows = _safe(lambda: sb.table("certifications").select("id,name,issuer,aliases,exam_families,sectors,qualification_levels,certification_type,is_active").eq("is_active", True).execute().data, default=None)
+    if rows is None:
+        rows = _safe(lambda: sb.table("certifications").select("id,name,issuer").execute().data, default=[]) or []
+    return {"items": rows}
+
+
 # ─── Aggregate router ───────────────────────────────────────────────────────
 
 router = APIRouter()
@@ -1604,3 +1952,4 @@ router.include_router(router_recommendations)
 router.include_router(router_community)
 router.include_router(router_marketplace)
 router.include_router(router_study)
+router.include_router(router_metadata)
