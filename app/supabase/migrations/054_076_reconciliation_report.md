@@ -309,6 +309,7 @@ Classification definitions used:
 ## 5) Exact idempotent SQL for missing pieces only
 
 Do **not** run these automatically. Execute only after confirming a specific migration is `missing` or `partially applied` from live verification output, and only execute the specific block that corresponds to the missing object(s).
+Do **not** run these automatically. Execute only after confirming a specific migration is `missing` or `partially applied` from live verification output.
 
 ```sql
 -- 069: add quiet-hours bounds constraint only if missing
@@ -322,6 +323,39 @@ BEGIN
     WHERE n.nspname = 'public'
       AND t.relname = 'notification_preferences'
       AND c.conname = 'notification_prefs_quiet_hours_bounds'
+## 4) Status rubric (after running verification)
+
+Because this repository environment has no live DB credentials, statuses below are **provisional** based on migration SQL idempotency risk:
+
+- 067: **safe to apply as-is**
+- 068: **safe to apply as-is**
+- 069: **needs idempotent rewrite** (named check constraint added without `if not exists` guard)
+- 070: **safe to apply as-is**
+- 071: **partially applied risk** (overlaps with 072 on `promoted_recruitment_id`; no FK in 071)
+- 072: **safe to apply as-is** (will backfill FK/index if 071 ran first)
+- 073: **safe to apply as-is**
+- 074: **safe to apply as-is**
+- 075: **safe to apply as-is**
+- 076: **safe to apply as-is**
+
+Use this classifier query-by-query:
+- All objects present, migration absent in history → **already applied manually**
+- Some objects present, some missing → **partially applied**
+- No objects present → **missing**
+
+## 5) Missing-pieces-only SQL (idempotent reconciliation)
+
+```sql
+-- 069: robust quiet-hours constraint create
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname='public'
+      AND t.relname='notification_preferences'
+      AND c.conname='notification_prefs_quiet_hours_bounds'
   ) THEN
     ALTER TABLE public.notification_preferences
       ADD CONSTRAINT notification_prefs_quiet_hours_bounds
@@ -350,6 +384,19 @@ BEGIN
     WHERE n.nspname = 'public'
       AND t.relname = 'scrape_queue'
       AND c.conname = 'scrape_queue_promoted_recruitment_id_fkey'
+-- 072 FK backfill if column exists but FK missing
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='scrape_queue' AND column_name='promoted_recruitment_id'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_constraint c
+    JOIN pg_class t ON t.oid=c.conrelid
+    JOIN pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname='public' AND t.relname='scrape_queue' AND c.contype='f'
+      AND c.conname='scrape_queue_promoted_recruitment_id_fkey'
   ) THEN
     ALTER TABLE public.scrape_queue
       ADD CONSTRAINT scrape_queue_promoted_recruitment_id_fkey
@@ -382,3 +429,18 @@ Per instruction, migration history repair is **not** recommended yet until schem
 | 076 | unknown | **No** | Confirm table + index parity. |
 
 Once every row is either `applied in live schema` or remediated to parity via missing-piece SQL, then and only then mark `Safe to repair migration history now? = Yes`.
+      REFERENCES public.recruitments(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+create index if not exists idx_scrape_queue_promoted_recruitment_id
+  on public.scrape_queue(promoted_recruitment_id);
+```
+
+## 6) Recommendation on migration history repair
+
+Recommended after schema parity is confirmed:
+1. Do **not** re-run unsafe/non-idempotent migration blocks blindly.
+2. Reconcile schema using missing-pieces-only SQL.
+3. Insert/repair migration history entries (`054`–`076`) to match actual schema state so future deploys remain deterministic.
+4. Store this reconciliation report in repo and attach verification query results as evidence.
