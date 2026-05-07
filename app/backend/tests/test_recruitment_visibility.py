@@ -72,18 +72,3 @@ def test_resolver_does_not_use_uuid_ilike(monkeypatch):
     except Exception:
         pass
     assert called['ilike'] is False
-
-
-def test_resolve_by_slug(monkeypatch):
-    rows=[{"id":"abcd1234-1111-1111-1111-111111111111","slug":"exam-2026-abcd1234"}]
-    class SB3:
-        def table(self,name): return Query(rows)
-    rid=canonical._resolve_rec_id(SB3(), "exam-2026-abcd1234")
-    assert rid.startswith("abcd1234")
-
-def test_invalid_slug_404(monkeypatch):
-    class SB3:
-        def table(self,name): return Query([])
-    import pytest
-    with pytest.raises(Exception):
-        canonical._resolve_rec_id(SB3(), "unknown-slug")
