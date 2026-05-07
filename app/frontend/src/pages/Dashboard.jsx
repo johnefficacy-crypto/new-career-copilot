@@ -32,6 +32,8 @@ function MatchSection({ title, items }) {
 export default function Dashboard() {
   const auth = useAuth();
   const [recruitments, setRecruitments] = useState({ items: [], counts: {} });
+  const [recommendations, setRecommendations] = useState({ items: [], counts: {} });
+  const [recommendationsAvailable, setRecommendationsAvailable] = useState(false);
   const [plan, setPlan] = useState({ tasks: [], plan: null, date: "" });
   const [focus, setFocus] = useState({ total_hours_7d: 0, week: [] });
   const [review, setReview] = useState({ hours_studied: 0, hours_planned: 0, adherence: 0, mocks_taken: 0, highlights: [], corrections: [] });
@@ -39,6 +41,12 @@ export default function Dashboard() {
   const [profileCompletion, setProfileCompletion] = useState(null);
 
   useEffect(() => {
+    api.get("/api/recommendations/me")
+      .then((d) => {
+        setRecommendations(d || { items: [], counts: {} });
+        setRecommendationsAvailable(true);
+      })
+      .catch(() => setRecommendationsAvailable(false));
     api.get("/api/recruitments").then((d) => setRecruitments(d || { items: [], counts: {} })).catch(() => setRecruitments({ items: [], counts: {} }));
     api.get("/api/study/plan").then((d) => setPlan({ date: d?.date || "", plan: d?.plan || null, tasks: Array.isArray(d?.tasks) ? d.tasks : [] })).catch(() => setPlan({ tasks: [], plan: null, date: "" }));
     api.get("/api/study/focus/summary").then((d) => setFocus({ total_hours_7d: d?.total_hours_7d || 0, week: Array.isArray(d?.week) ? d.week : [] })).catch(() => setFocus({ total_hours_7d: 0, week: [] }));
@@ -50,7 +58,7 @@ export default function Dashboard() {
   const appByRecruitmentId = useMemo(() => Object.fromEntries((apps || []).map((a) => [a.recruitment_id, a])), [apps]);
   const backlogHigh = (review.backlog_count || 0) > 3 || (review.missed_tasks || 0) > 3;
 
-  const rankedMatches = useMemo(
+  const rankedFallbackMatches = useMemo(
     () => rankRecruitments(recruitments.items, auth.user, {
       appByRecruitmentId,
       backlogHigh,
@@ -59,6 +67,7 @@ export default function Dashboard() {
     [recruitments.items, auth.user, appByRecruitmentId, backlogHigh, focus.total_hours_7d],
   );
 
+  const rankedMatches = recommendationsAvailable ? (recommendations.items || []) : rankedFallbackMatches;
   const topMatches = rankedMatches.slice(0, 6);
   const stageSections = useMemo(() => ({
     apply_now: topMatches.filter((m) => m.recommendation_stage === "apply_now").slice(0, 3),
