@@ -12,15 +12,33 @@ class _Q:
     def __init__(self, name, db):
         self.name = name
         self.db = db
+        self.filters = {}
     def select(self, *_a, **_k): return self
     def limit(self, n): self._limit=n; return self
-    def execute(self): return _Exec(self.db.get(self.name, [])[: getattr(self, '_limit', 9999)])
+    def eq(self, k, v): self.filters[k] = v; return self
+    def order(self, *_a, **_k): return self
+    def insert(self, payload):
+        row = {**payload}
+        row["id"] = row.get("id", f"run-{len(self.db.get(self.name, []))+1}")
+        self.db.setdefault(self.name, []).append(row)
+        return self
+    def update(self, payload):
+        for row in self.db.get(self.name, []):
+            if all(row.get(k) == v for k, v in self.filters.items()):
+                row.update(payload)
+        return self
+    def execute(self):
+        rows = self.db.get(self.name, [])
+        if self.filters:
+            rows = [r for r in rows if all(r.get(k) == v for k, v in self.filters.items())]
+        return _Exec(rows[: getattr(self, '_limit', 9999)])
 
 
 class _SB:
     def __init__(self):
         self.db = {
             "profiles": [{"id": "u1"}, {"id": "u2"}, {"id": "u3"}],
+            "notification_generation_runs": [],
         }
     def table(self, name): return _Q(name, self.db)
 
@@ -39,6 +57,24 @@ def test_generate_next_actions_all_users_limit_and_counts(monkeypatch):
     assert out["dry_run"] is True
     assert out["created"] == 0
     assert out["by_type"]["continue_application"] == 2
+    assert len(sb.db["notification_generation_runs"]) == 1
+    assert sb.db["notification_generation_runs"][0]["status"] == "success"
+    assert sb.db["notification_generation_runs"][0]["created_count"] == 0
+
+
+def test_generate_next_actions_failed_run_log(monkeypatch):
+    sb = _SB()
+    monkeypatch.setattr(notifications, "get_supabase_admin", lambda: sb)
+    async def boom(*_a, **_k): raise RuntimeError("boom")
+    monkeypatch.setattr(notifications, "generate_next_actions_for_user", boom)
+    body = notifications.GenerateNextActionsBody(scope="all_users", limit=1, dry_run=False)
+    try:
+        asyncio.run(notifications.generate_next_actions(body=body, actor={"id": "admin"}))
+        assert False, "expected exception"
+    except RuntimeError:
+        pass
+    assert sb.db["notification_generation_runs"][0]["status"] == "failed"
+    assert "boom" in sb.db["notification_generation_runs"][0]["error_message"]
 
 
 def test_my_alerts_shaping_and_recruitment_link(monkeypatch):

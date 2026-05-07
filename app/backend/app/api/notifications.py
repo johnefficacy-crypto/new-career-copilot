@@ -107,12 +107,13 @@ def my_mark_read(
 class Prefs(BaseModel):
     in_app_enabled: bool | None = None
     email_enabled: bool | None = None
-    email_digest_frequency: str | None = Field(default=None, pattern="^(immediate|daily|weekly|never)$")
-    whatsapp_enabled: bool | None = None
+    in_app_types_disabled: list[str] | None = None
+    email_types_disabled: list[str] | None = None
+    digest_preference: str | None = Field(default=None, pattern="^(off|daily|weekly)$")
+    quiet_hours_start: int | None = Field(default=None, ge=0, le=23)
+    quiet_hours_end: int | None = Field(default=None, ge=0, le=23)
     min_priority_in_app: str | None = Field(default=None, pattern="^(low|normal|medium|high|critical)$")
-    min_priority_email: str | None = Field(default=None, pattern="^(low|normal|medium|high|critical)$")
-    event_types_muted: list[str] | None = None
-    org_types_muted: list[str] | None = None
+    deadline_reminder_windows: list[str] | None = None
 
 
 @router.get("/notifications/preferences/me")
@@ -135,12 +136,13 @@ def get_prefs(user: dict = Depends(get_current_user)) -> dict[str, Any]:
             "user_id": user["id"],
             "in_app_enabled": True,
             "email_enabled": True,
-            "email_digest_frequency": "immediate",
-            "whatsapp_enabled": False,
+            "digest_preference": "off",
+            "in_app_types_disabled": [],
+            "email_types_disabled": [],
+            "quiet_hours_start": None,
+            "quiet_hours_end": None,
             "min_priority_in_app": "low",
-            "min_priority_email": "normal",
-            "event_types_muted": [],
-            "org_types_muted": [],
+            "deadline_reminder_windows": ["48h", "24h", "6h"],
         }
     }
 
@@ -185,15 +187,24 @@ def admin_notifications(_admin: dict = Depends(_require_admin)) -> dict[str, Any
         )
     except Exception:
         pass
+    recent_rows = sb.table("notification_alerts").select("alert_type,source,sent_at").eq("source", "next_action_engine").limit(200).execute().data or []
+    summary = {"created": len(recent_rows), "skipped": 0, "by_type": {}}
+    for r in recent_rows:
+        t = r.get("alert_type") or "unknown"
+        summary["by_type"][t] = summary["by_type"].get(t, 0) + 1
+
     return {
         "kill_switch": paused,
         "pending_dispatch": pending,
         "sent_24h": sent_24h,
+        "recent_generation": summary,
         "channels": [
             {"id": "in_app", "label": "In-app", "active": True},
             {"id": "email", "label": "Email (Resend)", "active": True},
             {"id": "whatsapp", "label": "WhatsApp", "active": False},
         ],
+        "kill_switch_note": "Kill switch controls outbound delivery. In-app next-action generation is controlled by preferences and admin permissions.",
+        "recent_runs": sb.table("notification_generation_runs").select("*").order("created_at", desc=True).limit(20).execute().data or [],
     }
 
 
@@ -261,6 +272,16 @@ async def generate_next_actions(
     actor: dict = Depends(require_permission("notifications.manage")),
 ) -> dict[str, Any]:
     sb = get_supabase_admin()
+    run_row = {
+        "triggered_by_user_id": actor.get("id"),
+        "scope": body.scope,
+        "dry_run": body.dry_run,
+        "run_limit": body.limit,
+        "status": "running",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    run = sb.table("notification_generation_runs").insert(run_row).execute().data or []
+    run_id = run[0].get("id") if run else None
     users: list[dict[str, Any]]
     if body.scope == "all_users":
         rows = sb.table("profiles").select("id").limit(body.limit).execute().data or []
@@ -271,11 +292,33 @@ async def generate_next_actions(
         users = [{"id": actor["id"]}]
     created = skipped = candidates = 0
     by_type: dict[str, int] = {}
-    for u in users:
-        res = await generate_next_actions_for_user(supabase=sb, user=u, dry_run=body.dry_run)
-        created += res["created"]
-        skipped += res["skipped"]
-        candidates += res["candidates"]
-        for k, v in (res.get("by_type") or {}).items():
-            by_type[k] = by_type.get(k, 0) + v
-    return {"scope": body.scope, "users": len(users), "created": created, "skipped": skipped, "candidates": candidates, "by_type": by_type, "dry_run": body.dry_run}
+    try:
+        for u in users:
+            res = await generate_next_actions_for_user(supabase=sb, user=u, dry_run=body.dry_run)
+            created += res["created"]
+            skipped += res["skipped"]
+            candidates += res["candidates"]
+            for k, v in (res.get("by_type") or {}).items():
+                by_type[k] = by_type.get(k, 0) + v
+        if run_id:
+            sb.table("notification_generation_runs").update({
+                "candidates_count": candidates,
+                "created_count": created,
+                "skipped_count": skipped,
+                "by_type": by_type,
+                "status": "success",
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", run_id).execute()
+        return {"scope": body.scope, "users": len(users), "created": created, "skipped": skipped, "candidates": candidates, "by_type": by_type, "dry_run": body.dry_run}
+    except Exception as exc:
+        if run_id:
+            sb.table("notification_generation_runs").update({
+                "status": "failed",
+                "error_message": str(exc),
+                "candidates_count": candidates,
+                "created_count": created,
+                "skipped_count": skipped,
+                "by_type": by_type,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", run_id).execute()
+        raise
