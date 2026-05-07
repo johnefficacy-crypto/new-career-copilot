@@ -1,44 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 
-export default function AdminRecruitments() {
-  const [items, setItems] = useState([]);
-  useEffect(() => {
-    api.get("/api/recruitments").then((d) => setItems(d.items)).catch(() => {});
-  }, []);
-  return (
-    <div className="space-y-6" data-testid="admin-recruitments">
-      <div>
-        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Recruitments</div>
-        <h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight">Canonical recruitments · Phase-1 read</h1>
-        <p className="text-muted-foreground mt-1">Phase-2 adds create/edit + scraper promotion.</p>
-      </div>
-      <div className="soft-card rounded-2xl overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
-              <th className="text-left px-4 py-3">Recruitment</th>
-              <th className="text-left px-4 py-3">Org</th>
-              <th className="text-left px-4 py-3">Stage</th>
-              <th className="text-left px-4 py-3">Posts</th>
-              <th className="text-left px-4 py-3">Vacancies</th>
-              <th className="text-left px-4 py-3">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((r) => (
-              <tr key={r.slug} className="border-t border-border">
-                <td className="px-4 py-3 font-semibold">{r.name}</td>
-                <td className="px-4 py-3 text-xs text-muted-foreground">{r.organization}</td>
-                <td className="px-4 py-3 text-xs">{r.stage}</td>
-                <td className="px-4 py-3 text-xs">{r.posts_matched} / {r.posts_total}</td>
-                <td className="px-4 py-3 text-xs">{r.vacancies?.toLocaleString()}</td>
-                <td className="px-4 py-3"><span className={`pill ${r.status === "eligible" ? "pill-sage" : r.status === "urgent" ? "pill-clay" : "pill-amber"}`}>{r.status}</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
+export default function AdminRecruitments(){
+  const [items,setItems]=useState([]);
+  const load=()=>api.get('/api/admin/recruitments').then(d=>setItems(d.items||[]));
+  useEffect(()=>{load().catch(()=>{});},[]);
+  const act=async(id,a)=>{await api.post(`/api/admin/recruitments/${id}/${a}`,{}); await load();};
+  return <div className='space-y-4'><h1 className='font-heading text-2xl'>Recruitment trust workflow</h1>
+  <div className='soft-card rounded-2xl overflow-auto'><table className='w-full text-xs'><thead><tr>{['name','organization','publish_status','lifecycle','notif','apply','dates','provenance','blocking','warnings','actions'].map(h=><th key={h} className='text-left px-2 py-2'>{h}</th>)}</tr></thead><tbody>
+  {items.map(r=>{const canPub=(r.blocking_issues||[]).length===0; return <tr key={r.id} className='border-t'><td>{r.name}</td><td>{r.organization}</td><td>{r.publish_status}</td><td>{r.lifecycle_status}</td><td>{r.official_notification_url||'—'}</td><td>{r.official_apply_url||'—'}</td><td>{r.apply_start_date}→{r.apply_end_date}</td><td>{r.source_provenance_count}</td><td>{(r.blocking_issues||[]).join(', ')||'—'}</td><td>{(r.warnings||[]).join(', ')||'—'}</td><td className='space-x-1'><button className='btn btn-ghost' onClick={()=>act(r.id,'validate-publish')}>Validate</button><button className='btn btn-ghost' onClick={()=>act(r.id,'verify')}>Verify</button><button disabled={!canPub} className='btn btn-primary' onClick={()=>act(r.id,'publish')}>Publish</button><button className='btn btn-ghost' onClick={()=>act(r.id,'archive')}>Archive</button><button className='btn btn-ghost' onClick={()=>act(r.id,'withdraw')}>Withdraw</button></td></tr>})}
+  </tbody></table></div></div>
 }
