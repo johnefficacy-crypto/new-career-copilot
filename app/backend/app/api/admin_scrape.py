@@ -233,8 +233,7 @@ def list_scrape_queue(
     supabase = get_supabase_admin()
     q = (
         supabase.table("scrape_queue")
-        .select("id, source_url, source_name, extracted_data, confidence_score, "
-                "status, scrape_run_id, scraped_at, duplicate_of, reviewer_notes")
+        .select("id, source_url, source_name, raw_html, extracted_data, confidence_score, data_quality_score, status, duplicate_of, reviewer_id, reviewer_notes, reviewed_at, field_evidence, official_source_resolved, official_source_host, extraction_status, evidence_required, scraped_at")
         .order("scraped_at", desc=True)
         .limit(limit)
     )
@@ -270,7 +269,7 @@ def promote_queue_item(
     if not rows:
         raise HTTPException(status_code=404, detail="Queue item not found")
     item = rows[0]
-    if item["status"] != "pending":
+    if item["status"] not in {"approved", "pending", "needs_review"}:
         raise HTTPException(status_code=409, detail=f"Item is already {item['status']}")
     try:
         extracted = ExtractedRecruitment(**(item["extracted_data"] or {}))
@@ -279,15 +278,16 @@ def promote_queue_item(
         raise HTTPException(status_code=500, detail=f"Promote failed: {exc}")
     supabase.table("scrape_queue").update(
         {
-            "status": "approved",
+            "status": "promoted",
             "reviewer_id": admin["id"],
             "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "promoted_recruitment_id": rec_id,
         }
     ).eq("id", queue_id).execute()
-    alerts_sent = alert_users_for_new_recruitment(rec_id, supabase)
-    _audit(supabase, admin, "scrape.promote_item", entity_type="scrape_queue",
+    # Promotion only creates canonical draft/needs_review records; no publish fanout here.
+    _audit(supabase, admin, "scrape.queue.promote", entity_type="scrape_queue",
            entity_id=queue_id, new_value={"recruitment_id": rec_id})
-    return {"ok": True, "recruitment_id": rec_id, "alerts_sent": alerts_sent}
+    return {"ok": True, "recruitment_id": rec_id, "publish_status": "needs_review"}
 
 
 @router.post("/admin/scrape/promote/{run_id}")
@@ -309,6 +309,36 @@ def promote_run_endpoint(
     return result
 
 
+
+
+@router.post("/admin/scrape/items/{queue_id}/approve")
+def approve_queue_item(
+    queue_id: str,
+    body: dict | None = None,
+    admin: dict = Depends(require_permission("scraper.manage")),
+) -> dict[str, Any]:
+    body = body or {}
+    supabase = get_supabase_admin()
+    res = (
+        supabase.table("scrape_queue")
+        .update(
+            {
+                "status": "approved",
+                "reviewer_id": admin["id"],
+                "reviewer_notes": body.get("notes"),
+                "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        .eq("id", queue_id)
+        .execute()
+        .data
+        or []
+    )
+    if not res:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+    _audit(supabase, admin, "scrape.queue.approve", entity_type="scrape_queue",
+           entity_id=queue_id, new_value=body)
+    return {"ok": True, "id": queue_id, "status": "approved"}
 @router.post("/admin/scrape/items/{queue_id}/reject")
 def reject_queue_item(
     queue_id: str,
@@ -334,7 +364,7 @@ def reject_queue_item(
     )
     if not res:
         raise HTTPException(status_code=404, detail="Queue item not found")
-    _audit(supabase, admin, "scrape.reject_item", entity_type="scrape_queue",
+    _audit(supabase, admin, "scrape.queue.reject", entity_type="scrape_queue",
            entity_id=queue_id, new_value=body)
     return {"ok": True, "id": queue_id, "status": "rejected"}
 
