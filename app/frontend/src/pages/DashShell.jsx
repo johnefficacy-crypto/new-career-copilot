@@ -26,6 +26,7 @@ import {
   Shield,
 } from "lucide-react";
 import { useAuth } from "../lib/authContext";
+import { api } from "../lib/api";
 
 const SECTIONS = [
   {
@@ -41,6 +42,7 @@ const SECTIONS = [
       { to: "/app/exams", label: "Exams", icon: BookOpenCheck },
       { to: "/app/saved", label: "Saved", icon: Bookmark },
       { to: "/app/tracker", label: "Application tracker", icon: ListChecks },
+      { to: "/app/notifications", label: "Notifications", icon: Bell },
     ],
   },
   {
@@ -215,8 +217,14 @@ export default function DashShell() {
   const { pathname } = useLocation();
   const auth = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => { setSidebarOpen(false); }, [pathname]);
+  useEffect(() => {
+    api.get("/api/notifications/me/unread-count")
+      .then((d) => setUnreadCount(Number(d?.count || 0)))
+      .catch(() => setUnreadCount(0));
+  }, [pathname]);
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && setSidebarOpen(false);
     document.addEventListener("keydown", onKey);
@@ -257,10 +265,10 @@ export default function DashShell() {
               className="w-full pl-9 pr-4 py-2 rounded-lg bg-white/80 border border-border focus:border-clay-400 text-sm outline-none"
             />
           </div>
-          <button data-testid="notif-btn" className="h-9 w-9 grid place-items-center rounded-lg border border-border bg-white/70 relative">
+          <Link to="/app/notifications" data-testid="notif-btn" className="h-9 w-9 grid place-items-center rounded-lg border border-border bg-white/70 relative">
             <Bell className="h-4 w-4" />
-            <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-clay-500" />
-          </button>
+            {unreadCount > 0 && <span className="absolute -top-1 -right-1 text-[10px] leading-none px-1.5 py-0.5 rounded-full bg-clay-500 text-white">{unreadCount > 9 ? "9+" : unreadCount}</span>}
+          </Link>
           <Link to="/app/profile" className="h-9 w-9 grid place-items-center rounded-lg border border-border bg-white/70" data-testid="settings-btn">
             <Settings className="h-4 w-4" />
           </Link>
