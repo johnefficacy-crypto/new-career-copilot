@@ -19,7 +19,7 @@ class Q:
             return R([row])
         return R([])
 class SB:
-    def __init__(self): self.state={'queue':[{'id':'q1','status':'approved','extracted_data':{'title':'t','organization_name':'Org','org_type':'central','year':2026,'official_notification_url':'https://x.gov/n'}}],'audits':[]}
+    def __init__(self): self.state={'queue':[{'id':'q1','status':'approved','notification_document_id':'doc-1','extracted_data':{'title':'t','organization_name':'Org','org_type':'central','year':2026,'official_notification_url':'https://x.gov/n'}}],'audits':[]}
     def table(self,t): return Q(t,self.state)
 
 def test_approve_updates_status(monkeypatch):
@@ -52,9 +52,12 @@ def test_field_verify_reject_correct_audit(monkeypatch):
                 class FQ:
                     def __init__(self,s): self.s=s; self.p=None
                     def upsert(self,p, on_conflict=None): self.p=p; return self
-                    def execute(self): self.s.state['field'].append(self.p); return R([self.p])
+                    def execute(self):
+                        if self.p is None: return R([])
+                        self.s.state['field'].append(self.p); return R([self.p])
                     def select(self,*a,**k): return self
                     def eq(self,*a,**k): return self
+                    def limit(self,*a,**k): return self
                 return FQ(self)
             return super().table(t)
     sb=SB2(); monkeypatch.setattr(admin_scrape,'get_supabase_admin',lambda:sb)
@@ -79,3 +82,22 @@ def test_promote_blocks_unverified_high_risk(monkeypatch):
     import pytest
     with pytest.raises(Exception):
         admin_scrape.promote_queue_item('q1', {'id':'a','email':'e'})
+
+
+def test_field_evidence_requires_document_id(monkeypatch):
+    class SB4(SB):
+        def __init__(self): super().__init__(); self.state["queue"][0]["notification_document_id"]=None
+        def table(self,t):
+            if t=="extracted_field_evidence":
+                class FQ:
+                    def select(self,*a,**k): return self
+                    def eq(self,*a,**k): return self
+                    def limit(self,*a,**k): return self
+                    def execute(self): return R([])
+                    def upsert(self,*a,**k): return self
+                return FQ()
+            return super().table(t)
+    import pytest
+    sb=SB4(); monkeypatch.setattr(admin_scrape,'get_supabase_admin',lambda:sb)
+    with pytest.raises(Exception):
+        admin_scrape.verify_field('q1','title',{'notes':'n'},{'id':'a','email':'e'})

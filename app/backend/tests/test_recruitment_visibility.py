@@ -59,3 +59,16 @@ def test_admin_list_can_see_all_statuses(monkeypatch):
     monkeypatch.setattr(admin_trust, 'get_supabase_admin', lambda: SB(ROWS))
     out=admin_trust.admin_recruitments(_admin={'id':'a','permissions':['recruitments.manage']})
     assert len(out['items'])==4
+
+def test_resolver_does_not_use_uuid_ilike(monkeypatch):
+    called={'ilike':False}
+    class Q2(Query):
+        def ilike(self,*a,**k): called['ilike']=True; return self
+    class SB2(SB):
+        def table(self,name): return Q2(self.rows if name=='recruitments' else [])
+    monkeypatch.setattr(canonical,'get_supabase_admin',lambda:SB2(ROWS))
+    try:
+        canonical._resolve_rec_id(SB2(ROWS), '11111111-1111-1111-1111-111111111111')
+    except Exception:
+        pass
+    assert called['ilike'] is False
