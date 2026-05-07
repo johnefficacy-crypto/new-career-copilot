@@ -272,6 +272,21 @@ where schemaname='public' and tablename='recruitment_events';
 
 ### 4.1 Migration-by-migration status (067–076)
 
+Live-output parsing block (fill this from pasted SQL outputs):
+
+```text
+067 => <applied in live schema|missing|partially applied|unknown>
+068 => <applied in live schema|missing|partially applied|unknown>
+069 => <applied in live schema|missing|partially applied|unknown>
+070 => <applied in live schema|missing|partially applied|unknown>
+071 => <applied in live schema|missing|partially applied|unknown>
+072 => <applied in live schema|missing|partially applied|unknown>
+073 => <applied in live schema|missing|partially applied|unknown>
+074 => <applied in live schema|missing|partially applied|unknown>
+075 => <applied in live schema|missing|partially applied|unknown>
+076 => <applied in live schema|missing|partially applied|unknown>
+```
+
 | Migration | Live status | Evidence from verification queries |
 |---|---|---|
 | 067_applications_tracker_fields | **unknown** | Pending pasted result set for `information_schema.columns` check. |
@@ -293,6 +308,7 @@ Classification definitions used:
 
 ## 5) Exact idempotent SQL for missing pieces only
 
+Do **not** run these automatically. Execute only after confirming a specific migration is `missing` or `partially applied` from live verification output, and only execute the specific block that corresponds to the missing object(s).
 Do **not** run these automatically. Execute only after confirming a specific migration is `missing` or `partially applied` from live verification output.
 
 ```sql
