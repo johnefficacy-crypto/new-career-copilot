@@ -265,6 +265,48 @@ from pg_indexes
 where schemaname='public' and tablename='recruitment_events';
 ```
 
+## 4) Live status (from executed verification SQL)
+
+> Latest update note: the command output payload was referenced as `[paste results]` but not included in this repo commit context.
+> Until the concrete result rows are pasted into this document, the live state classification remains `unknown`.
+
+### 4.1 Migration-by-migration status (067–076)
+
+| Migration | Live status | Evidence from verification queries |
+|---|---|---|
+| 067_applications_tracker_fields | **unknown** | Pending pasted result set for `information_schema.columns` check. |
+| 068_notification_next_action_dedupe | **unknown** | Pending pasted result set for `notification_alerts` columns + `notification_alerts_dedupe_key_uidx`. |
+| 069_notification_preferences_governance | **unknown** | Pending pasted result set for governance columns + check constraints. |
+| 070_notification_generation_runs | **unknown** | Pending pasted result set for table columns + index + RLS + policies. |
+| 071_trust_pipeline_hardening | **unknown** | Pending pasted result set for trust-pipeline columns + indexes. |
+| 072_field_evidence_alignment | **unknown** | Pending pasted result set for `corrected_value`, FK, and promoted index. |
+| 073_scrape_queue_promoted_status | **unknown** | Pending pasted result set for `scrape_queue_status_check` includes `promoted`. |
+| 074_recruitment_slug_support | **unknown** | Pending pasted result set for `recruitments.slug` + unique index. |
+| 075_source_intelligence_policy | **unknown** | Pending pasted result set for policy-governance columns in `source_registry`. |
+| 076_recruitment_events | **unknown** | Pending pasted result set for `recruitment_events` table + index. |
+
+Classification definitions used:
+- **applied in live schema**: all expected objects found.
+- **partially applied**: at least one expected object found and at least one missing.
+- **missing**: none of expected objects found.
+- **unknown**: verification output unavailable/insufficient to classify.
+
+## 5) Exact idempotent SQL for missing pieces only
+
+Do **not** run these automatically. Execute only after confirming a specific migration is `missing` or `partially applied` from live verification output.
+
+```sql
+-- 069: add quiet-hours bounds constraint only if missing
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'notification_preferences'
+      AND c.conname = 'notification_prefs_quiet_hours_bounds'
 ## 4) Status rubric (after running verification)
 
 Because this repository environment has no live DB credentials, statuses below are **provisional** based on migration SQL idempotency risk:
@@ -308,6 +350,24 @@ BEGIN
   END IF;
 END $$;
 
+-- 072: add FK only if promoted_recruitment_id exists and FK is missing
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'scrape_queue'
+      AND column_name = 'promoted_recruitment_id'
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'scrape_queue'
+      AND c.conname = 'scrape_queue_promoted_recruitment_id_fkey'
 -- 072 FK backfill if column exists but FK missing
 DO $$
 BEGIN
@@ -325,6 +385,34 @@ BEGIN
     ALTER TABLE public.scrape_queue
       ADD CONSTRAINT scrape_queue_promoted_recruitment_id_fkey
       FOREIGN KEY (promoted_recruitment_id)
+      REFERENCES public.recruitments(id)
+      ON DELETE SET NULL;
+  END IF;
+END $$;
+
+-- 072: add promoted index only if missing
+CREATE INDEX IF NOT EXISTS idx_scrape_queue_promoted_recruitment_id
+  ON public.scrape_queue(promoted_recruitment_id);
+```
+
+## 6) Final safe-to-repair migration history table
+
+Per instruction, migration history repair is **not** recommended yet until schema parity is confirmed with concrete live results.
+
+| Migration | Current status | Safe to repair migration history now? | Condition to become safe |
+|---|---|---|---|
+| 067 | unknown | **No** | Provide and validate live query evidence. |
+| 068 | unknown | **No** | Provide and validate live query evidence. |
+| 069 | unknown | **No** | Confirm constraints/columns parity; apply missing-piece SQL only if needed. |
+| 070 | unknown | **No** | Confirm table/index/RLS/policy parity. |
+| 071 | unknown | **No** | Confirm all trust-pipeline columns/indexes parity. |
+| 072 | unknown | **No** | Confirm `corrected_value` + FK/index parity. |
+| 073 | unknown | **No** | Confirm status check constraint includes `promoted`. |
+| 074 | unknown | **No** | Confirm slug column + unique index parity. |
+| 075 | unknown | **No** | Confirm three governance columns parity. |
+| 076 | unknown | **No** | Confirm table + index parity. |
+
+Once every row is either `applied in live schema` or remediated to parity via missing-piece SQL, then and only then mark `Safe to repair migration history now? = Yes`.
       REFERENCES public.recruitments(id) ON DELETE SET NULL;
   END IF;
 END $$;
