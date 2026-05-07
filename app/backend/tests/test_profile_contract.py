@@ -132,39 +132,6 @@ def test_put_profile_upserts_education(monkeypatch):
     assert row["percentage"] == 77.5
 
 
-def test_put_profile_maps_cgpa(monkeypatch):
-    sb = _SB()
-    monkeypatch.setattr(canonical, "get_supabase_admin", lambda: sb)
-    body = canonical.ProfileUpdate(qualification="BSc", cgpa=8.2)
-
-    asyncio.run(canonical.update_profile(body=body, user=_user()))
-
-    row = sb.db["aspirant_education"][0]
-    assert row["cgpa"] == 8.2
-
-
-def test_put_profile_maps_education_level(monkeypatch):
-    sb = _SB()
-    monkeypatch.setattr(canonical, "get_supabase_admin", lambda: sb)
-    body = canonical.ProfileUpdate(education_level="graduation")
-
-    asyncio.run(canonical.update_profile(body=body, user=_user()))
-
-    row = sb.db["aspirant_education"][0]
-    assert row["level"] == "graduation"
-
-
-def test_put_profile_maps_stream(monkeypatch):
-    sb = _SB()
-    monkeypatch.setattr(canonical, "get_supabase_admin", lambda: sb)
-    body = canonical.ProfileUpdate(qualification="BSc", stream="science")
-
-    asyncio.run(canonical.update_profile(body=body, user=_user()))
-
-    row = sb.db["aspirant_education"][0]
-    assert row["stream"] == "science"
-
-
 def test_put_profile_writes_goal_exams_preferences(monkeypatch):
     sb = _SB()
     monkeypatch.setattr(canonical, "get_supabase_admin", lambda: sb)

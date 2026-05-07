@@ -104,26 +104,13 @@ export default function Profile() {
           </Section>
 
           <Section title="Education" helper="Qualification and marks drive post-level matching.">
-            <Grid><Input label="Education level" value={form.education_level} onChange={(v) => set("education_level", v)} placeholder="Not provided" /><Input label="Qualification" value={form.qualification} onChange={(v) => set("qualification", v)} placeholder="Not provided" /><Input label="Stream" value={form.stream} onChange={(v) => set("stream", v)} placeholder="Not provided" /><Input label="Passing year" value={form.qualification_year} onChange={(v) => set("qualification_year", v)} placeholder="Not provided" /><Input label="Percentage" value={form.percentage} onChange={(v) => set("percentage", v)} placeholder="Not provided" /><Input label="CGPA" value={form.cgpa} onChange={(v) => set("cgpa", v)} placeholder="Not provided" /></Grid>
+            <Grid><Input label="Qualification" value={form.qualification} onChange={(v) => set("qualification", v)} placeholder="Not provided" /><Input label="Passing year" value={form.qualification_year} onChange={(v) => set("qualification_year", v)} placeholder="Not provided" /><Input label="Percentage" value={form.percentage} onChange={(v) => set("percentage", v)} placeholder="Not provided" /><Input label="CGPA" value={form.cgpa} onChange={(v) => set("cgpa", v)} placeholder="Not provided" /></Grid>
           </Section>
 
           <Section title="Preferences" helper="Preferences improve recommendation relevance only.">
             <div className="space-y-2"><div className="text-sm text-muted-foreground">Exam families</div><Chips options={EXAM_FAMILY_OPTIONS} values={form.goal_exams} onToggle={(v) => toggleArray("goal_exams", v)} /></div>
             <div className="space-y-2"><div className="text-sm text-muted-foreground">Preferred sectors</div><Chips options={SECTOR_OPTIONS} values={form.preferred_sectors} onToggle={(v) => toggleArray("preferred_sectors", v)} /></div>
-            <div className="space-y-2">
-              <div className="text-sm text-muted-foreground">Preferred states</div>
-              <select className="w-full px-3 py-2.5 rounded-xl bg-white/80 border border-border text-sm outline-none" onChange={(e) => e.target.value && !form.preferred_states.includes(e.target.value) && set("preferred_states", [...form.preferred_states, e.target.value])}>
-                <option value="">Select state to add</option>
-                {INDIAN_STATE_OPTIONS.map((s) => <option key={s} value={s}>{s.replaceAll("_", " ")}</option>)}
-              </select>
-              <div className="flex flex-wrap gap-2">
-                {(form.preferred_states || []).length ? form.preferred_states.map((s) => (
-                  <button key={s} type="button" onClick={() => set("preferred_states", form.preferred_states.filter((x) => x !== s))} className="px-3 py-1 rounded-full border border-clay-300 bg-clay-50 text-xs">
-                    {s.replaceAll("_", " ")} ×
-                  </button>
-                )) : <span className="text-xs text-muted-foreground">Not provided</span>}
-              </div>
-            </div>
+            <div className="space-y-2"><div className="text-sm text-muted-foreground">Preferred states</div><Chips options={INDIAN_STATE_OPTIONS} values={form.preferred_states} onToggle={(v) => toggleArray("preferred_states", v)} /></div>
             <Bool label="Willing to relocate" value={form.willing_to_relocate} onChange={(v) => set("willing_to_relocate", v)} />
           </Section>
 
