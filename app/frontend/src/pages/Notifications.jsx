@@ -14,6 +14,11 @@ function routeForNotification(n) {
   return n.recruitment_link || "/app";
 }
 
+function labelForType(t) {
+  const m = {continue_application:"Application",submit_form:"Application",complete_profile:"Profile",study_backlog_recovery:"Study",apply_deadline_urgent:"Deadline",weekly_review_ready:"Weekly Review",monitor_result:"Result Monitoring",prepare_after_submission:"Study"};
+  return m[t] || t;
+}
+
 export default function Notifications() {
   const nav = useNavigate();
   const [items, setItems] = useState([]);
@@ -62,7 +67,7 @@ export default function Notifications() {
           <h1 className="font-heading text-4xl font-semibold tracking-tight mt-1">Next actions</h1>
           <p className="text-muted-foreground mt-1">{unreadOnly && unreadCount === 0 ? "You’re caught up." : "Actionable reminders from your recruitment and study workflow."}</p>
         </div>
-        <button className="btn btn-ghost" onClick={markAllRead}>Mark all read</button>
+        <div className="flex gap-2"><a className="btn btn-ghost" href="/app/notifications/preferences">Preferences</a><button className="btn btn-ghost" onClick={markAllRead}>Mark all read</button></div>
       </div>
 
       <div className="soft-card rounded-2xl p-4 flex gap-3 flex-wrap items-center text-sm">
@@ -73,7 +78,7 @@ export default function Notifications() {
 
       {loading ? <div>Loading…</div> : items.length === 0 ? <div className="soft-card rounded-2xl p-10 text-center"><Bell className="h-6 w-6 text-clay-500 mx-auto" /><div className="mt-3 font-heading text-lg font-semibold">No next actions yet.</div></div> : (
         <div className="space-y-3">
-          {items.map((n) => <div key={n.id} className="soft-card rounded-2xl p-4"><div className="flex justify-between gap-3"><button className="text-left flex-1" onClick={() => openNotification(n)}><div className="font-semibold">{n.title}</div><div className="text-sm text-muted-foreground mt-1">{n.body}</div><div className="text-xs text-muted-foreground mt-2">{n.type} · priority {n.priority} · {n.created_at ? new Date(n.created_at).toLocaleString() : ""}</div></button><div className="flex flex-col items-end gap-2"><span className={`pill ${n.read ? "pill-dusk" : "pill-clay"}`}>{n.read ? "Read" : "Unread"}</span>{!n.read && <button className="text-xs link-under" onClick={() => markRead(n.id)}>Mark read</button>}{n.recruitment_link && <Link className="text-xs link-under" to={n.recruitment_link}>Open recruitment</Link>}</div></div></div>)}
+          {items.map((n) => <div key={n.id} className="soft-card rounded-2xl p-4"><div className="flex justify-between gap-3"><button className="text-left flex-1" onClick={() => openNotification(n)}><div className="font-semibold">{n.title}</div><div className="text-sm text-muted-foreground mt-1">{n.body}</div><div className="text-xs text-muted-foreground mt-2">{labelForType(n.type)} · priority {n.priority} · {n.created_at ? new Date(n.created_at).toLocaleString() : ""}</div></button><div className="flex flex-col items-end gap-2"><span className={`pill ${n.read ? "pill-dusk" : "pill-clay"}`}>{n.read ? "Read" : "Unread"}</span>{!n.read && <button className="text-xs link-under" onClick={() => markRead(n.id)}>Mark read</button>}{n.recruitment_link && <Link className="text-xs link-under" to={n.recruitment_link}>Open recruitment</Link>}</div></div></div>)}
         </div>
       )}
       <style>{`.input { padding:0.45rem 0.65rem; border:1px solid hsl(var(--border)); border-radius:0.5rem; background:white; }`}</style>

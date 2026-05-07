@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any
 
+PRIORITY_RANK = {"low": 1, "normal": 2, "medium": 2, "high": 3, "critical": 4}
+
 from supabase import Client
 
 from app.api.canonical import my_recommendations, profile_completion, weekly_review
@@ -86,6 +88,11 @@ def _already_exists_today(supabase: Client, *, user_id: str, recruitment_id: str
     return bool(rows)
 
 
+def _load_preferences(supabase: Client, user_id: str) -> dict[str, Any]:
+    rows = supabase.table("notification_preferences").select("*").eq("user_id", user_id).limit(1).execute().data or []
+    return rows[0] if rows else {}
+
+
 async def generate_next_actions_for_user(*, supabase: Client, user: dict[str, Any], day_bucket: str | None = None, dry_run: bool = False) -> dict[str, Any]:
     bucket = day_bucket or _day_bucket()
     recs = await my_recommendations(user)
@@ -105,9 +112,16 @@ async def generate_next_actions_for_user(*, supabase: Client, user: dict[str, An
     if (completion.get("eligibility_profile", {}).get("completion_pct") or 0) < 100:
         candidates.append({"notification_type": "complete_profile", "recruitment_id": None, "priority": 1, "title": "Complete your eligibility profile", "body": "Add missing profile details to improve recommendation quality."})
 
+    prefs = _load_preferences(supabase, user["id"])
+    disabled_types = set((prefs.get("in_app_types_disabled") or []) + (prefs.get("event_types_muted") or []))
+    min_priority = PRIORITY_RANK.get(str(prefs.get("min_priority_in_app") or "low"), 1)
+
     created = skipped = 0
     by_type: dict[str, int] = {}
     for c in candidates:
+        if c["notification_type"] in disabled_types or int(c.get("priority") or 0) < min_priority:
+            skipped += 1
+            continue
         if _already_exists_today(supabase, user_id=user["id"], recruitment_id=c.get("recruitment_id"), notification_type=c["notification_type"], bucket=bucket):
             skipped += 1
             continue
@@ -124,6 +138,7 @@ async def generate_next_actions_for_user(*, supabase: Client, user: dict[str, An
             "source": "next_action_engine",
             "source_stage": c.get("notification_type"),
             "dedupe_key": _dedupe_key(user["id"], c.get("recruitment_id"), c["notification_type"], bucket),
+            "metadata": {"digest_preference": prefs.get("digest_preference"), "quiet_hours_start": prefs.get("quiet_hours_start"), "quiet_hours_end": prefs.get("quiet_hours_end")},
         }
         if dry_run:
             created += 0

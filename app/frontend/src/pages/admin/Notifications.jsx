@@ -142,10 +142,11 @@ export default function AdminNotifications() {
       </div>
 
       {/* KPIs */}
-      <div className="grid md:grid-cols-3 gap-4">
+      <div className="grid md:grid-cols-4 gap-4">
         <Stat label="Pending dispatch" value={overview.pending_dispatch} />
         <Stat label="Sent (24h)" value={overview.sent_24h} />
         <Stat label="Channels active" value={overview.channels.filter((c) => c.active).length} />
+        <Stat label="Recent generated" value={overview.recent_generation?.created || 0} />
       </div>
 
       {/* Channels */}
