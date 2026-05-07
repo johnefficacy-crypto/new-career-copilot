@@ -272,7 +272,7 @@ def list_scrape_queue(
     supabase = get_supabase_admin()
     q = (
         supabase.table("scrape_queue")
-        .select("id, source_id, source_url, source_name, raw_html, extracted_data, confidence_score, data_quality_score, status, duplicate_of, reviewer_id, reviewer_notes, reviewed_at, field_evidence, official_source_resolved, official_source_host, extraction_status, evidence_required, scraped_at, duplicate_candidates, relevance_category, multiple_posts_detected")
+        .select("id, source_url, source_name, raw_html, extracted_data, confidence_score, data_quality_score, status, duplicate_of, reviewer_id, reviewer_notes, reviewed_at, field_evidence, official_source_resolved, official_source_host, extraction_status, evidence_required, scraped_at")
         .order("scraped_at", desc=True)
         .limit(limit)
     )
@@ -311,19 +311,6 @@ def promote_queue_item(
     if item["status"] not in {"approved", "pending", "needs_review"}:
         raise HTTPException(status_code=409, detail=f"Item is already {item['status']}")
     try:
-         # Source intelligence policy checks
-
-        # Source intelligence policy checks
-        source_rows = []
-        if item.get("source_id"):
-            source_rows = (supabase.table("source_registry").select("id, source_type, discovery_only, can_publish_directly, requires_official_confirmation").eq("id", item.get("source_id")).limit(1).execute().data or [])
-        src = source_rows[0] if source_rows else {}
-        source_type = src.get("source_type")
-        discovery_only = bool(src.get("discovery_only")) or source_type in {"aggregator","coaching_blog","social_signal"}
-        if discovery_only and not item.get("official_source_resolved"):
-            raise HTTPException(status_code=409, detail={"message": "official confirmation required for discovery source"})
-        if item.get("extraction_status") in {"irrelevant","rejected"}:
-            raise HTTPException(status_code=409, detail={"message": "irrelevant item cannot be promoted"})
         # High-risk fields should be reviewed before promotion where evidence table exists.
         warnings=[]
         try:
