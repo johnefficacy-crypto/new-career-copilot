@@ -27,6 +27,7 @@ from pydantic import BaseModel
 
 from app.api.admin_scrape import router as admin_scrape_router
 from app.api.auth import router as auth_router
+from app.api.admin_trust import router as admin_trust_router
 from app.api.canonical import router as canonical_router
 from app.api.eligibility import router as eligibility_router
 from app.api.notifications import router as notifications_router
@@ -143,6 +144,7 @@ api.include_router(auth_router)
 api.include_router(eligibility_router)
 api.include_router(notifications_router)
 api.include_router(admin_scrape_router)  # admin scraper trust-gate routes
+api.include_router(admin_trust_router)
 api.include_router(payments_router)  # razorpay + plans
 api.include_router(canonical_router)  # canonical Supabase routes — must precede placeholders
 api.include_router(placeholders_router)
