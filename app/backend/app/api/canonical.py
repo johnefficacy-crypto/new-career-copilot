@@ -376,10 +376,7 @@ class ProfileUpdate(BaseModel):
     graduation_year: int | None = Field(default=None, ge=1990, le=2035)
     qualification_year: int | None = Field(default=None, ge=1990, le=2035)
     qualification: str | None = None
-    education_level: str | None = None
-    stream: str | None = None
     percentage: float | None = Field(default=None, ge=0, le=100)
-    cgpa: float | None = Field(default=None, ge=0, le=10)
     weekly_hours_goal: int | None = Field(default=None, ge=0, le=120)
     target_exam_year: int | None = Field(default=None, ge=2024, le=2040)
     goal_exams: list[str] | None = None
@@ -511,6 +508,8 @@ async def update_profile(body: ProfileUpdate, user: dict = Depends(get_current_u
         education_payload["level"] = str(patch.get("qualification"))
     if patch.get("stream") is not None:
         education_payload["stream"] = patch.get("stream")
+        if "level" not in education_payload:
+            education_payload["level"] = str(patch.get("qualification"))
     if patch.get("qualification_year") is not None:
         education_payload["graduation_year"] = patch.get("qualification_year")
     if patch.get("percentage") is not None:
