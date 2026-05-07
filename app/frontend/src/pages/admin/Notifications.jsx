@@ -7,6 +7,7 @@ export default function AdminNotifications() {
   const [jobs, setJobs] = useState([]);
   const [busy, setBusy] = useState(null);
   const [msg, setMsg] = useState(null);
+  const [gen, setGen] = useState({ dry_run: true, scope: "me", limit: 100 });
 
   async function load() {
     const [o, j] = await Promise.all([
@@ -47,6 +48,19 @@ export default function AdminNotifications() {
       await load();
     } catch (e) {
       setMsg(`Run failed: ${e.message}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runNextActions() {
+    setBusy("next-actions");
+    setMsg(null);
+    try {
+      const r = await api.post("/api/notifications/generate-next-actions", gen);
+      setMsg(`next-actions ${r.dry_run ? "preview" : "generated"}: created=${r.created}, skipped=${r.skipped}, candidates=${r.candidates}, by_type=${JSON.stringify(r.by_type || {})}`);
+    } catch (e) {
+      setMsg(`Generate failed: ${e.message}`);
     } finally {
       setBusy(null);
     }
@@ -161,6 +175,16 @@ export default function AdminNotifications() {
       </div>
 
       {/* Jobs */}
+      <div className="soft-card rounded-2xl p-5 space-y-3">
+        <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">Next-action generator</div>
+        <div className="grid md:grid-cols-4 gap-3">
+          <select className="input" value={gen.scope} onChange={(e) => setGen((g) => ({ ...g, scope: e.target.value }))}><option value="me">me</option><option value="all_users">all_users</option></select>
+          <input className="input" type="number" min="1" max="500" value={gen.limit} onChange={(e) => setGen((g) => ({ ...g, limit: Number(e.target.value || 100) }))} />
+          <label className="text-xs flex items-center gap-2"><input type="checkbox" checked={gen.dry_run} onChange={(e) => setGen((g) => ({ ...g, dry_run: e.target.checked }))} /> Dry run</label>
+          <button className="btn btn-ghost" onClick={runNextActions} disabled={busy === "next-actions"}>Run next-actions</button>
+        </div>
+      </div>
+
       <div className="soft-card rounded-2xl p-5">
         <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-semibold mb-3">
           Scheduled jobs

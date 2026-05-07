@@ -130,7 +130,7 @@ def get_user_alerts(
     q = (
         supabase.table("notification_alerts")
         .select(
-            "*, recruitment:recruitments ( name, apply_end_date, status, "
+            "*, recruitment:recruitments ( id, slug, name, apply_end_date, status, "
             "organization:organizations ( name ) )"
         )
         .eq("user_id", user_id)
