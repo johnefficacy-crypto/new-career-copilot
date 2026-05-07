@@ -123,7 +123,7 @@ async def list_recruitments(
 ):
     supabase = get_supabase_admin()
     query = supabase.table("recruitments").select(_REC_SELECT).in_(
-        "publish_status", ["verified", "published"]
+        "publish_status", ["published"]
     )
     if status and status != "all":
         # Map UI status (eligible/urgent/conditional) to recruitment lifecycle.
@@ -247,7 +247,7 @@ async def toggle_save(rec_ref: str, user: dict = Depends(get_current_user)):
 
 
 def _resolve_rec_id(supabase: Client, ref: str) -> str:
-    """Accept a UUID or exact text slug from recruitments.slug (if present)."""
+    """Accept UUID or slug safely; never pattern-match UUID columns."""
     if len(ref) == 36 and ref.count("-") == 4:
         rows = _safe(lambda: supabase.table("recruitments").select("id").eq("id", ref).limit(1).execute().data, default=[]) or []
         if rows:
@@ -255,6 +255,13 @@ def _resolve_rec_id(supabase: Client, ref: str) -> str:
     rows = _safe(lambda: supabase.table("recruitments").select("id").eq("slug", ref).limit(1).execute().data, default=[]) or []
     if rows:
         return rows[0]["id"]
+    # fallback: readable slug with trailing id prefix, e.g. name-2026-1a2b3c4d
+    tail = (ref or '').split('-')[-1]
+    if len(tail) == 8:
+        cand = _safe(lambda: supabase.table("recruitments").select("id").limit(200).execute().data, default=[]) or []
+        for r in cand:
+            if str(r.get('id','')).startswith(tail):
+                return r['id']
     raise HTTPException(status_code=404, detail="Recruitment not found")
 
 
@@ -265,7 +272,8 @@ async def get_recruitment(rec_ref: str, user: dict | None = Depends(get_optional
     rows = _safe(
         lambda: supabase.table("recruitments")
         .select(_REC_SELECT + ", posts ( id, post_name, group_type, pay_level, job_type )")
-        .eq("id", rec_id)
+         .eq("id", rec_id)
+        .in_("publish_status", ["published"])
         .limit(1)
         .execute()
         .data,
