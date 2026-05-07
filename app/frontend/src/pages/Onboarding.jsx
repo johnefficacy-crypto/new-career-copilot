@@ -30,10 +30,10 @@ export default function Onboarding() {
     name: auth.user?.name || "",
     date_of_birth: "",
     gender: "",
-    category: "",
-    pwbd_status: "",
+    category: "general",
+    pwbd_status: "none",
     state: "",
-    education_level: "",
+    education_level: "graduation",
     qualification: "",
     stream: "",
     qualification_year: "",
@@ -44,7 +44,7 @@ export default function Onboarding() {
     preferred_sectors: [],
     preferred_states: [],
     willing_to_relocate: true,
-    study_mode: "",
+    study_mode: "part_time",
     weekly_hours_goal: "",
     target_exam_year: "",
   });
@@ -65,9 +65,7 @@ export default function Onboarding() {
       category: form.category || undefined,
       pwbd_status: form.pwbd_status || undefined,
       state: form.state || undefined,
-      qualification: form.qualification || undefined,
-      education_level: form.education_level || undefined,
-      stream: form.stream || undefined,
+      qualification: form.qualification || form.education_level || undefined,
       qualification_year: form.qualification_year ? Number(form.qualification_year) : undefined,
       percentage: form.marks_type === "percentage" && form.percentage ? Number(form.percentage) : undefined,
       cgpa: form.marks_type === "cgpa" && form.cgpa ? Number(form.cgpa) : undefined,
@@ -104,13 +102,13 @@ export default function Onboarding() {
           <Field label="Full name"><input className="input" value={form.name} onChange={(e) => set("name", e.target.value)} /></Field>
           <Field label="Date of birth"><input className="input" placeholder="YYYY-MM-DD" value={form.date_of_birth} onChange={(e) => set("date_of_birth", e.target.value)} /></Field>
           <Field label="Gender"><select className="input" value={form.gender} onChange={(e) => set("gender", e.target.value)}>{GENDER_OPTIONS.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}</select></Field>
-          <Field label="Category"><select className="input" value={form.category} onChange={(e) => set("category", e.target.value)}><option value="">Not provided</option>{CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
-          <Field label="PwBD status"><select className="input" value={form.pwbd_status} onChange={(e) => set("pwbd_status", e.target.value)}><option value="">Not provided</option>{PWBD_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}</select></Field>
+          <Field label="Category"><select className="input" value={form.category} onChange={(e) => set("category", e.target.value)}>{CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
+          <Field label="PwBD status"><select className="input" value={form.pwbd_status} onChange={(e) => set("pwbd_status", e.target.value)}>{PWBD_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}</select></Field>
           <Field label="Domicile state"><select className="input" value={form.state} onChange={(e) => set("state", e.target.value)}><option value="">Not provided</option>{INDIAN_STATE_OPTIONS.map((s) => <option key={s} value={s}>{s.replaceAll("_", " ")}</option>)}</select></Field>
         </div>}
 
         {step === 1 && <div className="grid md:grid-cols-2 gap-4">
-          <Field label="Education level"><select className="input" value={form.education_level} onChange={(e) => set("education_level", e.target.value)}><option value="">Not provided</option>{EDUCATION_LEVEL_OPTIONS.map((e) => <option key={e} value={e}>{e}</option>)}</select></Field>
+          <Field label="Education level"><select className="input" value={form.education_level} onChange={(e) => set("education_level", e.target.value)}>{EDUCATION_LEVEL_OPTIONS.map((e) => <option key={e} value={e}>{e}</option>)}</select></Field>
           <Field label="Qualification / degree"><input className="input" value={form.qualification} onChange={(e) => set("qualification", e.target.value)} /></Field>
           <Field label="Stream (optional)"><input className="input" value={form.stream} onChange={(e) => set("stream", e.target.value)} /></Field>
           <Field label="Passing year"><input className="input" type="number" value={form.qualification_year} onChange={(e) => set("qualification_year", e.target.value)} /></Field>
@@ -137,7 +135,7 @@ export default function Onboarding() {
         </div>}
 
         {step === 3 && <div className="grid md:grid-cols-2 gap-4">
-          <Field label="Preparation mode"><select className="input" value={form.study_mode} onChange={(e) => set("study_mode", e.target.value)}><option value="">Not provided</option>{PREPARATION_MODE_OPTIONS.map((p) => <option key={p} value={p}>{p.replaceAll("_", " ")}</option>)}</select></Field>
+          <Field label="Preparation mode"><select className="input" value={form.study_mode} onChange={(e) => set("study_mode", e.target.value)}>{PREPARATION_MODE_OPTIONS.map((p) => <option key={p} value={p}>{p.replaceAll("_", " ")}</option>)}</select></Field>
           <Field label="Weekly hours goal"><input className="input" type="number" value={form.weekly_hours_goal} onChange={(e) => set("weekly_hours_goal", e.target.value)} placeholder="Not provided" /></Field>
           <Field label="Target exam year"><input className="input" type="number" value={form.target_exam_year} onChange={(e) => set("target_exam_year", e.target.value)} placeholder="Not provided" /></Field>
         </div>}

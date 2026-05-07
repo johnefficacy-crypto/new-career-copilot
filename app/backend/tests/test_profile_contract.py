@@ -132,39 +132,6 @@ def test_put_profile_upserts_education(monkeypatch):
     assert row["percentage"] == 77.5
 
 
-def test_put_profile_maps_cgpa(monkeypatch):
-    sb = _SB()
-    monkeypatch.setattr(canonical, "get_supabase_admin", lambda: sb)
-    body = canonical.ProfileUpdate(qualification="BSc", cgpa=8.2)
-
-    asyncio.run(canonical.update_profile(body=body, user=_user()))
-
-    row = sb.db["aspirant_education"][0]
-    assert row["cgpa"] == 8.2
-
-
-def test_put_profile_maps_education_level(monkeypatch):
-    sb = _SB()
-    monkeypatch.setattr(canonical, "get_supabase_admin", lambda: sb)
-    body = canonical.ProfileUpdate(education_level="graduation")
-
-    asyncio.run(canonical.update_profile(body=body, user=_user()))
-
-    row = sb.db["aspirant_education"][0]
-    assert row["level"] == "graduation"
-
-
-def test_put_profile_maps_stream(monkeypatch):
-    sb = _SB()
-    monkeypatch.setattr(canonical, "get_supabase_admin", lambda: sb)
-    body = canonical.ProfileUpdate(qualification="BSc", stream="science")
-
-    asyncio.run(canonical.update_profile(body=body, user=_user()))
-
-    row = sb.db["aspirant_education"][0]
-    assert row["stream"] == "science"
-
-
 def test_put_profile_writes_goal_exams_preferences(monkeypatch):
     sb = _SB()
     monkeypatch.setattr(canonical, "get_supabase_admin", lambda: sb)
@@ -180,16 +147,13 @@ def test_put_profile_writes_goal_exams_preferences(monkeypatch):
 
 def test_get_profile_returns_assembled_profile(monkeypatch):
     sb = _SB()
-    sb.db["aspirant_education"].append({"id": "e1", "user_id": "u1", "degree": "BA", "level": "graduation", "stream": "arts", "graduation_year": 2021, "percentage": 68, "cgpa": 8.1, "is_completed": True})
+    sb.db["aspirant_education"].append({"id": "e1", "user_id": "u1", "degree": "BA", "level": "graduation", "graduation_year": 2021, "percentage": 68, "is_completed": True})
     sb.db["aspirant_preferences"].append({"id": "p1", "user_id": "u1", "target_exams": ["upsc"], "preferred_states": ["Delhi"], "preferred_sectors": ["admin"], "study_hours_per_day": 3})
     monkeypatch.setattr(canonical, "get_supabase_admin", lambda: sb)
 
     out = asyncio.run(canonical.get_profile(user=_user()))
 
     assert out["profile"]["qualification"] == "BA"
-    assert out["profile"]["education_level"] == "graduation"
-    assert out["profile"]["stream"] == "arts"
-    assert out["profile"]["cgpa"] == 8.1
     assert out["profile"]["goal_exams"] == ["upsc"]
     assert out["profile"]["weekly_hours_goal"] == 21
 
