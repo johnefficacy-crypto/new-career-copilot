@@ -180,8 +180,21 @@ def verify_organization(organization_id: str, admin: dict = Depends(require_perm
 @router.get("/admin/recruitments")
 def admin_recruitments(_admin: dict = Depends(require_permission("recruitments.manage"))):
     sb=get_supabase_admin()
-    rows=sb.table("recruitments").select("id,name,publish_status,status,organizations(name)").order("created_at", desc=True).limit(200).execute().data or []
+    rows=sb.table("recruitments").select("id,name,publish_status,status,official_notification_url,official_apply_url,published_by,published_at,review_notes,organizations(name,is_verified),recruitment_sources(source_id)").order("created_at", desc=True).limit(200).execute().data or []
     items=[]
     for r in rows:
-        items.append({"id":r.get("id"),"name":r.get("name"),"publish_status":r.get("publish_status"),"lifecycle_status":r.get("status"),"organization":(r.get("organizations") or {}).get("name")})
+        ready=validate_recruitment_publish_readiness(r.get("id"), _admin)
+        org=(r.get("organizations") or {})
+        items.append({"id":r.get("id"),"name":r.get("name"),"publish_status":r.get("publish_status"),"lifecycle_status":r.get("status"),"organization":org.get("name"),"organization_verified":org.get("is_verified"),"official_notification_url":r.get("official_notification_url"),"official_apply_url":r.get("official_apply_url"),"source_provenance":len(r.get("recruitment_sources") or []),"blocking_issues":ready.get("blocking_issues",[]),"warnings":ready.get("warnings",[]),"published_by":r.get("published_by"),"published_at":r.get("published_at"),"review_notes":r.get("review_notes")})
+    return {"items": items}
+
+@router.get("/admin/organizations")
+def admin_organizations(_admin: dict = Depends(require_permission("organizations.manage"))):
+    sb = get_supabase_admin()
+    rows = sb.table("organizations").select("id,name,type,state,website_url,official_domain,is_verified,trust_tier,verification_notes,verified_at").limit(200).execute().data or []
+    items=[]
+    for o in rows:
+        src = sb.table("source_registry").select("id", count="exact").eq("organization_id", o["id"]).execute().count or 0
+        rec = sb.table("recruitments").select("id", count="exact").eq("organization_id", o["id"]).execute().count or 0
+        items.append({**o, "linked_sources_count": src, "linked_recruitments_count": rec})
     return {"items": items}
