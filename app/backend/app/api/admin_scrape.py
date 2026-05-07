@@ -67,6 +67,7 @@ def _audit(supabase, actor: dict, action: str, *, entity_type: str | None = None
                 "entity_type": entity_type,
                 "entity_id": entity_id,
                 "new_value": new_value,
+                "notes": "legacy_admin_scrape" ,
             }
         ).execute()
     except Exception as exc:  # noqa: BLE001

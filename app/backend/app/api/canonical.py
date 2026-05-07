@@ -123,7 +123,7 @@ async def list_recruitments(
 ):
     supabase = get_supabase_admin()
     query = supabase.table("recruitments").select(_REC_SELECT).in_(
-        "publish_status", ["verified", "published"]
+        "publish_status", ["published"]
     )
     if status and status != "all":
         # Map UI status (eligible/urgent/conditional) to recruitment lifecycle.
@@ -266,7 +266,7 @@ async def get_recruitment(rec_ref: str, user: dict | None = Depends(get_optional
         lambda: supabase.table("recruitments")
         .select(_REC_SELECT + ", posts ( id, post_name, group_type, pay_level, job_type )")
          .eq("id", rec_id)
-        .in_("publish_status", ["verified", "published"])
+        .in_("publish_status", ["published"])
         .limit(1)
         .execute()
         .data,

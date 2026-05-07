@@ -16,10 +16,11 @@ def _audit(sb, admin: dict, action: str, entity_type: str, entity_id: str, befor
         "action": action,
         "entity_type": entity_type,
         "entity_id": entity_id,
-        "admin_user_id": admin.get("id"),
-        "before_payload": before_payload,
-        "after_payload": after_payload,
-        "metadata": metadata or {},
+        "actor_id": admin.get("id"),
+        "actor_email": admin.get("email"),
+        "old_value": before_payload,
+        "new_value": after_payload,
+        "notes": str(metadata or "")
     }).execute()
 
 
@@ -89,7 +90,7 @@ def verify_source(source_id: str, admin: dict = Depends(require_permission("sour
         update.update({"is_verified": True, "verified_by": admin.get("id"), "verified_at": datetime.now(timezone.utc).isoformat()})
     sb.table("source_registry").update(update).eq("id", source_id).execute()
     _audit(sb, admin, "source.verify", "source", source_id, before_payload=src, after_payload=update, metadata={"checks": checks, "warnings": warnings, "errors": errors})
-    return {"ok": True, "source_id": source_id, "verification_status": status, "checks": checks, "warnings": warnings, "errors": errors}
+    return {"ok": True, "source_id": source_id, "checks": checks, "warnings": warnings, "errors": errors}
 
 
 def validate_recruitment_publish_readiness(recruitment_id: str, admin: dict):
@@ -166,11 +167,11 @@ def verify_organization(organization_id: str, admin: dict = Depends(require_perm
     if not rows:
         raise HTTPException(status_code=404, detail="Organization not found")
     org = rows[0]
-    checks, warnings, errors, _, _ = _verify_url(org.get("official_website") or org.get("website_url"))
-    domain = (urlparse(org.get("official_website") or org.get("website_url") or "").hostname or "").lower()
+    checks, warnings, errors, _, _ = _verify_url(org.get("website_url"))
+    domain = (urlparse(org.get("website_url") or "").hostname or "").lower()
     status = "verified" if checks and not errors and not warnings else ("failed" if errors else "needs_review")
-    update = {"verification_status": status, "verified_domain": domain or None, "official_domain": domain or org.get("official_domain")}
+    update = {"trust_tier": "verified" if status=="verified" else ("unverified" if status=="failed" else "unknown"), "verification_notes": f"status={status}", "official_domain": domain or org.get("official_domain")}
     if status == "verified":
         update.update({"is_verified": True, "verified_by": admin.get("id"), "verified_at": datetime.now(timezone.utc).isoformat()})
     sb.table("organizations").update(update).eq("id", organization_id).execute(); _audit(sb, admin, "organization.verify", "organization", organization_id, before_payload=org, after_payload=update)
-    return {"ok": True, "organization_id": organization_id, "verification_status": status, "checks": checks, "warnings": warnings, "errors": errors}
+    return {"ok": True, "organization_id": organization_id, "checks": checks, "warnings": warnings, "errors": errors}
