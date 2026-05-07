@@ -28,6 +28,7 @@ from app.notifications.dispatcher import (
     kill_switch_enabled,
     set_kill_switch,
 )
+from app.notifications.next_actions import generate_next_actions_for_user
 from app.notifications.scheduler import JOBS, list_jobs, run_job_now
 from app.scraping.alerts import (
     get_unread_alert_count,
@@ -56,7 +57,23 @@ def my_alerts(
     user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
     items = get_user_alerts(user["id"], get_supabase_admin(), unread_only=unread_only, limit=limit)
-    return {"items": items, "count": len(items)}
+    shaped = []
+    for it in items:
+        rec = it.get("recruitment") or {}
+        title = it.get("title") or f"Next action: {(it.get('alert_type') or 'update').replace('_', ' ')}"
+        body = it.get("body") or "Review your latest recommendation update."
+        shaped.append({
+            **it,
+            "type": it.get("alert_type"),
+            "title": title,
+            "body": body,
+            "priority": it.get("priority"),
+            "recruitment_link": f"/app/exams/{it.get('recruitment_id')}" if it.get("recruitment_id") else None,
+            "created_at": it.get("sent_at"),
+            "read": bool(it.get("is_read")),
+            "organization": (rec.get("organization") or {}).get("name") if isinstance(rec, dict) else None,
+        })
+    return {"items": shaped, "count": len(shaped)}
 
 
 @router.get("/notifications/me/unread-count")
@@ -222,3 +239,31 @@ def admin_run_job(job_id: str, admin: dict = Depends(require_permission("notific
     except Exception:
         pass
     return result
+
+
+class GenerateNextActionsBody(BaseModel):
+    scope: str = Field(default="me", pattern="^(me|all_users)$")
+    user_id: str | None = None
+
+
+@router.post("/notifications/generate-next-actions")
+async def generate_next_actions(
+    body: GenerateNextActionsBody,
+    actor: dict = Depends(require_permission("notifications.manage")),
+) -> dict[str, Any]:
+    sb = get_supabase_admin()
+    users: list[dict[str, Any]]
+    if body.scope == "all_users":
+        rows = sb.table("profiles").select("id").limit(500).execute().data or []
+        users = [{"id": r["id"]} for r in rows if r.get("id")]
+    elif body.user_id:
+        users = [{"id": body.user_id}]
+    else:
+        users = [{"id": actor["id"]}]
+    created = skipped = candidates = 0
+    for u in users:
+        res = await generate_next_actions_for_user(supabase=sb, user=u)
+        created += res["created"]
+        skipped += res["skipped"]
+        candidates += res["candidates"]
+    return {"scope": body.scope, "users": len(users), "created": created, "skipped": skipped, "candidates": candidates}
