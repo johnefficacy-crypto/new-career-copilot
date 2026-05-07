@@ -349,13 +349,10 @@ def promote_run_endpoint(
     supabase = get_supabase_admin()
     result = promote_run(run_id, supabase, reviewer_id=admin["id"])
 
-    # Fan out per-recruitment alerts (eligibility must already be computed).
-    alerts_sent = 0
-    for rec_id in result.get("recruitment_ids", []):
-        alerts_sent += alert_users_for_new_recruitment(rec_id, supabase)
-    result["alerts_sent"] = alerts_sent
+    # Trust rule: promotion is not publication and must not fanout user alerts.
+    result["alerts_sent"] = 0
 
-    _audit(supabase, admin, "scrape.promote_run", entity_type="scrape_runs",
+    _audit(supabase, admin, "scrape.queue.promote", entity_type="scrape_runs",
            entity_id=run_id, new_value=result)
     return result
 
