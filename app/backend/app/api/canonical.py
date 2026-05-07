@@ -265,7 +265,8 @@ async def get_recruitment(rec_ref: str, user: dict | None = Depends(get_optional
     rows = _safe(
         lambda: supabase.table("recruitments")
         .select(_REC_SELECT + ", posts ( id, post_name, group_type, pay_level, job_type )")
-        .eq("id", rec_id)
+         .eq("id", rec_id)
+        .in_("publish_status", ["verified", "published"])
         .limit(1)
         .execute()
         .data,
