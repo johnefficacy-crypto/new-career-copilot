@@ -11,6 +11,7 @@ from app.eligibility.schemas import (
     AttemptLimit,
     EducationCriteria,
     PostCriteria,
+    CertificationCriteria,
     UserEducation,
     UserExamAttempts,
     UserExamCredential,
@@ -208,3 +209,31 @@ def test_batch():
     assert len(res) == 2
     assert res[0].result.is_eligible is True
     assert res[1].result.is_eligible is False  # missing domicile
+
+
+def test_mandatory_certification_present_passes():
+    p = _profile()
+    p.__dict__["_user_certifications"] = [{"certification_name": "gate"}]
+    res = check_eligibility(p, [_grad()], [], [], _post(certification_criteria=[CertificationCriteria(mandatory=True, name="gate", aliases=[])]))
+    assert res.is_eligible is True
+
+
+def test_mandatory_certification_missing_fails():
+    p = _profile()
+    p.__dict__["_user_certifications"] = []
+    res = check_eligibility(p, [_grad()], [], [], _post(certification_criteria=[CertificationCriteria(mandatory=True, name="gate", aliases=[])]))
+    assert res.is_eligible is False
+
+
+def test_certification_alias_matching():
+    p = _profile()
+    p.__dict__["_user_certifications"] = [{"certification_name": "computer_certificate"}]
+    res = check_eligibility(p, [_grad()], [], [], _post(certification_criteria=[CertificationCriteria(mandatory=True, name="ccc", aliases=["computer_certificate"])]))
+    assert res.is_eligible is True
+
+
+def test_optional_certification_does_not_fail():
+    p = _profile()
+    p.__dict__["_user_certifications"] = []
+    res = check_eligibility(p, [_grad()], [], [], _post(certification_criteria=[CertificationCriteria(mandatory=False, name="gate", aliases=[])]))
+    assert res.is_eligible is True

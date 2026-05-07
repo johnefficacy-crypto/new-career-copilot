@@ -27,10 +27,11 @@ export default function Profile() {
   const [newCert, setNewCert] = useState({ certification_name: "", issuing_body: "", year_completed: "" });
   const [newExp, setNewExp] = useState({ sector: "", role: "", organization: "", start_date: "", end_date: "" });
   const [newAttempt, setNewAttempt] = useState({ exam_id: "", attempts_used: 0 });
+  const [certRegistry, setCertRegistry] = useState([]);
 
   useEffect(() => {
-    Promise.all([api.get("/api/profile/me"), api.get("/api/profile/completion"), api.get("/api/profile/certifications"), api.get("/api/profile/experience"), api.get("/api/profile/exam-attempts")])
-      .then(([u, c, cs, ex, at]) => {
+    Promise.all([api.get("/api/profile/me"), api.get("/api/profile/completion"), api.get("/api/profile/certifications"), api.get("/api/profile/experience"), api.get("/api/profile/exam-attempts"), api.get("/api/metadata/certifications").catch(() => ({ items: [] }))])
+      .then(([u, c, cs, ex, at, reg]) => {
         setForm({
           name: u.name || "",
           email: u.email || "",
@@ -62,6 +63,7 @@ export default function Profile() {
         setCerts(cs?.items || []);
         setExpRows(ex?.items || []);
         setAttemptRows(at?.items || []);
+        setCertRegistry(reg?.items || []);
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -147,7 +149,7 @@ export default function Profile() {
           </Section>
 
           <Section title="Professional certifications" helper="Add certifications relevant for eligibility filters.">
-            <Grid><Select label="Certification" value={newCert.certification_name} onChange={(v) => setNewCert({ ...newCert, certification_name: v })} options={[{ value: "", label: "Not provided" }, ...CERTIFICATION_TYPE_OPTIONS.map((v) => ({ value: v, label: v }))]} /><Input label="Issuing body" value={newCert.issuing_body} onChange={(v) => setNewCert({ ...newCert, issuing_body: v })} placeholder="Not provided" /><Input label="Year completed" value={newCert.year_completed} onChange={(v) => setNewCert({ ...newCert, year_completed: v })} placeholder="Not provided" /></Grid>
+            <Grid><Select label="Certification" value={newCert.certification_name} onChange={(v) => { const found = certRegistry.find((c) => c.name === v); setNewCert({ ...newCert, certification_name: v, issuing_body: found?.issuer || newCert.issuing_body }); }} options={[{ value: "", label: "Not provided" }, ...(certRegistry.length ? certRegistry.map((v) => ({ value: v.name, label: v.name })) : CERTIFICATION_TYPE_OPTIONS.map((v) => ({ value: v, label: v })))]} /><Input label="Issuing body" value={newCert.issuing_body} onChange={(v) => setNewCert({ ...newCert, issuing_body: v })} placeholder="Not provided" /><Input label="Year completed" value={newCert.year_completed} onChange={(v) => setNewCert({ ...newCert, year_completed: v })} placeholder="Not provided" /></Grid>
             <button type="button" className="btn btn-secondary" onClick={async () => { const r = await api.post("/api/profile/certifications", { ...newCert, year_completed: newCert.year_completed ? Number(newCert.year_completed) : undefined, is_active: true }); setCerts((x) => [r.item, ...x]); }}>Add certification</button>
             <SimpleList rows={certs} onDelete={async (id) => { await api.delete(`/api/profile/certifications/${id}`); setCerts((x) => x.filter((r) => r.id !== id)); }} render={(r) => `${r.certification_name} · ${r.issuing_body || "Not provided"} · ${r.year_completed || "Not provided"}`} />
           </Section>

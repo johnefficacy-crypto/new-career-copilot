@@ -23,6 +23,7 @@ class _SB:
             "aspirant_preferences":[{"user_id":"u1","target_exams":["ssc"],"preferred_states":["delhi"],"preferred_sectors":["banking"]}],
             "aspirant_exam_attempts":[{"user_id":"u1","exam_id":"e1","attempts_used":2}],
             "aspirant_exam_credentials":[{"user_id":"u1","exam_key":"gate"}],
+            "certifications":[{"id":"c1","name":"GATE","issuer":"IIT","is_active":True}],
         }
     def table(self,name): return _Q(name,self.db)
 
@@ -39,3 +40,9 @@ def test_debug_endpoint(monkeypatch):
     sb=_SB(); monkeypatch.setattr(canonical,"get_supabase_admin",lambda:sb)
     out = asyncio.run(canonical.eligibility_input_me(user={"id":"u1"}))
     assert out["user_id"] == "u1" and "education" in out and "credentials" in out
+
+
+def test_metadata_certifications_endpoint(monkeypatch):
+    sb=_SB(); monkeypatch.setattr(canonical,"get_supabase_admin",lambda:sb)
+    out = asyncio.run(canonical.metadata_certifications())
+    assert out["items"][0]["name"] == "GATE"

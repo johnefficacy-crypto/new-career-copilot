@@ -1551,6 +1551,7 @@ async def affiliates():
 # ════════════════════════════════════════════════════════════════════════════
 
 router_study = APIRouter(prefix="/study", tags=["study"])
+router_metadata = APIRouter(prefix="/metadata", tags=["metadata"])
 
 
 def _ensure_active_plan(supabase: Client, user_id: str) -> str | None:
@@ -1931,6 +1932,15 @@ async def weekly_review(user: dict = Depends(get_current_user)):
     }
 
 
+@router_metadata.get("/certifications")
+async def metadata_certifications():
+    sb = get_supabase_admin()
+    rows = _safe(lambda: sb.table("certifications").select("id,name,issuer,aliases,exam_families,sectors,qualification_levels,certification_type,is_active").eq("is_active", True).execute().data, default=None)
+    if rows is None:
+        rows = _safe(lambda: sb.table("certifications").select("id,name,issuer").execute().data, default=[]) or []
+    return {"items": rows}
+
+
 # ─── Aggregate router ───────────────────────────────────────────────────────
 
 router = APIRouter()
@@ -1942,3 +1952,4 @@ router.include_router(router_recommendations)
 router.include_router(router_community)
 router.include_router(router_marketplace)
 router.include_router(router_study)
+router.include_router(router_metadata)

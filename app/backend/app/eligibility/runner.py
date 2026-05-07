@@ -27,11 +27,13 @@ from app.profile.eligibility_mapper import build_user_eligibility_profile
 from .schemas import (
     AgeCriteria,
     AttemptLimit,
+    CertificationCriteria,
     EducationCriteria,
     PostCriteria,
     UserEducation,
     UserExamAttempts,
     UserExamCredential,
+    UserCertification,
     UserProfile,
 )
 
@@ -105,6 +107,7 @@ def run_eligibility_for_user(
             supabase, "aspirant_exam_credentials", "exam_key", user_id=user_id
         )
     ]
+    user_certifications = [UserCertification(**row) for row in _safe_select(supabase, "aspirant_certifications", "certification_name,issuing_body,is_active", user_id=user_id) if row.get("is_active", True)]
     tracked_set = {
         row["recruitment_id"]
         for row in _safe_select(
@@ -127,6 +130,7 @@ def run_eligibility_for_user(
                 recruitments!inner ( status, publish_status, organizations ( state ) ),
                 age_criteria ( min_age, max_age, cutoff_date ),
                 education_criteria ( min_qualification_level, min_percentage, allowed_disciplines ),
+                certification_criteria ( mandatory, certifications ( name, issuer, aliases, exam_families, sectors, qualification_levels ) ),
                 attempt_limits ( category, max_attempts )
                 """
             )
@@ -152,6 +156,11 @@ def run_eligibility_for_user(
         ac = _first(row.get("age_criteria"))
         ec = _first(row.get("education_criteria"))
         attempts = row.get("attempt_limits") or []
+        cert_rows = row.get("certification_criteria") or []
+        cert_criteria = []
+        for c in cert_rows:
+            reg = _first(c.get("certifications"))
+            cert_criteria.append(CertificationCriteria(mandatory=bool(c.get("mandatory", True)), name=(reg or {}).get("name"), issuer=(reg or {}).get("issuer"), aliases=(reg or {}).get("aliases") or []))
 
         post_criteria_list.append(
             PostCriteria(
@@ -160,6 +169,7 @@ def run_eligibility_for_user(
                 age_criteria=AgeCriteria(**ac) if ac else None,
                 education_criteria=EducationCriteria(**ec) if ec else None,
                 attempt_limits=[AttemptLimit(**a) for a in attempts],
+                certification_criteria=cert_criteria,
                 org_state=(org or {}).get("state") if org else None,
             )
         )
@@ -187,9 +197,8 @@ def run_eligibility_for_user(
         pc.required_exam_keys = required_map.get(pc.recruitment_id, [])
 
     # ── 5. Run batch engine ────────────────────────────────────────────────
-    results = check_eligibility_batch(
-        profile, education, exam_attempts, exam_credentials, post_criteria_list
-    )
+    profile.__dict__["_user_certifications"] = user_certifications
+    results = check_eligibility_batch(profile, education, exam_attempts, exam_credentials, post_criteria_list)
 
     # ── 6. Upsert into eligibility_results ─────────────────────────────────
     now = datetime.now(timezone.utc).isoformat()
