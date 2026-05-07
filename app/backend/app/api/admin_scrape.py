@@ -28,6 +28,7 @@ from app.core.auth import get_current_user, require_permission
 from app.db.supabase_client import get_supabase_admin
 from app.scraping.alerts import alert_users_for_new_recruitment
 from app.scraping.runner import promote_run, run_scraping_pass
+from app.scraping.intelligence import classify_item, duplicate_candidates, BLOCKED
 
 logger = logging.getLogger("career_copilot.api.admin_scrape")
 
@@ -67,6 +68,7 @@ def _audit(supabase, actor: dict, action: str, *, entity_type: str | None = None
                 "entity_type": entity_type,
                 "entity_id": entity_id,
                 "new_value": new_value,
+                "notes": "legacy_admin_scrape" ,
             }
         ).execute()
     except Exception as exc:  # noqa: BLE001
@@ -79,22 +81,65 @@ def _audit(supabase, actor: dict, action: str, *, entity_type: str | None = None
 
 router = APIRouter(tags=["admin-scrape"])
 
+_HIGH_RISK_FIELDS={"apply_end_date","official_notification_url","official_apply_url","organization_name","total_vacancies","eligibility"}
+
+def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, admin: dict, notes: str | None=None, corrected_value=None):
+    existing = (supabase.table("extracted_field_evidence").select("id, document_id").eq("queue_item_id", queue_id).eq("field_name", field_name).limit(1).execute().data or [])
+    if existing:
+        payload={"queue_item_id": queue_id, "field_name": field_name, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat()}
+    else:
+        qrows = (supabase.table("scrape_queue").select("notification_document_id").eq("id", queue_id).limit(1).execute().data or [])
+        doc_id = (qrows[0] or {}).get("notification_document_id") if qrows else None
+        if not doc_id:
+            raise HTTPException(status_code=409, detail="Field evidence requires notification_document_id on scrape_queue")
+        payload={"queue_item_id": queue_id, "field_name": field_name, "document_id": doc_id, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat()}
+    if corrected_value is not None:
+        payload["corrected_value"]=corrected_value
+    supabase.table("extracted_field_evidence").upsert(payload, on_conflict="queue_item_id,field_name").execute()
+    return payload
+
+@router.post("/admin/scrape/items/{queue_id}/fields/{field_name}/verify")
+def verify_field(queue_id: str, field_name: str, body: dict | None = None, admin: dict = Depends(require_permission("scraper.manage"))):
+    body=body or {}
+    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "verified", admin, notes=body.get("notes"))
+    _audit(sb, admin, "scrape.field.verify", entity_type="scrape_field", entity_id=f"{queue_id}:{field_name}", new_value=data)
+    return {"ok": True, **data}
+
+@router.post("/admin/scrape/items/{queue_id}/fields/{field_name}/reject")
+def reject_field(queue_id: str, field_name: str, body: dict | None = None, admin: dict = Depends(require_permission("scraper.manage"))):
+    body=body or {}
+    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "rejected", admin, notes=body.get("notes"))
+    _audit(sb, admin, "scrape.field.reject", entity_type="scrape_field", entity_id=f"{queue_id}:{field_name}", new_value=data)
+    return {"ok": True, **data}
+
+@router.post("/admin/scrape/items/{queue_id}/fields/{field_name}/correct")
+def correct_field(queue_id: str, field_name: str, body: dict | None = None, admin: dict = Depends(require_permission("scraper.manage"))):
+    body=body or {}
+    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "corrected", admin, notes=body.get("notes"), corrected_value=body.get("corrected_value"))
+    _audit(sb, admin, "scrape.field.correct", entity_type="scrape_field", entity_id=f"{queue_id}:{field_name}", new_value=data)
+    return {"ok": True, **data}
+
+
 
 def _shape_source(row: dict[str, Any]) -> dict[str, Any]:
     """Return a UI-friendly source row (matches Sources.jsx)."""
     return {
         "id": row.get("id"),
         "org": row.get("source_name") or row.get("name"),
+        "official_url": row.get("official_url") or row.get("base_url"),
+        "notification_url": row.get("notification_url"),
         "url": row.get("notification_url") or row.get("base_url"),
         "kind": row.get("source_type") or row.get("adapter_type") or "html",
         "tier": row.get("tier"),
-        "trust": (
-            "verified"
-            if row.get("is_verified") or (row.get("trust_score") or 0) >= 0.85
-            else "tier-2"
-            if (row.get("trust_score") or 0) >= 0.6
-            else "tier-3"
-        ),
+        "verification_status": row.get("verification_status"),
+        "is_verified": row.get("is_verified"),
+        "trust_score": row.get("trust_score"),
+        "anti_bot_risk": row.get("anti_bot_risk"),
+        "has_captcha": row.get("has_captcha"),
+        "pdf_only": row.get("pdf_only"),
+        "notes": row.get("notes"),
+        "last_success_at": row.get("last_success_at"),
+        "last_error": row.get("last_error"),
         "last_run": row.get("last_scraped_at"),
         "status": "ok" if (row.get("consecutive_fails") or 0) == 0 else "degraded",
         "is_active": row.get("is_active"),
@@ -103,12 +148,12 @@ def _shape_source(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/sources")
-def public_sources(_admin: dict = Depends(_require_admin)) -> dict[str, Any]:
+def public_sources(_admin: dict = Depends(require_permission("sources.manage"))) -> dict[str, Any]:
     return _list_sources()
 
 
 @router.get("/admin/sources")
-def admin_sources(_admin: dict = Depends(_require_admin)) -> dict[str, Any]:
+def admin_sources(_admin: dict = Depends(require_permission("sources.manage"))) -> dict[str, Any]:
     return _list_sources()
 
 
@@ -188,7 +233,7 @@ def scrape_run(
 @router.get("/admin/scrape/runs")
 def list_scrape_runs(
     limit: int = Query(default=30, ge=1, le=100),
-    _admin: dict = Depends(_require_admin),
+    _admin: dict = Depends(require_permission("scraper.manage")),
 ) -> dict[str, Any]:
     supabase = get_supabase_admin()
     rows = (
@@ -223,19 +268,30 @@ def list_scrape_runs(
 def list_scrape_queue(
     status: str | None = Query(default="pending"),
     limit: int = Query(default=50, ge=1, le=200),
-    _admin: dict = Depends(_require_admin),
+    _admin: dict = Depends(require_permission("scraper.manage")),
 ) -> dict[str, Any]:
     supabase = get_supabase_admin()
     q = (
         supabase.table("scrape_queue")
-        .select("id, source_url, source_name, extracted_data, confidence_score, "
-                "status, scrape_run_id, scraped_at, duplicate_of, reviewer_notes")
+        .select("id, source_id, source_url, source_name, raw_html, extracted_data, confidence_score, data_quality_score, status, duplicate_of, reviewer_id, reviewer_notes, reviewed_at, field_evidence, official_source_resolved, official_source_host, extraction_status, evidence_required, scraped_at, duplicate_candidates, relevance_category, multiple_posts_detected")
         .order("scraped_at", desc=True)
         .limit(limit)
     )
     if status and status != "all":
         q = q.eq("status", status)
     rows = q.execute().data or []
+    supabase2 = get_supabase_admin()
+    existing = (supabase2.table("recruitments").select("id,name,year,official_notification_url").limit(400).execute().data or [])
+    for r in rows:
+        cls = classify_item(r)
+        r["relevance_category"] = r.get("relevance_category") or cls["relevance_category"]
+        r["lifecycle_event_type"] = cls["lifecycle_event_type"]
+        r["classifier_confidence"] = cls["confidence"]
+        r["classifier_reasons"] = cls["reasons"]
+        ext = r.get("extracted_data") or {}
+        dups = duplicate_candidates(ext if isinstance(ext, dict) else {}, existing)
+        r["duplicate_candidates"] = dups
+        r["multiple_posts_detected"] = bool((ext.get("posts") if isinstance(ext, dict) else None))
     return {"items": rows}
 
 
@@ -255,7 +311,7 @@ def promote_queue_item(
     supabase = get_supabase_admin()
     rows = (
         supabase.table("scrape_queue")
-        .select("id, extracted_data, status")
+        .select("id, source_id, source_url, extracted_data, status, official_source_resolved, extraction_status")
         .eq("id", queue_id)
         .limit(1)
         .execute()
@@ -265,24 +321,55 @@ def promote_queue_item(
     if not rows:
         raise HTTPException(status_code=404, detail="Queue item not found")
     item = rows[0]
-    if item["status"] != "pending":
+    if item["status"] not in {"approved", "pending", "needs_review"}:
         raise HTTPException(status_code=409, detail=f"Item is already {item['status']}")
     try:
+         # Source intelligence policy checks
+
+        # Source intelligence policy checks
+        source_rows = []
+        if item.get("source_id"):
+            source_rows = (supabase.table("source_registry").select("id, source_type, discovery_only, can_publish_directly, requires_official_confirmation").eq("id", item.get("source_id")).limit(1).execute().data or [])
+        src = source_rows[0] if source_rows else {}
+        source_type = src.get("source_type")
+        discovery_only = bool(src.get("discovery_only")) or source_type in {"aggregator","coaching_blog","social_signal"}
+        if discovery_only and not item.get("official_source_resolved"):
+            raise HTTPException(status_code=409, detail={"message": "official confirmation required for discovery source"})
+        cls = classify_item(item)
+        if cls["relevance_category"] in BLOCKED or item.get("extraction_status") in {"irrelevant","rejected"}:
+            raise HTTPException(status_code=409, detail={"message": "item is not promotable", "relevance_category": cls["relevance_category"]})
+        existing_recs = (supabase.table("recruitments").select("id,name,year,official_notification_url").limit(400).execute().data or [])
+        dup = duplicate_candidates(item.get("extracted_data") or {}, existing_recs)
+        if dup and dup[0]["score"] >= 85 and not ((item.get("reviewer_notes") or "").lower().find("confirm_duplicate")>=0):
+            raise HTTPException(status_code=409, detail={"message":"high duplicate score; confirmation required", "duplicate_candidates":dup[:3]})
+        # High-risk fields should be reviewed before promotion where evidence table exists.
+        warnings=[]
+        try:
+            frows=(supabase.table("extracted_field_evidence").select("field_name, reviewer_status").eq("queue_item_id", queue_id).execute().data or [])
+            reviewed={r.get("field_name"):r.get("reviewer_status") for r in frows}
+            missing=[f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified","corrected"}]
+            if missing:
+                raise HTTPException(status_code=409, detail={"message":"High-risk fields unverified","unverified_fields":missing})
+        except HTTPException:
+            raise
+        except Exception:
+            warnings.append("field_evidence_table_unavailable")
         extracted = ExtractedRecruitment(**(item["extracted_data"] or {}))
         rec_id = promote_to_recruitments(extracted, supabase)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Promote failed: {exc}")
     supabase.table("scrape_queue").update(
         {
-            "status": "approved",
+            "status": "promoted",
             "reviewer_id": admin["id"],
             "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "promoted_recruitment_id": rec_id,
         }
     ).eq("id", queue_id).execute()
-    alerts_sent = alert_users_for_new_recruitment(rec_id, supabase)
-    _audit(supabase, admin, "scrape.promote_item", entity_type="scrape_queue",
+    # Promotion only creates canonical draft/needs_review records; no publish fanout here.
+    _audit(supabase, admin, "scrape.queue.promote", entity_type="scrape_queue",
            entity_id=queue_id, new_value={"recruitment_id": rec_id})
-    return {"ok": True, "recruitment_id": rec_id, "alerts_sent": alerts_sent}
+    return {"ok": True, "recruitment_id": rec_id, "publish_status": "needs_review"}
 
 
 @router.post("/admin/scrape/promote/{run_id}")
@@ -293,17 +380,44 @@ def promote_run_endpoint(
     supabase = get_supabase_admin()
     result = promote_run(run_id, supabase, reviewer_id=admin["id"])
 
-    # Fan out per-recruitment alerts (eligibility must already be computed).
-    alerts_sent = 0
-    for rec_id in result.get("recruitment_ids", []):
-        alerts_sent += alert_users_for_new_recruitment(rec_id, supabase)
-    result["alerts_sent"] = alerts_sent
+    # Trust rule: promotion is not publication and must not fanout user alerts.
+    result["alerts_sent"] = 0
 
-    _audit(supabase, admin, "scrape.promote_run", entity_type="scrape_runs",
+    _audit(supabase, admin, "scrape.queue.promote", entity_type="scrape_runs",
            entity_id=run_id, new_value=result)
     return result
 
 
+
+
+@router.post("/admin/scrape/items/{queue_id}/approve")
+def approve_queue_item(
+    queue_id: str,
+    body: dict | None = None,
+    admin: dict = Depends(require_permission("scraper.manage")),
+) -> dict[str, Any]:
+    body = body or {}
+    supabase = get_supabase_admin()
+    res = (
+        supabase.table("scrape_queue")
+        .update(
+            {
+                "status": "approved",
+                "reviewer_id": admin["id"],
+                "reviewer_notes": body.get("notes"),
+                "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        .eq("id", queue_id)
+        .execute()
+        .data
+        or []
+    )
+    if not res:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+    _audit(supabase, admin, "scrape.queue.approve", entity_type="scrape_queue",
+           entity_id=queue_id, new_value=body)
+    return {"ok": True, "id": queue_id, "status": "approved"}
 @router.post("/admin/scrape/items/{queue_id}/reject")
 def reject_queue_item(
     queue_id: str,
@@ -329,7 +443,7 @@ def reject_queue_item(
     )
     if not res:
         raise HTTPException(status_code=404, detail="Queue item not found")
-    _audit(supabase, admin, "scrape.reject_item", entity_type="scrape_queue",
+    _audit(supabase, admin, "scrape.queue.reject", entity_type="scrape_queue",
            entity_id=queue_id, new_value=body)
     return {"ok": True, "id": queue_id, "status": "rejected"}
 
@@ -340,7 +454,7 @@ def reject_queue_item(
 
 
 @router.get("/admin/eligibility-queue")
-def eligibility_queue(_admin: dict = Depends(_require_admin)) -> dict[str, Any]:
+def eligibility_queue(_admin: dict = Depends(require_permission("scraper.manage"))) -> dict[str, Any]:
     """Two-pane KPI view consumed by ``EligibilityQueue.jsx``:
 
     * ``pending`` — scrape_queue rows awaiting promotion.

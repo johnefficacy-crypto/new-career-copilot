@@ -312,6 +312,7 @@ def promote_to_recruitments(
 
     # ── Recruitment insert ──
     rec_payload = {
+        "slug": f"{_slugify(extracted.title)}-{extracted.year}",
         "organization_id": org_id,
         "name": data.title,
         "year": data.year,

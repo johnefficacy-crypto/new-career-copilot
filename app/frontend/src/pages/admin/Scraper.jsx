@@ -3,138 +3,15 @@ import { Play, RefreshCw } from "lucide-react";
 import { api } from "../../lib/api";
 
 export default function AdminScraper() {
-  const [items, setItems] = useState([]);
-  const [running, setRunning] = useState(false);
-  const [msg, setMsg] = useState(null);
+  const [items, setItems] = useState([]); const [queue,setQueue]=useState([]);
+  const [running, setRunning] = useState(false); const [msg, setMsg] = useState(null);
+  async function load() { const d = await api.get("/api/admin/scrape/runs"); setItems(d.items || []); const q=await api.get('/api/admin/scrape/queue?status=all'); setQueue(q.items||[]); }
+  useEffect(() => { load().catch(() => {}); }, []);
+  async function runDry() { setRunning(true); setMsg(null); try { const r = await api.post("/api/admin/scrape/run-dry", {}); setMsg(`Dry-run ${r.run_id?.slice(0,8)} ${r.status}`); await load(); } catch (e) { setMsg(`Dry-run failed: ${e.message}`);} finally {setRunning(false);} }
+  const act=async(id,a)=>{try{const r=await api.post(`/api/admin/scrape/items/${id}/${a}`,{notes:'admin review'}); setMsg(`${a}: ${JSON.stringify(r)}`);}catch(e){setMsg(`${a} failed: ${e.message}`);} await load();};
+  const fieldAct=async(id,f,a,val)=>{try{const r=await api.post(`/api/admin/scrape/items/${id}/fields/${f}/${a}`,{notes:'field review', corrected_value:val}); setMsg(`${f} ${a}: ${JSON.stringify(r)}`);}catch(e){setMsg(`${f} ${a} failed: ${e.message}`);} };
 
-  async function load() {
-    const d = await api.get("/api/admin/scrape/runs");
-    setItems(d.items || []);
-  }
-  useEffect(() => {
-    load().catch(() => {});
-  }, []);
-
-  async function runDry() {
-    setRunning(true);
-    setMsg(null);
-    try {
-      const r = await api.post("/api/admin/scrape/run-dry", {});
-      setMsg(
-        `Dry-run ${r.run_id?.slice(0, 8)}…  ·  ${r.status}  ·  found ${r.items_found}, new ${r.items_new}, dup ${r.items_duplicate}`
-      );
-      await load();
-    } catch (e) {
-      setMsg(`Dry-run failed: ${e.message}`);
-    } finally {
-      setRunning(false);
-    }
-  }
-
-  const pillFor = (s) => {
-    if (s === "completed" || s === "ok") return "pill-sage";
-    if (s === "failed") return "pill-clay";
-    return "pill-amber";
-  };
-
-  return (
-    <div className="space-y-6" data-testid="admin-scraper">
-      <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
-            Scraper monitor · canonical
-          </div>
-          <h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight">
-            Runs, not rumors.
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Each pass writes to <code>scrape_runs</code> + <code>scrape_queue</code>.
-            Items always land <code>pending</code>; admins promote/reject from{" "}
-            <a href="/admin/eligibility-queue" className="link-under">
-              the queue
-            </a>
-            .
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={load}
-            className="btn btn-ghost"
-            data-testid="scraper-reload"
-          >
-            <RefreshCw className="h-4 w-4" /> Reload
-          </button>
-          <button
-            disabled={running}
-            onClick={runDry}
-            className="btn btn-primary"
-            data-testid="scraper-run-dry"
-          >
-            <Play className={`h-4 w-4 ${running ? "animate-spin" : ""}`} />
-            {running ? "Running…" : "Run dry-scrape"}
-          </button>
-        </div>
-      </div>
-
-      {msg && (
-        <div
-          data-testid="scraper-msg"
-          className="rounded-xl bg-sage-100/60 border border-sage-200 p-3 text-xs"
-        >
-          {msg}
-        </div>
-      )}
-
-      <div className="soft-card rounded-2xl overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
-              <th className="text-left px-4 py-3">Run id</th>
-              <th className="text-left px-4 py-3">Trigger</th>
-              <th className="text-left px-4 py-3">When</th>
-              <th className="text-left px-4 py-3">Status</th>
-              <th className="text-left px-4 py-3">Sources</th>
-              <th className="text-left px-4 py-3">Seen</th>
-              <th className="text-left px-4 py-3">New</th>
-              <th className="text-left px-4 py-3">Dup</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.length === 0 && (
-              <tr>
-                <td
-                  colSpan={8}
-                  className="px-4 py-8 text-center text-sm text-muted-foreground"
-                >
-                  No scrape runs yet. Click "Run dry-scrape" to populate.
-                </td>
-              </tr>
-            )}
-            {items.map((r) => (
-              <tr
-                key={r.id}
-                className="border-t border-border font-mono text-[12.5px]"
-                data-testid={`run-${r.id}`}
-              >
-                <td className="px-4 py-3">{r.id?.slice(0, 8)}…</td>
-                <td className="px-4 py-3 text-clay-600">{r.source}</td>
-                <td className="px-4 py-3 text-muted-foreground">
-                  {r.at ? new Date(r.at).toLocaleString("en-IN") : "—"}
-                </td>
-                <td className="px-4 py-3">
-                  <span className={`pill ${pillFor(r.status)}`}>{r.status}</span>
-                </td>
-                <td className="px-4 py-3">{r.sources_checked}</td>
-                <td className="px-4 py-3">{r.items_seen}</td>
-                <td className="px-4 py-3">{r.items_new}</td>
-                <td className="px-4 py-3 text-muted-foreground">
-                  {r.items_duplicate}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
+  return (<div className="space-y-6" data-testid="admin-scraper"><div className="flex items-start justify-between flex-wrap gap-3"><div><h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight">Scrape queue trust review</h1><p className="text-muted-foreground mt-1">Promote creates draft/needs_review, it does not publish.</p></div><div className="flex gap-2"><button onClick={load} className="btn btn-ghost"><RefreshCw className="h-4 w-4" /> Reload</button><button disabled={running} onClick={runDry} className="btn btn-primary"><Play className={`h-4 w-4 ${running ? "animate-spin" : ""}`} />{running ? "Running…" : "Run dry-scrape"}</button></div></div>
+  {msg && <div className="soft-card p-2 text-xs">{msg}</div>}
+  <div className='soft-card rounded-2xl overflow-auto'><table className='w-full text-xs'><thead><tr>{['source','type','official/discovery','url','title','org_guess','dates','official_resolved','host','conf','quality','extract','evidence_req','duplicate','relevance','event','clf_conf','clf_reasons','multi-posts','promotable','review_notes','status','actions'].map(h=><th key={h} className='text-left px-2 py-2'>{h}</th>)}</tr></thead><tbody>{queue.map(q=>{const e=q.extracted_data||{}; return <tr key={q.id} className='border-t'><td>{q.source_name}</td><td>{q.source_type||'unknown'}</td><td>{q.discovery_only?'discovery':'official'}</td><td>{q.source_url}</td><td>{e.title||e.name||'—'}</td><td>{e.organization||'—'}</td><td>{e.apply_start_date||'—'}→{e.apply_end_date||'—'}</td><td>{String(!!q.official_source_resolved)}</td><td>{q.official_source_host||'—'}</td><td>{q.confidence_score??'—'}</td><td>{q.data_quality_score??'—'}</td><td>{q.extraction_status||'—'}</td><td>{String(!!q.evidence_required)}</td><td>{q.duplicate_of||JSON.stringify((q.duplicate_candidates||[]).slice(0,2))||'—'}</td><td>{q.relevance_category||'—'}</td><td>{q.lifecycle_event_type||'—'}</td><td>{q.classifier_confidence??'—'}</td><td>{(q.classifier_reasons||[]).join(', ')||'—'}</td><td>{String(!!q.multiple_posts_detected)}</td><td>{['private_job','tender','coaching_ad','blog_only','irrelevant'].includes(q.relevance_category)?'NO':'YES'}</td><td>{q.reviewer_notes||'—'}</td><td>{q.status}</td><td><button className='btn btn-ghost' onClick={()=>act(q.id,'approve')}>Approve</button><button className='btn btn-ghost' onClick={()=>act(q.id,'reject')}>Reject</button><button className='btn btn-primary' onClick={()=>act(q.id,'promote')}>Promote</button><details><summary>Evidence</summary><pre className='max-w-[340px] overflow-auto'>{JSON.stringify(q.field_evidence||{},null,2)}</pre><div className='text-[10px]'>{(q.raw_html||'').slice(0,200)}</div>{['title','organization_name','notification_date','apply_start_date','apply_end_date','total_vacancies','official_notification_url','official_apply_url'].map(f=><div key={f} className='text-[10px] border-t mt-1 pt-1'><b>{f}</b>: {String(e[f]??'—')} <button className='btn btn-ghost' onClick={()=>fieldAct(q.id,f,'verify')}>verify</button><button className='btn btn-ghost' onClick={()=>fieldAct(q.id,f,'reject')}>reject</button><button className='btn btn-ghost' onClick={()=>fieldAct(q.id,f,'correct', prompt('Correct value')||'')}>correct</button></div>)}</details></td></tr>})}</tbody></table></div></div>);
 }
