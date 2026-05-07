@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -601,6 +601,170 @@ async def clicked_apply(recruitment_id: str, user: dict = Depends(get_current_us
         ApplicationUpsert(clicked_apply_at=_now_iso()),
         user,
     )
+
+
+router_recommendations = APIRouter(prefix="/recommendations", tags=["recommendations"])
+
+
+def _days_until(d: str | None) -> int | None:
+    if not d:
+        return None
+    try:
+        return (date.fromisoformat(str(d)) - date.today()).days
+    except Exception:
+        return None
+
+
+def _profile_gaps(profile: dict[str, Any]) -> list[str]:
+    return [k for k in ("date_of_birth", "category", "graduation_year") if not profile.get(k)]
+
+
+def _rank_recruitment(
+    recruitment: dict[str, Any],
+    profile: dict[str, Any],
+    eligibility: dict[str, Any],
+    application: dict[str, Any] | None,
+    backlog_high: bool,
+) -> dict[str, Any]:
+    # TODO(P1.5-B): add PwBD readiness scoring once normalized backend fields are available.
+    # TODO(P1.5-B): add education readiness scoring parity with full eligibility profile readiness.
+    # TODO(P1.5-B): add weekly_hours_goal capacity parity (currently backlog risk only).
+    # TODO(P1.5-B): tighten preferred sector/state normalization parity with frontend fallback heuristics.
+    score = 0
+    reasons: list[str] = []
+    risks: list[str] = []
+    missing = _profile_gaps(profile)
+    deadline_days = _days_until(recruitment.get("apply_end_date"))
+    start_days = _days_until(recruitment.get("apply_start_date"))
+    window_closed = deadline_days is not None and deadline_days < 0
+    window_not_started = start_days is not None and start_days > 0
+    deadline_near = deadline_days is not None and 0 <= deadline_days <= 3
+    submitted = bool(application and application.get("submitted_at"))
+    clicked = bool(application and application.get("clicked_apply_at"))
+    app_status = (application or {}).get("status") or "not_started"
+    has_eligibility = bool(eligibility.get("eligible"))
+    conditional = bool(eligibility.get("conditional"))
+
+    if has_eligibility:
+        score += 30
+        reasons.append("Deterministic eligibility confirmed")
+    elif conditional:
+        score += 10
+        reasons.append("Eligibility has conditional checks")
+        risks.append("Eligibility is conditional")
+    else:
+        risks.append("Eligibility not confirmed yet")
+    if missing:
+        score -= 20
+        risks.append(f"Missing profile fields: {', '.join(missing[:2])}")
+    if recruitment.get("saved") or application:
+        score += 6
+        reasons.append("Already saved/tracked")
+    if not submitted and deadline_near:
+        score += 10
+        reasons.append("Deadline approaching")
+        risks.append("Deadline is near")
+    if window_closed and not submitted:
+        score -= 40
+        risks.append("Application window closed")
+    if clicked and not submitted:
+        score += 8
+        reasons.append("Application started")
+    if submitted:
+        score += 12
+        reasons.append("Application submitted")
+    if backlog_high:
+        score -= 8
+        risks.append("High study backlog risk")
+
+    stage = "check_eligibility"
+    next_action = "Verify deterministic eligibility status before applying."
+    if window_closed and not submitted:
+        stage = "closed"
+        next_action = "Application window closed. Track future cycles."
+    elif missing:
+        stage = "complete_profile"
+        next_action = f"Complete profile fields: {', '.join(missing)}."
+    elif not has_eligibility:
+        stage = "check_eligibility"
+    elif submitted:
+        if window_closed:
+            stage = "monitor_result"
+            next_action = "Recover backlog while monitoring result notifications." if backlog_high else "Monitor result updates and keep revision steady."
+        else:
+            stage = "prepare_after_submission"
+            next_action = "Recover backlog first, then continue exam preparation." if backlog_high else "Shift from application to preparation strategy."
+    elif clicked:
+        stage = "continue_application"
+        next_action = "Complete or update your application status."
+    elif app_status == "in_progress":
+        stage = "submit_form"
+        next_action = "Submit form now — deadline is near." if deadline_near else "Complete and submit your form early."
+    elif window_not_started:
+        stage = "low_priority"
+        next_action = "Application window not open yet. Set a reminder for start date."
+    else:
+        stage = "apply_now"
+        next_action = "Apply now — deadline is near." if deadline_near else "Proceed to application and submit early."
+
+    return {
+        "recruitment_id": recruitment.get("id"),
+        "slug": recruitment.get("slug"),
+        "name": recruitment.get("name"),
+        "organization": recruitment.get("organization"),
+        "apply_start_date": recruitment.get("apply_window", {}).get("open"),
+        "apply_end_date": recruitment.get("apply_window", {}).get("close"),
+        "match_score": max(0, min(100, score)),
+        "match_reasons": reasons,
+        "risk_flags": risks,
+        "next_action": next_action,
+        "recommendation_stage": stage,
+    }
+
+
+@router_recommendations.get("/me")
+async def my_recommendations(user: dict = Depends(get_current_user)):
+    supabase = get_supabase_admin()
+    rec_data = await list_recruitments(user=user)
+    rec_items = rec_data.get("items", [])
+    profile = await get_profile(user)
+    eligibility = _eligibility_summary(supabase, user["id"])
+    app_rows = _safe(
+        lambda: supabase.table("user_recruitment_applications")
+        .select("recruitment_id,status,submitted_at,clicked_apply_at")
+        .eq("user_id", user["id"])
+        .execute()
+        .data,
+        default=[],
+    ) or []
+    app_by_rec = {a["recruitment_id"]: a for a in app_rows}
+    review = await weekly_review(user)
+    backlog_high = (review.get("backlog_count", 0) or 0) > 3 or (review.get("missed_tasks", 0) or 0) > 3
+
+    ranked = [
+        _rank_recruitment(
+            recruitment=r,
+            profile=profile,
+            eligibility=eligibility.get(r.get("id"), {"eligible": False, "conditional": False}),
+            application=app_by_rec.get(r.get("id")),
+            backlog_high=backlog_high,
+        )
+        for r in rec_items
+    ]
+    ranked.sort(key=lambda x: x["match_score"], reverse=True)
+    stage_counts = {
+        "apply_now": 0,
+        "continue_application": 0,
+        "prepare_after_submission": 0,
+        "complete_profile": 0,
+        "check_eligibility": 0,
+        "closed": 0,
+        "low_priority": 0,
+    }
+    for r in ranked:
+        if r["recommendation_stage"] in stage_counts:
+            stage_counts[r["recommendation_stage"]] += 1
+    return {"items": ranked, "counts": stage_counts}
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1428,6 +1592,7 @@ router.include_router(router_recruitments)
 router.include_router(router_profile)
 router.include_router(router_tracker)
 router.include_router(router_applications)
+router.include_router(router_recommendations)
 router.include_router(router_community)
 router.include_router(router_marketplace)
 router.include_router(router_study)
