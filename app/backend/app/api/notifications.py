@@ -203,6 +203,8 @@ def admin_notifications(_admin: dict = Depends(_require_admin)) -> dict[str, Any
             {"id": "email", "label": "Email (Resend)", "active": True},
             {"id": "whatsapp", "label": "WhatsApp", "active": False},
         ],
+        "kill_switch_note": "Kill switch controls outbound delivery. In-app next-action generation is controlled by preferences and admin permissions.",
+        "recent_runs": sb.table("notification_generation_runs").select("*").order("created_at", desc=True).limit(20).execute().data or [],
     }
 
 
@@ -270,6 +272,16 @@ async def generate_next_actions(
     actor: dict = Depends(require_permission("notifications.manage")),
 ) -> dict[str, Any]:
     sb = get_supabase_admin()
+    run_row = {
+        "triggered_by_user_id": actor.get("id"),
+        "scope": body.scope,
+        "dry_run": body.dry_run,
+        "run_limit": body.limit,
+        "status": "running",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    run = sb.table("notification_generation_runs").insert(run_row).execute().data or []
+    run_id = run[0].get("id") if run else None
     users: list[dict[str, Any]]
     if body.scope == "all_users":
         rows = sb.table("profiles").select("id").limit(body.limit).execute().data or []
@@ -280,11 +292,33 @@ async def generate_next_actions(
         users = [{"id": actor["id"]}]
     created = skipped = candidates = 0
     by_type: dict[str, int] = {}
-    for u in users:
-        res = await generate_next_actions_for_user(supabase=sb, user=u, dry_run=body.dry_run)
-        created += res["created"]
-        skipped += res["skipped"]
-        candidates += res["candidates"]
-        for k, v in (res.get("by_type") or {}).items():
-            by_type[k] = by_type.get(k, 0) + v
-    return {"scope": body.scope, "users": len(users), "created": created, "skipped": skipped, "candidates": candidates, "by_type": by_type, "dry_run": body.dry_run}
+    try:
+        for u in users:
+            res = await generate_next_actions_for_user(supabase=sb, user=u, dry_run=body.dry_run)
+            created += res["created"]
+            skipped += res["skipped"]
+            candidates += res["candidates"]
+            for k, v in (res.get("by_type") or {}).items():
+                by_type[k] = by_type.get(k, 0) + v
+        if run_id:
+            sb.table("notification_generation_runs").update({
+                "candidates_count": candidates,
+                "created_count": created,
+                "skipped_count": skipped,
+                "by_type": by_type,
+                "status": "success",
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", run_id).execute()
+        return {"scope": body.scope, "users": len(users), "created": created, "skipped": skipped, "candidates": candidates, "by_type": by_type, "dry_run": body.dry_run}
+    except Exception as exc:
+        if run_id:
+            sb.table("notification_generation_runs").update({
+                "status": "failed",
+                "error_message": str(exc),
+                "candidates_count": candidates,
+                "created_count": created,
+                "skipped_count": skipped,
+                "by_type": by_type,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", run_id).execute()
+        raise

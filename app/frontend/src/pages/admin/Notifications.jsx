@@ -126,9 +126,7 @@ export default function AdminNotifications() {
             </span>
           </div>
           <div className="text-xs text-muted-foreground">
-            Sets <code>admin_settings.notifications_paused</code>. The
-            dispatcher and the daily deadline sweep both early-return when
-            paused.
+            Sets <code>admin_settings.notifications_paused</code>. Kill switch controls outbound delivery. In-app next-action generation is controlled by preferences and admin permissions.
           </div>
         </div>
         <button
@@ -183,6 +181,30 @@ export default function AdminNotifications() {
           <input className="input" type="number" min="1" max="500" value={gen.limit} onChange={(e) => setGen((g) => ({ ...g, limit: Number(e.target.value || 100) }))} />
           <label className="text-xs flex items-center gap-2"><input type="checkbox" checked={gen.dry_run} onChange={(e) => setGen((g) => ({ ...g, dry_run: e.target.checked }))} /> Dry run</label>
           <button className="btn btn-ghost" onClick={runNextActions} disabled={busy === "next-actions"}>Run next-actions</button>
+        </div>
+      </div>
+
+      <div className="soft-card rounded-2xl p-5">
+        <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-semibold mb-3">
+          Recent generation runs
+        </div>
+        <div className="space-y-2">
+          {(overview.recent_runs || []).map((r) => (
+            <div key={r.id} className="border border-border rounded-xl p-3 text-xs">
+              <div className="flex flex-wrap gap-3">
+                <span>{new Date(r.created_at).toLocaleString("en-IN")}</span>
+                <span>scope: {r.scope}</span>
+                <span>dry-run: {String(r.dry_run)}</span>
+                <span>candidates: {r.candidates_count}</span>
+                <span>created: {r.created_count}</span>
+                <span>skipped: {r.skipped_count}</span>
+                <span>status: {r.status}</span>
+              </div>
+              <div className="mt-1 text-muted-foreground">by_type: {JSON.stringify(r.by_type || {})}</div>
+              {r.error_message && <div className="mt-1 text-destructive">{r.error_message}</div>}
+            </div>
+          ))}
+          {(!overview.recent_runs || overview.recent_runs.length === 0) && <div className="text-xs text-muted-foreground">No runs yet.</div>}
         </div>
       </div>
 
