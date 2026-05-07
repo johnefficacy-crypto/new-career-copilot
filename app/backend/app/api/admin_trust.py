@@ -175,3 +175,13 @@ def verify_organization(organization_id: str, admin: dict = Depends(require_perm
         update.update({"is_verified": True, "verified_by": admin.get("id"), "verified_at": datetime.now(timezone.utc).isoformat()})
     sb.table("organizations").update(update).eq("id", organization_id).execute(); _audit(sb, admin, "organization.verify", "organization", organization_id, before_payload=org, after_payload=update)
     return {"ok": True, "organization_id": organization_id, "checks": checks, "warnings": warnings, "errors": errors}
+
+
+@router.get("/admin/recruitments")
+def admin_recruitments(_admin: dict = Depends(require_permission("recruitments.manage"))):
+    sb=get_supabase_admin()
+    rows=sb.table("recruitments").select("id,name,publish_status,status,organizations(name)").order("created_at", desc=True).limit(200).execute().data or []
+    items=[]
+    for r in rows:
+        items.append({"id":r.get("id"),"name":r.get("name"),"publish_status":r.get("publish_status"),"lifecycle_status":r.get("status"),"organization":(r.get("organizations") or {}).get("name")})
+    return {"items": items}
