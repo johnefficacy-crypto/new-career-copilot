@@ -12,6 +12,7 @@ const NAV = [
   { to: "/admin/eligibility-queue", label: "Eligibility queue", icon: GaugeCircle },
   { to: "/admin/sources", label: "Source registry", icon: Database },
   { to: "/admin/scraper", label: "Scraper monitor", icon: Radar },
+  { to: "/admin/organizations", label: "Organizations", icon: Users2 },
   { to: "/admin/notifications", label: "Notifications", icon: Bell },
   { to: "/admin/marketplace", label: "Marketplace", icon: ShoppingBag },
   { to: "/admin/plans", label: "Pricing & plans", icon: CreditCard },
