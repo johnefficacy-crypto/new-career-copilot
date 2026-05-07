@@ -37,6 +37,8 @@ export default function Profile() {
           service_years: u.profile?.service_years ?? "",
           govt_employee: !!u.profile?.govt_employee,
           qualification: u.profile?.qualification || "",
+          education_level: u.profile?.education_level || "",
+          stream: u.profile?.stream || "",
           qualification_year: u.profile?.qualification_year || "",
           percentage: u.profile?.percentage || "",
           cgpa: u.profile?.cgpa || "",
