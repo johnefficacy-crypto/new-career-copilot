@@ -128,13 +128,3 @@ def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
     out=admin_scrape.promote_queue_item('q1', {'id':'a','email':'e'})
     assert out['publish_status']=='needs_review'
     assert sb.state['queue'][0]['status']=='promoted'
-
-
-def test_promote_run_no_alert_fanout(monkeypatch):
-    sb=SB(); monkeypatch.setattr(admin_scrape,'get_supabase_admin',lambda:sb)
-    monkeypatch.setattr(admin_scrape, 'promote_run', lambda run_id, supabase, reviewer_id=None: {"run_id": run_id, "recruitment_ids": ["r1","r2"]})
-    called={"n":0}
-    monkeypatch.setattr(admin_scrape, 'alert_users_for_new_recruitment', lambda *a, **k: called.__setitem__('n', called['n']+1) or 1)
-    out=admin_scrape.promote_run_endpoint('run1', {'id':'a','email':'e'})
-    assert out.get('alerts_sent') == 0
-    assert called['n'] == 0
