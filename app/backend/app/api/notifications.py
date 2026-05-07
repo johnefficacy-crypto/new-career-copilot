@@ -28,6 +28,7 @@ from app.notifications.dispatcher import (
     kill_switch_enabled,
     set_kill_switch,
 )
+from app.notifications.next_actions import generate_next_actions_for_user
 from app.notifications.scheduler import JOBS, list_jobs, run_job_now
 from app.scraping.alerts import (
     get_unread_alert_count,
@@ -53,10 +54,33 @@ def _require_admin(user: dict = Depends(get_current_user)) -> dict:
 def my_alerts(
     unread_only: bool = False,
     limit: int = 20,
+    priority: int | None = None,
+    alert_type: str | None = None,
     user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
     items = get_user_alerts(user["id"], get_supabase_admin(), unread_only=unread_only, limit=limit)
-    return {"items": items, "count": len(items)}
+    shaped = []
+    for it in items:
+        if priority is not None and int(it.get("priority") or 0) < priority:
+            continue
+        if alert_type and it.get("alert_type") != alert_type:
+            continue
+        rec = it.get("recruitment") or {}
+        title = it.get("title") or f"Next action: {(it.get('alert_type') or 'update').replace('_', ' ')}"
+        body = it.get("body") or "Review your latest recommendation update."
+        slug_or_id = rec.get("slug") if isinstance(rec, dict) else None
+        shaped.append({
+            **it,
+            "type": it.get("alert_type"),
+            "title": title,
+            "body": body,
+            "priority": it.get("priority"),
+            "recruitment_link": f"/app/exams/{slug_or_id or it.get('recruitment_id')}" if it.get("recruitment_id") else None,
+            "created_at": it.get("sent_at"),
+            "read": bool(it.get("is_read")),
+            "organization": (rec.get("organization") or {}).get("name") if isinstance(rec, dict) else None,
+        })
+    return {"items": shaped, "count": len(shaped)}
 
 
 @router.get("/notifications/me/unread-count")
@@ -222,3 +246,36 @@ def admin_run_job(job_id: str, admin: dict = Depends(require_permission("notific
     except Exception:
         pass
     return result
+
+
+class GenerateNextActionsBody(BaseModel):
+    scope: str = Field(default="me", pattern="^(me|all_users)$")
+    user_id: str | None = None
+    limit: int = Field(default=100, ge=1, le=500)
+    dry_run: bool = False
+
+
+@router.post("/notifications/generate-next-actions")
+async def generate_next_actions(
+    body: GenerateNextActionsBody,
+    actor: dict = Depends(require_permission("notifications.manage")),
+) -> dict[str, Any]:
+    sb = get_supabase_admin()
+    users: list[dict[str, Any]]
+    if body.scope == "all_users":
+        rows = sb.table("profiles").select("id").limit(body.limit).execute().data or []
+        users = [{"id": r["id"]} for r in rows if r.get("id")]
+    elif body.user_id:
+        users = [{"id": body.user_id}]
+    else:
+        users = [{"id": actor["id"]}]
+    created = skipped = candidates = 0
+    by_type: dict[str, int] = {}
+    for u in users:
+        res = await generate_next_actions_for_user(supabase=sb, user=u, dry_run=body.dry_run)
+        created += res["created"]
+        skipped += res["skipped"]
+        candidates += res["candidates"]
+        for k, v in (res.get("by_type") or {}).items():
+            by_type[k] = by_type.get(k, 0) + v
+    return {"scope": body.scope, "users": len(users), "created": created, "skipped": skipped, "candidates": candidates, "by_type": by_type, "dry_run": body.dry_run}
