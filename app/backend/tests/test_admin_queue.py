@@ -101,3 +101,30 @@ def test_field_evidence_requires_document_id(monkeypatch):
     sb=SB4(); monkeypatch.setattr(admin_scrape,'get_supabase_admin',lambda:sb)
     with pytest.raises(Exception):
         admin_scrape.verify_field('q1','title',{'notes':'n'},{'id':'a','email':'e'})
+
+
+def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
+    class SB5(SB):
+        def table(self,t):
+            if t=='extracted_field_evidence':
+                class FQ:
+                    def select(self,*a,**k): return self
+                    def eq(self,*a,**k): return self
+                    def execute(self):
+                        return R([
+                            {'field_name':'apply_end_date','reviewer_status':'verified'},
+                            {'field_name':'official_notification_url','reviewer_status':'verified'},
+                            {'field_name':'official_apply_url','reviewer_status':'verified'},
+                            {'field_name':'organization_name','reviewer_status':'verified'},
+                            {'field_name':'total_vacancies','reviewer_status':'verified'},
+                            {'field_name':'eligibility','reviewer_status':'verified'},
+                        ])
+                return FQ()
+            return super().table(t)
+    sb=SB5(); monkeypatch.setattr(admin_scrape,'get_supabase_admin',lambda:sb)
+    import app.scraping.runner as runner
+    monkeypatch.setattr(runner, 'promote_to_recruitments', lambda extracted, supabase: 'r1')
+    sb.state['queue'][0]['status']='approved'
+    out=admin_scrape.promote_queue_item('q1', {'id':'a','email':'e'})
+    assert out['publish_status']=='needs_review'
+    assert sb.state['queue'][0]['status']=='promoted'
