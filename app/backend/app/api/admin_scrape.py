@@ -298,7 +298,7 @@ def promote_queue_item(
     supabase = get_supabase_admin()
     rows = (
         supabase.table("scrape_queue")
-        .select("id, extracted_data, status")
+        .select("id, source_id, source_url, extracted_data, status, official_source_resolved, extraction_status")
         .eq("id", queue_id)
         .limit(1)
         .execute()
