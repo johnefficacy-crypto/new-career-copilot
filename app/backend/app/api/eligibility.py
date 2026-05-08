@@ -129,13 +129,21 @@ async def recompute(
     return {"ok": True, "user_id": target_user_id, **result}
 
 
+async def _get_results_supabase_client() -> Any:
+    """Prefer async Supabase client; fall back to sync client for compatibility."""
+    try:
+        return await get_supabase_admin_async()
+    except RuntimeError:
+        return get_supabase_admin()
+
+
 @router.get(
     "/results/me",
     summary="Get eligible and conditional results for the current user",
 )
 async def results_me(user: dict = Depends(get_current_user)) -> dict[str, Any]:
     try:
-        supabase = await get_supabase_admin_async()
+        supabase = await _get_results_supabase_client()
         items = await get_eligible_recruitments_async(user["id"], supabase)
     except DatabaseError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Eligibility results unavailable") from exc
@@ -148,7 +156,7 @@ async def results_me(user: dict = Depends(get_current_user)) -> dict[str, Any]:
 )
 async def results_me_all(user: dict = Depends(get_current_user)) -> dict[str, Any]:
     try:
-        supabase = await get_supabase_admin_async()
+        supabase = await _get_results_supabase_client()
         items = await get_all_eligibility_results_async(user["id"], supabase)
     except DatabaseError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Eligibility results unavailable") from exc
