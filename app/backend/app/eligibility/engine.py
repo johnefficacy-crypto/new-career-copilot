@@ -124,10 +124,11 @@ def check_eligibility(
     exam_attempts: list[UserExamAttempts],
     exam_credentials: list[UserExamCredential],
     criteria: PostCriteria,
+    user_certifications: list[UserCertification] | None = None,
 ) -> EligibilityCheckResult:
     checks: list[EligibilityCheck] = []
     is_conditional = False
-    user_certs: list[UserCertification] = getattr(profile, "_user_certifications", []) or []
+    user_certs: list[UserCertification] = user_certifications or []
 
     # ── 1. Age ──────────────────────────────────────────────────────────────
     if criteria.age_criteria is not None:
@@ -465,12 +466,13 @@ def check_eligibility_batch(
     exam_attempts: list[UserExamAttempts],
     exam_credentials: list[UserExamCredential],
     post_criteria_list: list[PostCriteria],
+    user_certifications: list[UserCertification] | None = None,
 ) -> list[BatchEligibilityResult]:
     return [
         BatchEligibilityResult(
             post_id=pc.post_id,
             recruitment_id=pc.recruitment_id,
-            result=check_eligibility(profile, education, exam_attempts, exam_credentials, pc),
+            result=check_eligibility(profile, education, exam_attempts, exam_credentials, pc, user_certifications=user_certifications),
         )
         for pc in post_criteria_list
     ]

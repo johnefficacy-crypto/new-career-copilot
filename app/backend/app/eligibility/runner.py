@@ -197,8 +197,14 @@ def run_eligibility_for_user(
         pc.required_exam_keys = required_map.get(pc.recruitment_id, [])
 
     # ── 5. Run batch engine ────────────────────────────────────────────────
-    profile.__dict__["_user_certifications"] = user_certifications
-    results = check_eligibility_batch(profile, education, exam_attempts, exam_credentials, post_criteria_list)
+    results = check_eligibility_batch(
+        profile,
+        education,
+        exam_attempts,
+        exam_credentials,
+        post_criteria_list,
+        user_certifications=user_certifications,
+    )
 
     # ── 6. Upsert into eligibility_results ─────────────────────────────────
     now = datetime.now(timezone.utc).isoformat()

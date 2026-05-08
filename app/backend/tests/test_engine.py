@@ -213,27 +213,23 @@ def test_batch():
 
 def test_mandatory_certification_present_passes():
     p = _profile()
-    p.__dict__["_user_certifications"] = [{"certification_name": "gate"}]
-    res = check_eligibility(p, [_grad()], [], [], _post(certification_criteria=[CertificationCriteria(mandatory=True, name="gate", aliases=[])]))
+    res = check_eligibility(p, [_grad()], [], [], _post(certification_criteria=[CertificationCriteria(mandatory=True, name="gate", aliases=[])]), user_certifications=[{"certification_name": "gate"}])
     assert res.is_eligible is True
 
 
 def test_mandatory_certification_missing_fails():
     p = _profile()
-    p.__dict__["_user_certifications"] = []
-    res = check_eligibility(p, [_grad()], [], [], _post(certification_criteria=[CertificationCriteria(mandatory=True, name="gate", aliases=[])]))
+    res = check_eligibility(p, [_grad()], [], [], _post(certification_criteria=[CertificationCriteria(mandatory=True, name="gate", aliases=[])]), user_certifications=[])
     assert res.is_eligible is False
 
 
 def test_certification_alias_matching():
     p = _profile()
-    p.__dict__["_user_certifications"] = [{"certification_name": "computer_certificate"}]
-    res = check_eligibility(p, [_grad()], [], [], _post(certification_criteria=[CertificationCriteria(mandatory=True, name="ccc", aliases=["computer_certificate"])]))
+    res = check_eligibility(p, [_grad()], [], [], _post(certification_criteria=[CertificationCriteria(mandatory=True, name="ccc", aliases=["computer_certificate"])]), user_certifications=[{"certification_name": "computer_certificate"}])
     assert res.is_eligible is True
 
 
 def test_optional_certification_does_not_fail():
     p = _profile()
-    p.__dict__["_user_certifications"] = []
-    res = check_eligibility(p, [_grad()], [], [], _post(certification_criteria=[CertificationCriteria(mandatory=False, name="gate", aliases=[])]))
+    res = check_eligibility(p, [_grad()], [], [], _post(certification_criteria=[CertificationCriteria(mandatory=False, name="gate", aliases=[])]), user_certifications=[])
     assert res.is_eligible is True
