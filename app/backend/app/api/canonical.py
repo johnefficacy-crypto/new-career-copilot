@@ -26,6 +26,7 @@ from supabase import Client
 
 from app.core.auth import get_current_user, get_optional_user
 from app.db.supabase_client import get_supabase_admin
+from app.eligibility.recompute_queue import enqueue_eligibility_recompute
 from app.profile.eligibility_mapper import build_user_eligibility_profile
 
 logger = logging.getLogger("career_copilot.canonical")
@@ -575,6 +576,15 @@ async def update_profile(body: ProfileUpdate, user: dict = Depends(get_current_u
     if preferences_payload:
         preferences_payload["user_id"] = user["id"]
         supabase.table("aspirant_preferences").upsert(preferences_payload, on_conflict="user_id").execute()
+    changed_reasons: list[str] = []
+    if any(k in patch for k in {"date_of_birth", "category", "pwbd_status", "domicile_state", "nationality", "ex_serviceman", "service_years", "govt_employee"}):
+        changed_reasons.append("profile.identity_updated")
+    if education_payload:
+        changed_reasons.append("profile.education_updated")
+    if preferences_payload:
+        changed_reasons.append("profile.preferences_updated")
+    if changed_reasons:
+        enqueue_eligibility_recompute(supabase, user["id"], changed_reasons[-1], metadata={"reasons": changed_reasons})
     return await get_profile(user)
 
 
@@ -660,6 +670,7 @@ async def create_certification(body: CertificationIn, user: dict = Depends(get_c
     sb = get_supabase_admin()
     payload = {**body.model_dump(), "user_id": user["id"]}
     row = sb.table("aspirant_certifications").insert(payload).execute().data
+    enqueue_eligibility_recompute(sb, user["id"], "profile.certification_created")
     return {"item": (row or [payload])[0]}
 
 
@@ -670,6 +681,7 @@ async def update_certification(cid: str, body: CertificationIn, user: dict = Dep
     if not existing:
         raise HTTPException(status_code=404, detail="Certification not found")
     row = sb.table("aspirant_certifications").update(body.model_dump()).eq("id", cid).eq("user_id", user["id"]).execute().data
+    enqueue_eligibility_recompute(sb, user["id"], "profile.certification_updated")
     return {"item": (row or [{}])[0]}
 
 
@@ -680,6 +692,7 @@ async def delete_certification(cid: str, user: dict = Depends(get_current_user))
     if not existing:
         raise HTTPException(status_code=404, detail="Certification not found")
     sb.table("aspirant_certifications").update({"is_active": False}).eq("id", cid).eq("user_id", user["id"]).execute()
+    enqueue_eligibility_recompute(sb, user["id"], "profile.certification_removed")
     return {"ok": True}
 
 
@@ -701,6 +714,7 @@ async def create_experience(body: ExperienceIn, user: dict = Depends(get_current
     sb = get_supabase_admin()
     payload = {**body.model_dump(), "user_id": user["id"]}
     row = sb.table("aspirant_experience").insert(payload).execute().data
+    enqueue_eligibility_recompute(sb, user["id"], "profile.experience_created")
     return {"item": (row or [payload])[0]}
 
 
@@ -712,6 +726,7 @@ async def update_experience(eid: str, body: ExperienceIn, user: dict = Depends(g
     if not existing:
         raise HTTPException(status_code=404, detail="Experience not found")
     row = sb.table("aspirant_experience").update(body.model_dump()).eq("id", eid).eq("user_id", user["id"]).execute().data
+    enqueue_eligibility_recompute(sb, user["id"], "profile.experience_updated")
     return {"item": (row or [{}])[0]}
 
 
@@ -722,6 +737,7 @@ async def delete_experience(eid: str, user: dict = Depends(get_current_user)):
     if not existing:
         raise HTTPException(status_code=404, detail="Experience not found")
     sb.table("aspirant_experience").delete().eq("id", eid).eq("user_id", user["id"]).execute()
+    enqueue_eligibility_recompute(sb, user["id"], "profile.experience_removed")
     return {"ok": True}
 
 
@@ -737,6 +753,7 @@ async def create_exam_attempt(body: ExamAttemptIn, user: dict = Depends(get_curr
     sb = get_supabase_admin()
     payload = {**body.model_dump(), "user_id": user["id"]}
     row = sb.table("aspirant_exam_attempts").insert(payload).execute().data
+    enqueue_eligibility_recompute(sb, user["id"], "profile.attempt_created")
     return {"item": (row or [payload])[0]}
 
 
@@ -747,6 +764,7 @@ async def update_exam_attempt(aid: str, body: ExamAttemptIn, user: dict = Depend
     if not existing:
         raise HTTPException(status_code=404, detail="Exam attempt not found")
     row = sb.table("aspirant_exam_attempts").update(body.model_dump()).eq("id", aid).eq("user_id", user["id"]).execute().data
+    enqueue_eligibility_recompute(sb, user["id"], "profile.attempt_updated")
     return {"item": (row or [{}])[0]}
 
 
@@ -757,7 +775,15 @@ async def delete_exam_attempt(aid: str, user: dict = Depends(get_current_user)):
     if not existing:
         raise HTTPException(status_code=404, detail="Exam attempt not found")
     sb.table("aspirant_exam_attempts").delete().eq("id", aid).eq("user_id", user["id"]).execute()
+    enqueue_eligibility_recompute(sb, user["id"], "profile.attempt_removed")
     return {"ok": True}
+
+
+@router_profile.post("/recompute-eligibility")
+async def enqueue_recompute(user: dict = Depends(get_current_user)):
+    sb = get_supabase_admin()
+    row = enqueue_eligibility_recompute(sb, user["id"], "manual.profile_recompute")
+    return {"item": row, "status": row.get("status", "pending")}
 
 
 @router_profile.get("/eligibility-input/me")
