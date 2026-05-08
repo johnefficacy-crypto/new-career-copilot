@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from app.core.auth import get_current_user
 from app.core.config import get_settings
 from app.core.errors import DatabaseError, ValidationError
-from app.db.supabase_client import get_supabase_admin
+from app.db.supabase_client import get_supabase_admin, get_supabase_admin_async
 from app.eligibility.runner import (
     get_all_eligibility_results_async,
     get_eligible_recruitments_async,
@@ -135,7 +135,7 @@ async def recompute(
 )
 async def results_me(user: dict = Depends(get_current_user)) -> dict[str, Any]:
     try:
-        supabase = get_supabase_admin()
+        supabase = await get_supabase_admin_async()
         items = await get_eligible_recruitments_async(user["id"], supabase)
     except DatabaseError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Eligibility results unavailable") from exc
@@ -148,7 +148,7 @@ async def results_me(user: dict = Depends(get_current_user)) -> dict[str, Any]:
 )
 async def results_me_all(user: dict = Depends(get_current_user)) -> dict[str, Any]:
     try:
-        supabase = get_supabase_admin()
+        supabase = await get_supabase_admin_async()
         items = await get_all_eligibility_results_async(user["id"], supabase)
     except DatabaseError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Eligibility results unavailable") from exc
