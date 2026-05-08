@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Any
 
 from supabase import Client
@@ -39,7 +40,9 @@ logger = logging.getLogger("career_copilot.scraping.runner")
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
+def _slugify(value: str | None) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", (value or "").lower()).strip("-")
+    return base[:80] or "recruitment"
 
 def _exec(call, default=None):
     try:
@@ -312,8 +315,7 @@ def promote_to_recruitments(
 
     # ── Recruitment insert ──
     rec_payload = {
-        "slug": f"{_slugify(extracted.title)}-{extracted.year}",
-        "organization_id": org_id,
+        "slug": f"{_slugify(data.title)}-{data.year}",        "organization_id": org_id,
         "name": data.title,
         "year": data.year,
         "notification_date": data.notification_date,
