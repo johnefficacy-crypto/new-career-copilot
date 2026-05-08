@@ -43,7 +43,7 @@ export default function Exams() {
   async function load() {
     const qs = new URLSearchParams();
     if (filter !== "all") qs.set("status", filter);
-    if (q) qs.set("q", q);
+    if (q.trim()) qs.set("q", q.trim());
     const d = await api.get(`/api/recruitments?${qs.toString()}`);
     setData(d);
   }
@@ -108,7 +108,7 @@ export default function Exams() {
       {recomputeMsg && (
         <div
           data-testid="recompute-msg"
-          className="rounded-xl bg-sage-100/60 border border-sage-200 p-3 text-xs"
+          className={`rounded-xl p-3 text-xs border ${recomputeMsg.toLowerCase().includes("failed") ? "bg-red-50 border-red-200 text-red-700" : "bg-sage-100/60 border-sage-200"}`}
         >
           {recomputeMsg}
         </div>
@@ -146,6 +146,7 @@ export default function Exams() {
             data-testid="exams-search"
           />
         </form>
+        <div className="text-[11px] text-muted-foreground">Tip: update Profile and recompute to refresh your eligibility verdicts.</div>
       </div>
 
       <div className="space-y-3">
