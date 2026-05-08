@@ -43,7 +43,14 @@ def _is_service_role(token: str) -> bool:
     return token.strip() == (get_settings().SUPABASE_SERVICE_ROLE_KEY or "").strip()
 
 
-@router.post("/recompute")
+@router.post(
+    "/recompute",
+    summary="Recompute eligibility for a user",
+    description=(
+        "Service-role callers may specify `user_id` in request body. "
+        "Regular users can recompute only for their own authenticated profile."
+    ),
+)
 async def recompute(
     request: Request,
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
@@ -76,14 +83,20 @@ async def recompute(
     return {"ok": True, "user_id": target_user_id, **result}
 
 
-@router.get("/results/me")
+@router.get(
+    "/results/me",
+    summary="Get eligible and conditional results for the current user",
+)
 async def results_me(user: dict = Depends(get_current_user)) -> dict[str, Any]:
     supabase = get_supabase_admin()
     items = await get_eligible_recruitments_async(user["id"], supabase)
     return {"items": items, "count": len(items)}
 
 
-@router.get("/results/me/all")
+@router.get(
+    "/results/me/all",
+    summary="Get all eligibility results for the current user",
+)
 async def results_me_all(user: dict = Depends(get_current_user)) -> dict[str, Any]:
     supabase = get_supabase_admin()
     items = await get_all_eligibility_results_async(user["id"], supabase)
