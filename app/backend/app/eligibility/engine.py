@@ -32,6 +32,7 @@ from .schemas import (
     UserEducation,
     UserExamAttempts,
     UserExamCredential,
+    UserCertification,
     UserProfile,
 )
 
@@ -123,9 +124,11 @@ def check_eligibility(
     exam_attempts: list[UserExamAttempts],
     exam_credentials: list[UserExamCredential],
     criteria: PostCriteria,
+    user_certifications: list[UserCertification] | None = None,
 ) -> EligibilityCheckResult:
     checks: list[EligibilityCheck] = []
     is_conditional = False
+    user_certs: list[UserCertification] = user_certifications or []
 
     # ── 1. Age ──────────────────────────────────────────────────────────────
     if criteria.age_criteria is not None:
@@ -391,8 +394,20 @@ def check_eligibility(
                     if not missing
                     else f"Missing required exam credentials: {', '.join(missing)}."
                 ),
+                )
             )
-        )
+
+    # ── 5. Certification criteria ──────────────────────────────────────────
+    if criteria.certification_criteria:
+        user_names = {((c.get("certification_name") if isinstance(c, dict) else getattr(c, "certification_name", None)) or "").strip().lower() for c in user_certs}
+        for cc in criteria.certification_criteria:
+            target = (cc.name or "").strip().lower()
+            aliases = {(a or "").strip().lower() for a in (cc.aliases or [])}
+            matched = bool(target and target in user_names) or bool(aliases.intersection(user_names))
+            if cc.mandatory:
+                checks.append(EligibilityCheck(rule="certification", passed=matched, detail=(f"Required certification matched: {cc.name}." if matched else f"Missing required certification: {cc.name or 'unspecified'}.")))
+            else:
+                checks.append(EligibilityCheck(rule="certification_optional", passed=True, detail=f"Optional certification: {cc.name or 'unspecified'}."))
 
     # ── 5. Nationality ──────────────────────────────────────────────────────
     nationality = (profile.nationality or "indian").lower()
@@ -451,12 +466,14 @@ def check_eligibility_batch(
     exam_attempts: list[UserExamAttempts],
     exam_credentials: list[UserExamCredential],
     post_criteria_list: list[PostCriteria],
+    user_certifications: list[UserCertification] | None = None,
 ) -> list[BatchEligibilityResult]:
     return [
         BatchEligibilityResult(
             post_id=pc.post_id,
             recruitment_id=pc.recruitment_id,
-            result=check_eligibility(profile, education, exam_attempts, exam_credentials, pc),
+            result=check_eligibility(profile, education, exam_attempts, exam_credentials, pc, user_certifications=user_certifications),
         )
         for pc in post_criteria_list
     ]
+    user_certs: list[UserCertification] = getattr(profile, "_user_certifications", []) or []

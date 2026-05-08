@@ -69,6 +69,7 @@ def drain_recompute_queue(supabase: Client, *, limit: int = 25) -> dict[str, Any
 
         try:
             result = run_eligibility_for_user(row["user_id"], supabase)
+            supabase.table("eligibility_recompute_queue").delete().eq("user_id", row["user_id"]).eq("status", "completed").neq("id", row["id"]).execute()
             supabase.table("eligibility_recompute_queue").update(
                 {
                     "status": "completed",
