@@ -42,3 +42,6 @@ Early migrations establish baseline profile, eligibility, source registry, scrap
 
 - For exact DDL and policy statements, inspect the corresponding SQL migration files in `app/supabase/migrations/`.
 - This summary is intentionally high-level and should be updated as new migrations are added.
+- Queue indexing updates:
+  - `081_queue_query_indexes_and_cleanup_candidates.sql` adds base queue indexes and a read-only cleanup-candidates function.
+  - `082_queue_query_composite_indexes.sql` adds composite indexes for primary admin queue filter/order paths.

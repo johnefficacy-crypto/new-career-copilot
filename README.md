@@ -29,8 +29,13 @@ Career Copilot is a FastAPI + Supabase platform for recruitment discovery, trust
 From `app/backend`:
 
 - Full test run: `pytest`
+- Coverage gate (CI parity): `pytest --cov=app --cov-fail-under=60`
 - Targeted suite used during runbook implementation:
   - `pytest tests/test_error_utils.py tests/test_eligibility_mapper.py tests/test_recompute_queue_behaviour.py`
+- Scraper trust-gate focused suites:
+  - `pytest tests/test_admin_queue.py tests/test_scrape_runner_promote.py tests/scraping/test_extractor_json_repair.py`
+- Dependency vulnerability check:
+  - `python -m pip_audit`
 
 ---
 
@@ -56,6 +61,7 @@ Key backend modules:
    - Scraper and extraction paths gather recruitment-like records.
 2. **Trust-gate queue**
    - Scraped records enter admin review workflows before promotion.
+   - No auto-approval invariant: items remain pending/duplicate until explicit admin review and promotion.
 3. **Promotion to recruitments/posts**
    - Approved records become recruitments/posts with criteria.
 4. **Eligibility recompute trigger**

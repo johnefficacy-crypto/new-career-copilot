@@ -32,6 +32,8 @@ From `app/backend`:
 
 ```bash
 pytest
+pytest --cov=app --cov-fail-under=60
+python -m pip_audit
 ```
 
 Targeted command commonly used during runbook work:

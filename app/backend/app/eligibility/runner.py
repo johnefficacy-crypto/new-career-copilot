@@ -17,7 +17,6 @@ verdicts; this module just shuttles data.
 from __future__ import annotations
 
 import logging
-import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
@@ -41,6 +40,11 @@ from .schemas import (
 )
 
 logger = logging.getLogger("career_copilot.eligibility")
+
+# Perf note (May 2026):
+# - Read helpers now use real async Supabase client awaits when AsyncClient is provided.
+# - Recompute path remains sync for write correctness (eligibility_results + alerts writes).
+# - Existing batched reads already use `.in_(...)` for post and recruitment-linked criteria.
 
 
 def _first(value: Any) -> Any:
@@ -330,11 +334,12 @@ async def run_eligibility_for_user_async(
     user_id: str,
     supabase: Client,
 ) -> dict[str, Any]:
-    """Async boundary wrapper for run_eligibility_for_user.
+    """Compatibility async API for FastAPI endpoints.
 
-    The underlying Supabase client calls remain synchronous in this codebase.
+    Note: recompute path still uses sync Supabase writes for correctness.
+    This wrapper intentionally executes synchronously and returns awaitable shape.
     """
-    return await asyncio.to_thread(run_eligibility_for_user, user_id, supabase)
+    return run_eligibility_for_user(user_id, supabase)
 
 
 # ─── Read helpers (used by /api/eligibility/results/me[/all]) ────────────────
@@ -379,10 +384,13 @@ def get_eligible_recruitments(user_id: str, supabase: Client) -> list[dict[str, 
 
 
 async def get_eligible_recruitments_async(
-    user_id: str, supabase: AsyncClient
+    user_id: str, supabase: AsyncClient | Client
 ) -> list[dict[str, Any]]:
+    if isinstance(supabase, Client):
+        # Compatibility path for sync client.
+        return get_eligible_recruitments(user_id, supabase)
     try:
-        resp = (
+        out = await (
             supabase.table("eligibility_results")
             .select(_RESULT_SELECT)
             .eq("user_id", user_id)
@@ -391,17 +399,12 @@ async def get_eligible_recruitments_async(
             .order("computed_at", desc=True)
             .execute()
         )
-        out = await resp
         return out.data or []
     except Exception as exc:  # noqa: BLE001
         log_warning_with_context(logger, "eligibility.get_eligible_recruitments_async", exc, user_id=user_id)
         return []
 
 
-async def get_eligible_recruitments_async(
-    user_id: str, supabase: Client
-) -> list[dict[str, Any]]:
-    return await asyncio.to_thread(get_eligible_recruitments, user_id, supabase)
 
 
 def get_all_eligibility_results(user_id: str, supabase: Client) -> list[dict[str, Any]]:
@@ -423,10 +426,12 @@ def get_all_eligibility_results(user_id: str, supabase: Client) -> list[dict[str
 
 
 async def get_all_eligibility_results_async(
-    user_id: str, supabase: AsyncClient
+    user_id: str, supabase: AsyncClient | Client
 ) -> list[dict[str, Any]]:
+    if isinstance(supabase, Client):
+        return get_all_eligibility_results(user_id, supabase)
     try:
-        resp = (
+        out = await (
             supabase.table("eligibility_results")
             .select(_RESULT_SELECT_ALL)
             .eq("user_id", user_id)
@@ -434,33 +439,7 @@ async def get_all_eligibility_results_async(
             .order("is_conditional", desc=True)
             .execute()
         )
-        out = await resp
         return out.data or []
     except Exception as exc:  # noqa: BLE001
         log_warning_with_context(logger, "eligibility.get_all_results_async", exc, user_id=user_id)
         return []
-
-
-async def get_all_eligibility_results_async(
-    user_id: str, supabase: AsyncClient
-) -> list[dict[str, Any]]:
-    try:
-        resp = (
-            supabase.table("eligibility_results")
-            .select(_RESULT_SELECT_ALL)
-            .eq("user_id", user_id)
-            .order("is_eligible", desc=True)
-            .order("is_conditional", desc=True)
-            .execute()
-        )
-        out = await resp
-        return out.data or []
-    except Exception as exc:  # noqa: BLE001
-        log_warning_with_context(logger, "eligibility.get_all_results_async", exc, user_id=user_id)
-        return []
-
-
-async def get_all_eligibility_results_async(
-    user_id: str, supabase: Client
-) -> list[dict[str, Any]]:
-    return await asyncio.to_thread(get_all_eligibility_results, user_id, supabase)

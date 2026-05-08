@@ -119,6 +119,7 @@ Keep admin queue APIs fast as data volume grows.
 ### Exit criteria
 - Queue endpoints maintain acceptable p95 under production-like load.
 - Query plans show index usage for primary filter paths.
+- If local DB is unavailable, document exact SQL for manual `EXPLAIN ANALYZE` verification.
 
 ---
 
@@ -139,6 +140,7 @@ Harden access controls and reduce operational security risk.
 ### Exit criteria
 - Privileged operations are permission-guarded and auditable.
 - Security checks run automatically in CI.
+- CI includes `pytest`, coverage threshold, and dependency vulnerability check (`pip-audit` or equivalent).
 
 ---
 
