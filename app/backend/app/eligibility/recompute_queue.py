@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
-
-
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -27,17 +24,14 @@ def enqueue_eligibility_recompute(
         "attempt_count": 0,
         "last_error": None,
     }
-    existing = (
+    query = (
         supabase.table("eligibility_recompute_queue")
         .select("id")
         .eq("user_id", user_id)
         .eq("status", "pending")
-        .eq("recruitment_id", recruitment_id)
-        .limit(1)
-        .execute()
-        .data
-        or []
     )
+    query = query.is_("recruitment_id", "null") if recruitment_id is None else query.eq("recruitment_id", recruitment_id)
+    existing = query.limit(1).execute().data or []
     if existing:
         row_id = existing[0]["id"]
         out = (

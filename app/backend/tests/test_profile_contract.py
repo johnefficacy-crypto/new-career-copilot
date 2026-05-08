@@ -22,6 +22,9 @@ class _Q:
     def eq(self, k, v):
         self.filters[k] = v
         return self
+    def is_(self, k, v):
+        self.filters[(k, "is")] = v
+        return self
 
     def order(self, k, desc=False):
         self._order.append((k, desc))
@@ -33,7 +36,7 @@ class _Q:
 
     def update(self, payload):
         for row in self.db.get(self.name, []):
-            if all(row.get(k) == v for k, v in self.filters.items()):
+            if all((row.get(k[0]) is None if isinstance(k, tuple) and k[1] == "is" else row.get(k) == v) for k, v in self.filters.items()):
                 row.update(payload)
         return self
 
@@ -56,7 +59,7 @@ class _Q:
     def execute(self):
         rows = list(self.db.get(self.name, []))
         if self.filters:
-            rows = [r for r in rows if all(r.get(k) == v for k, v in self.filters.items())]
+            rows = [r for r in rows if all((r.get(k[0]) is None if isinstance(k, tuple) and k[1] == "is" else r.get(k) == v) for k, v in self.filters.items())]
         for key, desc in reversed(self._order):
             rows.sort(key=lambda r: (r.get(key) is None, r.get(key)), reverse=desc)
         if self._limit is not None:
@@ -96,6 +99,7 @@ class _SB:
             ],
             "aspirant_education": [],
             "aspirant_preferences": [],
+            "eligibility_recompute_queue": [],
         }
 
     def table(self, name):

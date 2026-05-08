@@ -40,7 +40,7 @@ def drain_recompute_queue(supabase: Client, *, limit: int = 25) -> dict[str, Any
     try:
         rows = (
             supabase.table("eligibility_recompute_queue")
-            .select("id, user_id, attempt_count, next_attempt_at")
+            .select("id, user_id, recruitment_id, attempt_count, next_attempt_at")
             .eq("status", "pending")
             .or_(f"next_attempt_at.is.null,next_attempt_at.lte.{now_iso}")
             .order("queued_at")
@@ -69,7 +69,15 @@ def drain_recompute_queue(supabase: Client, *, limit: int = 25) -> dict[str, Any
 
         try:
             result = run_eligibility_for_user(row["user_id"], supabase)
-            supabase.table("eligibility_recompute_queue").delete().eq("user_id", row["user_id"]).eq("status", "completed").neq("id", row["id"]).execute()
+            cleanup = (
+                supabase.table("eligibility_recompute_queue")
+                .delete()
+                .eq("user_id", row["user_id"])
+                .eq("status", "completed")
+                .neq("id", row["id"])
+            )
+            cleanup = cleanup.is_("recruitment_id", "null") if row.get("recruitment_id") is None else cleanup.eq("recruitment_id", row.get("recruitment_id"))
+            cleanup.execute()
             supabase.table("eligibility_recompute_queue").update(
                 {
                     "status": "completed",
