@@ -1,6 +1,6 @@
 # Career Copilot — Docs
 
-_Last updated: 2026-04-30_
+_Last updated: 2026-05-09_
 
 This directory is the single source of context for the product, engineering strategy, and operations of Career Copilot.
 
@@ -10,6 +10,7 @@ This directory is the single source of context for the product, engineering stra
 |---|---|
 | What the product is and where it is going | [product/vision.md](product/vision.md) |
 | The full phased build roadmap | [product/roadmap.md](product/roadmap.md) |
+|Architectural guidelines: | [engineering/Code Review and Pipeline Analysis.docs](engineering/Code%20Review%20and%20Pipeline%20Analysis.docx) |
 | Pricing tiers and paywall design | [product/monetization.md](product/monetization.md) |
 | Forum, mentor sessions, and community strategy | [product/community-platform.md](product/community-platform.md) |
 | Database canonical rules (recruitment vs exam) | [engineering/domain-model.md](engineering/domain-model.md) |
@@ -48,3 +49,5 @@ Determinism > Heuristics
 ```
 
 See [engineering/admin-strategy.md](engineering/admin-strategy.md).
+
+For [latest Code Review and Pipeline Analysis](engineering/Code%20Review%20and%20Pipeline%20Analysis.docx).
