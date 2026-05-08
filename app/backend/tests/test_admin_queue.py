@@ -51,12 +51,14 @@ def test_field_verify_reject_correct_audit(monkeypatch):
             if t=='extracted_field_evidence':
                 class FQ:
                     def __init__(self,s): self.s=s; self.p=None
-                    def upsert(self,p, on_conflict=None): self.p=p; return self
+                    def insert(self,p): self.p=p; return self
+                    def update(self,p): self.p=p; return self
                     def execute(self):
                         if self.p is None: return R([])
                         self.s.state['field'].append(self.p); return R([self.p])
                     def select(self,*a,**k): return self
                     def eq(self,*a,**k): return self
+                    def order(self,*a,**k): return self
                     def limit(self,*a,**k): return self
                 return FQ(self)
             return super().table(t)
@@ -75,7 +77,7 @@ def test_promote_blocks_unverified_high_risk(monkeypatch):
                     def select(self,*a,**k): return self
                     def eq(self,*a,**k): return self
                     def execute(self): return R([{'field_name':'apply_end_date','reviewer_status':'unverified'}])
-                return FQ()
+                return FQ(self)
             return super().table(t)
     sb=SB3(); monkeypatch.setattr(admin_scrape,'get_supabase_admin',lambda:sb)
     sb.state['queue'][0]['status']='pending'
@@ -84,23 +86,39 @@ def test_promote_blocks_unverified_high_risk(monkeypatch):
         admin_scrape.promote_queue_item('q1', {'id':'a','email':'e'})
 
 
-def test_field_evidence_requires_document_id(monkeypatch):
+def test_field_evidence_fallback_document_created(monkeypatch):
     class SB4(SB):
-        def __init__(self): super().__init__(); self.state["queue"][0]["notification_document_id"]=None
+        def __init__(self): super().__init__(); self.state["queue"][0]["notification_document_id"]=None; self.state["docs"]=[]; self.state["field"]=[]
         def table(self,t):
             if t=="extracted_field_evidence":
                 class FQ:
+                    def __init__(self,s): self.s=s; self.p=None
+                    def select(self,*a,**k): return self
+                    def eq(self,*a,**k): return self
+                    def order(self,*a,**k): return self
+                    def limit(self,*a,**k): return self
+                    def execute(self): return R([])
+                    def insert(self,p,*a,**k): self.s.state["field"].append(p); return self
+                    def update(self,p,*a,**k): self.s.state["field"].append(p); return self
+                return FQ(self)
+            if t=="notification_documents":
+                class DQ:
+                    def __init__(self,s): self.s=s; self.payload=None
+                    def insert(self,p): self.payload=p; return self
                     def select(self,*a,**k): return self
                     def eq(self,*a,**k): return self
                     def limit(self,*a,**k): return self
-                    def execute(self): return R([])
-                    def upsert(self,*a,**k): return self
-                return FQ()
+                    def execute(self):
+                        if self.payload:
+                            row={"id":"doc-fallback", **self.payload}; self.s.state["docs"]=[row]; return R([row])
+                        return R(self.s.state["docs"])
+                return DQ(self)
             return super().table(t)
-    import pytest
     sb=SB4(); monkeypatch.setattr(admin_scrape,'get_supabase_admin',lambda:sb)
-    with pytest.raises(Exception):
-        admin_scrape.verify_field('q1','title',{'notes':'n'},{'id':'a','email':'e'})
+    out = admin_scrape.verify_field('q1','title',{'notes':'n'},{'id':'a','email':'e'})
+    assert out["ok"] is True
+    assert sb.state["queue"][0]["notification_document_id"] == "doc-fallback"
+    assert sb.state["field"][0]["document_id"] == "doc-fallback"
 
 
 def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
@@ -119,7 +137,7 @@ def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
                             {'field_name':'total_vacancies','reviewer_status':'verified'},
                             {'field_name':'eligibility','reviewer_status':'verified'},
                         ])
-                return FQ()
+                return FQ(self)
             return super().table(t)
     sb=SB5(); monkeypatch.setattr(admin_scrape,'get_supabase_admin',lambda:sb)
     import app.scraping.runner as runner
@@ -128,3 +146,26 @@ def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
     out=admin_scrape.promote_queue_item('q1', {'id':'a','email':'e'})
     assert out['publish_status']=='needs_review'
     assert sb.state['queue'][0]['status']=='promoted'
+
+
+def test_verify_updates_existing_row_without_upsert(monkeypatch):
+    class SB6(SB):
+        def __init__(self): super().__init__(); self.state["updated"]=[]
+        def table(self,t):
+            if t=="extracted_field_evidence":
+                class FQ:
+                    def __init__(self,s): self.s=s; self.payload=None; self.sel=True
+                    def select(self,*a,**k): return self
+                    def eq(self,*a,**k): return self
+                    def order(self,*a,**k): return self
+                    def limit(self,*a,**k): return self
+                    def update(self,p): self.payload=p; self.sel=False; return self
+                    def execute(self):
+                        if self.sel: return R([{"id":"efe-1","document_id":"doc-1"}])
+                        self.s.state["updated"].append(self.payload); return R([self.payload])
+                return FQ(self)
+            return super().table(t)
+    sb=SB6(); monkeypatch.setattr(admin_scrape,'get_supabase_admin',lambda:sb)
+    out=admin_scrape.verify_field('q1','title',{'notes':'ok'},{'id':'a','email':'e'})
+    assert out["ok"] is True
+    assert sb.state["updated"]
