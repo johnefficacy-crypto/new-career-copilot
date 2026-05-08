@@ -45,6 +45,11 @@ class UserExamCredential(_Base):
     exam_key: str
 
 
+class UserCertification(_Base):
+    certification_name: str
+    issuing_body: str | None = None
+
+
 class UserExamAttempts(_Base):
     recruitment_id: str
     attempts_used: int = 0
@@ -67,6 +72,13 @@ class AttemptLimit(_Base):
     max_attempts: int | None = None
 
 
+class CertificationCriteria(_Base):
+    mandatory: bool = True
+    name: str | None = None
+    issuer: str | None = None
+    aliases: list[str] = []
+
+
 class PostCriteria(_Base):
     post_id: str
     recruitment_id: str
@@ -75,6 +87,7 @@ class PostCriteria(_Base):
     attempt_limits: list[AttemptLimit] = []
     org_state: str | None = None
     required_exam_keys: list[str] = []
+    certification_criteria: list[CertificationCriteria] = []
 
 
 # ─── Output shapes ───────────────────────────────────────────────────────────

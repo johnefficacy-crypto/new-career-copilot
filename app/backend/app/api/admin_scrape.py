@@ -19,6 +19,8 @@ Every successful admin write inserts an ``admin_audit_logs`` row.
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -84,18 +86,44 @@ router = APIRouter(tags=["admin-scrape"])
 _HIGH_RISK_FIELDS={"apply_end_date","official_notification_url","official_apply_url","organization_name","total_vacancies","eligibility"}
 
 def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, admin: dict, notes: str | None=None, corrected_value=None):
-    existing = (supabase.table("extracted_field_evidence").select("id, document_id").eq("queue_item_id", queue_id).eq("field_name", field_name).limit(1).execute().data or [])
+    existing = (supabase.table("extracted_field_evidence").select("id, document_id").eq("scrape_queue_id", queue_id).eq("field_name", field_name).limit(1).execute().data or [])
     if existing:
-        payload={"queue_item_id": queue_id, "field_name": field_name, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat()}
+        payload={"scrape_queue_id": queue_id, "field_name": field_name, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat()}
     else:
-        qrows = (supabase.table("scrape_queue").select("notification_document_id").eq("id", queue_id).limit(1).execute().data or [])
-        doc_id = (qrows[0] or {}).get("notification_document_id") if qrows else None
+        qrows = (supabase.table("scrape_queue").select("id, source_id, source_url, scrape_run_id, extracted_data, notification_document_id").eq("id", queue_id).limit(1).execute().data or [])
+        qrow = (qrows[0] or {}) if qrows else {}
+        doc_id = qrow.get("notification_document_id")
         if not doc_id:
-            raise HTTPException(status_code=409, detail="Field evidence requires notification_document_id on scrape_queue")
-        payload={"queue_item_id": queue_id, "field_name": field_name, "document_id": doc_id, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat()}
+            source_url = qrow.get("source_url")
+            extracted_data = qrow.get("extracted_data") or {}
+            content_hash = hashlib.sha256(f"scrape_queue:{queue_id}:{source_url}:{json.dumps(extracted_data, sort_keys=True, default=str)}".encode("utf-8")).hexdigest()
+            nd_payload = {
+                "source_id": qrow.get("source_id"),
+                "scrape_run_id": qrow.get("scrape_run_id"),
+                "source_url": source_url or f"manual://scrape_queue/{queue_id}",
+                "final_url": source_url,
+                "document_type": "unknown",
+                "content_hash": content_hash,
+                "raw_text": json.dumps(extracted_data, default=str),
+                "metadata": {"created_by": "admin_field_review_fallback", "scrape_queue_id": queue_id},
+            }
+            try:
+                nd_rows = supabase.table("notification_documents").insert(nd_payload).execute().data or []
+            except Exception:
+                nd_rows = []
+            if not nd_rows:
+                nd_rows = (supabase.table("notification_documents").select("id").eq("content_hash", content_hash).limit(1).execute().data or [])
+            if not nd_rows:
+                raise HTTPException(status_code=500, detail="Failed to create fallback notification_document")
+            doc_id = nd_rows[0]["id"]
+            supabase.table("scrape_queue").update({"notification_document_id": doc_id}).eq("id", queue_id).execute()
+        extracted_data = qrow.get("extracted_data") if qrow else {}
+        extracted_value = corrected_value if corrected_value is not None else ((extracted_data or {}).get(field_name) if isinstance(extracted_data, dict) else None)
+        payload={"scrape_queue_id": queue_id, "field_name": field_name, "document_id": doc_id, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat()}
+        payload.update({"entity_type":"other","extraction_method":"manual","extracted_value":extracted_value})
     if corrected_value is not None:
         payload["corrected_value"]=corrected_value
-    supabase.table("extracted_field_evidence").upsert(payload, on_conflict="queue_item_id,field_name").execute()
+    supabase.table("extracted_field_evidence").upsert(payload, on_conflict="scrape_queue_id,field_name").execute()
     return payload
 
 @router.post("/admin/scrape/items/{queue_id}/fields/{field_name}/verify")
@@ -292,6 +320,18 @@ def list_scrape_queue(
         dups = duplicate_candidates(ext if isinstance(ext, dict) else {}, existing)
         r["duplicate_candidates"] = dups
         r["multiple_posts_detected"] = bool((ext.get("posts") if isinstance(ext, dict) else None))
+        r["high_risk_fields"] = sorted(list(_HIGH_RISK_FIELDS))
+        try:
+            frows = (supabase.table("extracted_field_evidence").select("field_name, reviewer_status").eq("scrape_queue_id", r["id"]).execute().data or [])
+            reviewed = {fr.get("field_name"): fr.get("reviewer_status") for fr in frows}
+            r["field_evidence_status"] = reviewed
+            missing = [f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified", "corrected"}]
+            r["unverified_fields"] = sorted(missing)
+            r["promotable"] = len(missing) == 0
+        except Exception:
+            r["field_evidence_status"] = {}
+            r["unverified_fields"] = []
+            r["promotable"] = False
     return {"items": rows}
 
 
@@ -327,7 +367,7 @@ def promote_queue_item(
         # High-risk fields should be reviewed before promotion where evidence table exists.
         warnings=[]
         try:
-            frows=(supabase.table("extracted_field_evidence").select("field_name, reviewer_status").eq("queue_item_id", queue_id).execute().data or [])
+            frows=(supabase.table("extracted_field_evidence").select("field_name, reviewer_status").eq("scrape_queue_id", queue_id).execute().data or [])
             reviewed={r.get("field_name"):r.get("reviewer_status") for r in frows}
             missing=[f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified","corrected"}]
             if missing:
@@ -494,7 +534,7 @@ def eligibility_queue(_admin: dict = Depends(require_permission("scraper.manage"
         recompute_backlog = (
             supabase.table("eligibility_recompute_queue")
             .select("id", count="exact")
-            .eq("status", "queued")
+            .eq("status", "pending")
             .execute()
             .count
             or 0
