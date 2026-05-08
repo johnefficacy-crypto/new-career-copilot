@@ -8,6 +8,7 @@ class _Q:
     def __init__(self,name,db): self.name=name; self.db=db; self.filters={}
     def select(self,*a,**k): return self
     def eq(self,k,v): self.filters[k]=v; return self
+    def is_(self,k,v): self.filters[(k,"is")]=v; return self
     def order(self,*a,**k): return self
     def limit(self,*a,**k): return self
     def upsert(self,p,**k): return self.insert(p)
@@ -16,17 +17,17 @@ class _Q:
         self.db.setdefault(self.name,[]).append(row); return self
     def update(self,p):
         for r in self.db.get(self.name,[]):
-            if all(r.get(k)==v for k,v in self.filters.items()): r.update(p)
+            if all((r.get(k[0]) is None if isinstance(k, tuple) and k[1]=="is" else r.get(k)==v) for k,v in self.filters.items()): r.update(p)
         return self
     def delete(self):
         keep=[]; removed=[]
         for r in self.db.get(self.name,[]):
-            if all(r.get(k)==v for k,v in self.filters.items()): removed.append(r)
+            if all((r.get(k[0]) is None if isinstance(k, tuple) and k[1]=="is" else r.get(k)==v) for k,v in self.filters.items()): removed.append(r)
             else: keep.append(r)
         self.db[self.name]=keep
         return self
     def execute(self):
-        rows=[r for r in self.db.get(self.name,[]) if all(r.get(k)==v for k,v in self.filters.items())]
+        rows=[r for r in self.db.get(self.name,[]) if all((r.get(k[0]) is None if isinstance(k, tuple) and k[1]=="is" else r.get(k)==v) for k,v in self.filters.items())]
         return _Exec(rows)
 class _SB:
     def __init__(self):
