@@ -120,8 +120,8 @@ def _eligibility_summary(supabase: Client, user_id: str) -> dict[str, dict[str, 
 
 @router_recruitments.get("")
 async def list_recruitments(
-    status: str | None = None,
-    q: str | None = None,
+    status: str | None = Query(default=None),
+    q: str | None = Query(default=None),
     user: dict | None = Depends(get_optional_user),
 ):
     supabase = get_supabase_admin()
@@ -133,7 +133,7 @@ async def list_recruitments(
         # The UI's "eligible/urgent/conditional" maps from eligibility_results,
         # not from recruitments.status. We filter client-side after eligibility merge.
         pass
-   if isinstance(q, str) and q.strip():
+        if isinstance(q, str) and q.strip():
     query = query.ilike("name", f"%{q.strip()}%")
     rows = _safe(lambda: query.order("apply_end_date", desc=False).execute().data, default=[]) or []
 
@@ -941,25 +941,14 @@ async def my_applications(user: dict = Depends(get_current_user)):
     supabase = get_supabase_admin()
     rows = _safe(
         lambda: supabase.table("user_recruitment_applications")
-        .select("id,recruitment_id,status,application_number,fee_paid,fee_amount,documents_pending,notes,submitted_at,clicked_apply_at,updated_at,recruitment:recruitments(id,slug,name,apply_end_date,official_notification_url,organizations(id,name,type,state))")
+        .select("id,recruitment_id,status,application_number,fee_paid,fee_amount,documents_pending,notes,submitted_at,clicked_apply_at,updated_at,recruitment:recruitments(id,slug,name,organization,organization_code,apply_end_date,notification_url)")
         .eq("user_id", user["id"])
         .order("updated_at", desc=True)
         .execute()
         .data,
         default=[],
     ) or []
-    items = []
-    for row in rows:
-        rec = row.get("recruitment") or {}
-        org = rec.get("organizations") or {}
-        if isinstance(org, list):
-            org = org[0] if org else {}
-        rec["organization"] = org.get("name")
-        rec["organization_code"] = (org.get("name") or "").split()[0][:6].upper() if org.get("name") else None
-        rec["notification_url"] = rec.get("official_notification_url")
-        row["recruitment"] = rec
-        items.append(row)
-    return {"items": items}
+    return {"items": rows}
 
 
 @router_applications.put("/{recruitment_id}")
