@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -20,3 +21,14 @@ def safe_select(supabase: Client, table: str, columns: str, **filters: Any) -> l
     except Exception as exc:  # noqa: BLE001
         log_warning_with_context(logger, "supabase.select", exc, table=table, filters=filters)
         return []
+
+
+async def async_safe_select(
+    supabase: Client, table: str, columns: str, **filters: Any
+) -> list[dict[str, Any]]:
+    """Async wrapper around safe_select for async API boundaries.
+
+    supabase-py calls are sync in this codebase today; run them in a worker
+    thread so async endpoints can avoid blocking the event loop directly.
+    """
+    return await asyncio.to_thread(safe_select, supabase, table, columns, **filters)

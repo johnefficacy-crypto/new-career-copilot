@@ -17,6 +17,7 @@ verdicts; this module just shuttles data.
 from __future__ import annotations
 
 import logging
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
@@ -325,6 +326,17 @@ def run_eligibility_for_user(
     }
 
 
+async def run_eligibility_for_user_async(
+    user_id: str,
+    supabase: Client,
+) -> dict[str, Any]:
+    """Async boundary wrapper for run_eligibility_for_user.
+
+    The underlying Supabase client calls remain synchronous in this codebase.
+    """
+    return await asyncio.to_thread(run_eligibility_for_user, user_id, supabase)
+
+
 # ─── Read helpers (used by /api/eligibility/results/me[/all]) ────────────────
 
 
@@ -366,6 +378,12 @@ def get_eligible_recruitments(user_id: str, supabase: Client) -> list[dict[str, 
         return []
 
 
+async def get_eligible_recruitments_async(
+    user_id: str, supabase: Client
+) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(get_eligible_recruitments, user_id, supabase)
+
+
 def get_all_eligibility_results(user_id: str, supabase: Client) -> list[dict[str, Any]]:
     """Every row, eligible first then conditional then ineligible."""
     try:
@@ -382,3 +400,9 @@ def get_all_eligibility_results(user_id: str, supabase: Client) -> list[dict[str
     except Exception as exc:  # noqa: BLE001
         log_warning_with_context(logger, "eligibility.get_all_results", exc, user_id=user_id)
         return []
+
+
+async def get_all_eligibility_results_async(
+    user_id: str, supabase: Client
+) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(get_all_eligibility_results, user_id, supabase)

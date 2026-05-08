@@ -53,3 +53,25 @@ Reference UI for ccp from Replit.
   - `cd app/backend && pytest tests/test_error_utils.py tests/test_eligibility_mapper.py tests/test_recompute_queue_behaviour.py`
 - **Known follow-ups**
   - Step 3 (asynchronous APIs) has not been started.
+
+### Step 3 completed: Introduce asynchronous APIs
+- **Files changed**
+  - `app/backend/app/db/utils.py`
+  - `app/backend/app/eligibility/runner.py`
+  - `app/backend/app/api/eligibility.py`
+  - `app/backend/tests/test_db_utils_async.py`
+- **Async boundaries added**
+  - Added `async_safe_select(...)` as an async wrapper around sync `safe_select(...)` using `asyncio.to_thread`.
+  - Added async wrappers in eligibility runner:
+    - `run_eligibility_for_user_async(...)`
+    - `get_eligible_recruitments_async(...)`
+    - `get_all_eligibility_results_async(...)`
+  - Updated eligibility API endpoints to await async runner/read wrappers.
+  - Preserved existing sync implementations and fallback behavior to avoid risky broad conversion.
+- **Commands run**
+  - `cd app/backend && pytest tests/test_db_utils_async.py tests/test_error_utils.py tests/test_eligibility_mapper.py tests/test_recompute_queue_behaviour.py`
+  - `rg \"asyncio.run\" app/backend/app`
+  - `rg \"create_task\" app/backend/app`
+  - `rg \"_safe_select\" app/backend/app app/backend/tests`
+- **Known follow-ups**
+  - Async wrappers currently run sync Supabase calls in worker threads; evaluate native async client support in a later step.
