@@ -1,28 +1,20 @@
 from __future__ import annotations
-from typing import Any
 
-def _safe_select(supabase, table: str, columns: str, **filters: Any) -> list[dict[str, Any]]:
-    try:
-        q = supabase.table(table).select(columns)
-        for k, v in filters.items():
-            q = q.eq(k, v)
-        return q.execute().data or []
-    except Exception:
-        return []
+from app.db.utils import safe_select
 
 def _norm_cat(v):
     return (v or "").strip().lower() or None
 
 def build_user_eligibility_profile(supabase, user_id: str) -> dict:
-    p = (_safe_select(supabase, "profiles", "*", id=user_id) or [{}])[0]
-    loc = (_safe_select(supabase, "aspirant_location", "state,district,is_rural,domicile_certificate", user_id=user_id) or [{}])[0]
-    res = (_safe_select(supabase, "aspirant_reservations", "category,sub_category,is_pwd,pwd_type,is_ex_serviceman", user_id=user_id) or [{}])[0]
-    edu = _safe_select(supabase, "aspirant_education", "level,degree,stream,graduation_year,percentage,cgpa,is_completed", user_id=user_id)
-    certs = _safe_select(supabase, "aspirant_certifications", "certification_name,issuing_body,year_completed,is_active", user_id=user_id)
-    exp = _safe_select(supabase, "aspirant_experience", "sector,role,organization,start_date,end_date,years_experience", user_id=user_id)
-    prefs = (_safe_select(supabase, "aspirant_preferences", "target_exams,preferred_states,preferred_sectors,willing_to_relocate,study_mode,study_hours_per_day", user_id=user_id) or [{}])[0]
-    attempts = _safe_select(supabase, "aspirant_exam_attempts", "exam_id,attempts_used", user_id=user_id)
-    creds = _safe_select(supabase, "aspirant_exam_credentials", "exam_key,score,percentile,rank_text,exam_year", user_id=user_id)
+    p = (safe_select(supabase, "profiles", "*", id=user_id) or [{}])[0]
+    loc = (safe_select(supabase, "aspirant_location", "state,district,is_rural,domicile_certificate", user_id=user_id) or [{}])[0]
+    res = (safe_select(supabase, "aspirant_reservations", "category,sub_category,is_pwd,pwd_type,is_ex_serviceman", user_id=user_id) or [{}])[0]
+    edu = safe_select(supabase, "aspirant_education", "level,degree,stream,graduation_year,percentage,cgpa,is_completed", user_id=user_id)
+    certs = safe_select(supabase, "aspirant_certifications", "certification_name,issuing_body,year_completed,is_active", user_id=user_id)
+    exp = safe_select(supabase, "aspirant_experience", "sector,role,organization,start_date,end_date,years_experience", user_id=user_id)
+    prefs = (safe_select(supabase, "aspirant_preferences", "target_exams,preferred_states,preferred_sectors,willing_to_relocate,study_mode,study_hours_per_day", user_id=user_id) or [{}])[0]
+    attempts = safe_select(supabase, "aspirant_exam_attempts", "exam_id,attempts_used", user_id=user_id)
+    creds = safe_select(supabase, "aspirant_exam_credentials", "exam_key,score,percentile,rank_text,exam_year", user_id=user_id)
     return {
         "user_id": user_id,
         "identity": {

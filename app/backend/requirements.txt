@@ -94,6 +94,7 @@ PyJWT==2.12.1
 pyparsing==3.3.2
 pyroaring==1.1.0
 pytest==9.0.3
+pytest-cov==7.0.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
 python-jose==3.5.0
@@ -139,4 +140,3 @@ websockets==15.0.1
 yarl==1.23.0
 zipp==3.23.1
 zstandard==0.25.0
-
