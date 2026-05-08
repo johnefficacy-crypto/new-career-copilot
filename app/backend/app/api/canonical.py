@@ -133,8 +133,8 @@ async def list_recruitments(
         # The UI's "eligible/urgent/conditional" maps from eligibility_results,
         # not from recruitments.status. We filter client-side after eligibility merge.
         pass
-        if isinstance(q, str) and q.strip():
-    query = query.ilike("name", f"%{q.strip()}%")
+    if isinstance(q, str) and q.strip():
+        query = query.ilike("name", f"%{q.strip()}%")
     rows = _safe(lambda: query.order("apply_end_date", desc=False).execute().data, default=[]) or []
 
     saved_ids: set[str] = set()
