@@ -22,3 +22,18 @@ Reference UI for ccp from Replit.
 | **Recompute queue**        | `app/backend/app/eligibility/recompute_queue.py`, SQL migrations for `eligibility_recompute_queue`                      | When a user edits their profile or when criteria change, a row is enqueued for recomputation.  Pending recompute tasks are shown in the admin eligibility queue.                                                                                                                                                                                                               |
 | **API routes**             | `app/backend/app/api/eligibility.py`, `app/backend/app/api/admin_scrape.py`                                             | Provide HTTP endpoints for users to recompute eligibility and retrieve their results, as well as admin‑only routes to manage scraping, queue operations and promotions.  The API never uses AI to decide eligibility; it always calls the deterministic engine.                                                                                                                |
 
+## Runbook progress
+
+### Step 1 completed: Consolidate common helpers
+- **Files changed**
+  - `app/backend/app/db/utils.py`
+  - `app/backend/app/eligibility/runner.py`
+  - `app/backend/app/profile/eligibility_mapper.py`
+  - `app/backend/tests/test_eligibility_mapper.py`
+- **Helpers consolidated**
+  - Moved duplicated Supabase select helper logic into `app.backend.app.db.utils.safe_select`.
+  - Replaced local `_safe_select` implementations in eligibility runner and profile eligibility mapper.
+- **Commands run**
+  - `cd app/backend && pytest tests/test_eligibility_mapper.py tests/test_recompute_queue_behaviour.py`
+- **Known follow-ups**
+  - Step 1 only is complete; no Step 2+ runbook changes were started.
