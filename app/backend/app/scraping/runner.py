@@ -27,11 +27,15 @@ from typing import Any
 from supabase import Client
 
 from .extractor import (
+    PROMPT_VERSION,
     build_recruitment_key,
     compute_similarity_key,
     extract_recruitment_data,
     fetch_page_text,
 )
+from .dedup import fuzzy_duplicate
+from .normalizer import normalize_recruitment
+from .sources import normalize_legacy_source
 from app.common.strings import slugify
 from app.common.time import utc_now_iso
 from app.core.errors import PromotionError
@@ -130,7 +134,8 @@ def run_scraping_pass(
     error_log: list[dict[str, Any]] = []
 
     for src in sources:
-        target_url = (src.get("base_url") or "") + (src.get("notification_path") or "")
+        source = normalize_legacy_source(src)
+        target_url = source.target_url
         try:
             raw = fetch_page_text(target_url) if not mock else f"MOCK PAGE TEXT FOR {target_url}"
             if not raw:
@@ -148,13 +153,24 @@ def run_scraping_pass(
             total_found += 1
 
             sim_key = compute_similarity_key(data)
-            is_dup = sim_key in existing_keys or sim_key in queued_keys
+            fuzzy_dup = any(fuzzy_duplicate(data.title, (r.get("name") or "")) for r in existing_recs)
+            is_dup = sim_key in existing_keys or sim_key in queued_keys or fuzzy_dup
             duplicate_of = existing_id_by_key.get(sim_key)
+            duplicate_reason = "similarity_key" if (sim_key in existing_keys or sim_key in queued_keys) else ("fuzzy_match" if fuzzy_dup else None)
+            normalized = normalize_recruitment(data)
+            extracted_payload = to_json_safe(data)
+            extracted_payload["_meta"] = {
+                "prompt_version": PROMPT_VERSION,
+                "data_quality_score": normalized.data_quality_score,
+                "warnings": normalized.warnings,
+                "normalized_fields": normalized.normalized_fields,
+                "duplicate_reason": duplicate_reason,
+            }
 
             queue_payload = {
                 "source_url": target_url,
-                "source_name": src.get("name"),
-                "extracted_data": to_json_safe(data),
+                "source_name": source.name,
+                "extracted_data": extracted_payload,
                 "confidence_score": confidence,
                 "scrape_run_id": run_id,
                 "duplicate_of": duplicate_of,
@@ -162,6 +178,8 @@ def run_scraping_pass(
                 # Never auto-approve — see runner.ts safety hardening note.
                 "status": "duplicate" if is_dup else "pending",
             }
+            logger.info("scrape.queue_insert run_id=%s source_id=%s source_name=%s target_url=%s extraction_status=%s confidence_score=%.2f data_quality_score=%.2f duplicate_status=%s",
+                        run_id, source.id, source.name, target_url, "ok", confidence, normalized.data_quality_score, queue_payload["status"])
             execute_or_raise("scrape_queue.insert", lambda payload=queue_payload: supabase.table("scrape_queue").insert(payload).execute())
 
             if is_dup:
