@@ -23,14 +23,17 @@ from typing import Any
 from supabase import Client
 
 from .engine import check_eligibility_batch
+from app.profile.eligibility_mapper import build_user_eligibility_profile
 from .schemas import (
     AgeCriteria,
     AttemptLimit,
+    CertificationCriteria,
     EducationCriteria,
     PostCriteria,
     UserEducation,
     UserExamAttempts,
     UserExamCredential,
+    UserCertification,
     UserProfile,
 )
 
@@ -68,8 +71,8 @@ def run_eligibility_for_user(
     errors: list[str] = []
 
     # ── 1. Load user data ──────────────────────────────────────────────────
-    profile_rows = _safe_select(supabase, "profiles", "*", id=user_id)
-    if not profile_rows:
+    mapped = build_user_eligibility_profile(supabase, user_id)
+    if not mapped.get("identity"):
         return {
             "processed": 0,
             "eligible": 0,
@@ -77,32 +80,34 @@ def run_eligibility_for_user(
             "alerts_inserted": 0,
             "errors": ["Profile not found"],
         }
-    profile = UserProfile(**profile_rows[0])
+    profile_rows = _safe_select(supabase, "profiles", "*", id=user_id)
+    profile = UserProfile(**(profile_rows[0] if profile_rows else {"id": user_id, "category": mapped.get("reservations", {}).get("category"), "domicile_state": mapped.get("location", {}).get("state"), "date_of_birth": mapped.get("identity", {}).get("dob"), "nationality": mapped.get("identity", {}).get("nationality")}))
 
-    education = [
-        UserEducation(**row)
-        for row in _safe_select(
-            supabase,
-            "aspirant_education",
-            "level, degree, stream, percentage, cgpa, is_completed",
-            user_id=user_id,
-        )
-    ]
-    exam_attempts = [
-        UserExamAttempts(**row)
-        for row in _safe_select(
+    education = [UserEducation(**row) for row in (mapped.get("education") or [])]
+    attempt_rows = mapped.get("attempts") or []
+    if not attempt_rows:
+        # Compatibility fallback for legacy deployments.
+        attempt_rows = _safe_select(
             supabase,
             "user_exam_attempts",
             "recruitment_id, attempts_used",
             user_id=user_id,
         )
-    ]
+    exam_attempts = []
+    for row in attempt_rows:
+        mapped = {
+            "recruitment_id": row.get("recruitment_id") or row.get("exam_id"),
+            "attempts_used": row.get("attempts_used") or 0,
+        }
+        if mapped["recruitment_id"]:
+            exam_attempts.append(UserExamAttempts(**mapped))
     exam_credentials = [
         UserExamCredential(**row)
         for row in _safe_select(
             supabase, "aspirant_exam_credentials", "exam_key", user_id=user_id
         )
     ]
+    user_certifications = [UserCertification(**row) for row in _safe_select(supabase, "aspirant_certifications", "certification_name,issuing_body,is_active", user_id=user_id) if row.get("is_active", True)]
     tracked_set = {
         row["recruitment_id"]
         for row in _safe_select(
@@ -125,6 +130,7 @@ def run_eligibility_for_user(
                 recruitments!inner ( status, publish_status, organizations ( state ) ),
                 age_criteria ( min_age, max_age, cutoff_date ),
                 education_criteria ( min_qualification_level, min_percentage, allowed_disciplines ),
+                certification_criteria ( mandatory, certifications ( name, issuer, aliases, exam_families, sectors, qualification_levels ) ),
                 attempt_limits ( category, max_attempts )
                 """
             )
@@ -150,6 +156,11 @@ def run_eligibility_for_user(
         ac = _first(row.get("age_criteria"))
         ec = _first(row.get("education_criteria"))
         attempts = row.get("attempt_limits") or []
+        cert_rows = row.get("certification_criteria") or []
+        cert_criteria = []
+        for c in cert_rows:
+            reg = _first(c.get("certifications"))
+            cert_criteria.append(CertificationCriteria(mandatory=bool(c.get("mandatory", True)), name=(reg or {}).get("name"), issuer=(reg or {}).get("issuer"), aliases=(reg or {}).get("aliases") or []))
 
         post_criteria_list.append(
             PostCriteria(
@@ -158,6 +169,7 @@ def run_eligibility_for_user(
                 age_criteria=AgeCriteria(**ac) if ac else None,
                 education_criteria=EducationCriteria(**ec) if ec else None,
                 attempt_limits=[AttemptLimit(**a) for a in attempts],
+                certification_criteria=cert_criteria,
                 org_state=(org or {}).get("state") if org else None,
             )
         )
@@ -186,7 +198,12 @@ def run_eligibility_for_user(
 
     # ── 5. Run batch engine ────────────────────────────────────────────────
     results = check_eligibility_batch(
-        profile, education, exam_attempts, exam_credentials, post_criteria_list
+        profile,
+        education,
+        exam_attempts,
+        exam_credentials,
+        post_criteria_list,
+        user_certifications=user_certifications,
     )
 
     # ── 6. Upsert into eligibility_results ─────────────────────────────────

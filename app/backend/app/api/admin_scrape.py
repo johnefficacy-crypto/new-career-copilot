@@ -494,7 +494,7 @@ def eligibility_queue(_admin: dict = Depends(require_permission("scraper.manage"
         recompute_backlog = (
             supabase.table("eligibility_recompute_queue")
             .select("id", count="exact")
-            .eq("status", "queued")
+            .eq("status", "pending")
             .execute()
             .count
             or 0
