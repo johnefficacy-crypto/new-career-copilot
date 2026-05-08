@@ -27,6 +27,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.auth import get_current_user, require_permission
+from app.core.errors import PromotionError
 from app.db.supabase_client import get_supabase_admin
 from app.scraping.alerts import alert_users_for_new_recruitment
 from app.scraping.runner import promote_run, run_scraping_pass
@@ -55,7 +56,7 @@ def _require_admin(user: dict = Depends(get_current_user)) -> dict:
                 }
             ).execute()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("admin profile bootstrap skipped: %s", exc)
+        logger.exception("admin profile bootstrap skipped")
     return user
 
 
@@ -73,8 +74,8 @@ def _audit(supabase, actor: dict, action: str, *, entity_type: str | None = None
                 "notes": "legacy_admin_scrape" ,
             }
         ).execute()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("audit log insert failed: %s", exc)
+    except Exception:  # noqa: BLE001
+        logger.exception("audit log insert failed")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -301,7 +302,7 @@ def list_scrape_runs(
 @router.get("/admin/scrape/queue")
 def list_scrape_queue(
     status: str | None = Query(default="pending"),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=50),
     _admin: dict = Depends(require_permission("scraper.manage")),
 ) -> dict[str, Any]:
     supabase = get_supabase_admin()
@@ -387,15 +388,20 @@ def promote_queue_item(
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"Promote failed: {exc}")
-    supabase.table("scrape_queue").update(
+        raise HTTPException(status_code=500, detail="Promote failed") from PromotionError("promotion write failed")
+    updated_rows = (
+        supabase.table("scrape_queue").update(
         {
             "status": "promoted",
             "reviewer_id": admin["id"],
             "reviewed_at": datetime.now(timezone.utc).isoformat(),
             "promoted_recruitment_id": rec_id,
         }
-    ).eq("id", queue_id).execute()
+    ).eq("id", queue_id).execute().data
+        or []
+    )
+    if not updated_rows:
+        raise HTTPException(status_code=500, detail="Promote failed: queue status update failed")
     # Promotion only creates canonical draft/needs_review records; no publish fanout here.
     _audit(supabase, admin, "scrape.queue.promote", entity_type="scrape_queue",
            entity_id=queue_id, new_value={"recruitment_id": rec_id})
