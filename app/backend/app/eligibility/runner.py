@@ -138,6 +138,25 @@ def run_eligibility_for_user(
             .in_("recruitments.publish_status", ["verified", "published"])
             .execute()
         )
+    except Exception:
+        posts_resp = (
+            supabase.table("posts")
+            .select(
+                """
+                id,
+                recruitment_id,
+                recruitments!inner ( status, publish_status, organizations ( state ) ),
+                age_criteria ( min_age, max_age, cutoff_date ),
+                education_criteria ( min_qualification_level, min_percentage, allowed_disciplines ),
+                certification_criteria ( mandatory, certifications ( name, issuer ) ),
+                attempt_limits ( category, max_attempts )
+                """
+            )
+            .in_("recruitments.status", ["open", "upcoming"])
+            .in_("recruitments.publish_status", ["verified", "published"])
+            .execute()
+        )
+    try:
         posts: list[dict[str, Any]] = posts_resp.data or []
     except Exception as exc:  # noqa: BLE001
         return {

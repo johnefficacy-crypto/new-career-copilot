@@ -84,18 +84,18 @@ router = APIRouter(tags=["admin-scrape"])
 _HIGH_RISK_FIELDS={"apply_end_date","official_notification_url","official_apply_url","organization_name","total_vacancies","eligibility"}
 
 def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, admin: dict, notes: str | None=None, corrected_value=None):
-    existing = (supabase.table("extracted_field_evidence").select("id, document_id").eq("queue_item_id", queue_id).eq("field_name", field_name).limit(1).execute().data or [])
+    existing = (supabase.table("extracted_field_evidence").select("id, document_id").eq("scrape_queue_id", queue_id).eq("field_name", field_name).limit(1).execute().data or [])
     if existing:
-        payload={"queue_item_id": queue_id, "field_name": field_name, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat()}
+        payload={"scrape_queue_id": queue_id, "field_name": field_name, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat()}
     else:
         qrows = (supabase.table("scrape_queue").select("notification_document_id").eq("id", queue_id).limit(1).execute().data or [])
         doc_id = (qrows[0] or {}).get("notification_document_id") if qrows else None
         if not doc_id:
             raise HTTPException(status_code=409, detail="Field evidence requires notification_document_id on scrape_queue")
-        payload={"queue_item_id": queue_id, "field_name": field_name, "document_id": doc_id, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat()}
+        payload={"scrape_queue_id": queue_id, "field_name": field_name, "document_id": doc_id, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat()}
     if corrected_value is not None:
         payload["corrected_value"]=corrected_value
-    supabase.table("extracted_field_evidence").upsert(payload, on_conflict="queue_item_id,field_name").execute()
+    supabase.table("extracted_field_evidence").upsert(payload, on_conflict="scrape_queue_id,field_name").execute()
     return payload
 
 @router.post("/admin/scrape/items/{queue_id}/fields/{field_name}/verify")
@@ -327,7 +327,7 @@ def promote_queue_item(
         # High-risk fields should be reviewed before promotion where evidence table exists.
         warnings=[]
         try:
-            frows=(supabase.table("extracted_field_evidence").select("field_name, reviewer_status").eq("queue_item_id", queue_id).execute().data or [])
+            frows=(supabase.table("extracted_field_evidence").select("field_name, reviewer_status").eq("scrape_queue_id", queue_id).execute().data or [])
             reviewed={r.get("field_name"):r.get("reviewer_status") for r in frows}
             missing=[f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified","corrected"}]
             if missing:
