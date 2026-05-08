@@ -40,6 +40,10 @@ class _Query:
         self.db.setdefault(self.name, []).extend(payload if isinstance(payload, list) else [payload])
         return self
 
+    def insert(self, payload):
+        self.db.setdefault(self.name, []).append(payload)
+        return self
+
     def execute(self):
         rows = []
         for r in self.db.get(self.name, []):
@@ -114,6 +118,12 @@ async def test_recompute_service_role_runs(monkeypatch):
     )
     assert out["ok"] is True
     assert out["user_id"] == "u1"
+    assert any(
+        row.get("action") == "eligibility.recompute"
+        and row.get("entity_id") == "u1"
+        and (row.get("new_value") or {}).get("mode") == "service_role"
+        for row in sb.db.get("admin_audit_logs", [])
+    )
 
 
 @pytest.mark.anyio
@@ -132,3 +142,23 @@ async def test_recompute_unauthorized_raises_401(monkeypatch):
             body=eligibility_api.RecomputeBody(),
         )
     assert exc.value.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_recompute_user_mode_audits(monkeypatch):
+    sb = _SB()
+    monkeypatch.setattr(eligibility_api, "_is_service_role", lambda _token: False)
+    monkeypatch.setattr(eligibility_api, "get_supabase_admin", lambda: sb)
+    monkeypatch.setattr(eligibility_api, "get_current_user", lambda _creds: {"id": "u1", "email": "u1@example.com"})
+
+    out = await eligibility_api.recompute(
+        request=None,
+        creds=type("Creds", (), {"credentials": "user-token"}),
+        body=eligibility_api.RecomputeBody(),
+    )
+    assert out["ok"] is True
+    assert any(
+        row.get("action") == "eligibility.recompute"
+        and (row.get("new_value") or {}).get("mode") == "user_token"
+        for row in sb.db.get("admin_audit_logs", [])
+    )

@@ -43,6 +43,31 @@ def _is_service_role(token: str) -> bool:
     return token.strip() == (get_settings().SUPABASE_SERVICE_ROLE_KEY or "").strip()
 
 
+def _audit_recompute(
+    supabase,
+    *,
+    actor_id: str | None,
+    actor_email: str | None,
+    target_user_id: str,
+    mode: str,
+) -> None:
+    try:
+        supabase.table("admin_audit_logs").insert(
+            {
+                "actor_id": actor_id,
+                "actor_email": actor_email,
+                "action": "eligibility.recompute",
+                "entity_type": "eligibility_recompute",
+                "entity_id": target_user_id,
+                "new_value": {"mode": mode},
+                "notes": "eligibility_api_recompute",
+            }
+        ).execute()
+    except Exception:
+        # Preserve existing recompute behavior even if audit writes fail.
+        pass
+
+
 @router.post(
     "/recompute",
     summary="Recompute eligibility for a user",
@@ -67,6 +92,9 @@ async def recompute(
             )
             # type: ignore[unreachable]
         target_user_id = body.user_id
+        actor_id = "service_role"
+        actor_email = "service_role"
+        mode = "service_role"
     else:
         # Regular user path — token must be a Supabase access token.
         try:
@@ -77,9 +105,19 @@ async def recompute(
                 detail="Unauthorized — provide a Supabase access token or service-role key",
             )
         target_user_id = user["id"]
+        actor_id = user.get("id")
+        actor_email = user.get("email")
+        mode = "user_token"
 
     supabase = get_supabase_admin()
     result = await run_eligibility_for_user_async(target_user_id, supabase)
+    _audit_recompute(
+        supabase,
+        actor_id=actor_id,
+        actor_email=actor_email,
+        target_user_id=target_user_id,
+        mode=mode,
+    )
     return {"ok": True, "user_id": target_user_id, **result}
 
 

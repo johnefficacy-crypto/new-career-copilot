@@ -103,4 +103,5 @@ For migration-by-migration details, see `docs/migrations.md`.
 - Step 4: Enhance documentation — **completed in this change**.
 - Step 5: Add unit and integration tests — **completed in this change**.
 - Step 6: Optimize queue queries — **completed in this change**.
-- Step 7+ (security hardening, architecture evolution): **not started in this change**.
+- Step 7: Security and permissions — **completed in this change**.
+- Optional event-driven architecture: **not started in this change**.
