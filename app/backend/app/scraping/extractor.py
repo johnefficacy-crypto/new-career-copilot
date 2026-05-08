@@ -30,6 +30,7 @@ import httpx
 from .schemas import ExtractedPost, ExtractedRecruitment
 
 logger = logging.getLogger("career_copilot.scraping.extractor")
+PROMPT_VERSION = "scraper-extractor-v2"
 
 
 SYSTEM_PROMPT = """You are a specialist data extraction agent for Indian government recruitment notifications.
@@ -54,6 +55,10 @@ Put the RAW education phrase into education_required so the downstream mapper
 can classify it (class_10, class_12, diploma, graduate, postgraduate, phd).
 If specific disciplines are listed (Civil Engineering, Computer Science,
 Economics, Law, etc.), put them into the "disciplines" array.
+
+If a notification has multiple posts/cadres, split them into separate items under posts.
+Do not merge unrelated post age/education into one post.
+If vacancy data is category-wise only, keep post.vacancies null unless a post total is explicit.
 
 CONFIDENCE CALIBRATION:
   1.0 — title, org, all three dates, total_vacancies, AND every post has min_age/max_age/education_required.
@@ -161,9 +166,18 @@ def extract_recruitment_data(
         text = "".join(
             getattr(b, "text", "") for b in resp.content if getattr(b, "type", None) == "text"
         ).strip()
-        clean = re.sub(r"^```json\s*", "", text)
-        clean = re.sub(r"\s*```$", "", clean).strip()
-        parsed = json.loads(clean)
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            repaired = _extract_json_object(text)
+            if not repaired:
+                logger.warning("[extractor] invalid_json source=%s", source_name)
+                return None
+            try:
+                parsed = json.loads(repaired)
+            except Exception:
+                logger.warning("[extractor] invalid_json source=%s", source_name)
+                return None
         confidence = parsed.pop("confidence", 0.5)
         confidence = max(0.0, min(1.0, float(confidence)))
         data = ExtractedRecruitment(**parsed)
@@ -171,6 +185,17 @@ def extract_recruitment_data(
     except Exception as exc:  # noqa: BLE001
         logger.warning("[extractor] Claude call failed: %s", exc)
         return None
+
+
+def _extract_json_object(text: str) -> str | None:
+    clean = re.sub(r"^```json\s*", "", text.strip(), flags=re.IGNORECASE)
+    clean = re.sub(r"^```\s*", "", clean)
+    clean = re.sub(r"\s*```$", "", clean).strip()
+    start = clean.find("{")
+    end = clean.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    return clean[start : end + 1].strip()
 
 
 def _mock_extract(raw_text: str, source_url: str, source_name: str) -> dict[str, Any]:
