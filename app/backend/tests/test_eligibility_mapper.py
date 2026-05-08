@@ -1,5 +1,6 @@
 import asyncio
 from app.profile.eligibility_mapper import build_user_eligibility_profile
+from app.db.utils import safe_select
 from app.api import canonical
 
 class _Exec:
@@ -46,3 +47,12 @@ def test_metadata_certifications_endpoint(monkeypatch):
     sb=_SB(); monkeypatch.setattr(canonical,"get_supabase_admin",lambda:sb)
     out = asyncio.run(canonical.metadata_certifications())
     assert out["items"][0]["name"] == "GATE"
+
+
+class _ErrSB:
+    def table(self, _name):
+        raise RuntimeError("db unavailable")
+
+
+def test_safe_select_returns_empty_on_failure():
+    assert safe_select(_ErrSB(), "profiles", "*", id="u1") == []
