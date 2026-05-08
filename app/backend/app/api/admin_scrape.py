@@ -23,8 +23,10 @@ import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from app.core.auth import get_current_user, require_permission
 from app.core.errors import PromotionError
@@ -86,6 +88,21 @@ router = APIRouter(tags=["admin-scrape"])
 
 _HIGH_RISK_FIELDS={"apply_end_date","official_notification_url","official_apply_url","organization_name","total_vacancies","eligibility"}
 
+
+class ScrapeRunBody(BaseModel):
+    source_ids: list[str] | None = Field(default=None, max_length=50)
+
+
+class ReviewBody(BaseModel):
+    notes: str | None = Field(default=None, max_length=2000)
+    corrected_value: str | int | float | bool | None = None
+
+
+def _validate_queue_id(queue_id: str) -> None:
+    qid = str(queue_id or "").strip()
+    if len(qid) < 2:
+        raise HTTPException(status_code=422, detail="Invalid queue_id format")
+
 def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, admin: dict, notes: str | None=None, corrected_value=None):
     existing = (supabase.table("extracted_field_evidence").select("id, document_id").eq("scrape_queue_id", queue_id).eq("field_name", field_name).order("reviewed_at", desc=True, nullsfirst=False).order("created_at", desc=True).limit(1).execute().data or [])
     doc_id = (existing[0] or {}).get("document_id") if existing else None
@@ -134,23 +151,32 @@ def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, 
     return payload
 
 @router.post("/admin/scrape/items/{queue_id}/fields/{field_name}/verify")
-def verify_field(queue_id: str, field_name: str, body: dict | None = None, admin: dict = Depends(require_permission("scraper.manage"))):
-    body=body or {}
-    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "verified", admin, notes=body.get("notes"))
+def verify_field(queue_id: str, field_name: str, body: ReviewBody | None = None, admin: dict = Depends(require_permission("scraper.manage"))):
+    _validate_queue_id(queue_id)
+    if isinstance(body, dict):
+        body = ReviewBody(**body)
+    body=body or ReviewBody()
+    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "verified", admin, notes=body.notes)
     _audit(sb, admin, "scrape.field.verify", entity_type="scrape_field", entity_id=f"{queue_id}:{field_name}", new_value=data)
     return {"ok": True, **data}
 
 @router.post("/admin/scrape/items/{queue_id}/fields/{field_name}/reject")
-def reject_field(queue_id: str, field_name: str, body: dict | None = None, admin: dict = Depends(require_permission("scraper.manage"))):
-    body=body or {}
-    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "rejected", admin, notes=body.get("notes"))
+def reject_field(queue_id: str, field_name: str, body: ReviewBody | None = None, admin: dict = Depends(require_permission("scraper.manage"))):
+    _validate_queue_id(queue_id)
+    if isinstance(body, dict):
+        body = ReviewBody(**body)
+    body=body or ReviewBody()
+    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "rejected", admin, notes=body.notes)
     _audit(sb, admin, "scrape.field.reject", entity_type="scrape_field", entity_id=f"{queue_id}:{field_name}", new_value=data)
     return {"ok": True, **data}
 
 @router.post("/admin/scrape/items/{queue_id}/fields/{field_name}/correct")
-def correct_field(queue_id: str, field_name: str, body: dict | None = None, admin: dict = Depends(require_permission("scraper.manage"))):
-    body=body or {}
-    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "corrected", admin, notes=body.get("notes"), corrected_value=body.get("corrected_value"))
+def correct_field(queue_id: str, field_name: str, body: ReviewBody | None = None, admin: dict = Depends(require_permission("scraper.manage"))):
+    _validate_queue_id(queue_id)
+    if isinstance(body, dict):
+        body = ReviewBody(**body)
+    body=body or ReviewBody()
+    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "corrected", admin, notes=body.notes, corrected_value=body.corrected_value)
     _audit(sb, admin, "scrape.field.correct", entity_type="scrape_field", entity_id=f"{queue_id}:{field_name}", new_value=data)
     return {"ok": True, **data}
 
@@ -224,20 +250,20 @@ def _list_sources() -> dict[str, Any]:
 
 @router.post("/admin/scrape/run-dry")
 def scrape_run_dry(
-    body: dict | None = None,
+    body: ScrapeRunBody | None = None,
     admin: dict = Depends(require_permission("scraper.manage")),
 ) -> dict[str, Any]:
     """Run a scrape pass in mock mode (no model call, deterministic output).
 
     Body (optional): ``{ "source_ids": ["uuid", ...] }``.
     """
-    body = body or {}
+    body = body or ScrapeRunBody()
     supabase = get_supabase_admin()
     summary = run_scraping_pass(
         supabase,
         triggered_by="admin",
         triggered_by_user=admin["id"],
-        source_ids=body.get("source_ids"),
+        source_ids=body.source_ids,
         mock=True,
     )
     _audit(supabase, admin, "scrape.run_dry", entity_type="scrape_runs",
@@ -247,17 +273,17 @@ def scrape_run_dry(
 
 @router.post("/admin/scrape/run")
 def scrape_run(
-    body: dict | None = None,
+    body: ScrapeRunBody | None = None,
     admin: dict = Depends(require_permission("scraper.manage")),
 ) -> dict[str, Any]:
     """Run a real scrape pass (Claude extraction). Requires ANTHROPIC_API_KEY."""
-    body = body or {}
+    body = body or ScrapeRunBody()
     supabase = get_supabase_admin()
     summary = run_scraping_pass(
         supabase,
         triggered_by="admin",
         triggered_by_user=admin["id"],
-        source_ids=body.get("source_ids"),
+        source_ids=body.source_ids,
         mock=False,
     )
     _audit(supabase, admin, "scrape.run", entity_type="scrape_runs",
@@ -309,6 +335,7 @@ def list_scrape_queue(
     q = (
         supabase.table("scrape_queue")
         .select("id, source_url, source_name, raw_html, extracted_data, confidence_score, data_quality_score, status, duplicate_of, reviewer_id, reviewer_notes, reviewed_at, field_evidence, official_source_resolved, official_source_host, extraction_status, evidence_required, scraped_at")
+        .order("data_quality_score", desc=False, nullsfirst=True)
         .order("scraped_at", desc=True)
         .limit(limit)
     )

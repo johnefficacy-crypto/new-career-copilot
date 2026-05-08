@@ -1,4 +1,5 @@
 from app.api import admin_scrape
+import pytest
 
 class R:
     def __init__(self,data=None,count=None): self.data=data; self.count=count
@@ -199,3 +200,13 @@ def test_verify_updates_existing_row_without_upsert(monkeypatch):
     out=admin_scrape.verify_field('q1','title',{'notes':'ok'},{'id':'a','email':'e'})
     assert out["ok"] is True
     assert sb.state["updated"]
+
+
+def test_validate_queue_id_rejects_invalid():
+    with pytest.raises(Exception):
+        admin_scrape._validate_queue_id("")
+
+
+def test_review_body_limits_notes():
+    with pytest.raises(Exception):
+        admin_scrape.ReviewBody(notes="x" * 2001)
