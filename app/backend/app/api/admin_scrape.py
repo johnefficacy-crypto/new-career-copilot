@@ -292,6 +292,18 @@ def list_scrape_queue(
         dups = duplicate_candidates(ext if isinstance(ext, dict) else {}, existing)
         r["duplicate_candidates"] = dups
         r["multiple_posts_detected"] = bool((ext.get("posts") if isinstance(ext, dict) else None))
+        r["high_risk_fields"] = sorted(list(_HIGH_RISK_FIELDS))
+        try:
+            frows = (supabase.table("extracted_field_evidence").select("field_name, reviewer_status").eq("scrape_queue_id", r["id"]).execute().data or [])
+            reviewed = {fr.get("field_name"): fr.get("reviewer_status") for fr in frows}
+            r["field_evidence_status"] = reviewed
+            missing = [f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified", "corrected"}]
+            r["unverified_fields"] = sorted(missing)
+            r["promotable"] = len(missing) == 0
+        except Exception:
+            r["field_evidence_status"] = {}
+            r["unverified_fields"] = []
+            r["promotable"] = False
     return {"items": rows}
 
 

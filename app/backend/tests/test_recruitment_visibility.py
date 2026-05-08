@@ -6,11 +6,11 @@ class Resp:
     def __init__(self,data): self.data=data
 
 class Query:
-    def __init__(self, rows): self.rows=rows; self.filters={}
+    def __init__(self, rows): self.rows=rows; self.filters={}; self.ilike_calls=[]
     def select(self,*a,**k): return self
     def in_(self,k,v): self.filters[k]=set(v); return self
     def eq(self,k,v): self.filters[k]=v; return self
-    def ilike(self,*a,**k): return self
+    def ilike(self,*a,**k): self.ilike_calls.append((a,k)); return self
     def order(self,*a,**k): return self
     def limit(self,*a,**k): return self
     def execute(self):
@@ -87,3 +87,21 @@ def test_partial_uuid_does_not_resolve(monkeypatch):
     monkeypatch.setattr(canonical, 'get_supabase_admin', lambda: SB(ROWS))
     with pytest.raises(Exception):
         canonical._resolve_rec_id(SB(ROWS), "44444444")
+
+def test_list_recruitments_without_q_does_not_ilike(monkeypatch):
+    q = Query(ROWS)
+    class SB3(SB):
+        def table(self, name): return q if name=="recruitments" else Query([])
+    monkeypatch.setattr(canonical, 'get_supabase_admin', lambda: SB3(ROWS))
+    monkeypatch.setattr(canonical, '_safe', lambda call, default=None: call())
+    asyncio.run(canonical.list_recruitments(status=None, q=None, user=None))
+    assert q.ilike_calls == []
+
+def test_list_recruitments_with_q_uses_trimmed_string(monkeypatch):
+    q = Query(ROWS)
+    class SB3(SB):
+        def table(self, name): return q if name=="recruitments" else Query([])
+    monkeypatch.setattr(canonical, 'get_supabase_admin', lambda: SB3(ROWS))
+    monkeypatch.setattr(canonical, '_safe', lambda call, default=None: call())
+    asyncio.run(canonical.list_recruitments(status=None, q=" ssc ", user=None))
+    assert q.ilike_calls and q.ilike_calls[0][0][1] == "%ssc%"

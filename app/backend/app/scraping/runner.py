@@ -24,6 +24,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 import re
 from typing import Any
+import re
 
 from supabase import Client
 
@@ -315,7 +316,8 @@ def promote_to_recruitments(
 
     # ── Recruitment insert ──
     rec_payload = {
-        "slug": f"{_slugify(data.title)}-{data.year}",        "organization_id": org_id,
+        "slug": f"{_slugify(data.title)}-{data.year}",
+        "organization_id": org_id,
         "name": data.title,
         "year": data.year,
         "notification_date": data.notification_date,
@@ -430,3 +432,5 @@ def promote_run(
             logger.warning("[promote_run] queue_id=%s failed: %s", item["id"], exc)
 
     return {"promoted": promoted, "failed": failed, "recruitment_ids": rec_ids, "errors": errors}
+def _slugify(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-") or "recruitment"
