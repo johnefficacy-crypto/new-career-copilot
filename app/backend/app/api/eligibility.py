@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from app.core.auth import get_current_user
 from app.core.config import get_settings
+from app.core.errors import DatabaseError, ValidationError
 from app.db.supabase_client import get_supabase_admin
 from app.eligibility.runner import (
     get_all_eligibility_results_async,
@@ -109,8 +110,15 @@ async def recompute(
         actor_email = user.get("email")
         mode = "user_token"
 
-    supabase = get_supabase_admin()
-    result = await run_eligibility_for_user_async(target_user_id, supabase)
+    try:
+        supabase = get_supabase_admin()
+        result = await run_eligibility_for_user_async(target_user_id, supabase)
+    except ValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except DatabaseError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database operation failed") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Eligibility recompute failed") from exc
     _audit_recompute(
         supabase,
         actor_id=actor_id,
@@ -126,8 +134,11 @@ async def recompute(
     summary="Get eligible and conditional results for the current user",
 )
 async def results_me(user: dict = Depends(get_current_user)) -> dict[str, Any]:
-    supabase = get_supabase_admin()
-    items = await get_eligible_recruitments_async(user["id"], supabase)
+    try:
+        supabase = get_supabase_admin()
+        items = await get_eligible_recruitments_async(user["id"], supabase)
+    except DatabaseError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Eligibility results unavailable") from exc
     return {"items": items, "count": len(items)}
 
 
@@ -136,6 +147,9 @@ async def results_me(user: dict = Depends(get_current_user)) -> dict[str, Any]:
     summary="Get all eligibility results for the current user",
 )
 async def results_me_all(user: dict = Depends(get_current_user)) -> dict[str, Any]:
-    supabase = get_supabase_admin()
-    items = await get_all_eligibility_results_async(user["id"], supabase)
+    try:
+        supabase = get_supabase_admin()
+        items = await get_all_eligibility_results_async(user["id"], supabase)
+    except DatabaseError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Eligibility results unavailable") from exc
     return {"items": items, "count": len(items)}
