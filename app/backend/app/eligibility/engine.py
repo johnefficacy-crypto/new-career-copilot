@@ -476,3 +476,4 @@ def check_eligibility_batch(
         )
         for pc in post_criteria_list
     ]
+    user_certs: list[UserCertification] = getattr(profile, "_user_certifications", []) or []
