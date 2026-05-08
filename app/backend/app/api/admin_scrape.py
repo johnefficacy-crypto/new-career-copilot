@@ -19,6 +19,8 @@ Every successful admin write inserts an ``admin_audit_logs`` row.
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -88,11 +90,37 @@ def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, 
     if existing:
         payload={"scrape_queue_id": queue_id, "field_name": field_name, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat()}
     else:
-        qrows = (supabase.table("scrape_queue").select("notification_document_id").eq("id", queue_id).limit(1).execute().data or [])
-        doc_id = (qrows[0] or {}).get("notification_document_id") if qrows else None
+        qrows = (supabase.table("scrape_queue").select("id, source_id, source_url, scrape_run_id, extracted_data, notification_document_id").eq("id", queue_id).limit(1).execute().data or [])
+        qrow = (qrows[0] or {}) if qrows else {}
+        doc_id = qrow.get("notification_document_id")
         if not doc_id:
-            raise HTTPException(status_code=409, detail="Field evidence requires notification_document_id on scrape_queue")
+            source_url = qrow.get("source_url")
+            extracted_data = qrow.get("extracted_data") or {}
+            content_hash = hashlib.sha256(f"scrape_queue:{queue_id}:{source_url}:{json.dumps(extracted_data, sort_keys=True, default=str)}".encode("utf-8")).hexdigest()
+            nd_payload = {
+                "source_id": qrow.get("source_id"),
+                "scrape_run_id": qrow.get("scrape_run_id"),
+                "source_url": source_url or f"manual://scrape_queue/{queue_id}",
+                "final_url": source_url,
+                "document_type": "unknown",
+                "content_hash": content_hash,
+                "raw_text": json.dumps(extracted_data, default=str),
+                "metadata": {"created_by": "admin_field_review_fallback", "scrape_queue_id": queue_id},
+            }
+            try:
+                nd_rows = supabase.table("notification_documents").insert(nd_payload).execute().data or []
+            except Exception:
+                nd_rows = []
+            if not nd_rows:
+                nd_rows = (supabase.table("notification_documents").select("id").eq("content_hash", content_hash).limit(1).execute().data or [])
+            if not nd_rows:
+                raise HTTPException(status_code=500, detail="Failed to create fallback notification_document")
+            doc_id = nd_rows[0]["id"]
+            supabase.table("scrape_queue").update({"notification_document_id": doc_id}).eq("id", queue_id).execute()
+        extracted_data = qrow.get("extracted_data") if qrow else {}
+        extracted_value = corrected_value if corrected_value is not None else ((extracted_data or {}).get(field_name) if isinstance(extracted_data, dict) else None)
         payload={"scrape_queue_id": queue_id, "field_name": field_name, "document_id": doc_id, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat()}
+        payload.update({"entity_type":"other","extraction_method":"manual","extracted_value":extracted_value})
     if corrected_value is not None:
         payload["corrected_value"]=corrected_value
     supabase.table("extracted_field_evidence").upsert(payload, on_conflict="scrape_queue_id,field_name").execute()
