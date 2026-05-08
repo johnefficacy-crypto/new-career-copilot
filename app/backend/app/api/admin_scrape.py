@@ -392,7 +392,7 @@ def promote_queue_item(
     updated_rows = (
         supabase.table("scrape_queue").update(
         {
-            "status": "promoted",
+            "status": "approved",
             "reviewer_id": admin["id"],
             "reviewed_at": datetime.now(timezone.utc).isoformat(),
             "promoted_recruitment_id": rec_id,
