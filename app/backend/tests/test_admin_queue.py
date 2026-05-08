@@ -148,6 +148,36 @@ def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
     assert sb.state['queue'][0]['status']=='promoted'
 
 
+def test_promote_failure_keeps_queue_item_pending(monkeypatch):
+    class SB7(SB):
+        def table(self,t):
+            if t=='extracted_field_evidence':
+                class FQ:
+                    def select(self,*a,**k): return self
+                    def eq(self,*a,**k): return self
+                    def execute(self):
+                        return R([
+                            {'field_name':'apply_end_date','reviewer_status':'verified'},
+                            {'field_name':'official_notification_url','reviewer_status':'verified'},
+                            {'field_name':'official_apply_url','reviewer_status':'verified'},
+                            {'field_name':'organization_name','reviewer_status':'verified'},
+                            {'field_name':'total_vacancies','reviewer_status':'verified'},
+                            {'field_name':'eligibility','reviewer_status':'verified'},
+                        ])
+                return FQ(self)
+            return super().table(t)
+    sb=SB7(); monkeypatch.setattr(admin_scrape,'get_supabase_admin',lambda:sb)
+    import app.scraping.runner as runner
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("promotion write failed")
+    monkeypatch.setattr(runner, 'promote_to_recruitments', _boom)
+    sb.state['queue'][0]['status']='pending'
+    import pytest
+    with pytest.raises(Exception):
+        admin_scrape.promote_queue_item('q1', {'id':'a','email':'e'})
+    assert sb.state['queue'][0]['status']=='pending'
+
+
 def test_verify_updates_existing_row_without_upsert(monkeypatch):
     class SB6(SB):
         def __init__(self): super().__init__(); self.state["updated"]=[]
