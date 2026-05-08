@@ -101,4 +101,5 @@ For migration-by-migration details, see `docs/migrations.md`.
 - Step 2: Improve error propagation — completed.
 - Step 3: Introduce asynchronous APIs — completed.
 - Step 4: Enhance documentation — **completed in this change**.
-- Step 5+ (tests expansion, queue optimization, security hardening, architecture evolution): **not started in this change**.
+- Step 5: Add unit and integration tests — **completed in this change**.
+- Step 6+ (queue optimization, security hardening, architecture evolution): **not started in this change**.
