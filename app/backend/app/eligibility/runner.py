@@ -398,6 +398,12 @@ async def get_eligible_recruitments_async(
         return []
 
 
+async def get_eligible_recruitments_async(
+    user_id: str, supabase: Client
+) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(get_eligible_recruitments, user_id, supabase)
+
+
 def get_all_eligibility_results(user_id: str, supabase: Client) -> list[dict[str, Any]]:
     """Every row, eligible first then conditional then ineligible."""
     try:
@@ -433,3 +439,28 @@ async def get_all_eligibility_results_async(
     except Exception as exc:  # noqa: BLE001
         log_warning_with_context(logger, "eligibility.get_all_results_async", exc, user_id=user_id)
         return []
+
+
+async def get_all_eligibility_results_async(
+    user_id: str, supabase: AsyncClient
+) -> list[dict[str, Any]]:
+    try:
+        resp = (
+            supabase.table("eligibility_results")
+            .select(_RESULT_SELECT_ALL)
+            .eq("user_id", user_id)
+            .order("is_eligible", desc=True)
+            .order("is_conditional", desc=True)
+            .execute()
+        )
+        out = await resp
+        return out.data or []
+    except Exception as exc:  # noqa: BLE001
+        log_warning_with_context(logger, "eligibility.get_all_results_async", exc, user_id=user_id)
+        return []
+
+
+async def get_all_eligibility_results_async(
+    user_id: str, supabase: Client
+) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(get_all_eligibility_results, user_id, supabase)
