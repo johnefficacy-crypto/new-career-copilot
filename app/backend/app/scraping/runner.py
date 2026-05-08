@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Any
 import re
 
@@ -40,7 +41,9 @@ logger = logging.getLogger("career_copilot.scraping.runner")
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
+def _slugify(value: str | None) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", (value or "").lower()).strip("-")
+    return base[:80] or "recruitment"
 
 def _exec(call, default=None):
     try:
