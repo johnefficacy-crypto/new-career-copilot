@@ -17,8 +17,10 @@ class Query:
         out=self.rows
         if 'publish_status' in self.filters and isinstance(self.filters['publish_status'], set):
             out=[r for r in out if r.get('publish_status') in self.filters['publish_status']]
-        if 'id' in self.filters and isinstance(self.filters['id'], str):
-            out=[r for r in out if r.get('id')==self.filters['id']]
+        for key, value in self.filters.items():
+            if isinstance(value, set):
+                continue
+            out=[r for r in out if r.get(key)==value]
         return Resp(out)
 
 class SB:
@@ -27,26 +29,27 @@ class SB:
         return Query(self.rows if name=='recruitments' else [])
 
 ROWS=[
- {"id":"1","name":"A","publish_status":"draft","status":"open","organizations":{"name":"Org"}},
- {"id":"2","name":"B","publish_status":"needs_review","status":"open","organizations":{"name":"Org"}},
- {"id":"3","name":"C","publish_status":"verified","status":"open","organizations":{"name":"Org"}},
- {"id":"4","name":"D","publish_status":"published","status":"open","organizations":{"name":"Org"}},
+ {"id":"11111111-1111-1111-1111-111111111111","slug":"a-draft","name":"A","publish_status":"draft","status":"open","organizations":{"name":"Org"}},
+ {"id":"22222222-2222-2222-2222-222222222222","slug":"b-needs-review","name":"B","publish_status":"needs_review","status":"open","organizations":{"name":"Org"}},
+ {"id":"33333333-3333-3333-3333-333333333333","slug":"c-verified","name":"C","publish_status":"verified","status":"open","organizations":{"name":"Org"}},
+ {"id":"44444444-4444-4444-4444-444444444444","slug":"d-published","name":"D","publish_status":"published","status":"open","organizations":{"name":"Org"}},
 ]
 
 def test_public_list_only_published(monkeypatch):
     monkeypatch.setattr(canonical, 'get_supabase_admin', lambda: SB(ROWS))
     monkeypatch.setattr(canonical, '_safe', lambda call, default=None: call())
     out=asyncio.run(canonical.list_recruitments(status=None, q=None, user=None))
-    assert [i['id'] for i in out['items']]==['4']
+    assert [i['id'] for i in out['items']]==['44444444-4444-4444-4444-444444444444']
+    assert out["items"][0]["slug"] == "d-published"
 
 def test_public_detail_excludes_unpublished(monkeypatch):
     monkeypatch.setattr(canonical, 'get_supabase_admin', lambda: SB(ROWS))
     monkeypatch.setattr(canonical, '_safe', lambda call, default=None: call())
-    monkeypatch.setattr(canonical, '_resolve_rec_id', lambda _sb,ref: ref)
     with pytest.raises(Exception):
-        asyncio.run(canonical.get_recruitment('1', user=None))
-    ok=asyncio.run(canonical.get_recruitment('4', user=None))
-    assert ok['id']=='4'
+        asyncio.run(canonical.get_recruitment('a-draft', user=None))
+    ok=asyncio.run(canonical.get_recruitment('d-published', user=None))
+    assert ok['id']=='44444444-4444-4444-4444-444444444444'
+    assert ok["slug"] == "d-published"
     for f in ['raw_html','extracted_data','field_evidence','raw_snapshot_url','raw_snapshot_hash','reviewer_notes']:
         assert f not in ok
 
@@ -72,3 +75,15 @@ def test_resolver_does_not_use_uuid_ilike(monkeypatch):
     except Exception:
         pass
     assert called['ilike'] is False
+
+
+def test_fake_generated_trailing_id_slug_does_not_resolve(monkeypatch):
+    monkeypatch.setattr(canonical, 'get_supabase_admin', lambda: SB(ROWS))
+    with pytest.raises(Exception):
+        canonical._resolve_rec_id(SB(ROWS), "d-published-44444444")
+
+
+def test_partial_uuid_does_not_resolve(monkeypatch):
+    monkeypatch.setattr(canonical, 'get_supabase_admin', lambda: SB(ROWS))
+    with pytest.raises(Exception):
+        canonical._resolve_rec_id(SB(ROWS), "44444444")
