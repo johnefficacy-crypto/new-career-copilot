@@ -48,3 +48,21 @@ def require_select(supabase: Client, table: str, columns: str, **filters: Any) -
     except Exception as exc:  # noqa: BLE001
         log_warning_with_context(logger, "supabase.select_required", exc, table=table, filters=filters)
         raise DatabaseError(f"Failed required select on {table}") from exc
+
+
+def execute_or_raise(operation: str, call):
+    """Execute a DB operation and raise DatabaseError on failure."""
+    try:
+        return call()
+    except Exception as exc:  # noqa: BLE001
+        log_warning_with_context(logger, "supabase.execute_or_raise", exc, db_operation=operation)
+        raise DatabaseError(f"Database operation failed: {operation}") from exc
+
+
+def execute_or_default(operation: str, call, default):
+    """Execute a DB operation and return default when failure is safe."""
+    try:
+        return call()
+    except Exception as exc:  # noqa: BLE001
+        log_warning_with_context(logger, "supabase.execute_or_default", exc, db_operation=operation)
+        return default
