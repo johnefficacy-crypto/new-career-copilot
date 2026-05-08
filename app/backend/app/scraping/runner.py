@@ -21,36 +21,30 @@ Schema notes:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
-import re
+from datetime import datetime, timezone
 from typing import Any
-import re
 
 from supabase import Client
 
 from .extractor import (
+    PROMPT_VERSION,
     build_recruitment_key,
     compute_similarity_key,
     extract_recruitment_data,
     fetch_page_text,
 )
+from .dedup import fuzzy_duplicate
+from .normalizer import normalize_recruitment
+from .sources import normalize_legacy_source
+from app.common.strings import slugify
+from app.common.time import utc_now_iso
+from app.core.errors import PromotionError
+from app.db.utils import execute_or_default, execute_or_raise
+
 from .schemas import ExtractedRecruitment, to_json_safe
 
 logger = logging.getLogger("career_copilot.scraping.runner")
 
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-def _slugify(value: str | None) -> str:
-    base = re.sub(r"[^a-z0-9]+", "-", (value or "").lower()).strip("-")
-    return base[:80] or "recruitment"
-
-def _exec(call, default=None):
-    try:
-        return call()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("supabase call failed: %s", exc)
-        return default
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -75,11 +69,11 @@ def run_scraping_pass(
     run_payload = {
         "status": "running",
         "triggered_by": triggered_by,
-        "started_at": _now(),
+        "started_at": utc_now_iso(),
     }
     if triggered_by_user:
         run_payload["triggered_by_user"] = triggered_by_user
-    inserted = supabase.table("scrape_runs").insert(run_payload).execute().data or []
+    inserted = execute_or_raise("scrape_runs.create", lambda: supabase.table("scrape_runs").insert(run_payload).execute()).data or []
     if not inserted:
         raise RuntimeError("run_scraping_pass: failed to create scrape_runs row")
     run_id: str = inserted[0]["id"]
@@ -93,10 +87,10 @@ def run_scraping_pass(
     )
     if source_ids:
         src_q = src_q.in_("id", source_ids)
-    sources: list[dict[str, Any]] = _exec(lambda: src_q.execute().data, default=[]) or []
+    sources: list[dict[str, Any]] = execute_or_default("scrape_sources.active.read", lambda: src_q.execute().data, []) or []
 
     # ── 3. Build dedup index from existing recruitments + open queue ─────
-    existing_recs = _exec(
+    existing_recs = execute_or_default("recruitments.read_for_dedupe",
         lambda: supabase.table("recruitments")
         .select("id, name, year, organizations(name)")
         .execute()
@@ -115,7 +109,7 @@ def run_scraping_pass(
         existing_keys.add(key)
         existing_id_by_key[key] = r["id"]
 
-    open_queue = _exec(
+    open_queue = execute_or_default("scrape_queue.read_open_for_dedupe",
         lambda: supabase.table("scrape_queue")
         .select("extracted_data, status")
         .not_.in_("status", ["rejected", "duplicate"])
@@ -140,16 +134,17 @@ def run_scraping_pass(
     error_log: list[dict[str, Any]] = []
 
     for src in sources:
-        target_url = (src.get("base_url") or "") + (src.get("notification_path") or "")
+        source = normalize_legacy_source(src)
+        target_url = source.target_url
         try:
             raw = fetch_page_text(target_url) if not mock else f"MOCK PAGE TEXT FOR {target_url}"
             if not raw:
-                error_log.append({"source": src.get("name"), "error": "Empty response", "at": _now()})
+                error_log.append({"source": src.get("name"), "error": "Empty response", "at": utc_now_iso()})
                 _bump_source_failure(supabase, src)
                 continue
             extraction = extract_recruitment_data(raw, target_url, src.get("name") or "", mock=mock)
             if not extraction:
-                error_log.append({"source": src.get("name"), "error": "Extraction returned null", "at": _now()})
+                error_log.append({"source": src.get("name"), "error": "Extraction returned null", "at": utc_now_iso()})
                 _bump_source_failure(supabase, src)
                 continue
 
@@ -158,21 +153,34 @@ def run_scraping_pass(
             total_found += 1
 
             sim_key = compute_similarity_key(data)
-            is_dup = sim_key in existing_keys or sim_key in queued_keys
+            fuzzy_dup = any(fuzzy_duplicate(data.title, (r.get("name") or "")) for r in existing_recs)
+            is_dup = sim_key in existing_keys or sim_key in queued_keys or fuzzy_dup
             duplicate_of = existing_id_by_key.get(sim_key)
+            duplicate_reason = "similarity_key" if (sim_key in existing_keys or sim_key in queued_keys) else ("fuzzy_match" if fuzzy_dup else None)
+            normalized = normalize_recruitment(data)
+            extracted_payload = to_json_safe(data)
+            extracted_payload["_meta"] = {
+                "prompt_version": PROMPT_VERSION,
+                "data_quality_score": normalized.data_quality_score,
+                "warnings": normalized.warnings,
+                "normalized_fields": normalized.normalized_fields,
+                "duplicate_reason": duplicate_reason,
+            }
 
             queue_payload = {
                 "source_url": target_url,
-                "source_name": src.get("name"),
-                "extracted_data": to_json_safe(data),
+                "source_name": source.name,
+                "extracted_data": extracted_payload,
                 "confidence_score": confidence,
                 "scrape_run_id": run_id,
                 "duplicate_of": duplicate_of,
-                "scraped_at": _now(),
+                "scraped_at": utc_now_iso(),
                 # Never auto-approve — see runner.ts safety hardening note.
                 "status": "duplicate" if is_dup else "pending",
             }
-            _exec(lambda payload=queue_payload: supabase.table("scrape_queue").insert(payload).execute())
+            logger.info("scrape.queue_insert run_id=%s source_id=%s source_name=%s target_url=%s extraction_status=%s confidence_score=%.2f data_quality_score=%.2f duplicate_status=%s",
+                        run_id, source.id, source.name, target_url, "ok", confidence, normalized.data_quality_score, queue_payload["status"])
+            execute_or_raise("scrape_queue.insert", lambda payload=queue_payload: supabase.table("scrape_queue").insert(payload).execute())
 
             if is_dup:
                 total_dup += 1
@@ -180,22 +188,24 @@ def run_scraping_pass(
                 total_new += 1
                 queued_keys.add(sim_key)
 
-            _exec(
+            execute_or_default(
+                "scrape_sources.mark_success",
                 lambda src=src: supabase.table("scrape_sources")
                 .update(
                     {
-                        "last_scraped_at": _now(),
-                        "last_success_at": _now(),
+                        "last_scraped_at": utc_now_iso(),
+                        "last_success_at": utc_now_iso(),
                         "consecutive_fails": 0,
                         "is_healthy": True,
                     }
                 )
                 .eq("id", src["id"])
-                .execute()
+                .execute(),
+                None,
             )
 
         except Exception as exc:  # noqa: BLE001
-            error_log.append({"source": src.get("name"), "error": str(exc), "at": _now()})
+            error_log.append({"source": src.get("name"), "error": str(exc), "at": utc_now_iso()})
             _bump_source_failure(supabase, src)
 
     # ── 5. Finalise the run row ──────────────────────────────────────────
@@ -206,11 +216,12 @@ def run_scraping_pass(
     else:
         final_status = "completed"
 
-    _exec(
+    execute_or_raise(
+        "scrape_runs.finalize",
         lambda: supabase.table("scrape_runs")
         .update(
             {
-                "finished_at": _now(),
+                "finished_at": utc_now_iso(),
                 "status": final_status,
                 "sources_checked": len(sources),
                 "items_found": total_found,
@@ -220,7 +231,7 @@ def run_scraping_pass(
             }
         )
         .eq("id", run_id)
-        .execute()
+        .execute(),
     )
 
     return {
@@ -235,7 +246,8 @@ def run_scraping_pass(
 
 
 def _bump_source_failure(supabase: Client, src: dict[str, Any]) -> None:
-    _exec(
+    execute_or_default(
+        "scrape_sources.bump_failure",
         lambda: supabase.table("scrape_sources")
         .update(
             {
@@ -244,7 +256,8 @@ def _bump_source_failure(supabase: Client, src: dict[str, Any]) -> None:
             }
         )
         .eq("id", src["id"])
-        .execute()
+        .execute(),
+        None,
     )
 
 
@@ -303,20 +316,16 @@ def promote_to_recruitments(
     """
     # ── Organisation upsert (on_conflict='name') ──
     org_payload = {"name": data.organization_name, "type": data.org_type}
-    org_rows = (
-        supabase.table("organizations")
+    org_rows = execute_or_raise("organizations.upsert", lambda: supabase.table("organizations")
         .upsert(org_payload, on_conflict="name", ignore_duplicates=False)
-        .execute()
-        .data
-        or []
-    )
+        .execute()).data or []
     if not org_rows:
         raise RuntimeError("[promote] organization upsert returned no row")
     org_id: str = org_rows[0]["id"]
 
     # ── Recruitment insert ──
     rec_payload = {
-        "slug": f"{_slugify(data.title)}-{data.year}",
+        "slug": f"{slugify(data.title)}-{data.year}",
         "organization_id": org_id,
         "name": data.title,
         "year": data.year,
@@ -329,7 +338,7 @@ def promote_to_recruitments(
         "official_notification_url": data.official_notification_url,
         "source_pdf_url": data.source_pdf_url,
     }
-    rec_rows = supabase.table("recruitments").insert(rec_payload).execute().data or []
+    rec_rows = execute_or_raise("recruitments.insert", lambda: supabase.table("recruitments").insert(rec_payload).execute()).data or []
     if not rec_rows:
         raise RuntimeError("[promote] recruitment insert returned no row")
     rec_id: str = rec_rows[0]["id"]
@@ -343,30 +352,23 @@ def promote_to_recruitments(
             "pay_level": post.pay_level,
             "job_type": "direct",
         }
-        post_rows = (
-            supabase.table("posts").insert(post_payload).execute().data or []
-        )
+        post_rows = execute_or_raise("posts.insert", lambda: supabase.table("posts").insert(post_payload).execute()).data or []
         if not post_rows:
-            logger.warning("[promote] post insert failed for %r", post.post_name)
-            continue
+            raise PromotionError(f"post insert returned no row for recruitment={rec_id}")
         post_id = post_rows[0]["id"]
 
         if post.min_age or post.max_age:
-            try:
-                supabase.table("age_criteria").insert(
+            execute_or_raise("age_criteria.insert", lambda: supabase.table("age_criteria").insert(
                     {
                         "post_id": post_id,
                         "min_age": post.min_age,
                         "max_age": post.max_age,
                         "cutoff_date": data.apply_end_date,
                     }
-                ).execute()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("[promote] age_criteria failed: %s", exc)
+                ).execute())
 
         if post.education_required:
-            try:
-                supabase.table("education_criteria").insert(
+            execute_or_raise("education_criteria.insert", lambda: supabase.table("education_criteria").insert(
                     {
                         "post_id": post_id,
                         "min_qualification_level": _map_education_level(post.education_required),
@@ -374,9 +376,7 @@ def promote_to_recruitments(
                             {"primary": post.disciplines} if post.disciplines else None
                         ),
                     }
-                ).execute()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("[promote] education_criteria failed: %s", exc)
+                ).execute())
 
     return rec_id
 
@@ -398,10 +398,7 @@ def promote_run(
         .select("id, extracted_data, status")
         .eq("scrape_run_id", run_id)
         .eq("status", "pending")
-        .execute()
-        .data
-        or []
-    )
+        .execute()).data or []
 
     promoted = 0
     failed = 0
@@ -420,11 +417,14 @@ def promote_run(
             rec_ids.append(rec_id)
             update = {
                 "status": "approved",
-                "reviewed_at": _now(),
+                "reviewed_at": utc_now_iso(),
             }
             if reviewer_id:
                 update["reviewer_id"] = reviewer_id
-            supabase.table("scrape_queue").update(update).eq("id", item["id"]).execute()
+            execute_or_raise(
+                "scrape_queue.promote_status_update",
+                lambda: supabase.table("scrape_queue").update(update).eq("id", item["id"]).execute(),
+            )
             promoted += 1
         except Exception as exc:  # noqa: BLE001
             failed += 1
@@ -432,5 +432,3 @@ def promote_run(
             logger.warning("[promote_run] queue_id=%s failed: %s", item["id"], exc)
 
     return {"promoted": promoted, "failed": failed, "recruitment_ids": rec_ids, "errors": errors}
-def _slugify(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-") or "recruitment"
