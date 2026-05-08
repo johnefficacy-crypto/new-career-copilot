@@ -301,7 +301,7 @@ def list_scrape_runs(
 @router.get("/admin/scrape/queue")
 def list_scrape_queue(
     status: str | None = Query(default="pending"),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=50),
     _admin: dict = Depends(require_permission("scraper.manage")),
 ) -> dict[str, Any]:
     supabase = get_supabase_admin()
