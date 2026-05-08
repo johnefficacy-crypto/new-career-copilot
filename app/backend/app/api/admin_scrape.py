@@ -86,13 +86,12 @@ router = APIRouter(tags=["admin-scrape"])
 _HIGH_RISK_FIELDS={"apply_end_date","official_notification_url","official_apply_url","organization_name","total_vacancies","eligibility"}
 
 def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, admin: dict, notes: str | None=None, corrected_value=None):
-    existing = (supabase.table("extracted_field_evidence").select("id, document_id").eq("scrape_queue_id", queue_id).eq("field_name", field_name).limit(1).execute().data or [])
-    if existing:
-        payload={"scrape_queue_id": queue_id, "field_name": field_name, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat()}
-    else:
+    existing = (supabase.table("extracted_field_evidence").select("id, document_id").eq("scrape_queue_id", queue_id).eq("field_name", field_name).order("reviewed_at", desc=True, nullsfirst=False).order("created_at", desc=True).limit(1).execute().data or [])
+    doc_id = (existing[0] or {}).get("document_id") if existing else None
+    if not existing:
         qrows = (supabase.table("scrape_queue").select("id, source_id, source_url, scrape_run_id, extracted_data, notification_document_id").eq("id", queue_id).limit(1).execute().data or [])
         qrow = (qrows[0] or {}) if qrows else {}
-        doc_id = qrow.get("notification_document_id")
+        doc_id = doc_id or qrow.get("notification_document_id")
         if not doc_id:
             source_url = qrow.get("source_url")
             extracted_data = qrow.get("extracted_data") or {}
@@ -119,11 +118,18 @@ def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, 
             supabase.table("scrape_queue").update({"notification_document_id": doc_id}).eq("id", queue_id).execute()
         extracted_data = qrow.get("extracted_data") if qrow else {}
         extracted_value = corrected_value if corrected_value is not None else ((extracted_data or {}).get(field_name) if isinstance(extracted_data, dict) else None)
-        payload={"scrape_queue_id": queue_id, "field_name": field_name, "document_id": doc_id, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat()}
-        payload.update({"entity_type":"other","extraction_method":"manual","extracted_value":extracted_value})
+    else:
+        qrows = (supabase.table("scrape_queue").select("id, extracted_data, notification_document_id").eq("id", queue_id).limit(1).execute().data or [])
+        qrow = (qrows[0] or {}) if qrows else {}
+        extracted_data = qrow.get("extracted_data") if qrow else {}
+        extracted_value = corrected_value if corrected_value is not None else ((extracted_data or {}).get(field_name) if isinstance(extracted_data, dict) else None)
+    payload={"scrape_queue_id": queue_id, "field_name": field_name, "document_id": doc_id, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat(), "entity_type":"other","extraction_method":"manual","extracted_value":extracted_value}
     if corrected_value is not None:
         payload["corrected_value"]=corrected_value
-    supabase.table("extracted_field_evidence").upsert(payload, on_conflict="scrape_queue_id,field_name").execute()
+    if existing:
+        supabase.table("extracted_field_evidence").update(payload).eq("id", existing[0]["id"]).execute()
+    else:
+        supabase.table("extracted_field_evidence").insert(payload).execute()
     return payload
 
 @router.post("/admin/scrape/items/{queue_id}/fields/{field_name}/verify")
