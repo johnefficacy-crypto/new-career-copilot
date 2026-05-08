@@ -37,3 +37,19 @@ Reference UI for ccp from Replit.
   - `cd app/backend && pytest tests/test_eligibility_mapper.py tests/test_recompute_queue_behaviour.py`
 - **Known follow-ups**
   - Step 1 only is complete; no Step 2+ runbook changes were started.
+
+### Step 2 completed: Improve error propagation
+- **Files changed**
+  - `app/backend/app/core/error_utils.py`
+  - `app/backend/app/db/utils.py`
+  - `app/backend/app/eligibility/runner.py`
+  - `app/backend/tests/test_error_utils.py`
+- **Error-handling helpers consolidated**
+  - Added `format_error_context(...)` and `log_warning_with_context(...)` for consistent warning logs with operation/context.
+  - Updated `safe_select(...)` warning logging to include standardized operation and context.
+  - Updated eligibility runner warning paths to use shared contextual logging helper.
+  - Fixed remaining `safe_select` call-site consistency in eligibility runner (no behavior change intended).
+- **Commands run**
+  - `cd app/backend && pytest tests/test_error_utils.py tests/test_eligibility_mapper.py tests/test_recompute_queue_behaviour.py`
+- **Known follow-ups**
+  - Step 3 (asynchronous APIs) has not been started.

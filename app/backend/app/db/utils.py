@@ -5,6 +5,8 @@ from typing import Any
 
 from supabase import Client
 
+from app.core.error_utils import log_warning_with_context
+
 logger = logging.getLogger("career_copilot.db")
 
 
@@ -16,6 +18,5 @@ def safe_select(supabase: Client, table: str, columns: str, **filters: Any) -> l
             q = q.eq(key, value)
         return q.execute().data or []
     except Exception as exc:  # noqa: BLE001
-        logger.warning("supabase select %s failed: %s", table, exc)
+        log_warning_with_context(logger, "supabase.select", exc, table=table, filters=filters)
         return []
-

@@ -22,6 +22,7 @@ from typing import Any
 
 from supabase import Client
 
+from app.core.error_utils import log_warning_with_context
 from app.db.utils import safe_select
 from .engine import check_eligibility_batch
 from app.profile.eligibility_mapper import build_user_eligibility_profile
@@ -246,7 +247,7 @@ def run_eligibility_for_user(
 
     alerts_inserted = 0
     if eligible_by_rec:
-        prefs_rows = _safe_select(
+        prefs_rows = safe_select(
             supabase,
             "aspirant_preferences",
             "target_exams, preferred_sectors",
@@ -267,7 +268,13 @@ def run_eligibility_for_user(
                 or []
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("rec meta fetch failed: %s", exc)
+            log_warning_with_context(
+                logger,
+                "eligibility.recruitment_meta_fetch",
+                exc,
+                user_id=user_id,
+                recruitment_count=len(eligible_by_rec),
+            )
 
         meta_map = {row["id"]: row for row in rec_meta_rows}
 
@@ -355,7 +362,7 @@ def get_eligible_recruitments(user_id: str, supabase: Client) -> list[dict[str, 
             or []
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("getEligibleRecruitments failed: %s", exc)
+        log_warning_with_context(logger, "eligibility.get_eligible_recruitments", exc, user_id=user_id)
         return []
 
 
@@ -373,5 +380,5 @@ def get_all_eligibility_results(user_id: str, supabase: Client) -> list[dict[str
             or []
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("getAllEligibilityResults failed: %s", exc)
+        log_warning_with_context(logger, "eligibility.get_all_results", exc, user_id=user_id)
         return []
