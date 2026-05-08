@@ -17,11 +17,14 @@ verdicts; this module just shuttles data.
 from __future__ import annotations
 
 import logging
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
-from supabase import Client
+from supabase import AsyncClient, Client
 
+from app.core.error_utils import log_warning_with_context
+from app.db.utils import safe_select
 from .engine import check_eligibility_batch
 from app.profile.eligibility_mapper import build_user_eligibility_profile
 from .schemas import (
@@ -47,18 +50,6 @@ def _first(value: Any) -> Any:
     return value
 
 
-def _safe_select(supabase: Client, table: str, columns: str, **filters: Any) -> list[dict[str, Any]]:
-    """Wrapper around supabase-py select that swallows missing-table errors."""
-    try:
-        q = supabase.table(table).select(columns)
-        for k, v in filters.items():
-            q = q.eq(k, v)
-        return q.execute().data or []
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("supabase select %s failed: %s", table, exc)
-        return []
-
-
 def run_eligibility_for_user(
     user_id: str,
     supabase: Client,
@@ -80,14 +71,14 @@ def run_eligibility_for_user(
             "alerts_inserted": 0,
             "errors": ["Profile not found"],
         }
-    profile_rows = _safe_select(supabase, "profiles", "*", id=user_id)
+    profile_rows = safe_select(supabase, "profiles", "*", id=user_id)
     profile = UserProfile(**(profile_rows[0] if profile_rows else {"id": user_id, "category": mapped.get("reservations", {}).get("category"), "domicile_state": mapped.get("location", {}).get("state"), "date_of_birth": mapped.get("identity", {}).get("dob"), "nationality": mapped.get("identity", {}).get("nationality")}))
 
     education = [UserEducation(**row) for row in (mapped.get("education") or [])]
     attempt_rows = mapped.get("attempts") or []
     if not attempt_rows:
         # Compatibility fallback for legacy deployments.
-        attempt_rows = _safe_select(
+        attempt_rows = safe_select(
             supabase,
             "user_exam_attempts",
             "recruitment_id, attempts_used",
@@ -103,14 +94,14 @@ def run_eligibility_for_user(
             exam_attempts.append(UserExamAttempts(**mapped))
     exam_credentials = [
         UserExamCredential(**row)
-        for row in _safe_select(
+        for row in safe_select(
             supabase, "aspirant_exam_credentials", "exam_key", user_id=user_id
         )
     ]
-    user_certifications = [UserCertification(**row) for row in _safe_select(supabase, "aspirant_certifications", "certification_name,issuing_body,is_active", user_id=user_id) if row.get("is_active", True)]
+    user_certifications = [UserCertification(**row) for row in safe_select(supabase, "aspirant_certifications", "certification_name,issuing_body,is_active", user_id=user_id) if row.get("is_active", True)]
     tracked_set = {
         row["recruitment_id"]
-        for row in _safe_select(
+        for row in safe_select(
             supabase, "tracked_recruitments", "recruitment_id", user_id=user_id
         )
     }
@@ -257,7 +248,7 @@ def run_eligibility_for_user(
 
     alerts_inserted = 0
     if eligible_by_rec:
-        prefs_rows = _safe_select(
+        prefs_rows = safe_select(
             supabase,
             "aspirant_preferences",
             "target_exams, preferred_sectors",
@@ -278,7 +269,13 @@ def run_eligibility_for_user(
                 or []
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("rec meta fetch failed: %s", exc)
+            log_warning_with_context(
+                logger,
+                "eligibility.recruitment_meta_fetch",
+                exc,
+                user_id=user_id,
+                recruitment_count=len(eligible_by_rec),
+            )
 
         meta_map = {row["id"]: row for row in rec_meta_rows}
 
@@ -329,6 +326,17 @@ def run_eligibility_for_user(
     }
 
 
+async def run_eligibility_for_user_async(
+    user_id: str,
+    supabase: Client,
+) -> dict[str, Any]:
+    """Async boundary wrapper for run_eligibility_for_user.
+
+    The underlying Supabase client calls remain synchronous in this codebase.
+    """
+    return await asyncio.to_thread(run_eligibility_for_user, user_id, supabase)
+
+
 # ─── Read helpers (used by /api/eligibility/results/me[/all]) ────────────────
 
 
@@ -366,7 +374,27 @@ def get_eligible_recruitments(user_id: str, supabase: Client) -> list[dict[str, 
             or []
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("getEligibleRecruitments failed: %s", exc)
+        log_warning_with_context(logger, "eligibility.get_eligible_recruitments", exc, user_id=user_id)
+        return []
+
+
+async def get_eligible_recruitments_async(
+    user_id: str, supabase: AsyncClient
+) -> list[dict[str, Any]]:
+    try:
+        resp = (
+            supabase.table("eligibility_results")
+            .select(_RESULT_SELECT)
+            .eq("user_id", user_id)
+            .or_("is_eligible.eq.true,is_conditional.eq.true")
+            .order("is_eligible", desc=True)
+            .order("computed_at", desc=True)
+            .execute()
+        )
+        out = await resp
+        return out.data or []
+    except Exception as exc:  # noqa: BLE001
+        log_warning_with_context(logger, "eligibility.get_eligible_recruitments_async", exc, user_id=user_id)
         return []
 
 
@@ -384,5 +412,24 @@ def get_all_eligibility_results(user_id: str, supabase: Client) -> list[dict[str
             or []
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("getAllEligibilityResults failed: %s", exc)
+        log_warning_with_context(logger, "eligibility.get_all_results", exc, user_id=user_id)
+        return []
+
+
+async def get_all_eligibility_results_async(
+    user_id: str, supabase: AsyncClient
+) -> list[dict[str, Any]]:
+    try:
+        resp = (
+            supabase.table("eligibility_results")
+            .select(_RESULT_SELECT_ALL)
+            .eq("user_id", user_id)
+            .order("is_eligible", desc=True)
+            .order("is_conditional", desc=True)
+            .execute()
+        )
+        out = await resp
+        return out.data or []
+    except Exception as exc:  # noqa: BLE001
+        log_warning_with_context(logger, "eligibility.get_all_results_async", exc, user_id=user_id)
         return []

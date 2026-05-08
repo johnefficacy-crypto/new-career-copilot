@@ -22,11 +22,12 @@ from pydantic import BaseModel
 
 from app.core.auth import get_current_user
 from app.core.config import get_settings
-from app.db.supabase_client import get_supabase_admin
+from app.core.errors import DatabaseError, ValidationError
+from app.db.supabase_client import get_supabase_admin, get_supabase_admin_async
 from app.eligibility.runner import (
-    get_all_eligibility_results,
-    get_eligible_recruitments,
-    run_eligibility_for_user,
+    get_all_eligibility_results_async,
+    get_eligible_recruitments_async,
+    run_eligibility_for_user_async,
 )
 
 router = APIRouter(prefix="/eligibility", tags=["eligibility"])
@@ -43,7 +44,39 @@ def _is_service_role(token: str) -> bool:
     return token.strip() == (get_settings().SUPABASE_SERVICE_ROLE_KEY or "").strip()
 
 
-@router.post("/recompute")
+def _audit_recompute(
+    supabase,
+    *,
+    actor_id: str | None,
+    actor_email: str | None,
+    target_user_id: str,
+    mode: str,
+) -> None:
+    try:
+        supabase.table("admin_audit_logs").insert(
+            {
+                "actor_id": actor_id,
+                "actor_email": actor_email,
+                "action": "eligibility.recompute",
+                "entity_type": "eligibility_recompute",
+                "entity_id": target_user_id,
+                "new_value": {"mode": mode},
+                "notes": "eligibility_api_recompute",
+            }
+        ).execute()
+    except Exception:
+        # Preserve existing recompute behavior even if audit writes fail.
+        pass
+
+
+@router.post(
+    "/recompute",
+    summary="Recompute eligibility for a user",
+    description=(
+        "Service-role callers may specify `user_id` in request body. "
+        "Regular users can recompute only for their own authenticated profile."
+    ),
+)
 async def recompute(
     request: Request,
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
@@ -60,6 +93,9 @@ async def recompute(
             )
             # type: ignore[unreachable]
         target_user_id = body.user_id
+        actor_id = "service_role"
+        actor_email = "service_role"
+        mode = "service_role"
     else:
         # Regular user path — token must be a Supabase access token.
         try:
@@ -70,21 +106,50 @@ async def recompute(
                 detail="Unauthorized — provide a Supabase access token or service-role key",
             )
         target_user_id = user["id"]
+        actor_id = user.get("id")
+        actor_email = user.get("email")
+        mode = "user_token"
 
-    supabase = get_supabase_admin()
-    result = run_eligibility_for_user(target_user_id, supabase)
+    try:
+        supabase = get_supabase_admin()
+        result = await run_eligibility_for_user_async(target_user_id, supabase)
+    except ValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except DatabaseError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database operation failed") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Eligibility recompute failed") from exc
+    _audit_recompute(
+        supabase,
+        actor_id=actor_id,
+        actor_email=actor_email,
+        target_user_id=target_user_id,
+        mode=mode,
+    )
     return {"ok": True, "user_id": target_user_id, **result}
 
 
-@router.get("/results/me")
-def results_me(user: dict = Depends(get_current_user)) -> dict[str, Any]:
-    supabase = get_supabase_admin()
-    items = get_eligible_recruitments(user["id"], supabase)
+@router.get(
+    "/results/me",
+    summary="Get eligible and conditional results for the current user",
+)
+async def results_me(user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    try:
+        supabase = await get_supabase_admin_async()
+        items = await get_eligible_recruitments_async(user["id"], supabase)
+    except DatabaseError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Eligibility results unavailable") from exc
     return {"items": items, "count": len(items)}
 
 
-@router.get("/results/me/all")
-def results_me_all(user: dict = Depends(get_current_user)) -> dict[str, Any]:
-    supabase = get_supabase_admin()
-    items = get_all_eligibility_results(user["id"], supabase)
+@router.get(
+    "/results/me/all",
+    summary="Get all eligibility results for the current user",
+)
+async def results_me_all(user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    try:
+        supabase = await get_supabase_admin_async()
+        items = await get_all_eligibility_results_async(user["id"], supabase)
+    except DatabaseError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Eligibility results unavailable") from exc
     return {"items": items, "count": len(items)}

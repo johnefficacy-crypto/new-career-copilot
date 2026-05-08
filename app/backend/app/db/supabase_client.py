@@ -1,4 +1,4 @@
-from supabase import Client, create_client
+from supabase import AsyncClient, Client, acreate_client, create_client
 
 from app.core.config import get_settings
 
@@ -26,4 +26,15 @@ def get_supabase_public() -> Client:
     return create_client(
         settings.NEXT_PUBLIC_SUPABASE_URL,
         settings.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    )
+
+
+async def get_supabase_admin_async() -> AsyncClient:
+    if not settings.NEXT_PUBLIC_SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE_KEY:
+        raise RuntimeError(
+            "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY"
+        )
+    return await acreate_client(
+        settings.NEXT_PUBLIC_SUPABASE_URL,
+        settings.SUPABASE_SERVICE_ROLE_KEY,
     )
