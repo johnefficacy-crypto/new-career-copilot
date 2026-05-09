@@ -7,9 +7,9 @@ import PublicRoutes from "./routes/publicRoutes";
 export default function App() {
   return (
     <Routes>
-      <PublicRoutes />
-      <AppRoutes />
-      <AdminRoutes />
+      {PublicRoutes()}
+      {AppRoutes()}
+      {AdminRoutes()}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
