@@ -23,7 +23,8 @@ from typing import Any
 from supabase import AsyncClient, Client
 
 from app.core.error_utils import log_warning_with_context
-from app.db.utils import safe_select
+from app.core.errors import DatabaseError
+from app.db.utils import require_select, safe_select
 from .engine import check_eligibility_batch
 from app.profile.eligibility_mapper import build_user_eligibility_profile
 from .schemas import (
@@ -75,7 +76,7 @@ def run_eligibility_for_user(
             "alerts_inserted": 0,
             "errors": ["Profile not found"],
         }
-    profile_rows = safe_select(supabase, "profiles", "*", id=user_id)
+    profile_rows = require_select(supabase, "profiles", "*", id=user_id)
     profile = UserProfile(**(profile_rows[0] if profile_rows else {"id": user_id, "category": mapped.get("reservations", {}).get("category"), "domicile_state": mapped.get("location", {}).get("state"), "date_of_birth": mapped.get("identity", {}).get("dob"), "nationality": mapped.get("identity", {}).get("nationality")}))
 
     education = [UserEducation(**row) for row in (mapped.get("education") or [])]
@@ -125,24 +126,6 @@ def run_eligibility_for_user(
                 recruitments!inner ( status, publish_status, organizations ( state ) ),
                 age_criteria ( min_age, max_age, cutoff_date ),
                 education_criteria ( min_qualification_level, min_percentage, allowed_disciplines ),
-                certification_criteria ( mandatory, certifications ( name, issuer, aliases, exam_families, sectors, qualification_levels ) ),
-                attempt_limits ( category, max_attempts )
-                """
-            )
-            .in_("recruitments.status", ["open", "upcoming"])
-            .in_("recruitments.publish_status", ["verified", "published"])
-            .execute()
-        )
-    except Exception:
-        posts_resp = (
-            supabase.table("posts")
-            .select(
-                """
-                id,
-                recruitment_id,
-                recruitments!inner ( status, publish_status, organizations ( state ) ),
-                age_criteria ( min_age, max_age, cutoff_date ),
-                education_criteria ( min_qualification_level, min_percentage, allowed_disciplines ),
                 certification_criteria ( mandatory, certifications ( name, issuer ) ),
                 attempt_limits ( category, max_attempts )
                 """
@@ -151,16 +134,10 @@ def run_eligibility_for_user(
             .in_("recruitments.publish_status", ["verified", "published"])
             .execute()
         )
-    try:
         posts: list[dict[str, Any]] = posts_resp.data or []
     except Exception as exc:  # noqa: BLE001
-        return {
-            "processed": 0,
-            "eligible": 0,
-            "conditional": 0,
-            "alerts_inserted": 0,
-            "errors": [f"Failed to load posts: {exc}"],
-        }
+        log_warning_with_context(logger, "eligibility.posts_fetch_required", exc, user_id=user_id)
+        raise DatabaseError("Failed required select on posts") from exc
 
     # ── 3. Map to PostCriteria ─────────────────────────────────────────────
     post_criteria_list: list[PostCriteria] = []
@@ -336,8 +313,9 @@ async def run_eligibility_for_user_async(
 ) -> dict[str, Any]:
     """Compatibility async API for FastAPI endpoints.
 
-    Note: recompute path still uses sync Supabase writes for correctness.
-    This wrapper intentionally executes synchronously and returns awaitable shape.
+    Note: recompute path intentionally remains sync for write-path safety and
+    deterministic behavior across eligibility_results + alert upserts.
+    This is an async compatibility wrapper, not true async DB I/O.
     """
     return run_eligibility_for_user(user_id, supabase)
 
