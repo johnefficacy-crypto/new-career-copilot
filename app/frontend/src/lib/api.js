@@ -1,11 +1,10 @@
 // Thin API client for Career Copilot backend.
 // Auth tokens come from Supabase Auth (managed by lib/supabase.js).
 
+import { BACKEND_URL } from "../shared/config/env";
 import { supabase } from "./supabase";
 
-const API_URL = process.env.REACT_APP_BACKEND_URL;
-
-if (!API_URL) {
+if (!BACKEND_URL) {
   // eslint-disable-next-line no-console
   console.warn("Missing REACT_APP_BACKEND_URL — frontend cannot reach the API.");
 }
@@ -32,7 +31,7 @@ function formatApiErrorDetail(detail) {
 }
 
 export async function apiFetch(path, options = {}) {
-  if (!API_URL) {
+  if (!BACKEND_URL) {
     throw new Error("Missing REACT_APP_BACKEND_URL. Set it in frontend .env before running the app.");
   }
   const token = await getAccessToken();
@@ -41,7 +40,7 @@ export async function apiFetch(path, options = {}) {
     ...(options.headers || {}),
   };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${BACKEND_URL}${path}`, {
     ...options,
     headers,
   });
@@ -61,6 +60,7 @@ export const api = {
   get: (p) => apiFetch(p),
   post: (p, body) => apiFetch(p, { method: "POST", body: JSON.stringify(body || {}) }),
   put: (p, body) => apiFetch(p, { method: "PUT", body: JSON.stringify(body || {}) }),
+  delete: (p) => apiFetch(p, { method: "DELETE" }),
   del: (p) => apiFetch(p, { method: "DELETE" }),
 };
 

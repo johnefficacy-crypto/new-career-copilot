@@ -1,0 +1,6 @@
+import React from "react";
+
+export function Section({ title, helper, children }) { return <div className="border-t border-border pt-5 first:border-0 first:pt-0"><h2 className="font-heading text-xl font-semibold">{title}</h2><p className="text-xs text-muted-foreground mb-3">{helper}</p><div className="space-y-3">{children}</div></div>; }
+export function Grid({ children }) { return <div className="grid md:grid-cols-2 gap-4">{children}</div>; }
+export function Chips({ options, values = [], onToggle }) { return <div className="grid gap-2">{options.map((o) => <button key={o} type="button" onClick={() => onToggle(o)} className={`text-left px-3 py-2 rounded-lg border ${values.includes(o) ? "border-clay-500 bg-clay-50" : "border-border"}`}>{o.replaceAll("_", " ")}</button>)}</div>; }
+export function SimpleList({ rows, onDelete, render }) { return <div className="space-y-2">{rows?.length ? rows.map((r) => <div key={r.id} className="flex items-center justify-between border rounded-lg px-3 py-2 text-sm"><span>{render(r)}</span><button type="button" className="text-xs link-under" onClick={() => onDelete(r.id)}>Remove</button></div>) : <div className="text-xs text-muted-foreground">Not provided</div>}</div>; }
