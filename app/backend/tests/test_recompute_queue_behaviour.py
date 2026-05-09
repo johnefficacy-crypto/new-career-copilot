@@ -1,4 +1,6 @@
-from app.notifications.recompute_worker import claim_pending_recomputes, drain_recompute_queue
+import asyncio
+
+from app.notifications.recompute_worker import claim_pending_recomputes, drain_recompute_queue, drain_recompute_queue_async
 from app.eligibility.recompute_queue import enqueue_eligibility_recompute
 from app.api import admin_scrape
 from app.core.errors import DatabaseError
@@ -124,3 +126,31 @@ def test_admin_queue_counts_pending(monkeypatch):
     monkeypatch.setattr(admin_scrape, "get_supabase_admin", lambda: sb)
     out=admin_scrape.eligibility_queue(_admin={"id":"a"})
     assert out["recompute_backlog"]==1
+
+
+def test_async_worker_blocked_without_safe_runner():
+    sb = SB()
+    out = asyncio.run(drain_recompute_queue_async(sb, limit=1))
+    assert out["blocked"] is True
+    assert out["checked"] == 0
+
+
+def test_async_worker_processes_multiple_rows_with_limit():
+    sb = SB()
+    sb.db["eligibility_recompute_queue"] = [
+        {"id": "1", "user_id": "u1", "status": "pending", "attempt_count": 0},
+        {"id": "2", "user_id": "u2", "status": "pending", "attempt_count": 0},
+    ]
+    active = {"n": 0, "max": 0}
+
+    async def _runner(*_a, **_k):
+        active["n"] += 1
+        active["max"] = max(active["max"], active["n"])
+        await asyncio.sleep(0)
+        active["n"] -= 1
+        return {"eligible": 1, "conditional": 0}
+
+    out = asyncio.run(drain_recompute_queue_async(sb, limit=10, concurrency_limit=1, recompute_runner=_runner))
+    assert out["checked"] == 2
+    assert out["completed"] == 2
+    assert active["max"] <= 1
