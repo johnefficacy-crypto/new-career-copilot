@@ -56,6 +56,14 @@ Improve throughput/responsiveness for sequential Supabase I/O workloads.
 - Performance gains are measured and documented.
 - No behavioral regression versus the sync baseline.
 
+### Implementation status (verified May 9, 2026)
+- `supabase==2.29.0` is installed with async support (`acreate_client` / `AsyncClient`) and the backend client factory exposes `get_supabase_admin_async()`.
+- Eligibility **result read** helpers use true async Supabase calls when given an async client:
+  - `get_eligible_recruitments_async`
+  - `get_all_eligibility_results_async`
+- Eligibility **recompute** remains a compatibility async wrapper around sync runner writes to preserve deterministic write ordering and existing safety semantics.
+- Existing read query batching remains in place (notably `.in_(...)` on posts/recruitment-linked criteria). No additional round-trip reduction was introduced in this pass.
+
 ---
 
 ## 4) Enhance documentation
