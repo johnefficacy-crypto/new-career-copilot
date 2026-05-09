@@ -200,6 +200,32 @@ def admin_organizations(_admin: dict = Depends(require_permission("organizations
     return {"items": items}
 
 
+def _normalize_timeline_event(row: dict):
+    return {
+        "id": row.get("id"),
+        "event_type": row.get("action") or "unknown",
+        "actor": {"id": row.get("actor_id"), "email": row.get("actor_email")} if row.get("actor_id") or row.get("actor_email") else None,
+        "created_at": row.get("created_at"),
+        "before": row.get("old_value"),
+        "after": row.get("new_value"),
+        "notes": row.get("notes"),
+    }
+
+
+@router.get("/admin/sources/{source_id}/audit")
+def source_audit_timeline(source_id: str, _admin: dict = Depends(require_permission("sources.manage"))):
+    sb = get_supabase_admin()
+    rows = sb.table("admin_audit_logs").select("id,action,actor_id,actor_email,old_value,new_value,notes,created_at").eq("entity_type", "source").eq("entity_id", source_id).order("created_at", desc=False).limit(500).execute().data or []
+    return {"items": [_normalize_timeline_event(r) for r in rows]}
+
+
+@router.get("/admin/organizations/{organization_id}/audit")
+def organization_audit_timeline(organization_id: str, _admin: dict = Depends(require_permission("organizations.manage"))):
+    sb = get_supabase_admin()
+    rows = sb.table("admin_audit_logs").select("id,action,actor_id,actor_email,old_value,new_value,notes,created_at").eq("entity_type", "organization").eq("entity_id", organization_id).order("created_at", desc=False).limit(500).execute().data or []
+    return {"items": [_normalize_timeline_event(r) for r in rows]}
+
+
 _ALLOWED_STATUS={"upcoming","open","closed","result_declared"}
 
 def _validate_common(payload: dict):

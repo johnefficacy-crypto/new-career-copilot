@@ -529,7 +529,7 @@ def eligibility_queue(_admin: dict = Depends(require_permission("scraper.manage"
 
     pending_rows = (
         supabase.table("scrape_queue")
-        .select("id, source_name, extracted_data, confidence_score, scraped_at")
+        .select("id, source_name, source_url, extracted_data, extracted_fields, raw_payload, confidence_score, scraped_at, status, reviewed_at, reviewer_notes, promoted_recruitment_id")
         .eq("status", "pending")
         .order("scraped_at", desc=True)
         .limit(50)
@@ -540,13 +540,24 @@ def eligibility_queue(_admin: dict = Depends(require_permission("scraper.manage"
 
     def _shape(p: dict[str, Any]) -> dict[str, Any]:
         d = p.get("extracted_data") or {}
+        normalized = p.get("extracted_fields") if isinstance(p.get("extracted_fields"), dict) else None
         return {
             "id": p["id"],
             "slug": p["id"],
             "recruitment": (d.get("title") if isinstance(d, dict) else None) or p.get("source_name"),
             "source": p.get("source_name"),
+            "source_url": p.get("source_url"),
             "confidence": float(p.get("confidence_score") or 0),
             "added": p.get("scraped_at"),
+            "status": p.get("status"),
+            "reviewed_at": p.get("reviewed_at"),
+            "reviewer_notes": p.get("reviewer_notes"),
+            "promoted_recruitment_id": p.get("promoted_recruitment_id"),
+            "raw_extracted_item": d if isinstance(d, dict) else {},
+            "normalized_item": normalized if isinstance(normalized, dict) else (d if isinstance(d, dict) else {}),
+            "previous_extraction": p.get("raw_payload") if isinstance(p.get("raw_payload"), dict) else None,
+            "promoted_recruitment_snapshot": None,
+            "confidence_history": None,
         }
 
     promoted_24h = (
