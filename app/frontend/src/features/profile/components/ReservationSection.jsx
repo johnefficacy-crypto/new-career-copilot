@@ -1,0 +1,8 @@
+import React from "react";
+import { CheckboxField, InputField, SelectField } from "../../../shared/ui";
+import { CATEGORY_OPTIONS, INDIAN_STATE_OPTIONS, PWBD_OPTIONS } from "../../../lib/profileFields";
+import { Grid, Section } from "./shared";
+
+export default function ReservationSection({ form, set }) {
+  return <Section title="Reservation & domicile" helper="Impacts reservation and state-specific eligibility rules."><Grid><SelectField label="Category" value={form.category || ""} onChange={(e) => set("category", e.target.value)}>{CATEGORY_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}</SelectField><SelectField label="PwBD status" value={form.pwbd_status || ""} onChange={(e) => set("pwbd_status", e.target.value)}>{PWBD_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}</SelectField><SelectField label="Domicile state" value={form.state || ""} onChange={(e) => set("state", e.target.value)}><option value="">Not provided</option>{INDIAN_STATE_OPTIONS.map((v) => <option key={v} value={v}>{v.replaceAll("_", " ")}</option>)}</SelectField><InputField label="Nationality" value={form.nationality || ""} onChange={(e) => set("nationality", e.target.value)} placeholder="Not provided" /><CheckboxField label="Ex-serviceman" checked={!!form.ex_serviceman} onChange={(e) => set("ex_serviceman", e.target.checked)} /><InputField label="Service years" value={form.service_years || ""} onChange={(e) => set("service_years", e.target.value)} placeholder="Not provided" /><CheckboxField label="Government employee" checked={!!form.govt_employee} onChange={(e) => set("govt_employee", e.target.checked)} /></Grid></Section>;
+}
