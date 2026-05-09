@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from app.db.utils import safe_select
+from app.db.utils import require_select, safe_select
 
 def _norm_cat(v):
     return (v or "").strip().lower() or None
 
 def build_user_eligibility_profile(supabase, user_id: str) -> dict:
-    p = (safe_select(supabase, "profiles", "*", id=user_id) or [{}])[0]
-    loc = (safe_select(supabase, "aspirant_location", "state,district,is_rural,domicile_certificate", user_id=user_id) or [{}])[0]
-    res = (safe_select(supabase, "aspirant_reservations", "category,sub_category,is_pwd,pwd_type,is_ex_serviceman", user_id=user_id) or [{}])[0]
-    edu = safe_select(supabase, "aspirant_education", "level,degree,stream,graduation_year,percentage,cgpa,is_completed", user_id=user_id)
+    p = (require_select(supabase, "profiles", "*", id=user_id) or [{}])[0]
+    loc = (require_select(supabase, "aspirant_location", "state,district,is_rural,domicile_certificate", user_id=user_id) or [{}])[0]
+    res = (require_select(supabase, "aspirant_reservations", "category,sub_category,is_pwd,pwd_type,is_ex_serviceman", user_id=user_id) or [{}])[0]
+    edu = require_select(supabase, "aspirant_education", "level,degree,stream,graduation_year,percentage,cgpa,is_completed", user_id=user_id)
     certs = safe_select(supabase, "aspirant_certifications", "certification_name,issuing_body,year_completed,is_active", user_id=user_id)
     exp = safe_select(supabase, "aspirant_experience", "sector,role,organization,start_date,end_date,years_experience", user_id=user_id)
     prefs = (safe_select(supabase, "aspirant_preferences", "target_exams,preferred_states,preferred_sectors,willing_to_relocate,study_mode,study_hours_per_day", user_id=user_id) or [{}])[0]
