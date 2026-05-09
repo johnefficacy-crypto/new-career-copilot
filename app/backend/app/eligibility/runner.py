@@ -336,8 +336,9 @@ async def run_eligibility_for_user_async(
 ) -> dict[str, Any]:
     """Compatibility async API for FastAPI endpoints.
 
-    Note: recompute path still uses sync Supabase writes for correctness.
-    This wrapper intentionally executes synchronously and returns awaitable shape.
+    Note: recompute path intentionally remains sync for write-path safety and
+    deterministic behavior across eligibility_results + alert upserts.
+    This is an async compatibility wrapper, not true async DB I/O.
     """
     return run_eligibility_for_user(user_id, supabase)
 
