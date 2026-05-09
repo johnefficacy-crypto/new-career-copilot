@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useRef } from "react";
 import DecisionBar from "./DecisionBar";
 import { StatusBadge } from "../../../shared/ui";
+import { useFocusTrap } from "../../../shared/a11y/useFocusTrap";
 
 function Row({ label, value }) {
   if (value == null || value === "") return null;
@@ -8,6 +9,10 @@ function Row({ label, value }) {
 }
 
 export default function EligibilityReviewDrawer({ item, open, onClose, busy, onPromote, onReject }) {
+  const containerRef = useRef(null);
+  const closeButtonRef = useRef(null);
+  useFocusTrap({ active: open && !!item, containerRef, onEscape: onClose, initialFocusRef: closeButtonRef });
+
   if (!open || !item) return null;
   const confidence = Number(item.confidence || 0);
   const hasSource = Boolean(item.source);
@@ -17,10 +22,10 @@ export default function EligibilityReviewDrawer({ item, open, onClose, busy, onP
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
-      <aside className="relative w-full max-w-xl bg-[#FBF6EF] border-l border-border h-full overflow-y-auto flex flex-col">
+      <aside ref={containerRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="eligibility-review-title" className="relative w-full max-w-xl bg-[#FBF6EF] border-l border-border h-full overflow-y-auto flex flex-col">
         <div className="p-4 border-b border-border flex items-start justify-between gap-3">
-          <div><div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Eligibility review</div><h2 className="font-heading text-xl font-semibold mt-1">{item.recruitment || "Untitled recruitment"}</h2></div>
-          <button className="btn btn-ghost text-xs" onClick={onClose}>Close</button>
+          <div><div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Eligibility review</div><h2 id="eligibility-review-title" className="font-heading text-xl font-semibold mt-1">{item.recruitment || "Untitled recruitment"}</h2></div>
+          <button ref={closeButtonRef} className="btn btn-ghost text-xs" onClick={onClose}>Close</button>
         </div>
         <div className="p-4 space-y-4 flex-1">
           <Row label="Source" value={item.source || "—"} />

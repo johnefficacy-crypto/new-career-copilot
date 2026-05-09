@@ -1,12 +1,22 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import SourceHealthBadge from "../../features/admin/sources/SourceHealthBadge";
 import { api } from "../../lib/api";
+import { useFocusTrap } from "../../shared/a11y/useFocusTrap";
 import { AdminTable, EmptyState, ErrorState, InputField, LoadingSkeleton, RowActions, StatusBadge } from "../../shared/ui";
+
+function SourceDetailsDialog({ source, result, onClose }) {
+  const panelRef = useRef(null);
+  const closeRef = useRef(null);
+  useFocusTrap({ active: !!source, containerRef: panelRef, onEscape: onClose, initialFocusRef: closeRef });
+  if (!source) return null;
+
+  return <div className="fixed inset-0 z-50 flex items-center justify-center p-4"><div className="absolute inset-0 bg-black/30" onClick={onClose} /><aside ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="source-details-title" className="relative w-full max-w-lg rounded-xl border border-border bg-[#FBF6EF] p-4 space-y-2"><div className="flex items-start justify-between gap-3"><h2 id="source-details-title" className="font-heading text-lg">{source.org || source.source_name} details</h2><button ref={closeRef} className="btn btn-ghost text-xs" onClick={onClose}>Close</button></div><div className="text-xs space-y-1 text-muted-foreground"><div>notification_url: {source.notification_url || "—"}</div><div>last_error: {source.last_error || "—"}</div><div>notes: {source.notes || "—"}</div>{result && <div className="p-2 rounded border border-border bg-white/60 text-foreground">verify checks={JSON.stringify(result.checks || [])} warnings={JSON.stringify(result.warnings || [])} errors={JSON.stringify(result.errors || [])}</div>}</div></aside></div>;
+}
 
 export default function AdminSources() {
   const [items, setItems] = useState([]);
   const [resultById, setResultById] = useState({});
-  const [openDetails, setOpenDetails] = useState({});
+  const [selectedDetails, setSelectedDetails] = useState(null);
   const [form, setForm] = useState({ source_name: "", official_url: "" });
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(true);
@@ -32,8 +42,8 @@ export default function AdminSources() {
     { key: "last_success", header: "Last success", render: (s) => s.last_success_at || "—" },
     { key: "fails", header: "Fails", render: (s) => s.consecutive_fails || 0 },
     { key: "active", header: "Active", render: (s) => <StatusBadge status={s.is_active ? "active" : "disabled"} label={s.is_active ? "Active" : "Inactive"} /> },
-    { key: "details", header: "Details", render: (s) => <div><button className="text-xs link-under" onClick={() => setOpenDetails((o) => ({ ...o, [s.id]: !o[s.id] }))}>{openDetails[s.id] ? "Hide details" : "Show details"}</button>{openDetails[s.id] && <div className="mt-2 text-xs space-y-1 text-muted-foreground"><div>notification_url: {s.notification_url || "—"}</div><div>last_error: {s.last_error || "—"}</div><div>notes: {s.notes || "—"}</div>{resultById[s.id] && <div className="p-2 rounded border border-border bg-white/60 text-foreground">verify checks={JSON.stringify(resultById[s.id].checks || [])} warnings={JSON.stringify(resultById[s.id].warnings || [])} errors={JSON.stringify(resultById[s.id].errors || [])}</div>}</div>}</div> },
+    { key: "details", header: "Details", render: (s) => <button className="text-xs link-under" onClick={() => setSelectedDetails(s.id)}>Show details</button> },
   ];
 
-  return <div className="space-y-4" data-testid="admin-sources"><h1 className="font-heading text-2xl">Sources trust</h1><div className="grid grid-cols-2 gap-3 text-xs"><div className="soft-card p-3">Sources needing review: <b>{summary.needsReview}</b></div><div className="soft-card p-3">Recently failed sources: <b>{summary.failed}</b></div></div>{msg && <div className="soft-card p-2 text-xs">{msg}</div>}<div className="soft-card p-3 grid md:grid-cols-3 gap-3 items-end"><InputField label="Source name" value={form.source_name} onChange={(e) => setForm({ ...form, source_name: e.target.value })} /><InputField label="Official URL" value={form.official_url} onChange={(e) => setForm({ ...form, official_url: e.target.value })} /><button className="btn btn-primary" onClick={create}>Create Source</button></div>{loading ? <LoadingSkeleton variant="table" /> : null}{!loading && error ? <ErrorState title="Failed to load sources" message={error.message} onRetry={load} /> : null}{!loading && !error && items.length === 0 ? <EmptyState title="No sources found" description="Create a source to begin trust verification." /> : null}{!loading && !error && items.length > 0 ? <AdminTable columns={columns} rows={items} getRowKey={(s) => s.id} renderRowActions={(s) => <RowActions groupLabel={`Row actions for ${s.org || s.source_name || "source"}`} actions={[{ label: "Verify", ariaLabel: `Verify source ${s.org || s.source_name}`, onClick: () => verify(s.id) }, { label: s.is_active ? "Deactivate" : "Activate", ariaLabel: `${s.is_active ? "Deactivate" : "Activate"} source ${s.org || s.source_name}`, onClick: () => toggle(s.id, !!s.is_active) }]} />} /> : null}</div>;
+  return <div className="space-y-4" data-testid="admin-sources"><h1 className="font-heading text-2xl">Sources trust</h1><div className="grid grid-cols-2 gap-3 text-xs"><div className="soft-card p-3">Sources needing review: <b>{summary.needsReview}</b></div><div className="soft-card p-3">Recently failed sources: <b>{summary.failed}</b></div></div>{msg && <div className="soft-card p-2 text-xs">{msg}</div>}<div className="soft-card p-3 grid md:grid-cols-3 gap-3 items-end"><InputField label="Source name" value={form.source_name} onChange={(e) => setForm({ ...form, source_name: e.target.value })} /><InputField label="Official URL" value={form.official_url} onChange={(e) => setForm({ ...form, official_url: e.target.value })} /><button className="btn btn-primary" onClick={create}>Create Source</button></div>{loading ? <LoadingSkeleton variant="table" /> : null}{!loading && error ? <ErrorState title="Failed to load sources" message={error.message} onRetry={load} /> : null}{!loading && !error && items.length === 0 ? <EmptyState title="No sources found" description="Create a source to begin trust verification." /> : null}{!loading && !error && items.length > 0 ? <AdminTable columns={columns} rows={items} getRowKey={(s) => s.id} renderRowActions={(s) => <RowActions groupLabel={`Row actions for ${s.org || s.source_name || "source"}`} actions={[{ label: "Verify", ariaLabel: `Verify source ${s.org || s.source_name}`, onClick: () => verify(s.id) }, { label: s.is_active ? "Deactivate" : "Activate", ariaLabel: `${s.is_active ? "Deactivate" : "Activate"} source ${s.org || s.source_name}`, onClick: () => toggle(s.id, !!s.is_active) }]} />} /> : null}<SourceDetailsDialog source={items.find((s) => s.id === selectedDetails)} result={resultById[selectedDetails]} onClose={() => setSelectedDetails(null)} /></div>;
 }
