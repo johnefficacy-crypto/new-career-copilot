@@ -8,6 +8,7 @@ export default function RecruitmentTrustActions({ row, onAction }) {
 
   return (
     <RowActions
+      groupLabel={`Row actions for ${row.name}`}
       actions={[
         { label: "Validate", ariaLabel: `Validate ${row.name}`, onClick: () => onAction(row.id, "validate-publish") },
         { label: "Verify", ariaLabel: `Verify ${row.name}`, onClick: () => onAction(row.id, "verify") },
