@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState,} from "react";
 import { Loader2, Save } from "lucide-react";
 import { FormProvider, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -24,7 +24,7 @@ export default function Profile() {
   const state = useProfileData();
   const methods = useForm({ resolver: zodResolver(profileSchema), defaultValues: {} });
 
-  useEffect(() => {
+  useEffect(() => {    
     methods.reset(state.form || {});
   }, [state.form]);
 
