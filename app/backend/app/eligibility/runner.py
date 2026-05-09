@@ -17,6 +17,8 @@ verdicts; this module just shuttles data.
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -55,6 +57,23 @@ def _first(value: Any) -> Any:
     return value
 
 
+def _stable_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _profile_hash(mapped_profile: dict[str, Any]) -> str:
+    payload = {
+        "identity": mapped_profile.get("identity") or {},
+        "reservations": mapped_profile.get("reservations") or {},
+        "location": mapped_profile.get("location") or {},
+        "education": sorted(mapped_profile.get("education") or [], key=lambda r: _stable_json(r)),
+        "certifications": sorted(mapped_profile.get("certifications") or [], key=lambda r: _stable_json(r)),
+        "attempts": sorted(mapped_profile.get("attempts") or [], key=lambda r: _stable_json(r)),
+        "credentials": sorted(mapped_profile.get("credentials") or [], key=lambda r: _stable_json(r)),
+    }
+    return hashlib.sha256(_stable_json(payload).encode("utf-8")).hexdigest()
+
+
 def run_eligibility_for_user(
     user_id: str,
     supabase: Client,
@@ -68,6 +87,7 @@ def run_eligibility_for_user(
 
     # ── 1. Load user data ──────────────────────────────────────────────────
     mapped = build_user_eligibility_profile(supabase, user_id)
+    profile_hash = _profile_hash(mapped)
     if not mapped.get("identity"):
         return {
             "processed": 0,
@@ -188,12 +208,27 @@ def run_eligibility_for_user(
         pc.required_exam_keys = required_map.get(pc.recruitment_id, [])
 
     # ── 5. Run batch engine ────────────────────────────────────────────────
+    existing_rows = (
+        supabase.table("eligibility_results")
+        .select("post_id, recruitment_id, profile_hash, computed_at")
+        .eq("user_id", user_id)
+        .execute()
+        .data
+        or []
+    )
+    existing_by_post = {row.get("post_id"): row for row in existing_rows if row.get("post_id")}
+    skip_ids = {
+        pc.post_id
+        for pc in post_criteria_list
+        if (existing_by_post.get(pc.post_id) or {}).get("profile_hash") == profile_hash
+    }
+    to_compute = [pc for pc in post_criteria_list if pc.post_id not in skip_ids]
     results = check_eligibility_batch(
         profile,
         education,
         exam_attempts,
         exam_credentials,
-        post_criteria_list,
+        to_compute,
         user_certifications=user_certifications,
     )
 
@@ -208,6 +243,7 @@ def run_eligibility_for_user(
             "is_conditional": r.result.is_conditional,
             "fail_reasons": r.result.fail_reasons,
             "computed_at": now,
+            "profile_hash": profile_hash,
         }
         for r in results
     ]
@@ -300,6 +336,7 @@ def run_eligibility_for_user(
 
     return {
         "processed": len(results),
+        "skipped": len(skip_ids),
         "eligible": eligible,
         "conditional": conditional,
         "alerts_inserted": alerts_inserted,
