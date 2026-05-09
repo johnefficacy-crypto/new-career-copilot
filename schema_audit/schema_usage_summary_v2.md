@@ -63,64 +63,64 @@ Schema file: `D:\GovtExamAgent\ccp-mainbuild-v1\app\docs\supabase(Govt Exam copi
 - `user_subscriptions` (table) — runtime: app/backend/app/api/payments.py
 - `vacancies` (table) — runtime: app/backend/app/api/canonical.py; app/backend/app/api/placeholders.py; app/backend/app/eligibility/runner.py; app/backend/app/scraping/extractor.py; app/backend/app/scraping/schemas.py; app/frontend/src/lib/recruitmentRanking.js; app/frontend/src/pages/ExamDetail.jsx; app/frontend/src/pages/Exams.jsx
 
-## migration_only_or_indirect (37)
+## migration_only_or_indirect (5)
 
-- `aggregator_listings` (table) — migrations: app/supabase/migrations/044_aggregator_candidate_layers.sql
-- `ai_action_policies` (table) — migrations: app/supabase/migrations/035_ai_action_policies.sql
-- `ai_jobs` (table) — migrations: app/supabase/migrations/020_ai_infrastructure.sql
-- `ai_prompt_versions` (table) — migrations: app/supabase/migrations/020_ai_infrastructure.sql
-- `ai_review_queue` (table) — migrations: app/supabase/migrations/020_ai_infrastructure.sql
-- `alert_events` (table) — migrations: app/supabase/migrations/003_v_notification_feed.sql; app/supabase/migrations/010_notification_alerts_unique_fanout.sql
-- `candidate_observations` (table) — migrations: app/supabase/migrations/044_aggregator_candidate_layers.sql
-- `chat_sessions` (table) — migrations: app/supabase/migrations/039_ai_chat_setup.sql
-- `community_channels` (table) — migrations: app/supabase/migrations/050_community_foundation.sql
-- `community_replies` (table) — migrations: app/supabase/migrations/050_community_foundation.sql
-- `community_reports` (table) — migrations: app/supabase/migrations/050_community_foundation.sql
-- `community_spaces` (table) — migrations: app/supabase/migrations/050_community_foundation.sql
-- `community_threads` (table) — migrations: app/supabase/migrations/050_community_foundation.sql
-- `community_votes` (table) — migrations: app/supabase/migrations/050_community_foundation.sql
-- `education_authorities` (table) — migrations: app/supabase/migrations/047_education_authority_grading.sql
-- `embeddings` (table) — migrations: app/supabase/migrations/030_embeddings.sql
-- `enrollments` (table) — migrations: app/supabase/migrations/049_marketplace_setup.sql
-- `form_submissions` (table) — migrations: app/supabase/migrations/027_user_events_and_form_submissions.sql
-- `forum_comment_upvotes` (table) — migrations: app/supabase/migrations/040_forum_setup.sql
-- `forum_reports` (table) — migrations: app/supabase/migrations/041_forum_moderation_queue.sql
-- `forum_reputation` (table) — migrations: app/supabase/migrations/040_forum_setup.sql
-- `forum_saved_posts` (table) — migrations: app/supabase/migrations/040_forum_setup.sql
-- `grading_conversion_rules` (table) — migrations: app/supabase/migrations/047_education_authority_grading.sql
-- `instructor_payouts` (table) — migrations: app/supabase/migrations/049_marketplace_setup.sql
-- `lesson_progress` (table) — migrations: app/supabase/migrations/049_marketplace_setup.sql
-- `listing_observations` (table) — migrations: app/supabase/migrations/044_aggregator_candidate_layers.sql
-- `mock_subject_breakdowns` (table) — migrations: app/supabase/migrations/034_mock_tests.sql
-- `notification_group_state` (table) — migrations: app/supabase/migrations/048_notification_group_state.sql
-- `notification_templates` (table) — migrations: app/supabase/migrations/037_runbook_schema.sql
-- `recruitment_candidates` (table) — migrations: app/supabase/migrations/044_aggregator_candidate_layers.sql
-- `recruitment_events` (table) — migrations: app/supabase/migrations/076_recruitment_events.sql
-- `source_observations` (table) — migrations: app/supabase/migrations/009_v_admin_queue_review.sql; app/supabase/migrations/018_admin_queue_evidence_view.sql
-- `study_weeks` (table) — migrations: app/supabase/migrations/020_ai_infrastructure.sql
-- `user_events` (table) — migrations: app/supabase/migrations/027_user_events_and_form_submissions.sql; app/supabase/migrations/028_user_recruitment_state.sql; app/supabase/migrations/031_apply_tracker.sql
-- `user_next_actions` (table) — migrations: app/supabase/migrations/020_ai_infrastructure.sql
-- `user_recruitment_feedback` (table) — migrations: app/supabase/migrations/045_user_recruitment_feedback.sql
-- `user_targets` (table) — migrations: app/supabase/migrations/028_user_recruitment_state.sql
+- `alert_events` (table) — migrations: app/supabase/migrations/002_core_runtime_schema.sql; app/supabase/migrations/006_core_views.sql; app/supabase/migrations/007_core_triggers_and_functions.sql
+- `embeddings` (table) — migrations: app/supabase/migrations/001_extensions_and_types.sql
+- `notification_group_state` (table) — migrations: app/supabase/migrations/002_core_runtime_schema.sql
+- `recruitment_field_diffs` (table) — migrations: app/supabase/migrations/002_core_runtime_schema.sql
+- `source_observations` (table) — migrations: app/supabase/migrations/002_core_runtime_schema.sql; app/supabase/migrations/006_core_views.sql
 
-## docs_only_review (16)
+## docs_only_review (48)
 
-- `alert_deliveries` (table) — docs: docs/schema/supabase -Schema.md
-- `career_progression` (table) — docs: docs/schema/supabase -Schema.md
-- `educational_qualifications` (table) — docs: docs/schema/supabase -Schema.md
-- `exam_stages` (table) — docs: docs/schema/supabase -Schema.md
-- `probation_details` (table) — docs: docs/schema/supabase -Schema.md
-- `recruitment_field_diffs` (table) — docs: docs/schema/supabase -Schema.md
-- `recruitment_versions` (table) — docs: docs/schema/supabase -Schema.md
-- `scrape_pdf_cache` (table) — docs: docs/schema/supabase -Schema.md
-- `scrape_source_etags` (table) — docs: docs/schema/supabase -Schema.md
-- `service_bonds` (table) — docs: docs/schema/supabase -Schema.md
-- `source_health_metrics` (table) — docs: docs/schema/supabase -Schema.md
-- `source_registry_backup_before_bulk_merge` (table) — docs: docs/schema/supabase -Schema.md
-- `source_registry_conflict_backup` (table) — docs: docs/schema/supabase -Schema.md
-- `study_logs` (table) — docs: docs/schema/supabase -Schema.md
-- `training_details` (table) — docs: docs/schema/supabase -Schema.md
-- `user_notification_prefs` (table) — docs: docs/schema/supabase -Schema.md
+- `aggregator_listings` (table) — docs: docs/engineering/aggregator-first-ingestion-strategy.md; docs/engineering/source-intelligence.md; docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `ai_action_policies` (table) — docs: docs/engineering/admin-strategy.md; docs/engineering/ai-strategy.md; docs/product/roadmap.md; docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `ai_jobs` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `ai_prompt_versions` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `ai_review_queue` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `alert_deliveries` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `candidate_observations` (table) — docs: docs/engineering/aggregator-first-ingestion-strategy.md; docs/engineering/source-intelligence.md; docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `career_progression` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `chat_sessions` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `community_channels` (table) — docs: docs/product/roadmap.md; docs/schema/supabase -Schema.md
+- `community_replies` (table) — docs: docs/product/roadmap.md; docs/schema/supabase -Schema.md
+- `community_reports` (table) — docs: docs/product/roadmap.md; docs/schema/supabase -Schema.md
+- `community_spaces` (table) — docs: docs/product/roadmap.md; docs/schema/supabase -Schema.md
+- `community_threads` (table) — docs: docs/product/roadmap.md; docs/schema/supabase -Schema.md
+- `community_votes` (table) — docs: docs/product/roadmap.md; docs/schema/supabase -Schema.md
+- `education_authorities` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `educational_qualifications` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `enrollments` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `exam_stages` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `form_submissions` (table) — docs: docs/00-ai-context.md; docs/engineering/domain-model.md; docs/product/roadmap.md; docs/schema/supabase -Schema.md
+- `forum_comment_upvotes` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `forum_reports` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `forum_reputation` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `forum_saved_posts` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `grading_conversion_rules` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `instructor_payouts` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `lesson_progress` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `listing_observations` (table) — docs: docs/engineering/aggregator-first-ingestion-strategy.md; docs/engineering/source-intelligence.md; docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `mock_subject_breakdowns` (table) — docs: docs/schema/supabase -Schema.md
+- `notification_templates` (table) — docs: docs/engineering/admin-strategy.md; docs/feature-registry.md; docs/schema/supabase -Schema.md
+- `probation_details` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `recruitment_candidates` (table) — docs: docs/engineering/aggregator-first-ingestion-strategy.md; docs/engineering/source-intelligence.md; docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `recruitment_events` (table) — docs: docs/engineering/aggregator-first-ingestion-strategy.md; docs/schema/supabase -Schema.md
+- `recruitment_versions` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `scrape_pdf_cache` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `scrape_source_etags` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `service_bonds` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `source_health_metrics` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `source_registry_backup_before_bulk_merge` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `source_registry_conflict_backup` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `study_logs` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `study_weeks` (table) — docs: docs/schema/supabase -Schema.md
+- `training_details` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `user_events` (table) — docs: docs/00-ai-context.md; docs/engineering/domain-model.md; docs/product/roadmap.md; docs/schema/supabase -Schema.md
+- `user_next_actions` (table) — docs: docs/schema/supabase -Schema.md
+- `user_notification_prefs` (table) — docs: docs/schema/clean-supabase-baseline-plan.md; docs/schema/supabase -Schema.md
+- `user_recruitment_feedback` (table) — docs: docs/schema/supabase -Schema.md
+- `user_targets` (table) — docs: docs/engineering/domain-model.md; docs/schema/supabase -Schema.md
 
 ## schema_only_candidate (0)
 
