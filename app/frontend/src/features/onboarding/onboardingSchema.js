@@ -29,6 +29,7 @@ export const onboardingSchema = z.object({
   try { parseYear(v.qualification_year); } catch { ctx.addIssue({ code: 'custom', path: ['qualification_year'], message: 'Passing year is invalid' }); }
   if (v.marks_type === 'percentage' && parseOptionalNumber(v.percentage) == null) ctx.addIssue({ code: 'custom', path: ['percentage'], message: 'Percentage is required' });
   if (v.marks_type === 'cgpa' && parseOptionalNumber(v.cgpa) == null) ctx.addIssue({ code: 'custom', path: ['cgpa'], message: 'CGPA is required' });
+  if ((v.goal_exams?.length || 0) + (v.preferred_sectors?.length || 0) === 0) ctx.addIssue({ code: 'custom', path: ['goal_exams'], message: 'Select at least one target exam family or preferred sector' });
   const weekly = parseOptionalNumber(v.weekly_hours_goal);
   if (weekly != null && weekly <= 0) ctx.addIssue({ code: 'custom', path: ['weekly_hours_goal'], message: 'Weekly hours goal must be positive' });
   const targetYear = parseOptionalNumber(v.target_exam_year);
