@@ -282,6 +282,12 @@ CREATE TABLE public.certifications (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
   name text NOT NULL,
   issuer text,
+  aliases ARRAY NOT NULL DEFAULT '{}'::text[],
+  exam_families ARRAY NOT NULL DEFAULT '{}'::text[],
+  sectors ARRAY NOT NULL DEFAULT '{}'::text[],
+  qualification_levels ARRAY NOT NULL DEFAULT '{}'::text[],
+  certification_type text,
+  is_active boolean NOT NULL DEFAULT true,
   CONSTRAINT certifications_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.chat_sessions (
@@ -458,6 +464,7 @@ CREATE TABLE public.eligibility_recompute_queue (
   attempt_count integer NOT NULL DEFAULT 0,
   last_error text,
   next_attempt_at timestamp with time zone,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   CONSTRAINT eligibility_recompute_queue_pkey PRIMARY KEY (id),
   CONSTRAINT eligibility_recompute_queue_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id),
   CONSTRAINT eligibility_recompute_queue_recruitment_id_fkey FOREIGN KEY (recruitment_id) REFERENCES public.recruitments(id)
@@ -471,6 +478,7 @@ CREATE TABLE public.eligibility_results (
   fail_reasons ARRAY DEFAULT '{}'::text[],
   computed_at timestamp with time zone DEFAULT now(),
   is_conditional boolean NOT NULL DEFAULT false,
+  profile_hash text,
   CONSTRAINT eligibility_results_pkey PRIMARY KEY (id),
   CONSTRAINT eligibility_results_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id),
   CONSTRAINT eligibility_results_post_id_fkey FOREIGN KEY (post_id) REFERENCES public.posts(id),
