@@ -10,6 +10,8 @@ export const adminTrustService = {
   verifySource: (id) => api.post(`/api/admin/sources/${id}/verify`, {}),
   activateSource: (id) => api.post(`/api/admin/sources/${id}/activate`, {}),
   deactivateSource: (id) => api.post(`/api/admin/sources/${id}/deactivate`, {}),
+  sourceAudit: (id) => api.get(`/api/admin/sources/${id}/audit`),
+  organizationAudit: (id) => api.get(`/api/admin/organizations/${id}/audit`),
 
   listRecruitments: () => api.get("/api/admin/recruitments"),
   updateRecruitment: (id, body) => api.put(`/api/admin/recruitments/${id}`, body),
