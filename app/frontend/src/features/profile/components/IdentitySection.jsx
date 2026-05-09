@@ -1,8 +1,11 @@
 import React from "react";
+import { useFormContext } from "react-hook-form";
 import { InputField, SelectField } from "../../../shared/ui";
 import { GENDER_OPTIONS } from "../../../lib/profileFields";
 import { Grid, Section } from "./shared";
 
-export default function IdentitySection({ form, set }) {
-  return <Section title="Identity" helper="Used for deterministic identity checks."><Grid><InputField label="Name" value={form.name || ""} onChange={(e) => set("name", e.target.value)} /><InputField label="Phone" value={form.phone || ""} onChange={(e) => set("phone", e.target.value)} placeholder="Not provided" /><SelectField label="Gender" value={form.gender || ""} onChange={(e) => set("gender", e.target.value)}>{GENDER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</SelectField><InputField label="Date of birth" value={form.date_of_birth || ""} onChange={(e) => set("date_of_birth", e.target.value)} placeholder="YYYY-MM-DD" /></Grid></Section>;
+export default function IdentitySection() {
+  const { register, formState: { errors, touchedFields } } = useFormContext();
+  const err = (k) => touchedFields[k] ? errors[k]?.message : undefined;
+  return <Section title="Identity" helper="Used for deterministic identity checks."><Grid><InputField label="Name" {...register("name")} error={err("name")} /><InputField label="Phone" {...register("phone")} placeholder="Not provided" /><SelectField label="Gender" {...register("gender")} error={err("gender")}><option value="">Not provided</option>{GENDER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</SelectField><InputField label="Date of birth" {...register("date_of_birth")} error={err("date_of_birth")} placeholder="YYYY-MM-DD" /></Grid></Section>;
 }

@@ -6,6 +6,7 @@ import "./index.css";
 import App from "./App";
 import { AuthProvider } from "./lib/authContext";
 import { queryClient } from "./shared/api/queryClient";
+import { ToastProvider } from "./shared/ui";
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
@@ -13,7 +14,9 @@ root.render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
-          <App />
+          <ToastProvider>
+            <App />
+          </ToastProvider>
         </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>

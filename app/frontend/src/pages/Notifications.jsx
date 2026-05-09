@@ -1,10 +1,13 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bell } from "lucide-react";
 import FilterToolbar from "../features/notifications/components/FilterToolbar";
 import NotificationList from "../features/notifications/components/NotificationList";
 import useNotifications from "../features/notifications/hooks/useNotifications";
 import { EmptyState, ErrorState, LoadingSkeleton } from "../shared/ui";
+
+const FILTERS_KEY = "ccp.notifications.filters.v1";
+const DEFAULT_FILTERS = { unreadOnly: false, priority: "", type: "" };
 
 function routeForNotification(n) {
   const t = n.type || n.alert_type;
@@ -19,8 +22,12 @@ function routeForNotification(n) {
 
 export default function Notifications() {
   const nav = useNavigate();
-  const [filters, setFilters] = useState({ unreadOnly: false, priority: "", type: "" });
+  const [filters, setFilters] = useState(() => {
+    try { return { ...DEFAULT_FILTERS, ...(JSON.parse(localStorage.getItem(FILTERS_KEY) || "{}") || {}) }; } catch { return DEFAULT_FILTERS; }
+  });
   const { items, loading, error, reload, markRead, markAllRead } = useNotifications(filters);
+
+  useEffect(() => { localStorage.setItem(FILTERS_KEY, JSON.stringify(filters)); }, [filters]);
 
   const unreadCount = useMemo(() => items.filter((x) => !x.read).length, [items]);
 
@@ -40,7 +47,7 @@ export default function Notifications() {
         <div className="flex gap-2"><a className="btn btn-ghost" href="/app/notifications/preferences">Preferences</a><button className="btn btn-ghost" onClick={markAllRead}>Mark all read</button></div>
       </div>
 
-      <FilterToolbar filters={filters} onChange={setFilters} />
+      <FilterToolbar filters={filters} onChange={setFilters} onReset={() => setFilters(DEFAULT_FILTERS)} />
 
       {loading ? <LoadingSkeleton variant="card" /> : null}
       {!loading && error ? <ErrorState title="Unable to load notifications" message={error.message || "Please try again."} onRetry={reload} /> : null}
