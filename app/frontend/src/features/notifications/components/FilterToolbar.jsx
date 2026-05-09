@@ -1,7 +1,7 @@
 import React from "react";
 import { CheckboxField, SelectField } from "../../../shared/ui";
 
-export default function FilterToolbar({ filters, onChange }) {
+export default function FilterToolbar({ filters, onChange, onReset }) {
   const set = (key, value) => onChange({ ...filters, [key]: value });
 
   return (
@@ -29,6 +29,7 @@ export default function FilterToolbar({ filters, onChange }) {
         <option value="monitor_result">Monitor result</option>
         <option value="apply_deadline_urgent">Deadline urgent</option>
       </SelectField>
+      <button type="button" className="btn btn-ghost" onClick={onReset}>Reset filters</button>
     </div>
   );
 }
