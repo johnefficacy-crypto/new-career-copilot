@@ -1,6 +1,7 @@
 from app.notifications.recompute_worker import claim_pending_recomputes, drain_recompute_queue
 from app.eligibility.recompute_queue import enqueue_eligibility_recompute
 from app.api import admin_scrape
+from app.core.errors import DatabaseError
 
 class E:
     def __init__(self,data=None,count=None): self.data=data; self.count=count
@@ -102,6 +103,21 @@ def test_two_workers_do_not_claim_same_row(monkeypatch):
     assert out1["completed"] == 1
     assert out2["checked"] == 0
     assert out2["completed"] == 0
+
+def test_worker_records_failure_metadata_on_database_error(monkeypatch):
+    sb = SB()
+    sb.db["eligibility_recompute_queue"]=[{"id":"1","user_id":"u1","status":"pending","attempt_count":0}]
+    monkeypatch.setattr(
+        "app.notifications.recompute_worker.run_eligibility_for_user",
+        lambda *_a, **_k: (_ for _ in ()).throw(DatabaseError("db down")),
+    )
+    out = drain_recompute_queue(sb, limit=1)
+    row = sb.db["eligibility_recompute_queue"][0]
+    assert out["failed"] == 1
+    assert row["status"] == "pending"
+    assert row["attempt_count"] == 1
+    assert "db down" in (row.get("last_error") or "")
+    assert row.get("next_attempt_at")
 
 def test_admin_queue_counts_pending(monkeypatch):
     sb=SB(); sb.db["eligibility_recompute_queue"]=[{"id":"1","status":"pending"},{"id":"2","status":"queued"}]

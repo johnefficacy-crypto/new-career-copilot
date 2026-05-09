@@ -1,7 +1,9 @@
 import asyncio
+import pytest
 from app.profile.eligibility_mapper import build_user_eligibility_profile
 from app.db.utils import safe_select
 from app.api import canonical
+from app.core.errors import DatabaseError
 
 class _Exec:
     def __init__(self,data): self.data=data
@@ -56,3 +58,21 @@ class _ErrSB:
 
 def test_safe_select_returns_empty_on_failure():
     assert safe_select(_ErrSB(), "profiles", "*", id="u1") == []
+
+
+def test_mapper_raises_database_error_on_critical_read_failure():
+    with pytest.raises(DatabaseError):
+        build_user_eligibility_profile(_ErrSB(), "u1")
+
+
+def test_mapper_optional_tables_fallback_to_empty_lists():
+    sb = _SB()
+    del sb.db["aspirant_certifications"]
+    del sb.db["aspirant_experience"]
+    del sb.db["aspirant_exam_attempts"]
+    del sb.db["aspirant_exam_credentials"]
+    out = build_user_eligibility_profile(sb, "u1")
+    assert out["certifications"] == []
+    assert out["experience"] == []
+    assert out["attempts"] == []
+    assert out["credentials"] == []
