@@ -1,7 +1,9 @@
 import asyncio
+import pytest
 from app.profile.eligibility_mapper import build_user_eligibility_profile
 from app.db.utils import safe_select
 from app.api import canonical
+from app.core.errors import DatabaseError
 
 class _Exec:
     def __init__(self,data): self.data=data
@@ -29,7 +31,7 @@ class _SB:
     def table(self,name): return _Q(name,self.db)
 
 def test_mapper_contract_and_precedence():
-    out = build_user_eligibility_profile(_SB(), "u1")
+    out = build_user_eligibility_profile(_SB(), "u1").model_dump()
     assert out["location"]["state"] == "y"
     assert out["reservations"]["category"] == "sc"
     assert out["education"][0]["cgpa"] == 8.0
@@ -56,3 +58,41 @@ class _ErrSB:
 
 def test_safe_select_returns_empty_on_failure():
     assert safe_select(_ErrSB(), "profiles", "*", id="u1") == []
+
+
+def test_mapper_raises_database_error_on_critical_read_failure():
+    with pytest.raises(DatabaseError):
+        build_user_eligibility_profile(_ErrSB(), "u1")
+
+
+def test_mapper_optional_tables_fallback_to_empty_lists():
+    sb = _SB()
+    del sb.db["aspirant_certifications"]
+    del sb.db["aspirant_experience"]
+    del sb.db["aspirant_exam_attempts"]
+    del sb.db["aspirant_exam_credentials"]
+    out = build_user_eligibility_profile(sb, "u1").model_dump()
+    assert out["certifications"] == []
+    assert out["experience"] == []
+    assert out["attempts"] == []
+    assert out["credentials"] == []
+
+
+def test_mapper_deduplicates_certifications_and_attempts_and_credentials():
+    sb = _SB()
+    sb.db["aspirant_certifications"].append({"user_id":"u1","certification_name":"gate","issuing_body":None,"is_active":True})
+    sb.db["aspirant_exam_attempts"].append({"user_id":"u1","exam_id":"e1","attempts_used":3})
+    sb.db["aspirant_exam_credentials"].append({"user_id":"u1","exam_key":"gate"})
+    out = build_user_eligibility_profile(sb, "u1").model_dump()
+    assert len(out["certifications"]) == 1
+    assert len(out["attempts"]) == 1
+    assert len(out["credentials"]) == 1
+
+
+def test_invalid_numeric_rows_skipped():
+    sb = _SB()
+    sb.db["aspirant_education"].append({"user_id":"u1","level":"x","percentage":120})
+    sb.db["aspirant_exam_attempts"].append({"user_id":"u1","exam_id":"e2","attempts_used":-1})
+    out = build_user_eligibility_profile(sb, "u1").model_dump()
+    assert all((e.get("percentage") or 0) <= 100 for e in out["education"])
+    assert all(a["attempts_used"] >= 0 for a in out["attempts"])

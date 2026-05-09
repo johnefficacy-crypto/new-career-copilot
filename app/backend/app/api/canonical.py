@@ -789,7 +789,7 @@ async def enqueue_recompute(user: dict = Depends(get_current_user)):
 @router_profile.get("/eligibility-input/me")
 async def eligibility_input_me(user: dict = Depends(get_current_user)):
     sb = get_supabase_admin()
-    return build_user_eligibility_profile(sb, user["id"])
+    return build_user_eligibility_profile(sb, user["id"]).model_dump()
 
 
 # ════════════════════════════════════════════════════════════════════════════
