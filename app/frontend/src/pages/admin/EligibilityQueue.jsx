@@ -2,11 +2,12 @@ import React, { useEffect, useState } from "react";
 import EligibilityReviewDrawer from "../../features/admin/eligibility/EligibilityReviewDrawer";
 import { api } from "../../lib/api";
 import { EmptyState, ErrorState, LoadingSkeleton, StatusBadge } from "../../shared/ui";
+import useAdminAction from "../../features/admin/shared/useAdminAction";
 
 export default function AdminEligibilityQueue() {
   const [d, setD] = useState(null);
-  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+  const { runAction, busyKey, error: actionError } = useAdminAction();
   const [error, setError] = useState(null);
   const [selected, setSelected] = useState(null);
 
@@ -18,23 +19,11 @@ export default function AdminEligibilityQueue() {
   useEffect(() => { load().catch((e) => setError(e)); }, []);
 
   async function promote(item) {
-    setBusy(true); setMsg(null);
-    try {
-      const r = await api.post(`/api/admin/scrape/items/${item.id}/promote`, {});
-      setMsg(`Promoted "${item.recruitment}" → recruitment ${(r.recruitment_id || "unknown").slice(0, 8)}… · ${r.alerts_sent} alerts sent`);
-      await load();
-      setSelected(null);
-    } catch (e) { setMsg(`promote failed: ${e.message}`); } finally { setBusy(false); }
+    await runAction({ key: `promote-${item.id}`, confirm: `Promote "${item.recruitment}"?`, successMessage: `Promoted ${item.recruitment}`, action: async () => { const r = await api.post(`/api/admin/scrape/items/${item.id}/promote`, {}); setMsg(`Promoted "${item.recruitment}" → recruitment ${(r.recruitment_id || "unknown").slice(0, 8)}… · ${r.alerts_sent} alerts sent`); await load(); setSelected(null); } });
   }
 
   async function reject(item, notes) {
-    setBusy(true); setMsg(null);
-    try {
-      await api.post(`/api/admin/scrape/items/${item.id}/reject`, { notes });
-      setMsg(`Rejected "${item.recruitment}".`);
-      await load();
-      setSelected(null);
-    } catch (e) { setMsg(`reject failed: ${e.message}`); } finally { setBusy(false); }
+    await runAction({ key: `reject-${item.id}`, confirm: `Reject "${item.recruitment}"?`, successMessage: `Rejected ${item.recruitment}`, action: async () => { await api.post(`/api/admin/scrape/items/${item.id}/reject`, { notes }); setMsg(`Rejected "${item.recruitment}".`); await load(); setSelected(null); } });
   }
 
   if (!d && !error) return <div data-testid="admin-elig-loading"><LoadingSkeleton variant="table" /></div>;
@@ -48,7 +37,7 @@ export default function AdminEligibilityQueue() {
         <p className="text-muted-foreground mt-1">Scraped items wait here for an explicit admin decision. The deterministic eligibility engine never auto-promotes — that's the trust gate.</p>
       </div>
 
-      {msg && <div data-testid="admin-elig-msg" className="rounded-xl bg-sage-100/60 border border-sage-200 p-3 text-xs">{msg}</div>}
+      {msg && <div data-testid="admin-elig-msg" className="rounded-xl bg-sage-100/60 border border-sage-200 p-3 text-xs">{msg}</div>}{actionError && <div className="text-xs text-destructive">{actionError.message}</div>}
 
       <div className="grid md:grid-cols-3 gap-4"><Stat label="Pending" value={d.pending.length} /><Stat label="Promoted (24h)" value={d.promoted_24h} /><Stat label="Rejected (24h)" value={d.rejected_24h} /></div>
 
@@ -57,7 +46,7 @@ export default function AdminEligibilityQueue() {
         {d.pending.length === 0 ? <EmptyState title="Queue is empty" description="Run a dry-scrape from Scraper monitor to populate it." actionLabel="Open scraper" actionHref="/admin/scraper" /> : <ul className="space-y-2">{d.pending.map((p) => { const conf = Number(p.confidence || 0); return <li key={p.id} className="border-b border-border py-1 last:border-0"><button type="button" className="w-full flex items-center justify-between gap-3 flex-wrap hover:bg-clay-50/50 px-2 py-2 rounded text-left" data-testid={`queue-item-${p.id}`} aria-label={`Open eligibility review for ${p.recruitment}`} onClick={() => setSelected(p)}><div className="min-w-[280px]"><div className="font-semibold">{p.recruitment}</div><div className="text-xs text-muted-foreground">Source: {p.source || "—"}</div>{!p.source && <div className="text-xs text-destructive">Source missing</div>}</div><div className="text-xs text-muted-foreground"><StatusBadge status={conf < 0.7 ? "pending" : "verified"} label={`${Math.round(conf * 100)}% confidence`} />{" · "}{p.added ? new Date(p.added).toLocaleString("en-IN") : "—"}{conf < 0.7 && <div className="text-destructive mt-1">Low confidence</div>}</div></button></li>; })}</ul>}
       </div>
 
-      <EligibilityReviewDrawer open={!!selected} item={selected} busy={busy} onClose={() => setSelected(null)} onPromote={() => promote(selected)} onReject={(notes) => reject(selected, notes)} />
+      <EligibilityReviewDrawer open={!!selected} item={selected} busy={Boolean(busyKey)} onClose={() => setSelected(null)} onPromote={() => promote(selected)} onReject={(notes) => reject(selected, notes)} />
     </div>
   );
 }

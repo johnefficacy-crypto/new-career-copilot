@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 import RecruitmentEditPanel from "../../features/admin/recruitments/RecruitmentEditPanel";
 import RecruitmentTrustActions from "../../features/admin/recruitments/RecruitmentTrustActions";
+import useAdminAction from "../../features/admin/shared/useAdminAction";
 import { api } from "../../lib/api";
 import { AdminTable, EmptyState, ErrorState, LoadingSkeleton, StatusBadge } from "../../shared/ui";
 
 export default function AdminRecruitments() {
   const [items, setItems] = useState([]);
-  const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const { runAction, busyKey, error: actionError } = useAdminAction();
 
   const load = async () => {
     setLoading(true); setError(null);
@@ -20,25 +21,9 @@ export default function AdminRecruitments() {
 
   useEffect(() => { load(); }, []);
 
-  const act = async (id, a) => {
-    try {
-      const r = await api.post(`/api/admin/recruitments/${id}/${a}`, {});
-      setMsg(`${a} ok: ${JSON.stringify(r)}`);
-    } catch (e) {
-      setMsg(`${a} failed: ${e.message}`);
-    }
-    await load();
-  };
+  const act = async (id, a, opts = {}) => runAction({ key: `${a}-${id}`, confirm: opts.confirm, successMessage: `${a} completed`, errorMessage: `${a} failed`, action: async () => { await api.post(`/api/admin/recruitments/${id}/${a}`, {}); await load(); } });
 
-  const save = async (id, payload) => {
-    try {
-      await api.put(`/api/admin/recruitments/${id}`, payload || {});
-      setMsg("recruitment saved (critical changes may move to needs_review)");
-      await load();
-    } catch (e) {
-      setMsg(e.message);
-    }
-  };
+  const save = async (id, payload) => runAction({ key: `save-${id}`, successMessage: "Recruitment saved", errorMessage: "Save failed", action: async () => { await api.put(`/api/admin/recruitments/${id}`, payload || {}); await load(); } });
 
   const summary = useMemo(() => ({ unpublished: items.filter((i) => i.publish_status !== "published").length, blocked: items.filter((i) => (i.blocking_issues || []).length > 0).length }), [items]);
 
@@ -60,12 +45,12 @@ export default function AdminRecruitments() {
     <div className="space-y-4">
       <h1 className="font-heading text-2xl">Recruitment trust workflow</h1>
       <div className="grid grid-cols-2 gap-3 text-xs"><div className="soft-card p-3">Unpublished recruitments: <b>{summary.unpublished}</b></div><div className="soft-card p-3">Publish blocked: <b>{summary.blocked}</b></div></div>
-      {msg && <div className="soft-card p-2 text-xs" data-testid="admin-recruitments-message">{msg}</div>}
+      {actionError && <div className="soft-card p-2 text-xs" data-testid="admin-recruitments-message">{actionError.message}</div>}
 
       {loading ? <LoadingSkeleton variant="table" /> : null}
       {!loading && error ? <ErrorState title="Failed to load recruitments" message={error.message} onRetry={load} /> : null}
       {!loading && !error && items.length === 0 ? <EmptyState title="No recruitments found" description="No admin recruitment rows are available right now." /> : null}
-      {!loading && !error && items.length > 0 ? <AdminTable columns={columns} rows={items} getRowKey={(r) => r.id} emptyMessage="No recruitments to display." renderRowActions={(row) => <RecruitmentTrustActions row={row} onAction={act} />} /> : null}
+      {!loading && !error && items.length > 0 ? <AdminTable columns={columns} rows={items} getRowKey={(r) => r.id} emptyMessage="No recruitments to display." renderRowActions={(row) => <RecruitmentTrustActions row={row} onAction={act} busyKey={busyKey} />} /> : null}
     </div>
   );
 }
