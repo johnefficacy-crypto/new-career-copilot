@@ -2,6 +2,7 @@ import React, { useRef } from "react";
 import DecisionBar from "./DecisionBar";
 import { StatusBadge } from "../../../shared/ui";
 import { useFocusTrap } from "../../../shared/a11y/useFocusTrap";
+import EvidenceDiffViewer from "./EvidenceDiffViewer";
 
 function Row({ label, value }) {
   if (value == null || value === "") return null;
@@ -18,6 +19,7 @@ export default function EligibilityReviewDrawer({ item, open, onClose, busy, onP
   const hasSource = Boolean(item.source);
 
   const optionalKeys = ["evidence", "source_provenance", "official_url", "notification_url", "raw", "raw_payload", "snapshot_url"];
+  const timelineAction = item.status === "approved" ? "Promoted" : item.status === "rejected" ? "Rejected" : "Pending";
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -33,6 +35,8 @@ export default function EligibilityReviewDrawer({ item, open, onClose, busy, onP
           <div className="space-y-1"><div className="text-[11px] uppercase tracking-widest text-muted-foreground">Confidence</div><StatusBadge status={confidence < 0.7 ? "pending" : "verified"} label={`${Math.round(confidence * 100)}% confidence`} /></div>
           {!hasSource && <div className="text-xs text-destructive">Warning: Source missing.</div>}
           {confidence < 0.7 && <div className="text-xs text-destructive">Warning: Low confidence item.</div>}
+          <EvidenceDiffViewer extracted={item.raw_extracted_item} normalized={item.normalized_item} previous={item.previous_extraction} />
+          <div className="soft-card p-3 text-xs space-y-1"><div className="text-[11px] uppercase tracking-widest text-muted-foreground">Evidence timeline</div><div>Added: {item.added ? new Date(item.added).toLocaleString("en-IN") : "—"}</div><div>Source: {item.source || "—"}</div><div>Confidence: {Math.round(confidence * 100)}%</div><div>Action: {timelineAction}</div>{item.reviewed_at ? <div>Action time: {new Date(item.reviewed_at).toLocaleString("en-IN")}</div> : null}{item.reviewer_notes ? <div>Notes: {item.reviewer_notes}</div> : null}</div>
           {optionalKeys.map((k) => <Row key={k} label={k.replaceAll("_", " ")} value={typeof item[k] === "object" ? JSON.stringify(item[k], null, 2) : item[k]} />)}
         </div>
         <DecisionBar item={item} busy={busy} onPromote={onPromote} onReject={onReject} />
