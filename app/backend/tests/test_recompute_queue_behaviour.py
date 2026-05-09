@@ -63,6 +63,11 @@ class SB:
             def execute(self): return E(self.data)
         return R(claimed)
 
+
+class SBFailRpc(SB):
+    def rpc(self, fn, params):
+        raise RuntimeError("rpc unavailable")
+
 def test_enqueue_upserts_pending_row():
     sb=SB(); enqueue_eligibility_recompute(sb,"u1","a"); enqueue_eligibility_recompute(sb,"u1","b")
     assert len(sb.db["eligibility_recompute_queue"])==1
@@ -105,6 +110,23 @@ def test_two_workers_do_not_claim_same_row(monkeypatch):
     assert out1["completed"] == 1
     assert out2["checked"] == 0
     assert out2["completed"] == 0
+
+
+def test_claim_batches_are_disjoint_across_workers():
+    sb = SB()
+    sb.db["eligibility_recompute_queue"]=[
+        {"id":"1","user_id":"u1","status":"pending","attempt_count":0},
+        {"id":"2","user_id":"u2","status":"pending","attempt_count":0},
+    ]
+    first = claim_pending_recomputes(sb, 1)
+    second = claim_pending_recomputes(sb, 1)
+    assert {r["id"] for r in first}.isdisjoint({r["id"] for r in second})
+
+
+def test_claim_failure_returns_structured_error():
+    out = drain_recompute_queue(SBFailRpc(), limit=1)
+    assert out["checked"] == 0
+    assert "claim_error" in out
 
 def test_worker_records_failure_metadata_on_database_error(monkeypatch):
     sb = SB()

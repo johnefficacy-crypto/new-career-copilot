@@ -162,3 +162,17 @@ async def test_recompute_user_mode_audits(monkeypatch):
         and (row.get("new_value") or {}).get("mode") == "user_token"
         for row in sb.db.get("admin_audit_logs", [])
     )
+
+
+@pytest.mark.anyio
+async def test_recompute_user_mode_ignores_body_user_id(monkeypatch):
+    sb = _SB()
+    monkeypatch.setattr(eligibility_api, "_is_service_role", lambda _token: False)
+    monkeypatch.setattr(eligibility_api, "get_supabase_admin", lambda: sb)
+    monkeypatch.setattr(eligibility_api, "get_current_user", lambda _creds: {"id": "u1", "email": "u1@example.com"})
+    out = await eligibility_api.recompute(
+        request=None,
+        creds=type("Creds", (), {"credentials": "user-token"}),
+        body=eligibility_api.RecomputeBody(user_id="u2"),
+    )
+    assert out["user_id"] == "u1"
