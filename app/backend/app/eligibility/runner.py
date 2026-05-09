@@ -86,7 +86,8 @@ def run_eligibility_for_user(
     errors: list[str] = []
 
     # ── 1. Load user data ──────────────────────────────────────────────────
-    mapped = build_user_eligibility_profile(supabase, user_id)
+    mapped_model = build_user_eligibility_profile(supabase, user_id)
+    mapped = mapped_model.model_dump()
     profile_hash = _profile_hash(mapped)
     if not mapped.get("identity"):
         return {

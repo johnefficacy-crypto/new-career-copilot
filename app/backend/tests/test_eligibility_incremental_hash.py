@@ -58,7 +58,7 @@ def test_second_recompute_skips_when_hash_unchanged(monkeypatch):
     monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
     runner.run_eligibility_for_user("u1", sb)
     # seed a matching cached row with hash from current profile
-    h = runner._profile_hash(runner.build_user_eligibility_profile(sb, "u1"))
+    h = runner._profile_hash(runner.build_user_eligibility_profile(sb, "u1").model_dump())
     sb.db["eligibility_results"].append({"user_id":"u1","post_id":"p1","profile_hash":h,"computed_at":"2026-01-01T00:00:00Z"})
     out = runner.run_eligibility_for_user("u1", sb)
     assert out["skipped"] == 1

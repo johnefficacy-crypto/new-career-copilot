@@ -1,11 +1,26 @@
 from __future__ import annotations
 
+import logging
+from pydantic import ValidationError
+
 from app.db.utils import require_select, safe_select
+from app.core.errors import ValidationError as DomainValidationError
+from app.profile.eligibility_profile import (
+    AttemptRow,
+    CertificationRow,
+    CredentialRow,
+    EducationRow,
+    EligibilityProfile,
+    ExperienceRow,
+    Identity,
+    Location,
+    Preferences,
+    Reservations,
+)
 
-def _norm_cat(v):
-    return (v or "").strip().lower() or None
+logger = logging.getLogger("career_copilot.profile.eligibility_mapper")
 
-def build_user_eligibility_profile(supabase, user_id: str) -> dict:
+def build_user_eligibility_profile(supabase, user_id: str) -> EligibilityProfile:
     p = (require_select(supabase, "profiles", "*", id=user_id) or [{}])[0]
     loc = (require_select(supabase, "aspirant_location", "state,district,is_rural,domicile_certificate", user_id=user_id) or [{}])[0]
     res = (require_select(supabase, "aspirant_reservations", "category,sub_category,is_pwd,pwd_type,is_ex_serviceman", user_id=user_id) or [{}])[0]
@@ -15,25 +30,71 @@ def build_user_eligibility_profile(supabase, user_id: str) -> dict:
     prefs = (safe_select(supabase, "aspirant_preferences", "target_exams,preferred_states,preferred_sectors,willing_to_relocate,study_mode,study_hours_per_day", user_id=user_id) or [{}])[0]
     attempts = safe_select(supabase, "aspirant_exam_attempts", "exam_id,attempts_used", user_id=user_id)
     creds = safe_select(supabase, "aspirant_exam_credentials", "exam_key,score,percentile,rank_text,exam_year", user_id=user_id)
-    return {
-        "user_id": user_id,
-        "identity": {
-            "full_name": p.get("full_name"), "dob": p.get("dob") or p.get("date_of_birth"), "nationality": p.get("nationality"),
-        },
-        "location": {"state": loc.get("state") or p.get("domicile_state"), "district": loc.get("district")},
-        "reservations": {
-            "category": _norm_cat(res.get("category") or p.get("category")),
-            "is_pwd": bool(res.get("is_pwd") or p.get("pwbd_status")),
-            "pwd_type": res.get("pwd_type") or p.get("pwbd_status"),
-            "is_ex_serviceman": bool(res.get("is_ex_serviceman") if res.get("is_ex_serviceman") is not None else p.get("ex_serviceman")),
-            "govt_employee": bool(p.get("govt_employee")),
-        },
-        "education": [{**r, "percentage": float(r["percentage"]) if r.get("percentage") is not None else None, "cgpa": float(r["cgpa"]) if r.get("cgpa") is not None else None} for r in edu],
-        "certifications": [{**r, "certification_name": (r.get("certification_name") or "").strip().lower()} for r in certs if r.get("is_active", True)],
-        "experience": [{**r, "years_experience": float(r["years_experience"]) if r.get("years_experience") is not None else None} for r in exp],
-        "preferences": {
-            "target_exams": prefs.get("target_exams") or [], "preferred_states": prefs.get("preferred_states") or [], "preferred_sectors": prefs.get("preferred_sectors") or [], "willing_to_relocate": prefs.get("willing_to_relocate"), "study_mode": prefs.get("study_mode")
-        },
-        "attempts": [{"exam_id": a.get("exam_id"), "attempts_used": int(a.get("attempts_used") or 0)} for a in attempts],
-        "credentials": creds,
-    }
+    identity = Identity(full_name=p.get("full_name"), dob=p.get("dob") or p.get("date_of_birth"), nationality=p.get("nationality"))
+    if not identity.dob:
+        raise DomainValidationError("Invalid critical profile identity: missing dob/date_of_birth")
+    location = Location(state=loc.get("state") or p.get("domicile_state"), district=loc.get("district"))
+    reservations = Reservations(
+        category=res.get("category") or p.get("category"),
+        is_pwd=bool(res.get("is_pwd") or p.get("pwbd_status")),
+        pwd_type=res.get("pwd_type") or p.get("pwbd_status"),
+        is_ex_serviceman=bool(res.get("is_ex_serviceman") if res.get("is_ex_serviceman") is not None else p.get("ex_serviceman")),
+        govt_employee=bool(p.get("govt_employee")),
+    )
+    education_rows = []
+    for row in edu:
+        try:
+            education_rows.append(EducationRow(**row))
+        except ValidationError as exc:
+            logger.warning("eligibility_mapper skip education row for user=%s: %s", user_id, exc)
+    cert_rows, cert_seen = [], set()
+    for row in certs:
+        if not row.get("is_active", True):
+            continue
+        row = {**row, "certification_name": (row.get("certification_name") or "").strip().lower()}
+        key = ((row.get("certification_name") or "").strip().lower(), (row.get("issuing_body") or "").strip().lower())
+        if key in cert_seen:
+            continue
+        cert_seen.add(key)
+        cert_rows.append(CertificationRow(**row))
+    exp_rows = []
+    for row in exp:
+        try:
+            exp_rows.append(ExperienceRow(**row))
+        except ValidationError as exc:
+            logger.warning("eligibility_mapper skip experience row for user=%s: %s", user_id, exc)
+    attempt_rows, attempt_seen = [], set()
+    for row in attempts:
+        key = str(row.get("exam_id") or "").strip().lower()
+        if not key or key in attempt_seen:
+            continue
+        try:
+            attempt_rows.append(AttemptRow(exam_id=key, attempts_used=row.get("attempts_used") or 0))
+            attempt_seen.add(key)
+        except ValidationError as exc:
+            logger.warning("eligibility_mapper skip attempt row for user=%s: %s", user_id, exc)
+    cred_rows, cred_seen = [], set()
+    for row in creds:
+        key = (str(row.get("exam_key") or "").strip().lower(), row.get("exam_year"))
+        if not key[0] or key in cred_seen:
+            continue
+        cred_seen.add(key)
+        cred_rows.append(CredentialRow(exam_key=key[0], exam_year=row.get("exam_year")))
+    return EligibilityProfile(
+        user_id=user_id,
+        identity=identity,
+        location=location,
+        reservations=reservations,
+        education=education_rows,
+        certifications=cert_rows,
+        experience=exp_rows,
+        preferences=Preferences(
+            target_exams=prefs.get("target_exams") or [],
+            preferred_states=prefs.get("preferred_states") or [],
+            preferred_sectors=prefs.get("preferred_sectors") or [],
+            willing_to_relocate=prefs.get("willing_to_relocate"),
+            study_mode=prefs.get("study_mode"),
+        ),
+        attempts=attempt_rows,
+        credentials=cred_rows,
+    )
