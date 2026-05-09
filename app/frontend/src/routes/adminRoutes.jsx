@@ -17,6 +17,21 @@ import AdminMentorsPg from "../pages/admin/Mentors";
 import AdminCommunity from "../pages/admin/Community";
 import AdminAIPolicy from "../pages/admin/AIPolicy";
 
-export default function AdminRoutes() {
-  return <Route element={<ProtectedRoute role={["admin", "super_admin"]}><AdminShell /></ProtectedRoute>}><Route path="/admin" element={<AdminOverview />} /><Route path="/admin/recruitments" element={<AdminRecruitments />} /><Route path="/admin/eligibility-queue" element={<AdminEligibility />} /><Route path="/admin/sources" element={<AdminSources />} /><Route path="/admin/organizations" element={<AdminOrganizations />} /><Route path="/admin/scraper" element={<AdminScraper />} /><Route path="/admin/notifications" element={<AdminNotifications />} /><Route path="/admin/marketplace" element={<AdminMarketplace />} /><Route path="/admin/plans" element={<AdminPlans />} /><Route path="/admin/audit" element={<AdminAudit />} /><Route path="/admin/rbac" element={<AdminRBAC />} /><Route path="/admin/mentors" element={<AdminMentorsPg />} /><Route path="/admin/community" element={<AdminCommunity />} /><Route path="/admin/ai-policy" element={<AdminAIPolicy />} /></Route>;
-}
+export const adminRouteElements = (
+  <Route element={<ProtectedRoute role={["admin", "super_admin"]}><AdminShell /></ProtectedRoute>}>
+    <Route path="/admin" element={<AdminOverview />} />
+    <Route path="/admin/recruitments" element={<AdminRecruitments />} />
+    <Route path="/admin/eligibility-queue" element={<AdminEligibility />} />
+    <Route path="/admin/sources" element={<AdminSources />} />
+    <Route path="/admin/organizations" element={<AdminOrganizations />} />
+    <Route path="/admin/scraper" element={<AdminScraper />} />
+    <Route path="/admin/notifications" element={<AdminNotifications />} />
+    <Route path="/admin/marketplace" element={<AdminMarketplace />} />
+    <Route path="/admin/plans" element={<AdminPlans />} />
+    <Route path="/admin/audit" element={<AdminAudit />} />
+    <Route path="/admin/rbac" element={<AdminRBAC />} />
+    <Route path="/admin/mentors" element={<AdminMentorsPg />} />
+    <Route path="/admin/community" element={<AdminCommunity />} />
+    <Route path="/admin/ai-policy" element={<AdminAIPolicy />} />
+  </Route>
+);
