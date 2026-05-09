@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { parseOptionalNumber, parseYear } from '../../shared/forms/numberParsers';
 import { parseDateString, validateDOBRange } from '../../shared/forms/dateParsers';
 
-export const profileCoreSchema = z.object({
+export const profileSchema = z.object({
   name: z.string().trim().min(1),
   gender: z.string().optional(),
   date_of_birth: z.string().optional(),
@@ -32,7 +32,7 @@ export const profileCoreSchema = z.object({
 });
 
 export function toProfilePayload(formValues) {
-  const v = profileCoreSchema.parse(formValues);
+  const v = profileSchema.parse(formValues);
   return {
     ...v,
     date_of_birth: parseDateString(v.date_of_birth) || undefined,
