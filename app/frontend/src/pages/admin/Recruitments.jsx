@@ -1,17 +1,56 @@
 import React, { useEffect, useMemo, useState } from "react";
+import RecruitmentEditPanel from "../../features/admin/recruitments/RecruitmentEditPanel";
+import RecruitmentTrustActions from "../../features/admin/recruitments/RecruitmentTrustActions";
+import useAdminAction from "../../features/admin/shared/useAdminAction";
 import { api } from "../../lib/api";
+import { AdminTable, EmptyState, ErrorState, LoadingSkeleton, StatusBadge } from "../../shared/ui";
 
-export default function AdminRecruitments(){
-  const [items,setItems]=useState([]); const [msg,setMsg]=useState(''); const [edit,setEdit]=useState({});
-  const load=()=>api.get('/api/admin/recruitments').then(d=>setItems(d.items||[]));
-  useEffect(()=>{load().catch(()=>{});},[]);
-  const act=async(id,a)=>{try{const r=await api.post(`/api/admin/recruitments/${id}/${a}`,{}); setMsg(`${a} ok: ${JSON.stringify(r)}`);}catch(e){setMsg(`${a} failed: ${e.message}`);} await load();};
-  const save=async(id)=>{try{await api.put(`/api/admin/recruitments/${id}`, edit[id]||{}); setMsg("recruitment saved (critical changes may move to needs_review)"); await load();}catch(e){setMsg(e.message);}};
-  const summary = useMemo(()=>({unpublished: items.filter(i=>i.publish_status!=='published').length, blocked: items.filter(i=>(i.blocking_issues||[]).length>0).length}),[items]);
-  return <div className='space-y-4'><h1 className='font-heading text-2xl'>Recruitment trust workflow</h1>
-  <div className='grid grid-cols-2 gap-3 text-xs'><div className='soft-card p-3'>Unpublished recruitments: <b>{summary.unpublished}</b></div><div className='soft-card p-3'>Publish blocked: <b>{summary.blocked}</b></div></div>
-  {msg && <div className='soft-card p-2 text-xs'>{msg}</div>}
-  <div className='soft-card rounded-2xl overflow-auto'><table className='w-full text-xs'><thead><tr>{['name','publish_status','lifecycle','org verified','notification','apply','provenance','blocked','warnings','published','review_notes','actions'].map(h=><th key={h} className='text-left px-2 py-2'>{h}</th>)}</tr></thead><tbody>
-  {items.map(r=>{const canPub=(r.blocking_issues||[]).length===0; return <tr key={r.id} className='border-t'><td>{r.name}<div className='text-muted-foreground'>{r.organization}</div></td><td><span className='pill pill-amber'>{r.publish_status}</span></td><td>{r.lifecycle_status}</td><td>{String(!!r.organization_verified)}</td><td>{r.official_notification_url||'—'}</td><td>{r.official_apply_url||'—'}</td><td>{r.source_provenance}</td><td>{(r.blocking_issues||[]).join(', ')||'—'}</td><td>{(r.warnings||[]).join(', ')||'—'}</td><td>{r.published_by||'—'}<div>{r.published_at||''}</div></td><td>{r.review_notes||'—'}<div className="flex gap-1"><input className="border px-1" placeholder="name" onChange={e=>setEdit({...edit,[r.id]:{...(edit[r.id]||{}),name:e.target.value}})}/><input className="border px-1" placeholder="official apply" onChange={e=>setEdit({...edit,[r.id]:{...(edit[r.id]||{}),official_apply_url:e.target.value}})}/><button className="btn btn-ghost" onClick={()=>save(r.id)}>Save</button></div></td><td className='space-x-1'><button className='btn btn-ghost' onClick={()=>act(r.id,'validate-publish')}>Validate</button><button className='btn btn-ghost' onClick={()=>act(r.id,'verify')}>Verify</button><button disabled={!canPub} className='btn btn-primary' onClick={()=>act(r.id,'publish')}>Publish</button><button className='btn btn-ghost' onClick={()=>act(r.id,'archive')}>Archive</button><button className='btn btn-ghost' onClick={()=>act(r.id,'withdraw')}>Withdraw</button></td></tr>})}
-  </tbody></table></div></div>
+export default function AdminRecruitments() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const { runAction, busyKey, error: actionError } = useAdminAction();
+
+  const load = async () => {
+    setLoading(true); setError(null);
+    try {
+      const d = await api.get("/api/admin/recruitments");
+      setItems(d.items || []);
+    } catch (e) { setError(e); } finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const act = async (id, a, opts = {}) => runAction({ key: `${a}-${id}`, confirm: opts.confirm, successMessage: `${a} completed`, errorMessage: `${a} failed`, action: async () => { await api.post(`/api/admin/recruitments/${id}/${a}`, {}); await load(); } });
+
+  const save = async (id, payload) => runAction({ key: `save-${id}`, successMessage: "Recruitment saved", errorMessage: "Save failed", action: async () => { await api.put(`/api/admin/recruitments/${id}`, payload || {}); await load(); } });
+
+  const summary = useMemo(() => ({ unpublished: items.filter((i) => i.publish_status !== "published").length, blocked: items.filter((i) => (i.blocking_issues || []).length > 0).length }), [items]);
+
+  const columns = [
+    { key: "name", header: "Recruitment", render: (r) => <div><div className="font-medium">{r.name}</div><div className="text-muted-foreground text-xs">{r.organization}</div></div> },
+    { key: "publish_status", header: "Publish", render: (r) => <StatusBadge status={r.publish_status} label={r.publish_status} /> },
+    { key: "lifecycle_status", header: "Lifecycle", render: (r) => <StatusBadge status={r.lifecycle_status} label={r.lifecycle_status} /> },
+    { key: "organization_verified", header: "Org verified", render: (r) => <StatusBadge status={r.organization_verified ? "verified" : "pending"} label={r.organization_verified ? "Verified" : "Pending"} /> },
+    { key: "official_notification_url", header: "Notification", render: (r) => r.official_notification_url || "—" },
+    { key: "official_apply_url", header: "Apply", render: (r) => r.official_apply_url || "—" },
+    { key: "source_provenance", header: "Provenance", render: (r) => r.source_provenance || "—" },
+    { key: "blocking_issues", header: "Blocking issues", render: (r) => (r.blocking_issues || []).join(", ") || "—" },
+    { key: "warnings", header: "Warnings", render: (r) => (r.warnings || []).join(", ") || "—" },
+    { key: "published", header: "Published", render: (r) => <div>{r.published_by || "—"}<div className="text-xs text-muted-foreground">{r.published_at || ""}</div></div> },
+    { key: "review_notes", header: "Review notes", render: (r) => <div className="space-y-2"><div>{r.review_notes || "—"}</div><RecruitmentEditPanel row={r} onSave={(payload) => save(r.id, payload)} /></div> },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <h1 className="font-heading text-2xl">Recruitment trust workflow</h1>
+      <div className="grid grid-cols-2 gap-3 text-xs"><div className="soft-card p-3">Unpublished recruitments: <b>{summary.unpublished}</b></div><div className="soft-card p-3">Publish blocked: <b>{summary.blocked}</b></div></div>
+      {actionError && <div className="soft-card p-2 text-xs" data-testid="admin-recruitments-message">{actionError.message}</div>}
+
+      {loading ? <LoadingSkeleton variant="table" /> : null}
+      {!loading && error ? <ErrorState title="Failed to load recruitments" message={error.message} onRetry={load} /> : null}
+      {!loading && !error && items.length === 0 ? <EmptyState title="No recruitments found" description="No admin recruitment rows are available right now." /> : null}
+      {!loading && !error && items.length > 0 ? <AdminTable columns={columns} rows={items} getRowKey={(r) => r.id} emptyMessage="No recruitments to display." renderRowActions={(row) => <RecruitmentTrustActions row={row} onAction={act} busyKey={busyKey} />} /> : null}
+    </div>
+  );
 }
