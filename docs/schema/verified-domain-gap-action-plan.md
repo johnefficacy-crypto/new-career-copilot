@@ -379,6 +379,7 @@ After migrations and data backfill are stable:
 - Remove or isolate fallback to `user_exam_attempts`.
 - Stop relying on scalar profile education fields for canonical decisions.
 - Prefer `date_of_birth` as canonical DOB write target while reading `dob` as fallback.
+-use calender in UI for `-date-of-birth`
 
 ### P2.2 Wire profile completeness to normalized tables
 
