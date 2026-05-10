@@ -21,6 +21,16 @@ from typing import Any
 import httpx
 from supabase import Client
 
+
+def _looks_like_missing_email_sent(exc: Exception) -> bool:
+    text = str(exc)
+    return "email_sent" in text and (
+        "does not exist" in text
+        or "PGRST204" in text
+        or "schema cache" in text
+        or "42703" in text
+    )
+
 logger = logging.getLogger("career_copilot.notifications.dispatcher")
 
 
@@ -193,21 +203,27 @@ def dispatch_pending_alerts(
     if kill_switch_enabled(supabase):
         return {"checked": 0, "in_app": 0, "emailed": 0, "skipped": 0, "failed": 0, "killed": 1}
 
-    rows = (
-        supabase.table("notification_alerts")
-        .select(
-            "id, user_id, recruitment_id, alert_type, is_read, priority, email_sent, "
-            "recruitment:recruitments ( name, apply_start_date, apply_end_date, "
-            "organization:organizations ( name ) )"
+    try:
+        rows = (
+            supabase.table("notification_alerts")
+            .select(
+                "id, user_id, recruitment_id, alert_type, is_read, priority, email_sent, "
+                "recruitment:recruitments ( name, apply_start_date, apply_end_date, "
+                "organization:organizations ( name ) )"
+            )
+            .eq("email_sent", False)
+            .order("priority", desc=True)
+            .order("sent_at", desc=False, nullsfirst=False)
+            .limit(limit)
+            .execute()
+            .data
+            or []
         )
-        .eq("email_sent", False)
-        .order("priority", desc=True)
-        .order("sent_at", desc=False, nullsfirst=False)
-        .limit(limit)
-        .execute()
-        .data
-        or []
-    )
+    except Exception as exc:  # noqa: BLE001
+        if not _looks_like_missing_email_sent(exc):
+            raise
+        logger.warning("notification email dispatch skipped; notification_alerts.email_sent is missing")
+        return {"checked": 0, "in_app": 0, "emailed": 0, "skipped": 0, "failed": 0, "killed": 0}
     if not rows:
         return {"checked": 0, "in_app": 0, "emailed": 0, "skipped": 0, "failed": 0, "killed": 0}
 

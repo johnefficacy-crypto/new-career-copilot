@@ -68,10 +68,34 @@ class SBFailRpc(SB):
     def rpc(self, fn, params):
         raise RuntimeError("rpc unavailable")
 
+class QLegacyQueue(Q):
+    def insert(self, p):
+        if "attempt_count" in p:
+            raise RuntimeError("PGRST204 Could not find the 'attempt_count' column of 'eligibility_recompute_queue' in the schema cache")
+        return super().insert(p)
+
+    def update(self, p):
+        if "attempt_count" in p:
+            raise RuntimeError("PGRST204 Could not find the 'attempt_count' column of 'eligibility_recompute_queue' in the schema cache")
+        return super().update(p)
+
+class SBLegacyQueue(SB):
+    def table(self, n):
+        if n == "eligibility_recompute_queue":
+            return QLegacyQueue(n, self.db)
+        return super().table(n)
+
 def test_enqueue_upserts_pending_row():
     sb=SB(); enqueue_eligibility_recompute(sb,"u1","a"); enqueue_eligibility_recompute(sb,"u1","b")
     assert len(sb.db["eligibility_recompute_queue"])==1
     assert sb.db["eligibility_recompute_queue"][0]["reason"]=="b"
+
+def test_enqueue_falls_back_when_queue_hardening_columns_missing():
+    sb=SBLegacyQueue(); enqueue_eligibility_recompute(sb,"u1","a", metadata={"x": 1})
+    row = sb.db["eligibility_recompute_queue"][0]
+    assert row["reason"] == "a"
+    assert "attempt_count" not in row
+    assert "metadata" not in row
 
 def test_enqueue_recruitment_scope_is_idempotent():
     sb=SB(); enqueue_eligibility_recompute(sb,"u1","a", recruitment_id="r1"); enqueue_eligibility_recompute(sb,"u1","b", recruitment_id="r1")
