@@ -53,7 +53,7 @@ class SB:
         for row in self.db.get("eligibility_recompute_queue", []):
             if len(claimed) >= limit:
                 break
-            if row.get("status") == "pending":
+            if row.get("status") in {"pending", "queued"}:
                 row["status"] = "processing"
                 row["claimed_at"] = "now"
                 row["attempt_count"] = (row.get("attempt_count") or 0) + 1
@@ -120,6 +120,14 @@ def test_worker_handles_existing_completed(monkeypatch):
 def test_claim_helper_uses_rpc_p_limit():
     sb = SB()
     sb.db["eligibility_recompute_queue"]=[{"id":"1","user_id":"u1","status":"pending","attempt_count":0}]
+    rows = claim_pending_recomputes(sb, 5)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "processing"
+
+
+def test_claim_helper_accepts_queued_status_for_legacy_callers():
+    sb = SB()
+    sb.db["eligibility_recompute_queue"]=[{"id":"1","user_id":"u1","status":"queued","attempt_count":0}]
     rows = claim_pending_recomputes(sb, 5)
     assert len(rows) == 1
     assert rows[0]["status"] == "processing"
