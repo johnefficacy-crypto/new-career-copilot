@@ -172,22 +172,41 @@ def _slugify(value: str) -> str:
     return s[:64] or "plan"
 
 
+def _normalise_plan_row(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    if out.get("price_inr") is None:
+        legacy_price = out.get("price")
+        out["price_inr"] = int(float(legacy_price or 0) * 100)
+    out.setdefault("currency", "INR")
+    out["interval"] = out.get("interval") or out.get("billing_period") or "monthly"
+    out.setdefault("features", [])
+    out.setdefault("sort_order", 0)
+    out.setdefault("description", None)
+    return out
+
+
+def _list_subscription_plans(sb, *, active_only: bool) -> list[dict[str, Any]]:
+    try:
+        q = sb.table("subscription_plans").select("*").order("sort_order")
+        if active_only:
+            q = q.eq("is_active", True)
+        rows = q.execute().data or []
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("subscription_plans rich query unavailable, falling back to legacy shape: %s", exc)
+        q = sb.table("subscription_plans").select("*")
+        if active_only:
+            q = q.eq("is_active", True)
+        rows = q.execute().data or []
+    return sorted((_normalise_plan_row(r) for r in rows), key=lambda r: r.get("sort_order") or 0)
+
+
 # ─── Public — plans ───────────────────────────────────────────────────────────
 
 
 @router.get("/plans")
 def list_plans_public():
     sb = get_supabase_admin()
-    rows = (
-        sb.table("subscription_plans")
-        .select("id,name,description,price_inr,currency,interval,features,sort_order,is_active")
-        .eq("is_active", True)
-        .order("sort_order")
-        .execute()
-        .data
-        or []
-    )
-    return {"plans": rows}
+    return {"plans": _list_subscription_plans(sb, active_only=True)}
 
 
 # ─── Admin — plan CRUD ────────────────────────────────────────────────────────
@@ -196,15 +215,7 @@ def list_plans_public():
 @router.get("/admin/plans")
 def admin_list_plans(_: dict = Depends(_require_admin)):
     sb = get_supabase_admin()
-    rows = (
-        sb.table("subscription_plans")
-        .select("*")
-        .order("sort_order")
-        .execute()
-        .data
-        or []
-    )
-    return {"plans": rows}
+    return {"plans": _list_subscription_plans(sb, active_only=False)}
 
 
 @router.post("/admin/plans")

@@ -46,7 +46,100 @@ alter table public.extracted_field_evidence
   add column if not exists extracted_value jsonb;
 
 alter table public.notification_alerts
-  add column if not exists source text;
+  add column if not exists source text,
+  add column if not exists source_stage text,
+  add column if not exists dedupe_key text,
+  add column if not exists generated_at timestamptz,
+  add column if not exists title text,
+  add column if not exists body text,
+  add column if not exists metadata jsonb not null default '{}'::jsonb;
+
+alter table public.notification_generation_runs
+  add column if not exists triggered_by_user_id uuid references auth.users(id) on delete set null,
+  add column if not exists scope text,
+  add column if not exists dry_run boolean not null default true,
+  add column if not exists run_limit integer,
+  add column if not exists candidates_count integer not null default 0,
+  add column if not exists created_count integer not null default 0,
+  add column if not exists skipped_count integer not null default 0,
+  add column if not exists by_type jsonb not null default '{}'::jsonb,
+  add column if not exists finished_at timestamptz,
+  add column if not exists error_message text,
+  add column if not exists created_at timestamptz not null default now();
+
+alter table public.subscription_plans
+  add column if not exists description text,
+  add column if not exists price_inr integer,
+  add column if not exists currency text not null default 'INR',
+  add column if not exists interval text not null default 'monthly',
+  add column if not exists features jsonb not null default '[]'::jsonb,
+  add column if not exists sort_order integer not null default 0,
+  add column if not exists created_at timestamptz not null default now(),
+  add column if not exists updated_at timestamptz not null default now();
+
+alter table public.profiles
+  add column if not exists is_instructor boolean not null default false,
+  add column if not exists instructor_bio text;
+
+alter table public.courses
+  add column if not exists instructor_id uuid,
+  add column if not exists slug text,
+  add column if not exists short_description text,
+  add column if not exists thumbnail_url text,
+  add column if not exists preview_video_url text,
+  add column if not exists price_inr integer not null default 0,
+  add column if not exists original_price_inr integer,
+  add column if not exists level text not null default 'all',
+  add column if not exists language text not null default 'Hindi',
+  add column if not exists exam_tags text[] not null default '{}'::text[],
+  add column if not exists status text not null default 'draft',
+  add column if not exists total_lessons integer not null default 0,
+  add column if not exists total_duration_mins integer not null default 0,
+  add column if not exists avg_rating numeric(3,2),
+  add column if not exists total_reviews integer not null default 0,
+  add column if not exists total_enrollments integer not null default 0,
+  add column if not exists commission_pct integer not null default 20,
+  add column if not exists updated_at timestamptz default now();
+
+alter table public.course_sections
+  add column if not exists order_index integer not null default 0,
+  add column if not exists is_free_preview boolean not null default false;
+
+alter table public.lessons
+  add column if not exists type text not null default 'video',
+  add column if not exists order_index integer not null default 0,
+  add column if not exists duration_mins integer,
+  add column if not exists is_free_preview boolean not null default false,
+  add column if not exists content_url text,
+  add column if not exists content_text text;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'courses_instructor_id_fkey'
+      and conrelid = 'public.courses'::regclass
+  )
+  and exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'courses'
+      and column_name = 'instructor_id'
+  ) then
+    alter table public.courses
+      add constraint courses_instructor_id_fkey
+      foreign key (instructor_id) references public.profiles(id) on delete cascade;
+  end if;
+end $$;
+
+update public.subscription_plans
+   set price_inr = coalesce(price_inr, case when price is null then 0 else (price * 100)::integer end),
+       interval = coalesce(nullif(interval, ''), billing_period, 'monthly')
+ where price_inr is null
+    or interval is null
+    or interval = '';
 
 create index if not exists idx_scrape_queue_source_id
   on public.scrape_queue(source_id);
@@ -59,6 +152,25 @@ create index if not exists idx_scrape_queue_promoted_recruitment_id
 
 create index if not exists idx_notification_documents_content_hash
   on public.notification_documents(content_hash);
+
+create unique index if not exists notification_alerts_dedupe_key_uidx
+  on public.notification_alerts(dedupe_key)
+  where dedupe_key is not null;
+
+create index if not exists idx_notification_generation_runs_created_at
+  on public.notification_generation_runs(created_at desc);
+
+create index if not exists subscription_plans_active_idx
+  on public.subscription_plans(is_active, sort_order);
+
+create index if not exists courses_instructor_idx
+  on public.courses(instructor_id);
+
+create index if not exists courses_status_idx
+  on public.courses(status);
+
+create index if not exists courses_exam_tags_idx
+  on public.courses using gin(exam_tags);
 
 --------------------------------------------------
 -- P1.1 MULTI-UNIT RECRUITMENT SUPPORT

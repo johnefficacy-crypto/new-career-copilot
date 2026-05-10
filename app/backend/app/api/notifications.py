@@ -187,7 +187,11 @@ def admin_notifications(_admin: dict = Depends(_require_admin)) -> dict[str, Any
         )
     except Exception:
         pass
-    recent_rows = sb.table("notification_alerts").select("alert_type,source,sent_at").eq("source", "next_action_engine").limit(200).execute().data or []
+    recent_rows = []
+    try:
+        recent_rows = sb.table("notification_alerts").select("alert_type,source,sent_at").eq("source", "next_action_engine").limit(200).execute().data or []
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("admin notification next-action summary unavailable: %s", exc)
     summary = {"created": len(recent_rows), "skipped": 0, "by_type": {}}
     for r in recent_rows:
         t = r.get("alert_type") or "unknown"
@@ -204,8 +208,16 @@ def admin_notifications(_admin: dict = Depends(_require_admin)) -> dict[str, Any
             {"id": "whatsapp", "label": "WhatsApp", "active": False},
         ],
         "kill_switch_note": "Kill switch controls outbound delivery. In-app next-action generation is controlled by preferences and admin permissions.",
-        "recent_runs": sb.table("notification_generation_runs").select("*").order("created_at", desc=True).limit(20).execute().data or [],
+        "recent_runs": _recent_generation_runs(sb),
     }
+
+
+def _recent_generation_runs(sb) -> list[dict[str, Any]]:
+    try:
+        return sb.table("notification_generation_runs").select("*").order("created_at", desc=True).limit(20).execute().data or []
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("admin notification generation runs unavailable: %s", exc)
+        return []
 
 
 class KillSwitchBody(BaseModel):
