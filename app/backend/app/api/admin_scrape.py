@@ -344,6 +344,24 @@ def list_scrape_queue(
     rows = q.execute().data or []
     supabase2 = get_supabase_admin()
     existing = (supabase2.table("recruitments").select("id,name,year,official_notification_url").limit(400).execute().data or [])
+    queue_ids = [r["id"] for r in rows if r.get("id")]
+    evidence_by_queue: dict[str, dict[str, str]] = {qid: {} for qid in queue_ids}
+    if queue_ids:
+        try:
+            frows = (
+                supabase.table("extracted_field_evidence")
+                .select("scrape_queue_id, field_name, reviewer_status")
+                .in_("scrape_queue_id", queue_ids)
+                .execute()
+                .data
+                or []
+            )
+            for fr in frows:
+                qid = fr.get("scrape_queue_id")
+                if qid in evidence_by_queue:
+                    evidence_by_queue[qid][fr.get("field_name")] = fr.get("reviewer_status")
+        except Exception:
+            evidence_by_queue = {qid: {} for qid in queue_ids}
     for r in rows:
         cls = classify_item(r)
         r["relevance_category"] = r.get("relevance_category") or cls["relevance_category"]
@@ -355,17 +373,11 @@ def list_scrape_queue(
         r["duplicate_candidates"] = dups
         r["multiple_posts_detected"] = bool((ext.get("posts") if isinstance(ext, dict) else None))
         r["high_risk_fields"] = sorted(list(_HIGH_RISK_FIELDS))
-        try:
-            frows = (supabase.table("extracted_field_evidence").select("field_name, reviewer_status").eq("scrape_queue_id", r["id"]).execute().data or [])
-            reviewed = {fr.get("field_name"): fr.get("reviewer_status") for fr in frows}
-            r["field_evidence_status"] = reviewed
-            missing = [f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified", "corrected"}]
-            r["unverified_fields"] = sorted(missing)
-            r["promotable"] = len(missing) == 0
-        except Exception:
-            r["field_evidence_status"] = {}
-            r["unverified_fields"] = []
-            r["promotable"] = False
+        reviewed = evidence_by_queue.get(r.get("id"), {})
+        r["field_evidence_status"] = reviewed
+        missing = [f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified", "corrected"}]
+        r["unverified_fields"] = sorted(missing)
+        r["promotable"] = len(missing) == 0
     return {"items": rows}
 
 

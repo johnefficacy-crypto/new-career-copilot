@@ -63,7 +63,7 @@ def _verify_url(url: str):
 @router.post("/admin/sources/{source_id}/verify")
 def verify_source(source_id: str, admin: dict = Depends(require_permission("sources.manage"))):
     sb = get_supabase_admin()
-    rows = sb.table("source_registry").select("*, organizations(id, official_domain, name)").eq("id", source_id).limit(1).execute().data or []
+    rows = sb.table("source_registry").select("*").eq("id", source_id).limit(1).execute().data or []
     if not rows:
         raise HTTPException(status_code=404, detail="Source not found")
     src = rows[0]
@@ -74,7 +74,18 @@ def verify_source(source_id: str, admin: dict = Depends(require_permission("sour
         _, w2, e2, _, _ = _verify_url(src.get("notification_url"))
         warnings.extend([f"notification:{w}" for w in w2])
         errors.extend([f"notification:{e}" for e in e2])
-    org = src.get("organizations") or {}
+    org = {}
+    if src.get("organization_id"):
+        org_rows = (
+            sb.table("organizations")
+            .select("id, official_domain, name")
+            .eq("id", src["organization_id"])
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        org = org_rows[0] if org_rows else {}
     if org and org.get("official_domain"):
         host = (urlparse(src.get("official_url") or "").hostname or "").lower()
         if host and org.get("official_domain") not in host:
@@ -96,7 +107,7 @@ def verify_source(source_id: str, admin: dict = Depends(require_permission("sour
 def validate_recruitment_publish_readiness(recruitment_id: str, admin: dict):
     sb = get_supabase_admin()
     blocking, warnings = [], []
-    rec_rows = sb.table("recruitments").select("*, organizations(*), recruitment_sources(source_id, source_registry(is_verified, verification_status)), posts(id)").eq("id", recruitment_id).limit(1).execute().data or []
+    rec_rows = sb.table("recruitments").select("*, organizations(*), posts(id)").eq("id", recruitment_id).limit(1).execute().data or []
     if not rec_rows:
         raise HTTPException(status_code=404, detail="Recruitment not found")
     rec = rec_rows[0]
@@ -120,10 +131,23 @@ def validate_recruitment_publish_readiness(recruitment_id: str, admin: dict):
         blocking.append("posts_missing")
     if not rec.get("rules_unavailable") and not rec.get("min_age") and not rec.get("max_age"):
         blocking.append("eligibility_rules_missing")
-    prov = rec.get("recruitment_sources") or []
-    if not prov:
+    source = None
+    if rec.get("source_id"):
+        source_rows = (
+            sb.table("source_registry")
+            .select("id,is_verified,verification_status")
+            .eq("id", rec["source_id"])
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        source = source_rows[0] if source_rows else None
+    if not rec.get("source_id"):
         blocking.append("source_provenance_missing")
-    elif any(not (p.get("source_registry") or {}).get("is_verified") for p in prov):
+    elif not source:
+        blocking.append("source_provenance_not_found")
+    elif not source.get("is_verified"):
         blocking.append("unverified_source_provenance")
     return {"ready": len(blocking) == 0, "blocking_issues": blocking, "warnings": warnings}
 
@@ -180,22 +204,37 @@ def verify_organization(organization_id: str, admin: dict = Depends(require_perm
 @router.get("/admin/recruitments")
 def admin_recruitments(_admin: dict = Depends(require_permission("recruitments.manage"))):
     sb=get_supabase_admin()
-    rows=sb.table("recruitments").select("id,name,publish_status,status,official_notification_url,official_apply_url,published_by,published_at,review_notes,organizations(name,is_verified),recruitment_sources(source_id)").order("created_at", desc=True).limit(200).execute().data or []
+    rows=sb.table("recruitments").select("id,name,publish_status,status,official_notification_url,official_apply_url,published_by,published_at,review_notes,source_id,organizations(name,is_verified)").order("created_at", desc=True).limit(200).execute().data or []
     items=[]
     for r in rows:
-        ready=validate_recruitment_publish_readiness(r.get("id"), _admin)
+        try:
+            ready=validate_recruitment_publish_readiness(r.get("id"), _admin)
+        except Exception as exc:  # noqa: BLE001
+            ready={"blocking_issues":["readiness_check_failed"],"warnings":[str(exc)]}
         org=(r.get("organizations") or {})
-        items.append({"id":r.get("id"),"name":r.get("name"),"publish_status":r.get("publish_status"),"lifecycle_status":r.get("status"),"organization":org.get("name"),"organization_verified":org.get("is_verified"),"official_notification_url":r.get("official_notification_url"),"official_apply_url":r.get("official_apply_url"),"source_provenance":len(r.get("recruitment_sources") or []),"blocking_issues":ready.get("blocking_issues",[]),"warnings":ready.get("warnings",[]),"published_by":r.get("published_by"),"published_at":r.get("published_at"),"review_notes":r.get("review_notes")})
+        items.append({"id":r.get("id"),"name":r.get("name"),"publish_status":r.get("publish_status"),"lifecycle_status":r.get("status"),"organization":org.get("name"),"organization_verified":org.get("is_verified"),"official_notification_url":r.get("official_notification_url"),"official_apply_url":r.get("official_apply_url"),"source_provenance":1 if r.get("source_id") else 0,"blocking_issues":ready.get("blocking_issues",[]),"warnings":ready.get("warnings",[]),"published_by":r.get("published_by"),"published_at":r.get("published_at"),"review_notes":r.get("review_notes")})
     return {"items": items}
 
 @router.get("/admin/organizations")
 def admin_organizations(_admin: dict = Depends(require_permission("organizations.manage"))):
     sb = get_supabase_admin()
     rows = sb.table("organizations").select("id,name,type,state,website_url,official_domain,is_verified,trust_tier,verification_notes,verified_at").limit(200).execute().data or []
+    org_ids = [o["id"] for o in rows]
+    source_counts = {oid: 0 for oid in org_ids}
+    recruitment_counts = {oid: 0 for oid in org_ids}
+    if org_ids:
+        source_rows = sb.table("source_registry").select("id,organization_id").in_("organization_id", org_ids).execute().data or []
+        for src in source_rows:
+            if src.get("organization_id") in source_counts:
+                source_counts[src["organization_id"]] += 1
+        recruitment_rows = sb.table("recruitments").select("id,organization_id").in_("organization_id", org_ids).execute().data or []
+        for rec in recruitment_rows:
+            if rec.get("organization_id") in recruitment_counts:
+                recruitment_counts[rec["organization_id"]] += 1
     items=[]
     for o in rows:
-        src = sb.table("source_registry").select("id", count="exact").eq("organization_id", o["id"]).execute().count or 0
-        rec = sb.table("recruitments").select("id", count="exact").eq("organization_id", o["id"]).execute().count or 0
+        src = source_counts.get(o["id"], 0)
+        rec = recruitment_counts.get(o["id"], 0)
         items.append({**o, "linked_sources_count": src, "linked_recruitments_count": rec})
     return {"items": items}
 
@@ -244,7 +283,7 @@ def create_source(body: dict, admin: dict = Depends(require_permission("sources.
     sb=get_supabase_admin()
     ex=sb.table("source_registry").select("id").eq("official_url", body["official_url"]).limit(1).execute().data or []
     if ex: raise HTTPException(status_code=409, detail="official_url must be unique")
-    payload={k:v for k,v in body.items() if k in {"source_name","short_code","source_type","category","jurisdiction","state","parent_org","official_url","notification_url","rss_url","api_url","pdf_bulletin_url","adapter_type","scrape_interval_hours","tier","trust_score","anti_bot_risk","requires_playwright","requires_login","has_captcha","pdf_only","is_active","is_verified","notes","org_state","insecure_tls","selectors","requires_official_confirmation"}}
+    payload={k:v for k,v in body.items() if k in {"organization_id","source_name","short_code","source_type","category","jurisdiction","state","parent_org","official_url","notification_url","rss_url","api_url","pdf_bulletin_url","adapter_type","scrape_interval_hours","tier","trust_score","anti_bot_risk","requires_playwright","requires_login","has_captcha","pdf_only","is_active","is_verified","notes","org_state","insecure_tls","selectors","requires_official_confirmation"}}
     row=(sb.table("source_registry").insert(payload).execute().data or [{}])[0]
     _audit(sb, admin, "source.create", "source", row.get("id","new"), after_payload=payload)
     return {"ok":True,"item":row}

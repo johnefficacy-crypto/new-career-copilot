@@ -11,12 +11,18 @@ class Q:
 
 
 def _mk_rec(**kw):
-    base={"id":"r1","organization_id":"o1","organizations":{"is_verified":True},"official_notification_url":"https://x.gov/n","official_apply_url":"https://x.gov/a","status":"open","apply_start_date":"2026-05-01","apply_end_date":"2026-05-10","posts":[{"id":"p"}],"rules_unavailable":True,"recruitment_sources":[{"source_registry":{"is_verified":True}}]}
+    base={"id":"r1","organization_id":"o1","organizations":{"is_verified":True},"source_id":"s1","official_notification_url":"https://x.gov/n","official_apply_url":"https://x.gov/a","status":"open","apply_start_date":"2026-05-01","apply_end_date":"2026-05-10","posts":[{"id":"p"}],"rules_unavailable":True}
     base.update(kw);return base
 
-def _set_sb(monkeypatch, rec):
+def _set_sb(monkeypatch, rec, source=None):
+    source = {"id":"s1","is_verified":True,"verification_status":"verified"} if source is None else source
     class SB:
-        def table(self, name): return Q([rec]) if name=="recruitments" else Q([])
+        def table(self, name):
+            if name=="recruitments":
+                return Q([rec])
+            if name=="source_registry" and source:
+                return Q([source])
+            return Q([])
     monkeypatch.setattr(admin_trust, "get_supabase_admin", lambda: SB())
 
 
@@ -36,7 +42,7 @@ def test_unverified_org(monkeypatch):
     assert 'organization_unverified' in out['blocking_issues']
 
 def test_unverified_source(monkeypatch):
-    _set_sb(monkeypatch,_mk_rec(recruitment_sources=[{"source_registry":{"is_verified":False}}]))
+    _set_sb(monkeypatch,_mk_rec(), {"id":"s1","is_verified":False,"verification_status":"needs_review"})
     out=admin_trust.validate_recruitment_publish_readiness('r1',{})
     assert 'unverified_source_provenance' in out['blocking_issues']
 
