@@ -172,8 +172,27 @@ def _slugify(value: str) -> str:
     return s[:64] or "plan"
 
 
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def _is_uuid_like(value: str | None) -> bool:
+    return bool(value and _UUID_RE.match(str(value)))
+
+
+def _external_plan_id(row: dict[str, Any] | None) -> str | None:
+    if not row:
+        return None
+    return row.get("plan_code") or (str(row.get("id")) if row.get("id") else None)
+
+
 def _normalise_plan_row(row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
+    db_id = str(out["id"]) if out.get("id") is not None else None
+    out["db_id"] = db_id
+    out["id"] = _external_plan_id(out) or db_id
     if out.get("price_inr") is None:
         legacy_price = out.get("price")
         out["price_inr"] = int(float(legacy_price or 0) * 100)
@@ -183,6 +202,28 @@ def _normalise_plan_row(row: dict[str, Any]) -> dict[str, Any]:
     out.setdefault("sort_order", 0)
     out.setdefault("description", None)
     return out
+
+
+def _find_plan(sb, plan_id: str, *, active_only: bool = False) -> dict[str, Any] | None:
+    q = sb.table("subscription_plans").select("*").eq("plan_code", plan_id)
+    if active_only:
+        q = q.eq("is_active", True)
+    try:
+        rows = q.limit(1).execute().data or []
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("subscription_plans lookup by plan_code failed: %s", exc)
+        rows = []
+    if rows:
+        return _normalise_plan_row(rows[0])
+
+    if not _is_uuid_like(plan_id):
+        return None
+
+    q = sb.table("subscription_plans").select("*").eq("id", plan_id)
+    if active_only:
+        q = q.eq("is_active", True)
+    rows = q.limit(1).execute().data or []
+    return _normalise_plan_row(rows[0]) if rows else None
 
 
 def _list_subscription_plans(sb, *, active_only: bool) -> list[dict[str, Any]]:
@@ -198,6 +239,20 @@ def _list_subscription_plans(sb, *, active_only: bool) -> list[dict[str, Any]]:
             q = q.eq("is_active", True)
         rows = q.execute().data or []
     return sorted((_normalise_plan_row(r) for r in rows), key=lambda r: r.get("sort_order") or 0)
+
+
+def _normalise_subscription_row(row: dict[str, Any], plan_by_db_id: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    out = dict(row)
+    plan = out.get("plan")
+    if isinstance(plan, dict):
+        normalised_plan = _normalise_plan_row(plan)
+        out["plan"] = normalised_plan
+        out["plan_id"] = normalised_plan["id"]
+    elif plan_by_db_id and out.get("plan_id"):
+        plan_row = plan_by_db_id.get(str(out.get("plan_id")))
+        if plan_row:
+            out["plan_id"] = plan_row["id"]
+    return out
 
 
 # ─── Public — plans ───────────────────────────────────────────────────────────
@@ -223,7 +278,7 @@ def admin_create_plan(payload: PlanIn, _: dict = Depends(require_permission("pay
     sb = get_supabase_admin()
     plan_id = _slugify(payload.id)
     record = {
-        "id": plan_id,
+        "plan_code": plan_id,
         "name": payload.name,
         "description": payload.description,
         "price_inr": payload.price_inr,
@@ -233,45 +288,51 @@ def admin_create_plan(payload: PlanIn, _: dict = Depends(require_permission("pay
         "sort_order": payload.sort_order,
     }
     try:
-        sb.table("subscription_plans").insert(record).execute()
+        rows = sb.table("subscription_plans").insert(record).execute().data or []
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Could not create plan: {exc}")
-    return {"plan": record}
+    return {"plan": _normalise_plan_row(rows[0]) if rows else {**record, "id": plan_id}}
 
 
 @router.put("/admin/plans/{plan_id}")
 def admin_update_plan(plan_id: str, patch: PlanPatch, _: dict = Depends(require_permission("payments.manage"))):
     sb = get_supabase_admin()
+    plan = _find_plan(sb, plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
     update = {k: v for k, v in patch.model_dump(exclude_none=True).items()}
     if not update:
         raise HTTPException(status_code=400, detail="No fields to update")
     rows = (
         sb.table("subscription_plans")
         .update(update)
-        .eq("id", plan_id)
+        .eq("id", plan["db_id"])
         .execute()
         .data
         or []
     )
     if not rows:
         raise HTTPException(status_code=404, detail="Plan not found")
-    return {"plan": rows[0]}
+    return {"plan": _normalise_plan_row(rows[0])}
 
 
 @router.delete("/admin/plans/{plan_id}")
 def admin_disable_plan(plan_id: str, _: dict = Depends(require_permission("payments.manage"))):
     sb = get_supabase_admin()
+    plan = _find_plan(sb, plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
     rows = (
         sb.table("subscription_plans")
         .update({"is_active": False})
-        .eq("id", plan_id)
+        .eq("id", plan["db_id"])
         .execute()
         .data
         or []
     )
     if not rows:
         raise HTTPException(status_code=404, detail="Plan not found")
-    return {"plan": rows[0]}
+    return {"plan": _normalise_plan_row(rows[0])}
 
 
 # ─── User — subscription + payments ───────────────────────────────────────────
@@ -282,7 +343,7 @@ def my_subscription(user: dict = Depends(get_current_user)):
     sb = get_supabase_admin()
     rows = (
         sb.table("user_subscriptions")
-        .select("*, plan:subscription_plans(id,name,price_inr,interval,features)")
+        .select("*, plan:subscription_plans(id,plan_code,name,price_inr,interval,features)")
         .eq("user_id", user["id"])
         .order("created_at", desc=True)
         .limit(5)
@@ -290,6 +351,7 @@ def my_subscription(user: dict = Depends(get_current_user)):
         .data
         or []
     )
+    rows = [_normalise_subscription_row(r) for r in rows]
     active = next((r for r in rows if r.get("status") == "active"), None)
     return {"active": active, "history": rows}
 
@@ -317,19 +379,9 @@ def my_payments(user: dict = Depends(get_current_user)):
 def create_order(body: OrderIn, user: dict = Depends(get_current_user)):
     _ensure_profile(user)
     sb = get_supabase_admin()
-    plan_rows = (
-        sb.table("subscription_plans")
-        .select("*")
-        .eq("id", body.plan_id)
-        .eq("is_active", True)
-        .limit(1)
-        .execute()
-        .data
-        or []
-    )
-    if not plan_rows:
+    plan = _find_plan(sb, body.plan_id, active_only=True)
+    if not plan:
         raise HTTPException(status_code=404, detail="Plan not found or inactive")
-    plan = plan_rows[0]
     if (plan.get("price_inr") or 0) <= 0:
         raise HTTPException(status_code=400, detail="Free plan does not require payment")
 
@@ -350,7 +402,7 @@ def create_order(body: OrderIn, user: dict = Depends(get_current_user)):
 
     sub_record = {
         "user_id": user["id"],
-        "plan_id": plan["id"],
+        "plan_id": plan["db_id"],
         "status": "created",
         "razorpay_order_id": rzp_order["id"],
         "amount_paid_inr": int(plan["price_inr"]),
@@ -414,16 +466,8 @@ def verify_payment(body: VerifyIn, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Order not found for this user")
     sub = sub_rows[0]
 
-    plan_rows = (
-        sb.table("subscription_plans")
-        .select("*")
-        .eq("id", sub["plan_id"])
-        .limit(1)
-        .execute()
-        .data
-        or []
-    )
-    plan = plan_rows[0] if plan_rows else {}
+    plan = _find_plan(sb, sub["plan_id"]) or {}
+    external_plan_id = _external_plan_id(plan) or sub["plan_id"]
     interval = plan.get("interval") or "monthly"
     now = datetime.now(timezone.utc)
     period = (
@@ -446,7 +490,7 @@ def verify_payment(body: VerifyIn, user: dict = Depends(get_current_user)):
         {
             "user_id": user["id"],
             "subscription_id": sub["id"],
-            "plan_id": sub["plan_id"],
+            "plan_id": external_plan_id,
             "razorpay_order_id": body.razorpay_order_id,
             "razorpay_payment_id": body.razorpay_payment_id,
             "amount_inr": sub.get("amount_paid_inr") or 0,
@@ -460,12 +504,12 @@ def verify_payment(body: VerifyIn, user: dict = Depends(get_current_user)):
     # Mirror plan onto the user's auth metadata so the frontend shell sees it.
     try:
         get_supabase_admin().auth.admin.update_user_by_id(
-            user["id"], {"user_metadata": {**(user.get("claims", {}).get("user_metadata") or {}), "plan": sub["plan_id"]}}
+            user["id"], {"user_metadata": {**(user.get("claims", {}).get("user_metadata") or {}), "plan": external_plan_id}}
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("auth.admin.update_user_by_id failed: %s", exc)
 
-    return {"status": "active", "plan_id": sub["plan_id"], "subscription_id": sub["id"]}
+    return {"status": "active", "plan_id": external_plan_id, "subscription_id": sub["id"]}
 
 
 # ─── Webhook ──────────────────────────────────────────────────────────────────
@@ -511,12 +555,14 @@ async def razorpay_webhook(request: Request):
         "refund.processed": "refunded",
     }
     ph_status = status_map.get(event, "attempted")
+    plan = _find_plan(sb, sub["plan_id"]) if sub else None
+    external_plan_id = _external_plan_id(plan) if plan else None
 
     sb.table("payment_history").insert(
         {
             "user_id": sub["user_id"] if sub else None,
             "subscription_id": sub["id"] if sub else None,
-            "plan_id": sub["plan_id"] if sub else None,
+            "plan_id": external_plan_id or (sub["plan_id"] if sub else None),
             "razorpay_order_id": order_id,
             "razorpay_payment_id": payment_id,
             "amount_inr": payment_entity.get("amount") or 0,
@@ -532,16 +578,7 @@ async def razorpay_webhook(request: Request):
         logger.warning("Webhook %s referenced unknown order_id=%s — skipping insert", event, order_id)
 
     if sub and event == "payment.captured" and sub.get("status") != "active":
-        plan_rows = (
-            sb.table("subscription_plans")
-            .select("interval")
-            .eq("id", sub["plan_id"])
-            .limit(1)
-            .execute()
-            .data
-            or []
-        )
-        interval = (plan_rows[0]["interval"] if plan_rows else None) or "monthly"
+        interval = (plan or {}).get("interval") or "monthly"
         now = datetime.now(timezone.utc)
         period = timedelta(days=365) if interval == "annual" else timedelta(days=30)
         _deactivate_other_active(sub["user_id"], except_id=sub["id"])
@@ -578,6 +615,9 @@ def admin_subs(_: dict = Depends(_require_admin), limit: int = 100):
         .data
         or []
     )
+    plans = _list_subscription_plans(sb, active_only=False)
+    plan_by_db_id = {str(p["db_id"]): p for p in plans if p.get("db_id")}
+    rows = [_normalise_subscription_row(r, plan_by_db_id) for r in rows]
     return {"subscriptions": rows}
 
 
