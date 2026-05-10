@@ -83,6 +83,90 @@ $$;
 grant execute on function public.claim_eligibility_queue(integer) to service_role;
 
 --------------------------------------------------
+-- RECRUITMENTS
+--------------------------------------------------
+
+alter table public.recruitments
+  add column if not exists official_notification_url text,
+  add column if not exists official_apply_url text,
+  add column if not exists source_pdf_url text;
+
+--------------------------------------------------
+-- ELIGIBILITY RESULTS
+--------------------------------------------------
+
+alter table public.eligibility_results
+  add column if not exists is_conditional boolean default false,
+  add column if not exists fail_reasons text[] not null default '{}'::text[],
+  add column if not exists pass_reasons text[] not null default '{}'::text[],
+  add column if not exists computed_at timestamptz default now();
+
+--------------------------------------------------
+-- USER APPLICATIONS
+--------------------------------------------------
+
+alter table public.user_recruitment_applications
+  add column if not exists submitted_at timestamptz,
+  add column if not exists clicked_apply_at timestamptz,
+  add column if not exists application_number text,
+  add column if not exists fee_paid boolean default false,
+  add column if not exists fee_amount numeric(10,2),
+  add column if not exists documents_pending jsonb default '[]'::jsonb,
+  add column if not exists notes text,
+  add column if not exists updated_at timestamptz default now();
+
+create index if not exists idx_user_recruitment_applications_user_updated
+  on public.user_recruitment_applications(user_id, updated_at desc);
+
+--------------------------------------------------
+-- STUDY SESSIONS
+--------------------------------------------------
+
+alter table public.study_sessions
+  add column if not exists started_at timestamptz,
+  add column if not exists ended_at timestamptz;
+
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'study_sessions'
+      and column_name = 'starts_at'
+  ) then
+    update public.study_sessions
+       set started_at = starts_at
+     where started_at is null;
+  end if;
+
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'study_sessions'
+      and column_name = 'ends_at'
+  ) then
+    update public.study_sessions
+       set ended_at = ends_at
+     where ended_at is null;
+  end if;
+end $$;
+
+create index if not exists idx_study_sessions_user_started
+  on public.study_sessions(user_id, started_at desc);
+
+--------------------------------------------------
+-- MOCK TESTS
+--------------------------------------------------
+
+alter table public.mock_tests
+  add column if not exists attempted_at timestamptz default now();
+
+create index if not exists idx_mock_tests_user_attempted
+  on public.mock_tests(user_id, attempted_at desc);
+
+--------------------------------------------------
 -- NOTIFICATION DISPATCHER
 --------------------------------------------------
 
