@@ -87,7 +87,7 @@ begin
   ) then
     alter table public.source_registry
       add constraint source_registry_organization_id_fkey
-      foreign key (organization_id) references public.organizations(id) on delete set null;
+      foreign key (organization_id) references public.organizations(id) on delete set null not valid;
   end if;
 
   if not exists (
@@ -143,7 +143,7 @@ begin
   ) then
     alter table public.scrape_runs
       add constraint scrape_runs_triggered_by_user_fkey
-      foreign key (triggered_by_user) references public.profiles(id) on delete set null;
+      foreign key (triggered_by_user) references public.profiles(id) on delete set null not valid;
   end if;
 end $$;
 

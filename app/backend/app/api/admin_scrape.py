@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import get_current_user, require_permission
 from app.core.errors import PromotionError
+from app.common.indexing import group_by
 from app.db.supabase_client import get_supabase_admin
 from app.scraping.alerts import alert_users_for_new_recruitment
 from app.scraping.runner import promote_run, run_scraping_pass
@@ -356,10 +357,9 @@ def list_scrape_queue(
                 .data
                 or []
             )
-            for fr in frows:
-                qid = fr.get("scrape_queue_id")
+            for qid, group in group_by(frows, "scrape_queue_id").items():
                 if qid in evidence_by_queue:
-                    evidence_by_queue[qid][fr.get("field_name")] = fr.get("reviewer_status")
+                    evidence_by_queue[qid] = {fr.get("field_name"): fr.get("reviewer_status") for fr in group}
         except Exception:
             evidence_by_queue = {qid: {} for qid in queue_ids}
     for r in rows:

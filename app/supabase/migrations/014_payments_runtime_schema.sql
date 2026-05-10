@@ -93,7 +93,7 @@ begin
   ) then
     alter table public.user_subscriptions
       add constraint user_subscriptions_plan_id_fkey
-      foreign key (plan_id) references public.subscription_plans(id) on delete restrict;
+      foreign key (plan_id) references public.subscription_plans(id) on delete restrict not valid;
   end if;
 
   if not exists (
@@ -103,7 +103,7 @@ begin
   ) then
     alter table public.user_subscriptions
       add constraint user_subscriptions_user_id_fkey
-      foreign key (user_id) references public.profiles(id) on delete cascade;
+      foreign key (user_id) references public.profiles(id) on delete cascade not valid;
   end if;
 end $$;
 
@@ -158,7 +158,7 @@ begin
   ) then
     alter table public.payment_history
       add constraint payment_history_user_id_fkey
-      foreign key (user_id) references public.profiles(id) on delete cascade;
+      foreign key (user_id) references public.profiles(id) on delete cascade not valid;
   end if;
 
   if not exists (
@@ -168,7 +168,7 @@ begin
   ) then
     alter table public.payment_history
       add constraint payment_history_subscription_id_fkey
-      foreign key (subscription_id) references public.user_subscriptions(id) on delete set null;
+      foreign key (subscription_id) references public.user_subscriptions(id) on delete set null not valid;
   end if;
 end $$;
 

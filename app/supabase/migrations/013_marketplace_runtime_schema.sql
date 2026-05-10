@@ -108,7 +108,7 @@ begin
   ) then
     alter table public.courses
       add constraint courses_instructor_id_fkey
-      foreign key (instructor_id) references public.profiles(id) on delete cascade;
+      foreign key (instructor_id) references public.profiles(id) on delete cascade not valid;
   end if;
 
   if not exists (
@@ -118,7 +118,7 @@ begin
   ) then
     alter table public.course_sections
       add constraint course_sections_course_id_fkey
-      foreign key (course_id) references public.courses(id) on delete cascade;
+      foreign key (course_id) references public.courses(id) on delete cascade not valid;
   end if;
 
   if not exists (
@@ -128,7 +128,7 @@ begin
   ) then
     alter table public.lessons
       add constraint lessons_section_id_fkey
-      foreign key (section_id) references public.course_sections(id) on delete cascade;
+      foreign key (section_id) references public.course_sections(id) on delete cascade not valid;
   end if;
 
   if not exists (
@@ -138,7 +138,7 @@ begin
   ) then
     alter table public.reviews
       add constraint reviews_course_id_fkey
-      foreign key (course_id) references public.courses(id) on delete cascade;
+      foreign key (course_id) references public.courses(id) on delete cascade not valid;
   end if;
 
   if not exists (
@@ -148,7 +148,7 @@ begin
   ) then
     alter table public.reviews
       add constraint reviews_user_id_fkey
-      foreign key (user_id) references public.profiles(id) on delete cascade;
+      foreign key (user_id) references public.profiles(id) on delete cascade not valid;
   end if;
 
   if not exists (
