@@ -25,6 +25,26 @@ def test_promote_generates_slug_without_nameerror():
     assert sb.db["recruitments"][0]["slug"]=="ssc-cgl-2026"
 
 
+def test_promote_creates_recruitment_unit_for_unitwise_post():
+    sb=SB()
+    data=ExtractedRecruitment(
+        title="Multi Unit",
+        organization_name="Parent",
+        org_type="central",
+        year=2026,
+        notification_date="2026-01-01",
+        apply_start_date="2026-01-02",
+        apply_end_date="2026-01-03",
+        official_notification_url="https://x",
+        source_pdf_url=None,
+        posts=[{"post_name":"A","unit_code":"U1","unit_name":"Unit One","unit_location_state":"Delhi","language_requirements":["hindi"]}],
+    )
+    promote_to_recruitments(data, sb)
+    assert sb.db["recruitment_units"][0]["unit_code"] == "U1"
+    assert sb.db["posts"][0]["recruitment_unit_id"] == "recruitment_units-1"
+    assert sb.db["posts"][0]["language_requirements"] == ["hindi"]
+
+
 def test_promote_raises_when_post_insert_returns_no_rows():
     class SBPostFail(SB):
         def table(self, name):

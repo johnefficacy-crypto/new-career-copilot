@@ -97,6 +97,8 @@ class _SB:
                     "avatar_url": None,
                 }
             ],
+            "aspirant_location": [],
+            "aspirant_reservations": [],
             "aspirant_education": [],
             "aspirant_preferences": [],
             "eligibility_recompute_queue": [],
@@ -119,7 +121,35 @@ def test_put_profile_maps_name_state_to_profiles(monkeypatch):
 
     assert sb.db["profiles"][0]["full_name"] == "New Name"
     assert sb.db["profiles"][0]["domicile_state"] == "Karnataka"
+    assert sb.db["aspirant_location"][0]["state"] == "Karnataka"
     assert out["profile"]["domicile_state"] == "Karnataka"
+
+
+def test_put_profile_writes_dob_to_canonical_date_of_birth(monkeypatch):
+    sb = _SB()
+    monkeypatch.setattr(canonical, "get_supabase_admin", lambda: sb)
+    body = canonical.ProfileUpdate(dob="1999-02-03")
+
+    out = asyncio.run(canonical.update_profile(body=body, user=_user()))
+
+    assert sb.db["profiles"][0]["date_of_birth"] == "1999-02-03"
+    assert sb.db["profiles"][0].get("dob") is None
+    assert out["profile"]["date_of_birth"] == "1999-02-03"
+
+
+def test_put_profile_mirrors_reservation_fields_to_normalized_table(monkeypatch):
+    sb = _SB()
+    monkeypatch.setattr(canonical, "get_supabase_admin", lambda: sb)
+    body = canonical.ProfileUpdate(category="ews", pwbd_status="none", ex_serviceman=True)
+
+    out = asyncio.run(canonical.update_profile(body=body, user=_user()))
+
+    row = sb.db["aspirant_reservations"][0]
+    assert row["category"] == "ews"
+    assert row["is_pwd"] is False
+    assert row["pwd_type"] == "none"
+    assert row["is_ex_serviceman"] is True
+    assert out["profile"]["category"] == "ews"
 
 
 def test_put_profile_upserts_education(monkeypatch):
@@ -184,6 +214,12 @@ def test_put_profile_writes_goal_exams_preferences(monkeypatch):
 
 def test_get_profile_returns_assembled_profile(monkeypatch):
     sb = _SB()
+    sb.db["profiles"][0]["dob"] = "1998-04-05"
+    sb.db["profiles"][0]["date_of_birth"] = None
+    sb.db["profiles"][0]["category"] = "general"
+    sb.db["profiles"][0]["domicile_state"] = None
+    sb.db["aspirant_location"].append({"user_id": "u1", "state": "Delhi"})
+    sb.db["aspirant_reservations"].append({"user_id": "u1", "category": "obc", "pwd_type": "visual"})
     sb.db["aspirant_education"].append({"id": "e1", "user_id": "u1", "degree": "BA", "level": "graduation", "stream": "arts", "graduation_year": 2021, "percentage": 68, "cgpa": 8.1, "is_completed": True})
     sb.db["aspirant_preferences"].append({"id": "p1", "user_id": "u1", "target_exams": ["upsc"], "preferred_states": ["Delhi"], "preferred_sectors": ["admin"], "study_hours_per_day": 3})
     monkeypatch.setattr(canonical, "get_supabase_admin", lambda: sb)
@@ -196,6 +232,25 @@ def test_get_profile_returns_assembled_profile(monkeypatch):
     assert out["profile"]["cgpa"] == 8.1
     assert out["profile"]["goal_exams"] == ["upsc"]
     assert out["profile"]["weekly_hours_goal"] == 21
+    assert out["profile"]["date_of_birth"] == "1998-04-05"
+    assert out["profile"]["domicile_state"] == "Delhi"
+    assert out["profile"]["category"] == "obc"
+    assert out["profile"]["pwbd_status"] == "visual"
+
+
+def test_profile_completion_uses_normalized_location_and_reservations(monkeypatch):
+    sb = _SB()
+    sb.db["profiles"][0]["category"] = None
+    sb.db["profiles"][0]["domicile_state"] = None
+    sb.db["aspirant_location"].append({"user_id": "u1", "state": "Kerala"})
+    sb.db["aspirant_reservations"].append({"user_id": "u1", "category": "ews", "family_income_annual": 250000, "ews_certificate_available": True})
+    monkeypatch.setattr(canonical, "get_supabase_admin", lambda: sb)
+
+    out = asyncio.run(canonical.profile_completion(user=_user()))
+
+    assert "category" not in out["identity_profile"]["missing_fields"]
+    assert "domicile_state" not in out["identity_profile"]["missing_fields"]
+    assert out["ews_profile"]["completion_pct"] == 100
 
 
 def test_profile_completion_detects_missing_education(monkeypatch):

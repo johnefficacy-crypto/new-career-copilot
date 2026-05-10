@@ -31,8 +31,10 @@ from .engine import check_eligibility_batch
 from app.profile.eligibility_mapper import build_user_eligibility_profile
 from .schemas import (
     AgeCriteria,
+    AgeRelaxationRule,
     AttemptLimit,
     CertificationCriteria,
+    DisabilityRequirement,
     EducationCriteria,
     PostCriteria,
     UserEducation,
@@ -98,18 +100,22 @@ def run_eligibility_for_user(
             "errors": ["Profile not found"],
         }
     profile_rows = require_select(supabase, "profiles", "*", id=user_id)
-    profile = UserProfile(**(profile_rows[0] if profile_rows else {"id": user_id, "category": mapped.get("reservations", {}).get("category"), "domicile_state": mapped.get("location", {}).get("state"), "date_of_birth": mapped.get("identity", {}).get("dob"), "nationality": mapped.get("identity", {}).get("nationality")}))
+    profile_payload = profile_rows[0] if profile_rows else {"id": user_id}
+    profile_payload = {
+        **profile_payload,
+        "category": profile_payload.get("category") or mapped.get("reservations", {}).get("category"),
+        "domicile_state": profile_payload.get("domicile_state") or mapped.get("location", {}).get("state"),
+        "date_of_birth": profile_payload.get("date_of_birth") or mapped.get("identity", {}).get("dob"),
+        "nationality": profile_payload.get("nationality") or mapped.get("identity", {}).get("nationality"),
+        "disability_code": mapped.get("reservations", {}).get("disability_code"),
+        "languages_known": mapped.get("preferences", {}).get("languages_known") or [],
+        "family_income_annual": mapped.get("reservations", {}).get("family_income_annual"),
+        "ews_certificate_available": mapped.get("reservations", {}).get("ews_certificate_available"),
+    }
+    profile = UserProfile(**profile_payload)
 
     education = [UserEducation(**row) for row in (mapped.get("education") or [])]
     attempt_rows = mapped.get("attempts") or []
-    if not attempt_rows:
-        # Compatibility fallback for legacy deployments.
-        attempt_rows = safe_select(
-            supabase,
-            "user_exam_attempts",
-            "recruitment_id, attempts_used",
-            user_id=user_id,
-        )
     exam_attempts = []
     for row in attempt_rows:
         mapped = {
@@ -144,9 +150,12 @@ def run_eligibility_for_user(
                 """
                 id,
                 recruitment_id,
+                language_requirements,
                 recruitments!inner ( status, publish_status, organizations ( state ) ),
                 age_criteria ( min_age, max_age, cutoff_date ),
-                education_criteria ( min_qualification_level, min_percentage, allowed_disciplines ),
+                age_relaxation_rules ( reservation_category, condition_key, additional_years, max_age_cap, cumulative, source_note ),
+                education_criteria ( min_qualification_level, min_percentage, allowed_disciplines, allow_higher_qualification, accepted_equivalent_qualifications, raw_requirement_text ),
+                post_disability_requirements ( disability_code, physical_requirement_code, suitable, source_note ),
                 certification_criteria ( mandatory, certifications ( name, issuer ) ),
                 attempt_limits ( category, max_attempts )
                 """
@@ -168,6 +177,8 @@ def run_eligibility_for_user(
         ac = _first(row.get("age_criteria"))
         ec = _first(row.get("education_criteria"))
         attempts = row.get("attempt_limits") or []
+        age_rules = row.get("age_relaxation_rules") or []
+        disability_rows = row.get("post_disability_requirements") or []
         cert_rows = row.get("certification_criteria") or []
         cert_criteria = []
         for c in cert_rows:
@@ -181,7 +192,10 @@ def run_eligibility_for_user(
                 age_criteria=AgeCriteria(**ac) if ac else None,
                 education_criteria=EducationCriteria(**ec) if ec else None,
                 attempt_limits=[AttemptLimit(**a) for a in attempts],
+                age_relaxation_rules=[AgeRelaxationRule(**a) for a in age_rules],
+                disability_requirements=[DisabilityRequirement(**d) for d in disability_rows],
                 certification_criteria=cert_criteria,
+                language_requirements=row.get("language_requirements") or [],
                 org_state=(org or {}).get("state") if org else None,
             )
         )

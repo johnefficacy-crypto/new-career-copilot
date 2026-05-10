@@ -19,11 +19,11 @@ class _SB:
         self.db={
             "profiles":[{"id":"u1","full_name":"A","domicile_state":"x","category":"OBC","pwbd_status":"visual","ex_serviceman":False,"govt_employee":True,"date_of_birth":"2000-01-01","nationality":"Indian"}],
             "aspirant_location":[{"user_id":"u1","state":"y","district":"d"}],
-            "aspirant_reservations":[{"user_id":"u1","category":"sc","is_pwd":True,"pwd_type":"visual","is_ex_serviceman":True}],
+            "aspirant_reservations":[{"user_id":"u1","category":"sc","is_pwd":True,"pwd_type":"visual","disability_code":"blindness","is_ex_serviceman":True,"family_income_annual":100000,"ews_assets":{"land": False},"ews_certificate_available":True}],
             "aspirant_education":[{"user_id":"u1","level":"graduation","degree":"BA","stream":"arts","percentage":70,"cgpa":8.0,"is_completed":True}],
             "aspirant_certifications":[{"user_id":"u1","certification_name":" GATE ","is_active":True},{"user_id":"u1","certification_name":"old","is_active":False}],
             "aspirant_experience":[{"user_id":"u1","organization":"Org","years_experience":2}],
-            "aspirant_preferences":[{"user_id":"u1","target_exams":["ssc"],"preferred_states":["delhi"],"preferred_sectors":["banking"]}],
+            "aspirant_preferences":[{"user_id":"u1","target_exams":["ssc"],"preferred_states":["delhi"],"preferred_sectors":["banking"],"languages_known":["marathi"],"preferred_language":"hindi"}],
             "aspirant_exam_attempts":[{"user_id":"u1","exam_id":"e1","attempts_used":2}],
             "aspirant_exam_credentials":[{"user_id":"u1","exam_key":"gate"}],
             "certifications":[{"id":"c1","name":"GATE","issuer":"IIT","is_active":True}],
@@ -34,10 +34,13 @@ def test_mapper_contract_and_precedence():
     out = build_user_eligibility_profile(_SB(), "u1").model_dump()
     assert out["location"]["state"] == "y"
     assert out["reservations"]["category"] == "sc"
+    assert out["reservations"]["disability_code"] == "blindness"
+    assert out["reservations"]["ews_certificate_available"] is True
     assert out["education"][0]["cgpa"] == 8.0
     assert len(out["certifications"]) == 1 and out["certifications"][0]["certification_name"] == "gate"
     assert out["attempts"][0]["attempts_used"] == 2
     assert out["preferences"]["preferred_states"] == ["delhi"]
+    assert out["preferences"]["languages_known"] == ["marathi"]
 
 def test_debug_endpoint(monkeypatch):
     sb=_SB(); monkeypatch.setattr(canonical,"get_supabase_admin",lambda:sb)

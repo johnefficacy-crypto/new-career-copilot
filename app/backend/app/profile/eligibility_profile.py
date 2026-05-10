@@ -22,8 +22,12 @@ class Reservations(_Base):
     category: str | None = None
     is_pwd: bool = False
     pwd_type: str | None = None
+    disability_code: str | None = None
     is_ex_serviceman: bool = False
     govt_employee: bool = False
+    family_income_annual: float | None = None
+    ews_assets: dict = Field(default_factory=dict)
+    ews_certificate_available: bool | None = None
 
     @field_validator("category", mode="before")
     @classmethod
@@ -84,6 +88,8 @@ class Preferences(_Base):
     preferred_sectors: list[str] = Field(default_factory=list)
     willing_to_relocate: bool | None = None
     study_mode: str | None = None
+    languages_known: list[str] = Field(default_factory=list)
+    preferred_language: str | None = None
 
 
 class AttemptRow(_Base):

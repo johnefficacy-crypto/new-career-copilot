@@ -115,6 +115,48 @@ def _parse_iso_date(value: str) -> datetime:
     return datetime.fromisoformat(value + "T00:00:00+00:00")
 
 
+def _normalise_token(value: str | None) -> str:
+    return (value or "").lower().strip().replace("-", "_").replace(" ", "_")
+
+
+def _condition_matches(profile: UserProfile, condition_key: str | None) -> bool:
+    key = _normalise_token(condition_key)
+    if not key:
+        return True
+    if key in {"pwd", "pwbd", "disability"}:
+        return bool(profile.pwbd_status and profile.pwbd_status != "none")
+    if key in {"ex_serviceman", "esm"}:
+        return bool(profile.ex_serviceman)
+    if key in {"govt_employee", "government_employee"}:
+        return bool(profile.govt_employee)
+    if key in {"ews_certificate", "ews_certificate_available"}:
+        return bool(profile.ews_certificate_available)
+    return key == _normalize_category(profile.category)
+
+
+def _notice_age_relaxation(profile: UserProfile, criteria: PostCriteria) -> tuple[int, int | None, str] | None:
+    matched = []
+    category = _normalize_category(profile.category)
+    for rule in criteria.age_relaxation_rules:
+        category_matches = not rule.reservation_category or _normalize_category(rule.reservation_category) == category
+        if category_matches and _condition_matches(profile, rule.condition_key):
+            matched.append(rule)
+    if not matched:
+        return None
+    cumulative_years = sum(max(0, r.additional_years or 0) for r in matched if r.cumulative)
+    non_cumulative = [max(0, r.additional_years or 0) for r in matched if not r.cumulative]
+    years = cumulative_years + (max(non_cumulative) if non_cumulative else 0)
+    caps = [r.max_age_cap for r in matched if r.max_age_cap is not None]
+    cap = min(caps) if caps else None
+    notes = [r.source_note for r in matched if r.source_note]
+    detail = f"{years} yr notice-specific relaxation applied"
+    if cap is not None:
+        detail += f" with max age cap {cap}"
+    if notes:
+        detail += f" ({'; '.join(notes[:2])})"
+    return years, cap, detail
+
+
 # ─── Core engine ─────────────────────────────────────────────────────────────
 
 
@@ -159,7 +201,8 @@ def check_eligibility(
                     (cutoff - dob).total_seconds() // (365.25 * 24 * 60 * 60)
                 )
 
-                if profile.ex_serviceman and profile.service_years is not None:
+                notice_relaxation = _notice_age_relaxation(profile, criteria)
+                if notice_relaxation is None and profile.ex_serviceman and profile.service_years is not None:
                     cat_relax = _category_relaxation_years(profile)
                     age_for_max = age_at_cutoff - profile.service_years - 3
                     relax_note = (
@@ -180,8 +223,17 @@ def check_eligibility(
                         else "no relaxation"
                     )
 
+                effective_max_age = ac.max_age
+                if notice_relaxation is not None:
+                    relaxation_years, max_age_cap, relax_note = notice_relaxation
+                    age_for_max = age_at_cutoff - relaxation_years
+                    if ac.max_age is not None and max_age_cap is not None:
+                        effective_max_age = min(ac.max_age, max_age_cap)
+                    elif max_age_cap is not None:
+                        effective_max_age = max_age_cap
+
                 min_ok = ac.min_age is None or age_at_cutoff >= ac.min_age
-                max_ok = ac.max_age is None or age_for_max <= ac.max_age
+                max_ok = effective_max_age is None or age_for_max <= effective_max_age
 
                 if not min_ok:
                     checks.append(
@@ -200,7 +252,7 @@ def check_eligibility(
                             rule="age",
                             passed=False,
                             detail=(
-                                f"Age {age_at_cutoff} exceeds maximum {ac.max_age} after "
+                                f"Age {age_at_cutoff} exceeds maximum {effective_max_age} after "
                                 f"{relax_note} as of {ac.cutoff_date or 'today'}."
                             ),
                         )
@@ -242,17 +294,46 @@ def check_eligibility(
                 if completed_edu
                 else None
             )
-            completed_level_ok = (
-                highest_completed is not None
-                and _edu_level_rank(highest_completed.level) >= required_rank
+            equivalents = {
+                _normalise_token(str(item.get("level") or item.get("degree") or item))
+                if isinstance(item, dict)
+                else _normalise_token(str(item))
+                for item in (ec.accepted_equivalent_qualifications or [])
+            }
+
+            def _education_matches(row: UserEducation | None) -> bool:
+                if row is None:
+                    return False
+                user_tokens = {
+                    _normalise_token(row.level),
+                    _normalise_token(row.degree),
+                    _normalise_token(row.stream),
+                }
+                if equivalents and user_tokens.intersection(equivalents):
+                    return True
+                user_rank = _edu_level_rank(row.level)
+                if ec.allow_higher_qualification:
+                    return user_rank >= required_rank
+                return user_rank == required_rank
+
+            matching_completed = next(
+                (
+                    e
+                    for e in sorted(completed_edu, key=lambda e: _edu_level_rank(e.level), reverse=True)
+                    if _education_matches(e)
+                ),
+                None,
             )
+            completed_level_ok = matching_completed is not None
+            if matching_completed is not None:
+                highest_completed = matching_completed
 
             if not completed_level_ok:
                 appearing_match = next(
                     (
                         e
                         for e in all_edu
-                        if not e.is_completed and _edu_level_rank(e.level) >= required_rank
+                        if not e.is_completed and _education_matches(e)
                     ),
                     None,
                 )
@@ -274,8 +355,8 @@ def check_eligibility(
                 else:
                     if highest_completed is not None:
                         detail = (
-                            f"Education level {highest_completed.level} is below required "
-                            f"{ec.min_qualification_level}."
+                            f"Education level {highest_completed.level} does not meet required "
+                            f"{ec.raw_requirement_text or ec.min_qualification_level}."
                         )
                     else:
                         detail = "No completed education meets the requirement."
@@ -344,6 +425,61 @@ def check_eligibility(
                     if s
                 )
                 checks.append(EligibilityCheck(rule="education", passed=passed, detail=detail))
+
+    if criteria.disability_requirements:
+        user_disability = _normalise_token(profile.disability_code or profile.pwbd_status)
+        matching = [
+            req
+            for req in criteria.disability_requirements
+            if _normalise_token(req.disability_code) == user_disability
+        ]
+        if matching:
+            unsuitable = next((req for req in matching if not req.suitable), None)
+            checks.append(
+                EligibilityCheck(
+                    rule="disability_suitability",
+                    passed=unsuitable is None,
+                    detail=(
+                        f"Post is not suitable for disability category {user_disability}."
+                        if unsuitable
+                        else f"Post suitability confirmed for disability category {user_disability}."
+                    ),
+                )
+            )
+        elif user_disability and user_disability != "none":
+            checks.append(
+                EligibilityCheck(
+                    rule="disability_suitability",
+                    passed=True,
+                    detail="No restrictive disability suitability rule matched.",
+                )
+            )
+
+    if criteria.language_requirements:
+        required_languages = {_normalise_token(x) for x in criteria.language_requirements if x}
+        known_languages = {_normalise_token(x) for x in profile.languages_known if x}
+        if not known_languages:
+            is_conditional = True
+            checks.append(
+                EligibilityCheck(
+                    rule="language",
+                    passed=False,
+                    detail=f"Language requirement not verified: {', '.join(sorted(required_languages))}.",
+                )
+            )
+        else:
+            missing = sorted(required_languages - known_languages)
+            checks.append(
+                EligibilityCheck(
+                    rule="language",
+                    passed=not missing,
+                    detail=(
+                        f"Language requirements met: {', '.join(sorted(required_languages))}."
+                        if not missing
+                        else f"Missing required languages: {', '.join(missing)}."
+                    ),
+                )
+            )
 
     # ── 3. Attempt limit ────────────────────────────────────────────────────
     if criteria.attempt_limits:
@@ -448,7 +584,7 @@ def check_eligibility(
     failed_checks = [c for c in checks if not c.passed]
     is_eligible = len(failed_checks) == 0
     non_edu_failures = [
-        c for c in failed_checks if c.rule not in ("education", "exam_credential")
+        c for c in failed_checks if c.rule not in ("education", "exam_credential", "language")
     ]
     final_conditional = is_conditional and not non_edu_failures and not is_eligible
 

@@ -14,3 +14,12 @@ export function validateDOBRange(value, { minYear = 1940, minAge = 12 } = {}) {
   const latestAllowed = new Date(now.getFullYear() - minAge, now.getMonth(), now.getDate());
   return dob >= minDate && dob <= latestAllowed;
 }
+
+export function getDOBInputBounds({ minYear = 1940, minAge = 12 } = {}) {
+  const now = new Date();
+  const latestAllowed = new Date(now.getFullYear() - minAge, now.getMonth(), now.getDate());
+  return {
+    min: `${minYear}-01-01`,
+    max: latestAllowed.toISOString().slice(0, 10),
+  };
+}

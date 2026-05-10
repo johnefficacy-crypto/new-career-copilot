@@ -344,13 +344,63 @@ def promote_to_recruitments(
     rec_id: str = rec_rows[0]["id"]
 
     # ── Posts + age_criteria + education_criteria ──
+    unit_ids: dict[tuple[str | None, str | None, str | None, str | None], str] = {}
     for post in data.posts or []:
+        unit_id = None
+        if post.unit_name or post.unit_code:
+            unit_key = (
+                post.unit_code,
+                post.unit_name,
+                post.unit_location_state,
+                post.unit_location_city,
+            )
+            unit_id = unit_ids.get(unit_key)
+            if unit_id is None:
+                unit_org_id = org_id
+                if post.unit_name and post.unit_name != data.organization_name:
+                    unit_org_rows = execute_or_raise(
+                        "organizations.upsert_unit",
+                        lambda post=post: supabase.table("organizations")
+                        .upsert(
+                            {
+                                "name": post.unit_name,
+                                "type": data.org_type,
+                                "state": post.unit_location_state,
+                            },
+                            on_conflict="name",
+                            ignore_duplicates=False,
+                        )
+                        .execute(),
+                    ).data or []
+                    if unit_org_rows:
+                        unit_org_id = unit_org_rows[0]["id"]
+                unit_rows = execute_or_raise(
+                    "recruitment_units.insert",
+                    lambda post=post, unit_org_id=unit_org_id: supabase.table("recruitment_units")
+                    .insert(
+                        {
+                            "recruitment_id": rec_id,
+                            "organization_id": unit_org_id,
+                            "unit_code": post.unit_code,
+                            "unit_name": post.unit_name,
+                            "location_state": post.unit_location_state,
+                            "location_city": post.unit_location_city,
+                        }
+                    )
+                    .execute(),
+                ).data or []
+                if not unit_rows:
+                    raise PromotionError(f"unit insert returned no row for recruitment={rec_id}")
+                unit_id = unit_rows[0]["id"]
+                unit_ids[unit_key] = unit_id
         post_payload = {
             "recruitment_id": rec_id,
             "post_name": post.post_name,
             "group_type": post.group_type,
             "pay_level": post.pay_level,
             "job_type": "direct",
+            "recruitment_unit_id": unit_id,
+            "language_requirements": post.language_requirements or [],
         }
         post_rows = execute_or_raise("posts.insert", lambda: supabase.table("posts").insert(post_payload).execute()).data or []
         if not post_rows:

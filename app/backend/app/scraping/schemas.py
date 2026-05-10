@@ -17,6 +17,11 @@ class ExtractedPost(BaseModel):
     max_age: int | None = None
     education_required: str | None = None
     disciplines: list[str] | None = None
+    unit_code: str | None = None
+    unit_name: str | None = None
+    unit_location_state: str | None = None
+    unit_location_city: str | None = None
+    language_requirements: list[str] | None = None
 
 
 class ExtractedRecruitment(BaseModel):

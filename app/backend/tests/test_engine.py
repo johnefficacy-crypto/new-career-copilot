@@ -8,8 +8,10 @@ from datetime import datetime, timedelta, timezone
 from app.eligibility.engine import check_eligibility, check_eligibility_batch
 from app.eligibility.schemas import (
     AgeCriteria,
+    AgeRelaxationRule,
     AttemptLimit,
     EducationCriteria,
+    DisabilityRequirement,
     PostCriteria,
     CertificationCriteria,
     UserEducation,
@@ -233,3 +235,96 @@ def test_optional_certification_does_not_fail():
     p = _profile()
     res = check_eligibility(p, [_grad()], [], [], _post(certification_criteria=[CertificationCriteria(mandatory=False, name="gate", aliases=[])]), user_certifications=[])
     assert res.is_eligible is True
+
+
+def test_notice_specific_age_relaxation_overrides_fallback():
+    dob = (datetime.now(timezone.utc) - timedelta(days=int(37 * 365.25))).date().isoformat()
+    today = datetime.now(timezone.utc).date().isoformat()
+    res = check_eligibility(
+        _profile(dob=dob, category="general"),
+        [_grad()], [], [],
+        _post(
+            age_criteria=AgeCriteria(min_age=18, max_age=32, cutoff_date=today),
+            age_relaxation_rules=[AgeRelaxationRule(reservation_category="general", additional_years=5)],
+        ),
+    )
+    assert res.is_eligible is True
+    assert any("notice-specific" in c.detail for c in res.checks if c.rule == "age")
+
+
+def test_exact_education_can_reject_higher_qualification():
+    res = check_eligibility(
+        _profile(),
+        [_grad(level="postgraduate")],
+        [], [],
+        _post(
+            education_criteria=EducationCriteria(
+                min_qualification_level="graduate",
+                allow_higher_qualification=False,
+                raw_requirement_text="graduate only",
+            )
+        ),
+    )
+    assert res.is_eligible is False
+    assert any("graduate only" in r for r in res.fail_reasons)
+
+
+def test_exact_education_accepts_exact_row_even_with_higher_qualification():
+    res = check_eligibility(
+        _profile(),
+        [_grad(level="postgraduate"), _grad(level="graduate")],
+        [], [],
+        _post(
+            education_criteria=EducationCriteria(
+                min_qualification_level="graduate",
+                allow_higher_qualification=False,
+            )
+        ),
+    )
+    assert res.is_eligible is True
+
+
+def test_education_equivalent_allows_configured_degree():
+    res = check_eligibility(
+        _profile(),
+        [UserEducation(level="diploma", degree="BCA", stream="computer", percentage=70, is_completed=True)],
+        [], [],
+        _post(
+            education_criteria=EducationCriteria(
+                min_qualification_level="graduate",
+                allow_higher_qualification=False,
+                accepted_equivalent_qualifications=["bca"],
+            )
+        ),
+    )
+    assert res.is_eligible is True
+
+
+def test_disability_requirement_can_fail_unsuitable_post():
+    res = check_eligibility(
+        _profile(pwbd_status="visual", disability_code="visual"),
+        [_grad()], [], [],
+        _post(disability_requirements=[DisabilityRequirement(disability_code="visual", suitable=False)]),
+    )
+    assert res.is_eligible is False
+    assert any("not suitable" in r for r in res.fail_reasons)
+
+
+def test_language_requirement_is_conditional_when_profile_not_captured():
+    res = check_eligibility(
+        _profile(languages_known=[]),
+        [_grad()], [], [],
+        _post(language_requirements=["marathi"]),
+    )
+    assert res.is_eligible is False
+    assert res.is_conditional is True
+
+
+def test_language_requirement_fails_when_missing_known_language():
+    res = check_eligibility(
+        _profile(languages_known=["hindi"]),
+        [_grad()], [], [],
+        _post(language_requirements=["marathi"]),
+    )
+    assert res.is_eligible is False
+    assert res.is_conditional is False

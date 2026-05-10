@@ -276,7 +276,11 @@ async def get_recruitment(rec_ref: str, user: dict | None = Depends(get_optional
     rec_id = _resolve_rec_id(supabase, rec_ref)
     rows = _safe(
         lambda: supabase.table("recruitments")
-        .select(_REC_SELECT + ", posts ( id, post_name, group_type, pay_level, job_type )")
+        .select(
+            _REC_SELECT
+            + ", recruitment_units ( id, organization_id, unit_code, unit_name, location_state, location_city, preference_order, organizations ( id, name, type, state ) )"
+            + ", posts ( id, post_name, post_code, group_type, pay_level, job_type, recruitment_unit_id, language_requirements, exam_patterns ( id, stage_name, section_name, question_count, marks, duration_minutes, negative_marking, sort_order ), skill_tests ( id, test_type, speed_requirement, duration_minutes, evaluation_formula ) )"
+        )
          .eq("id", rec_id)
         .in_("publish_status", ["published"])
         .limit(1)
@@ -305,6 +309,7 @@ async def get_recruitment(rec_ref: str, user: dict | None = Depends(get_optional
 
     out = _shape_recruitment(row, saved_ids)
     out["posts"] = row.get("posts") or []
+    out["units"] = row.get("recruitment_units") or []
     out["eligibility_preview"] = {
         "verdict": (
             "eligible"
@@ -439,7 +444,7 @@ def _get_primary_education(supabase: Client, user_id: str) -> dict[str, Any]:
 def _get_preferences(supabase: Client, user_id: str) -> dict[str, Any]:
     rows = _safe(
         lambda: supabase.table("aspirant_preferences")
-        .select("target_exams, preferred_states, preferred_sectors, willing_to_relocate, study_mode, study_hours_per_day")
+        .select("target_exams, preferred_states, preferred_sectors, willing_to_relocate, study_mode, study_hours_per_day, languages_known, preferred_language")
         .eq("user_id", user_id)
         .limit(1)
         .execute()
@@ -449,8 +454,76 @@ def _get_preferences(supabase: Client, user_id: str) -> dict[str, Any]:
     return rows[0] if rows else {}
 
 
-def _assemble_profile_payload(profile: dict[str, Any], edu: dict[str, Any], prefs: dict[str, Any]) -> dict[str, Any]:
+def _get_location(supabase: Client, user_id: str) -> dict[str, Any]:
+    rows = _safe(
+        lambda: supabase.table("aspirant_location")
+        .select("state, district, is_rural, domicile_certificate")
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+        .data,
+        default=[],
+    ) or []
+    return rows[0] if rows else {}
+
+
+def _get_reservations(supabase: Client, user_id: str) -> dict[str, Any]:
+    rows = _safe(
+        lambda: supabase.table("aspirant_reservations")
+        .select(
+            "category, sub_category, is_pwd, pwd_type, disability_code, is_ex_serviceman, "
+            "family_income_annual, ews_assets, ews_certificate_available"
+        )
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+        .data,
+        default=[],
+    ) or []
+    return rows[0] if rows else {}
+
+
+def _upsert_user_scoped_row(supabase: Client, table: str, user_id: str, payload: dict[str, Any]) -> None:
+    existing = _safe(
+        lambda: supabase.table(table).select("user_id").eq("user_id", user_id).limit(1).execute().data,
+        default=[],
+    ) or []
+    row = {"user_id": user_id, **payload}
+    if existing:
+        supabase.table(table).update(row).eq("user_id", user_id).execute()
+    else:
+        supabase.table(table).insert(row).execute()
+
+
+def _assemble_profile_payload(
+    profile: dict[str, Any],
+    edu: dict[str, Any],
+    prefs: dict[str, Any],
+    location: dict[str, Any] | None = None,
+    reservations: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    location = location or {}
+    reservations = reservations or {}
     assembled = {k: v for k, v in profile.items() if k not in {"id"}}
+    assembled["date_of_birth"] = assembled.get("date_of_birth") or assembled.get("dob")
+    assembled["domicile_state"] = location.get("state") or assembled.get("domicile_state")
+    assembled["state"] = assembled.get("domicile_state")
+    assembled["category"] = reservations.get("category") or assembled.get("category")
+    assembled["pwbd_status"] = (
+        reservations.get("pwd_type")
+        or reservations.get("disability_code")
+        or assembled.get("pwbd_status")
+    )
+    if reservations.get("disability_code"):
+        assembled["disability_code"] = reservations.get("disability_code")
+    if reservations.get("is_ex_serviceman") is not None:
+        assembled["ex_serviceman"] = reservations.get("is_ex_serviceman")
+    if reservations.get("family_income_annual") is not None:
+        assembled["family_income_annual"] = reservations.get("family_income_annual")
+    if reservations.get("ews_assets") is not None:
+        assembled["ews_assets"] = reservations.get("ews_assets")
+    if reservations.get("ews_certificate_available") is not None:
+        assembled["ews_certificate_available"] = reservations.get("ews_certificate_available")
     if not assembled.get("graduation_year"):
         assembled["graduation_year"] = edu.get("graduation_year")
     assembled["qualification"] = edu.get("degree") or edu.get("level") or assembled.get("qualification")
@@ -469,6 +542,9 @@ def _assemble_profile_payload(profile: dict[str, Any], edu: dict[str, Any], pref
         assembled["willing_to_relocate"] = prefs.get("willing_to_relocate")
     if prefs.get("study_mode"):
         assembled["study_mode"] = prefs.get("study_mode")
+    assembled["languages_known"] = prefs.get("languages_known") or []
+    if prefs.get("preferred_language"):
+        assembled["preferred_language"] = prefs.get("preferred_language")
     return assembled
 
 
@@ -496,7 +572,9 @@ async def get_profile(user: dict = Depends(get_current_user)):
     profile = _ensure_profile_row(supabase, user["id"], user.get("email"))
     education = _get_primary_education(supabase, user["id"])
     prefs = _get_preferences(supabase, user["id"])
-    assembled = _assemble_profile_payload(profile, education, prefs)
+    location = _get_location(supabase, user["id"])
+    reservations = _get_reservations(supabase, user["id"])
+    assembled = _assemble_profile_payload(profile, education, prefs, location, reservations)
     return {
         "id": user["id"],
         "email": user.get("email"),
@@ -520,10 +598,33 @@ async def update_profile(body: ProfileUpdate, user: dict = Depends(get_current_u
         patch["domicile_state"] = patch.pop("state")
     if "onboarded" in patch and "onboarding_completed" not in patch:
         patch["onboarding_completed"] = patch.pop("onboarded")
+    if "dob" in patch and "date_of_birth" not in patch:
+        patch["date_of_birth"] = patch.pop("dob")
+    else:
+        patch.pop("dob", None)
 
     identity_patch = {k: v for k, v in patch.items() if k in _PROFILE_IDENTITY_FIELDS}
     if identity_patch:
+        identity_patch.pop("dob", None)
         supabase.table("profiles").update(identity_patch).eq("id", user["id"]).execute()
+
+    location_payload = {}
+    if patch.get("domicile_state") is not None:
+        location_payload["state"] = patch.get("domicile_state")
+    if location_payload:
+        _upsert_user_scoped_row(supabase, "aspirant_location", user["id"], location_payload)
+
+    reservations_payload = {}
+    if patch.get("category") is not None:
+        reservations_payload["category"] = patch.get("category")
+    if patch.get("pwbd_status") is not None:
+        pwbd_status = patch.get("pwbd_status")
+        reservations_payload["pwd_type"] = pwbd_status
+        reservations_payload["is_pwd"] = bool(pwbd_status and pwbd_status != "none")
+    if patch.get("ex_serviceman") is not None:
+        reservations_payload["is_ex_serviceman"] = patch.get("ex_serviceman")
+    if reservations_payload:
+        _upsert_user_scoped_row(supabase, "aspirant_reservations", user["id"], reservations_payload)
 
     education_payload = {}
     if patch.get("qualification"):
@@ -594,6 +695,8 @@ async def profile_completion(user: dict = Depends(get_current_user)):
     profile = _ensure_profile_row(supabase, user["id"], user.get("email"))
     education = _get_primary_education(supabase, user["id"])
     prefs = _get_preferences(supabase, user["id"])
+    location = _get_location(supabase, user["id"])
+    reservations = _get_reservations(supabase, user["id"])
     checks = {
         "identity_profile": {
             "fields": ["full_name", "phone", "date_of_birth", "category", "domicile_state"],
@@ -621,7 +724,7 @@ async def profile_completion(user: dict = Depends(get_current_user)):
             "next_action": "Complete application-readiness metadata.",
         },
     }
-    assembled = _assemble_profile_payload(profile, education, prefs)
+    assembled = _assemble_profile_payload(profile, education, prefs, location, reservations)
     out = {}
     for k, meta in checks.items():
         fields = meta["fields"]
@@ -631,6 +734,19 @@ async def profile_completion(user: dict = Depends(get_current_user)):
             "completion_pct": int(round(((len(fields) - len(missing)) / len(fields)) * 100)),
             "why_it_matters": meta["why_it_matters"],
             "next_action": meta["next_action"],
+        }
+    if (assembled.get("category") or "").lower() == "ews":
+        missing_ews = []
+        if reservations.get("family_income_annual") is None:
+            missing_ews.append("family_income_annual")
+        if reservations.get("ews_certificate_available") is None:
+            missing_ews.append("ews_certificate_available")
+        out["ews_profile"] = {
+            "missing_fields": missing_ews,
+            "completion_pct": 100 if not missing_ews else 0,
+            "why_it_matters": "EWS details help distinguish declared category from verifiable EWS eligibility.",
+            "next_action": "Complete EWS details." if missing_ews else "EWS details complete.",
+            "warning": "EWS details incomplete" if missing_ews else None,
         }
     # Backward compatibility for next-actions engine.
     out["eligibility_profile"] = out["identity_profile"]

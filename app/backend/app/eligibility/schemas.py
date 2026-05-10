@@ -30,6 +30,10 @@ class UserProfile(_Base):
     govt_employee: bool = False
     domicile_state: str | None = None
     nationality: str | None = None
+    disability_code: str | None = None
+    languages_known: list[str] = []
+    family_income_annual: float | None = None
+    ews_certificate_available: bool | None = None
 
 
 class UserEducation(_Base):
@@ -61,10 +65,29 @@ class AgeCriteria(_Base):
     cutoff_date: str | None = None
 
 
+class AgeRelaxationRule(_Base):
+    reservation_category: str | None = None
+    condition_key: str | None = None
+    additional_years: int = 0
+    max_age_cap: int | None = None
+    cumulative: bool = False
+    source_note: str | None = None
+
+
 class EducationCriteria(_Base):
     min_qualification_level: str | None = None
     min_percentage: float | None = None
     allowed_disciplines: dict[str, Any] | None = None
+    allow_higher_qualification: bool = True
+    accepted_equivalent_qualifications: list[Any] = []
+    raw_requirement_text: str | None = None
+
+
+class DisabilityRequirement(_Base):
+    disability_code: str | None = None
+    physical_requirement_code: str | None = None
+    suitable: bool = True
+    source_note: str | None = None
 
 
 class AttemptLimit(_Base):
@@ -88,6 +111,9 @@ class PostCriteria(_Base):
     org_state: str | None = None
     required_exam_keys: list[str] = []
     certification_criteria: list[CertificationCriteria] = []
+    language_requirements: list[str] = []
+    disability_requirements: list[DisabilityRequirement] = []
+    age_relaxation_rules: list[AgeRelaxationRule] = []
 
 
 # ─── Output shapes ───────────────────────────────────────────────────────────

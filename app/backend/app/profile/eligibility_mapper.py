@@ -23,11 +23,11 @@ logger = logging.getLogger("career_copilot.profile.eligibility_mapper")
 def build_user_eligibility_profile(supabase, user_id: str) -> EligibilityProfile:
     p = (require_select(supabase, "profiles", "*", id=user_id) or [{}])[0]
     loc = (require_select(supabase, "aspirant_location", "state,district,is_rural,domicile_certificate", user_id=user_id) or [{}])[0]
-    res = (require_select(supabase, "aspirant_reservations", "category,sub_category,is_pwd,pwd_type,is_ex_serviceman", user_id=user_id) or [{}])[0]
+    res = (require_select(supabase, "aspirant_reservations", "category,sub_category,is_pwd,pwd_type,disability_code,is_ex_serviceman,family_income_annual,ews_assets,ews_certificate_available", user_id=user_id) or [{}])[0]
     edu = require_select(supabase, "aspirant_education", "level,degree,stream,graduation_year,percentage,cgpa,is_completed", user_id=user_id)
     certs = safe_select(supabase, "aspirant_certifications", "certification_name,issuing_body,year_completed,is_active", user_id=user_id)
     exp = safe_select(supabase, "aspirant_experience", "sector,role,organization,start_date,end_date,years_experience", user_id=user_id)
-    prefs = (safe_select(supabase, "aspirant_preferences", "target_exams,preferred_states,preferred_sectors,willing_to_relocate,study_mode,study_hours_per_day", user_id=user_id) or [{}])[0]
+    prefs = (safe_select(supabase, "aspirant_preferences", "target_exams,preferred_states,preferred_sectors,willing_to_relocate,study_mode,study_hours_per_day,languages_known,preferred_language", user_id=user_id) or [{}])[0]
     attempts = safe_select(supabase, "aspirant_exam_attempts", "exam_id,attempts_used", user_id=user_id)
     creds = safe_select(supabase, "aspirant_exam_credentials", "exam_key,score,percentile,rank_text,exam_year", user_id=user_id)
     identity = Identity(full_name=p.get("full_name"), dob=p.get("dob") or p.get("date_of_birth"), nationality=p.get("nationality"))
@@ -38,8 +38,12 @@ def build_user_eligibility_profile(supabase, user_id: str) -> EligibilityProfile
         category=res.get("category") or p.get("category"),
         is_pwd=bool(res.get("is_pwd") or p.get("pwbd_status")),
         pwd_type=res.get("pwd_type") or p.get("pwbd_status"),
+        disability_code=res.get("disability_code") or res.get("pwd_type") or p.get("pwbd_status"),
         is_ex_serviceman=bool(res.get("is_ex_serviceman") if res.get("is_ex_serviceman") is not None else p.get("ex_serviceman")),
         govt_employee=bool(p.get("govt_employee")),
+        family_income_annual=res.get("family_income_annual"),
+        ews_assets=res.get("ews_assets") or {},
+        ews_certificate_available=res.get("ews_certificate_available"),
     )
     education_rows = []
     for row in edu:
@@ -94,6 +98,8 @@ def build_user_eligibility_profile(supabase, user_id: str) -> EligibilityProfile
             preferred_sectors=prefs.get("preferred_sectors") or [],
             willing_to_relocate=prefs.get("willing_to_relocate"),
             study_mode=prefs.get("study_mode"),
+            languages_known=prefs.get("languages_known") or [],
+            preferred_language=prefs.get("preferred_language"),
         ),
         attempts=attempt_rows,
         credentials=cred_rows,

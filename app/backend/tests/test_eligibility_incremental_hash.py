@@ -30,6 +30,7 @@ class Q:
 
 class SB:
     def __init__(self):
+        self.queried_tables = []
         self.db={
             "profiles":[{"id":"u1","date_of_birth":"2000-01-01","nationality":"Indian","category":"general","domicile_state":"MH"}],
             "aspirant_location":[{"user_id":"u1","state":"MH"}],
@@ -40,7 +41,9 @@ class SB:
             "posts":[{"id":"p1","recruitment_id":"r1","age_criteria":[],"education_criteria":[],"attempt_limits":[],"certification_criteria":[],"recruitments":{"organizations":{"state":"MH"}}}],
             "eligibility_results":[],"notification_alerts":[],"recruitments":[]
         }
-    def table(self,n): return Q(n,self.db)
+    def table(self,n):
+        self.queried_tables.append(n)
+        return Q(n,self.db)
 
 
 def test_first_recompute_stores_profile_hash(monkeypatch):
@@ -63,3 +66,13 @@ def test_second_recompute_skips_when_hash_unchanged(monkeypatch):
     out = runner.run_eligibility_for_user("u1", sb)
     assert out["skipped"] == 1
     assert calls["n"] == 2
+
+
+def test_recompute_does_not_read_legacy_user_exam_attempts(monkeypatch):
+    sb=SB()
+    monkeypatch.setattr(runner, "check_eligibility_batch", lambda *a,**k: [])
+
+    runner.run_eligibility_for_user("u1", sb)
+
+    assert "aspirant_exam_attempts" in sb.queried_tables
+    assert "user_exam_attempts" not in sb.queried_tables
