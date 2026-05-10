@@ -72,14 +72,11 @@ def _dedupe_key(user_id: str, recruitment_id: str | None, notification_type: str
 
 
 def _already_exists_today(supabase: Client, *, user_id: str, recruitment_id: str | None, notification_type: str, bucket: str) -> bool:
+    dedupe_key = _dedupe_key(user_id, recruitment_id, notification_type, bucket)
     rows = (
         supabase.table("notification_alerts")
-        .select("id,sent_at")
-        .eq("user_id", user_id)
-        .eq("alert_type", notification_type)
-        .eq("recruitment_id", recruitment_id)
-        .gte("sent_at", f"{bucket}T00:00:00")
-        .lt("sent_at", f"{bucket}T23:59:59")
+        .select("id")
+        .eq("dedupe_key", dedupe_key)
         .limit(1)
         .execute()
         .data

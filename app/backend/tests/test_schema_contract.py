@@ -536,6 +536,7 @@ REQUIRED_COLUMNS = {
         "exam_tag",
         "post_count",
         "order_index",
+        "is_active",
     },
     "forum_posts": {
         "id",

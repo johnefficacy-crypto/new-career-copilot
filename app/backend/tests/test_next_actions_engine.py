@@ -93,6 +93,29 @@ def test_no_duplicate_notification_same_day(monkeypatch):
     assert out["skipped"] >= 1
 
 
+def test_global_notification_dedupe_uses_key_not_uuid_null():
+    class StrictQuery(_Query):
+        def eq(self, k, v):
+            assert not (k == "recruitment_id" and v is None)
+            return super().eq(k, v)
+
+    class StrictSupabase(FakeSupabase):
+        def table(self, name):
+            return StrictQuery(name, self.db)
+
+    sb = StrictSupabase()
+    key = next_actions._dedupe_key("u-global", None, "complete_profile", date.today().isoformat())
+    sb.db["notification_alerts"].append({"id": "n1", "dedupe_key": key})
+
+    assert next_actions._already_exists_today(
+        sb,
+        user_id="u-global",
+        recruitment_id=None,
+        notification_type="complete_profile",
+        bucket=date.today().isoformat(),
+    )
+
+
 def test_priority_and_types(monkeypatch):
     sb = FakeSupabase()
 

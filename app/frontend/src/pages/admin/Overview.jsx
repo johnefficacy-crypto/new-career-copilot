@@ -19,8 +19,8 @@ export default function AdminOverview() {
       </div>
 
       <div className="grid md:grid-cols-3 lg:grid-cols-6 gap-4">
-        {(Array.isArray(data.kpis) ? data.kpis : Object.values(data.kpis || {})).map((k) => (
-          <div key={k.label} className="soft-card rounded-2xl p-5">
+        {(Array.isArray(data.kpis) ? data.kpis : Object.values(data.kpis || {})).map((k, idx) => (
+          <div key={k.key || k.label || `kpi-${idx}`} className="soft-card rounded-2xl p-5">
             <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">{k.label}</div>
             <div className="mt-3 font-heading text-3xl font-semibold tracking-tight">{k.value}</div>
             <div className="mt-1 text-xs text-muted-foreground">{k.delta}</div>
@@ -35,8 +35,8 @@ export default function AdminOverview() {
             <div className="text-sm text-muted-foreground py-6">No audit events yet.</div>
           ) : (
             <ul className="mt-4 space-y-2 font-mono text-[12.5px]">
-              {data.recent_audit.map((e) => (
-                <li key={e.id} className="flex items-start gap-3 py-1.5 border-b border-border last:border-0">
+              {data.recent_audit.map((e, idx) => (
+                <li key={e.id || `${e.created_at || "audit"}-${e.action || "event"}-${idx}`} className="flex items-start gap-3 py-1.5 border-b border-border last:border-0">
                   <span className="text-muted-foreground w-40 shrink-0 truncate">{e.created_at}</span>
                   <span className="text-clay-600">{e.action}</span>
                   <span className="text-muted-foreground">·</span>

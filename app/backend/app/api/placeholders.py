@@ -1030,13 +1030,28 @@ async def admin_community_flags(_admin: dict = Depends(_require_admin)):
 
 @router_admin.get("/ai-policy")
 async def admin_ai_policy(_admin: dict = Depends(_require_admin)):
+    rules = [
+        {
+            "id": "deterministic_eligibility_authority",
+            "rule": "AI must never override deterministic eligibility verdicts.",
+            "enabled": True,
+        },
+        {
+            "id": "source_registry_required",
+            "rule": "AI must cite source registry for any recruitment claim.",
+            "enabled": True,
+        },
+        {
+            "id": "admin_review_for_promotion",
+            "rule": "AI may extract structure from documents; canonical promotion still requires admin review.",
+            "enabled": True,
+        },
+    ]
     return {
-        "guardrails": [
-            "AI must never override deterministic eligibility verdicts.",
-            "AI must cite source registry for any recruitment claim.",
-            "AI may extract structure from documents; canonical promotion still requires admin review.",
-        ],
+        "rules": rules,
+        "guardrails": [r["rule"] for r in rules],
         "model": "phase-2:claude-sonnet",
+        "swap_target": "phase-2:provider-wired",
         "active": False,
     }
 

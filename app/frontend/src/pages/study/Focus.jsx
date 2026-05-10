@@ -133,8 +133,8 @@ export default function Focus() {
             <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Last 7 days</div>
             <div className="mt-3 font-heading text-3xl font-semibold">{summary.total_hours_7d} <span className="text-base text-muted-foreground">h</span></div>
             <div className="mt-3 flex items-end h-16 gap-2">
-              {(summary.week || []).map((w) => (
-                <div key={w.d} className="flex-1 flex flex-col items-center gap-1">
+              {(summary.week || []).map((w, idx) => (
+                <div key={w.date || w.d || `week-${idx}`} className="flex-1 flex flex-col items-center gap-1">
                   <div className="w-full rounded-md bg-clay-100 flex items-end h-full">
                     <div className="w-full bg-clay-500 rounded-md" style={{ height: `${Math.min(w.h * 14, 100)}%` }} />
                   </div>

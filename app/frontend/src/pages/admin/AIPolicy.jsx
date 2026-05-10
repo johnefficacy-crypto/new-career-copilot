@@ -7,20 +7,21 @@ export default function AdminAIPolicy() {
   useEffect(() => {
     api.get("/api/admin/ai-policy").then(setD).catch(() => {});
   }, []);
-  if (!d) return <div>Loading…</div>;
+  if (!d) return <div>Loading...</div>;
+  const rules = Array.isArray(d.rules) ? d.rules : [];
   return (
     <div className="space-y-6" data-testid="admin-ai-policy">
       <div>
         <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">AI policy</div>
         <h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight">What the model is allowed to say.</h1>
-        <p className="text-muted-foreground mt-1">Current model: <span className="pill pill-dusk">{d.model}</span> · Target: <span className="pill pill-clay">{d.swap_target}</span></p>
+        <p className="text-muted-foreground mt-1">Current model: <span className="pill pill-dusk">{d.model}</span> / Target: <span className="pill pill-clay">{d.swap_target}</span></p>
       </div>
       <div className="grid md:grid-cols-2 gap-4">
-        {d.rules.map((r) => (
-          <div key={r.id} className="soft-card rounded-2xl p-5">
+        {rules.map((r, idx) => (
+          <div key={r.id || `${r.rule || "rule"}-${idx}`} className="soft-card rounded-2xl p-5">
             <div className="flex items-center gap-2">
               <ShieldCheck className="h-4 w-4 text-sage-600" />
-              <div className="font-semibold">{r.id}</div>
+              <div className="font-semibold">{r.id || "policy_rule"}</div>
               <span className={`pill ${r.enabled ? "pill-sage" : "pill-amber"} ml-auto`}>{r.enabled ? "enabled" : "off"}</span>
             </div>
             <p className="mt-2 text-sm text-foreground/85">{r.rule}</p>
