@@ -27,6 +27,37 @@ alter table profiles add column if not exists avatar_url text;
 
 create unique index if not exists profiles_id_idx on profiles(id);
 
+
+
+
+-- Fix onboarding profile type mismatch.
+-- Frontend and backend use pwbd_status as a string enum, not boolean.
+
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'profiles'
+      and column_name = 'pwbd_status'
+      and data_type = 'boolean'
+  ) then
+    alter table public.profiles
+      alter column pwbd_status drop default;
+
+    alter table public.profiles
+      alter column pwbd_status type text
+      using case
+        when pwbd_status is true then 'other'
+        when pwbd_status is false then 'none'
+        else null
+      end;
+
+    alter table public.profiles
+      alter column pwbd_status set default 'none';
+  end if;
+end $$;
 --------------------------------------------------
 -- RECRUITMENTS
 --------------------------------------------------
