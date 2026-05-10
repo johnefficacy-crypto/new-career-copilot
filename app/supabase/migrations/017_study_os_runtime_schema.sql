@@ -30,13 +30,41 @@ alter table public.study_sessions
   add column if not exists ended_at timestamptz,
   add column if not exists notes text;
 
-update public.study_sessions
-   set started_at = coalesce(started_at, starts_at),
-       ended_at = coalesce(ended_at, ends_at),
-       duration_mins = coalesce(duration_mins, duration_minutes)
- where started_at is null
-    or ended_at is null
-    or duration_mins is null;
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'study_sessions'
+      and column_name = 'starts_at'
+  ) then
+    update public.study_sessions
+       set started_at = coalesce(started_at, starts_at)
+     where started_at is null;
+  end if;
+
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'study_sessions'
+      and column_name = 'ends_at'
+  ) then
+    update public.study_sessions
+       set ended_at = coalesce(ended_at, ends_at)
+     where ended_at is null;
+  end if;
+
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'study_sessions'
+      and column_name = 'duration_minutes'
+  ) then
+    update public.study_sessions
+       set duration_mins = coalesce(duration_mins, duration_minutes)
+     where duration_mins is null;
+  end if;
+end $$;
 
 alter table public.mock_tests
   add column if not exists user_id uuid references public.profiles(id) on delete cascade,
