@@ -6,7 +6,7 @@
 --------------------------------------------------
 alter table profiles add column if not exists gender text;
 alter table profiles add column if not exists category text;
-alter table profiles add column if not exists pwbd_status boolean default false;
+alter table profiles add column if not exists pwbd_status text default 'none';
 alter table profiles add column if not exists domicile_state text;
 alter table profiles add column if not exists nationality text;
 alter table profiles add column if not exists ex_serviceman boolean default false;
