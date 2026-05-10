@@ -13,7 +13,7 @@ CANDIDATE_ROOTS = [
 
 SCHEMA_RELATIVE_PATHS = [
     Path("docs") / "supabase(Govt Exam copilot)-Schema.md",
-    Path("app") / "docs" / "supabase(Govt Exam copilot)-Schema.md",
+    Path("docs") /("schema") /  "supabase(Govt Exam copilot)-Schema.md",
 ]
 
 ROOT = None
