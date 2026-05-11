@@ -230,17 +230,6 @@ def _list_sources() -> dict[str, Any]:
         .data
         or []
     )
-    if not rows:
-        # Fall back to legacy scrape_sources so the admin UI still has data.
-        rows = (
-            supabase.table("scrape_sources")
-            .select("*")
-            .order("tier")
-            .order("name")
-            .execute()
-            .data
-            or []
-        )
     return {"items": [_shape_source(r) for r in rows]}
 
 

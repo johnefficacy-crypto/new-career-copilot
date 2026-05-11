@@ -1,6 +1,7 @@
--- Source registry seed compatibility for legacy workbook-style source records.
--- This keeps source_registry able to store scraper policy/provenance metadata
--- without changing the current runner, which still reads scrape_sources.
+-- Source registry runtime contract.
+-- source_registry is the canonical admin/source-management table. scrape_sources
+-- remains a runner/internal legacy adapter table and is intentionally not widened
+-- here to match source_registry.
 
 alter table public.source_registry
   add column if not exists organization_id uuid references public.organizations(id) on delete set null,

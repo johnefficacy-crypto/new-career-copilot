@@ -23,6 +23,29 @@ class SB:
     def __init__(self): self.state={'queue':[{'id':'q1','status':'approved','notification_document_id':'doc-1','extracted_data':{'title':'t','organization_name':'Org','org_type':'central','year':2026,'official_notification_url':'https://x.gov/n'}}],'audits':[]}
     def table(self,t): return Q(t,self.state)
 
+def test_list_sources_uses_source_registry_only(monkeypatch):
+    class SourceQ:
+        def __init__(self, table, calls):
+            self.table = table
+            self.calls = calls
+        def select(self, *a, **k): return self
+        def order(self, *a, **k): return self
+        def execute(self):
+            self.calls.append(self.table)
+            return R([])
+
+    class SourceSB:
+        def __init__(self):
+            self.calls = []
+        def table(self, table):
+            return SourceQ(table, self.calls)
+
+    sb = SourceSB()
+    monkeypatch.setattr(admin_scrape, "get_supabase_admin", lambda: sb)
+
+    assert admin_scrape._list_sources() == {"items": []}
+    assert sb.calls == ["source_registry"]
+
 def test_approve_updates_status(monkeypatch):
     sb=SB(); monkeypatch.setattr(admin_scrape,'get_supabase_admin',lambda:sb)
     r=admin_scrape.approve_queue_item('q1', {'notes':'ok'}, {'id':'a','email':'e'})
