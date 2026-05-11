@@ -29,11 +29,18 @@ from .extractor import (
     build_recruitment_key,
     compute_similarity_key,
     extract_recruitment_data,
+    fetch_page_html,
     fetch_page_text,
 )
 from .dedup import fuzzy_duplicate
 from .normalizer import normalize_recruitment
 from .sources import normalize_source_registry
+from .aggregator import (
+    aggregator_max_items,
+    discover_aggregator_detail_urls,
+    is_aggregator_source,
+    mock_aggregator_detail_urls,
+)
 from app.common.strings import slugify
 from app.common.time import utc_now_iso
 from app.core.errors import PromotionError
@@ -131,10 +138,103 @@ def run_scraping_pass(
     total_dup = 0
     error_log: list[dict[str, Any]] = []
 
+    def queue_extraction(src: dict[str, Any], source_name: str, item_url: str, raw: str) -> bool:
+        nonlocal total_found, total_new, total_dup
+        extraction = extract_recruitment_data(raw, item_url, source_name, mock=mock)
+        if not extraction:
+            error_log.append({"source": source_name, "url": item_url, "error": "Extraction returned null", "at": utc_now_iso()})
+            return False
+
+        data: ExtractedRecruitment = extraction["data"]
+        confidence = float(extraction.get("confidence") or 0.5)
+        total_found += 1
+
+        sim_key = compute_similarity_key(data)
+        fuzzy_dup = any(fuzzy_duplicate(data.title, (r.get("name") or "")) for r in existing_recs)
+        is_dup = sim_key in existing_keys or sim_key in queued_keys or fuzzy_dup
+        duplicate_of = existing_id_by_key.get(sim_key)
+        duplicate_reason = "similarity_key" if (sim_key in existing_keys or sim_key in queued_keys) else ("fuzzy_match" if fuzzy_dup else None)
+        normalized = normalize_recruitment(data)
+        extracted_payload = to_json_safe(data)
+        extracted_payload["_meta"] = {
+            "prompt_version": PROMPT_VERSION,
+            "data_quality_score": normalized.data_quality_score,
+            "warnings": normalized.warnings,
+            "normalized_fields": normalized.normalized_fields,
+            "duplicate_reason": duplicate_reason,
+            "source_registry_id": src.get("id"),
+            "source_type": src.get("source_type"),
+        }
+
+        queue_payload = {
+            "source_url": item_url,
+            "source_name": source_name,
+            "source_id": src.get("id"),
+            "extracted_data": extracted_payload,
+            "confidence_score": confidence,
+            "scrape_run_id": run_id,
+            "duplicate_of": duplicate_of,
+            "scraped_at": utc_now_iso(),
+            "status": "duplicate" if is_dup else "pending",
+            "official_source_resolved": not bool(src.get("requires_official_confirmation")),
+            "evidence_required": bool(src.get("requires_official_confirmation")),
+            "extraction_status": "ok",
+        }
+        logger.info("scrape.queue_insert run_id=%s source_id=%s source_name=%s target_url=%s extraction_status=%s confidence_score=%.2f data_quality_score=%.2f duplicate_status=%s",
+                    run_id, src.get("id"), source_name, item_url, "ok", confidence, normalized.data_quality_score, queue_payload["status"])
+        execute_or_raise("scrape_queue.insert", lambda payload=queue_payload: supabase.table("scrape_queue").insert(payload).execute())
+
+        if is_dup:
+            total_dup += 1
+        else:
+            total_new += 1
+            queued_keys.add(sim_key)
+        return True
+
     for src in sources:
         source = normalize_source_registry(src)
         target_url = source.target_url
         try:
+            if is_aggregator_source(src):
+                if mock:
+                    detail_urls = mock_aggregator_detail_urls(source, count=min(3, aggregator_max_items(src)))
+                else:
+                    listing_html = fetch_page_html(target_url)
+                    if not listing_html:
+                        error_log.append({"source": source.name, "url": target_url, "error": "Empty listing response", "at": utc_now_iso()})
+                        _bump_source_failure(supabase, src)
+                        continue
+                    detail_urls = discover_aggregator_detail_urls(listing_html, target_url, max_items=aggregator_max_items(src))
+                if not detail_urls:
+                    error_log.append({"source": source.name, "url": target_url, "error": "No detail links discovered", "at": utc_now_iso()})
+                    _bump_source_failure(supabase, src)
+                    continue
+                found_before = total_found
+                for detail_url in detail_urls:
+                    raw = fetch_page_text(detail_url) if not mock else f"MOCK DETAIL PAGE TEXT FOR {detail_url}"
+                    if not raw:
+                        error_log.append({"source": source.name, "url": detail_url, "error": "Empty response", "at": utc_now_iso()})
+                        continue
+                    queue_extraction(src, source.name, detail_url, raw)
+                if total_found == found_before:
+                    _bump_source_failure(supabase, src)
+                    continue
+                execute_or_default(
+                    "source_registry.mark_success",
+                    lambda src=src: supabase.table("source_registry")
+                    .update(
+                        {
+                            "last_scraped_at": utc_now_iso(),
+                            "last_success_at": utc_now_iso(),
+                            "consecutive_fails": 0,
+                            "last_error": None,
+                        }
+                    )
+                    .eq("id", src["id"])
+                    .execute(),
+                    None,
+                )
+                continue
             raw = fetch_page_text(target_url) if not mock else f"MOCK PAGE TEXT FOR {target_url}"
             if not raw:
                 error_log.append({"source": source.name, "error": "Empty response", "at": utc_now_iso()})

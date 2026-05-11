@@ -87,6 +87,16 @@ def fetch_page_text(url: str, *, timeout: float = 15.0) -> str | None:
         return None
 
 
+def fetch_page_html(url: str, *, timeout: float = 15.0) -> str | None:
+    try:
+        resp = httpx.get(url, headers=_DEFAULT_HEADERS, timeout=timeout, follow_redirects=True)
+        resp.raise_for_status()
+        return resp.text
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] failed %s: %s", url, exc)
+        return None
+
+
 def _strip_html(html: str) -> str:
     text = re.sub(r"<script[^>]*>[\s\S]*?</script>", " ", html, flags=re.IGNORECASE)
     text = re.sub(r"<style[^>]*>[\s\S]*?</style>", " ", text, flags=re.IGNORECASE)

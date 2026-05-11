@@ -90,8 +90,10 @@ class RunnerSB:
                 {
                     "id": "src-1",
                     "source_name": "Free Job Alert",
+                    "source_type": "aggregator",
                     "source_url": "https://www.freejobalert.com/government-jobs/",
                     "is_active": True,
+                    "requires_official_confirmation": True,
                 }
             ]
         }
@@ -104,10 +106,11 @@ def test_run_scraping_pass_reads_source_registry():
     sb = RunnerSB()
     out = run_scraping_pass(sb, source_ids=["src-1"], mock=True)
     assert out["sources_checked"] == 1
-    assert out["items_found"] == 1
+    assert out["items_found"] == 3
     assert "scrape_sources" not in sb.calls
     assert sb.db["scrape_queue"][0]["source_id"] == "src-1"
-    assert sb.db["scrape_queue"][0]["source_url"] == "https://www.freejobalert.com/government-jobs/"
+    assert sb.db["scrape_queue"][0]["source_url"].endswith("/mock-recruitment-1/")
+    assert sb.db["scrape_queue"][0]["evidence_required"] is True
 
 def test_promote_generates_slug_without_nameerror():
     sb=SB()
