@@ -126,10 +126,11 @@ def test_run_scraping_pass_reads_source_registry():
 
 def test_promote_generates_slug_without_nameerror():
     sb=SB()
-    data=ExtractedRecruitment(title="SSC CGL", organization_name="SSC", org_type="central", year=2026, notification_date="2026-01-01", apply_start_date="2026-01-02", apply_end_date="2026-01-03", official_notification_url="https://x", source_pdf_url=None, posts=[])
+    data=ExtractedRecruitment(title="SSC CGL", organization_name="SSC", org_type="central", year=2026, notification_date="2026-01-01", apply_start_date="2026-01-02", apply_end_date="2026-01-03", official_notification_url="https://x", official_apply_url="https://x/apply", source_pdf_url=None, posts=[])
     rec_id=promote_to_recruitments(data, sb)
     assert rec_id=="recruitments-1"
     assert sb.db["recruitments"][0]["slug"]=="ssc-cgl-2026"
+    assert sb.db["recruitments"][0]["official_apply_url"]=="https://x/apply"
 
 
 def test_promote_creates_recruitment_unit_for_unitwise_post():

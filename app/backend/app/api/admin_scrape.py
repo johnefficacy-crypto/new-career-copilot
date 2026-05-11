@@ -87,7 +87,7 @@ def _audit(supabase, actor: dict, action: str, *, entity_type: str | None = None
 
 router = APIRouter(tags=["admin-scrape"])
 
-_HIGH_RISK_FIELDS={"apply_end_date","official_notification_url","official_apply_url","organization_name","total_vacancies","eligibility"}
+_HIGH_RISK_FIELDS={"apply_end_date","official_notification_url","official_apply_url","organization_name","total_vacancies"}
 
 
 class ScrapeRunBody(BaseModel):
@@ -441,6 +441,7 @@ def promote_queue_item(
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
+        logger.exception("scrape queue promotion failed queue_id=%s", queue_id)
         raise HTTPException(status_code=500, detail="Promote failed") from PromotionError("promotion write failed")
     updated_rows = (
         supabase.table("scrape_queue").update(

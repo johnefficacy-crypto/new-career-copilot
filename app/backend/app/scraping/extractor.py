@@ -157,6 +157,7 @@ def extract_recruitment_data(
         f'  "year":             number,\n'
         f'  "source_pdf_url":   "string or null",\n'
         f'  "official_notification_url": "{source_url}",\n'
+        f'  "official_apply_url": "string or null",\n'
         f'  "posts": [{{ "post_name": "string", "group_type": "A|B|C|D or null", '
         f'"pay_level": "string or null", "vacancies": number or null, '
         f'"min_age": number or null, "max_age": number or null, '
@@ -233,6 +234,7 @@ def _mock_extract(raw_text: str, source_url: str, source_name: str) -> dict[str,
         total_vacancies=int(digest[:3], 16) % 5000 + 100,
         year=today.year,
         official_notification_url=source_url,
+        official_apply_url=source_url,
         source_pdf_url=None,
         posts=[
             ExtractedPost(

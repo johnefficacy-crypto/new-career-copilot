@@ -36,6 +36,7 @@ class ExtractedRecruitment(BaseModel):
     total_vacancies: int | None = None
     year: int
     official_notification_url: str
+    official_apply_url: str | None = None
     source_pdf_url: str | None = None
     posts: list[ExtractedPost] = Field(default_factory=list)
 

@@ -509,6 +509,7 @@ def promote_to_recruitments(
         "publish_status": "needs_review",  # newly promoted — admin still gates it
         "total_vacancies": data.total_vacancies,
         "official_notification_url": data.official_notification_url,
+        "official_apply_url": data.official_apply_url,
         "source_pdf_url": data.source_pdf_url,
     }
     rec_rows = execute_or_raise("recruitments.insert", lambda: supabase.table("recruitments").insert(rec_payload).execute()).data or []

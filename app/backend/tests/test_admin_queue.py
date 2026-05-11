@@ -201,7 +201,6 @@ def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
                             {'field_name':'official_apply_url','reviewer_status':'verified'},
                             {'field_name':'organization_name','reviewer_status':'verified'},
                             {'field_name':'total_vacancies','reviewer_status':'verified'},
-                            {'field_name':'eligibility','reviewer_status':'verified'},
                         ])
                 return FQ(self)
             return super().table(t)
@@ -228,7 +227,6 @@ def test_promote_failure_keeps_queue_item_pending(monkeypatch):
                             {'field_name':'official_apply_url','reviewer_status':'verified'},
                             {'field_name':'organization_name','reviewer_status':'verified'},
                             {'field_name':'total_vacancies','reviewer_status':'verified'},
-                            {'field_name':'eligibility','reviewer_status':'verified'},
                         ])
                 return FQ(self)
             return super().table(t)
