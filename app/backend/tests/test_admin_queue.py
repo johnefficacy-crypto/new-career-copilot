@@ -146,6 +146,47 @@ def test_field_evidence_fallback_document_created(monkeypatch):
     assert sb.state["docs"][0]["file_url"] == sb.state["docs"][0]["source_url"]
 
 
+def test_field_evidence_continues_when_fallback_document_missing(monkeypatch):
+    class SBMissingDoc(SB):
+        def __init__(self):
+            super().__init__()
+            self.state["queue"][0]["notification_document_id"] = None
+            self.state["field"] = []
+
+        def table(self, t):
+            if t == "extracted_field_evidence":
+                class FQ:
+                    def __init__(self, s): self.s = s; self.payload = None
+                    def select(self, *a, **k): return self
+                    def eq(self, *a, **k): return self
+                    def order(self, *a, **k): return self
+                    def limit(self, *a, **k): return self
+                    def execute(self): return R([]) if self.payload is None else R([self.payload])
+                    def insert(self, p, *a, **k):
+                        self.payload = p
+                        self.s.state["field"].append(p)
+                        return self
+                return FQ(self)
+            if t == "notification_documents":
+                class DQ:
+                    def insert(self, p): return self
+                    def select(self, *a, **k): return self
+                    def eq(self, *a, **k): return self
+                    def limit(self, *a, **k): return self
+                    def execute(self): return R([])
+                return DQ()
+            return super().table(t)
+
+    sb = SBMissingDoc()
+    monkeypatch.setattr(admin_scrape, "get_supabase_admin", lambda: sb)
+
+    out = admin_scrape.correct_field("q1", "title", {"corrected_value": "Fixed title"}, {"id": "a", "email": "e"})
+
+    assert out["ok"] is True
+    assert sb.state["field"][0]["document_id"] is None
+    assert sb.state["field"][0]["corrected_value"] == "Fixed title"
+
+
 def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
     class SB5(SB):
         def table(self,t):

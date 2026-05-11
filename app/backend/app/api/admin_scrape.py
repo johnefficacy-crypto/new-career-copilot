@@ -140,9 +140,15 @@ def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, 
             if not nd_rows:
                 nd_rows = (supabase.table("notification_documents").select("id").eq("content_hash", content_hash).limit(1).execute().data or [])
             if not nd_rows:
-                raise HTTPException(status_code=500, detail="Failed to create fallback notification_document")
-            doc_id = nd_rows[0]["id"]
-            supabase.table("scrape_queue").update({"notification_document_id": doc_id}).eq("id", queue_id).execute()
+                logger.error(
+                    "fallback notification_document unavailable; continuing field review without document queue_id=%s source_url=%s content_hash=%s",
+                    queue_id,
+                    nd_payload.get("source_url"),
+                    content_hash,
+                )
+            else:
+                doc_id = nd_rows[0]["id"]
+                supabase.table("scrape_queue").update({"notification_document_id": doc_id}).eq("id", queue_id).execute()
         extracted_data = qrow.get("extracted_data") if qrow else {}
         extracted_value = corrected_value if corrected_value is not None else ((extracted_data or {}).get(field_name) if isinstance(extracted_data, dict) else None)
     else:
@@ -153,10 +159,21 @@ def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, 
     payload={"scrape_queue_id": queue_id, "field_name": field_name, "document_id": doc_id, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat(), "entity_type":"other","extraction_method":"manual","extracted_value":extracted_value}
     if corrected_value is not None:
         payload["corrected_value"]=corrected_value
-    if existing:
-        supabase.table("extracted_field_evidence").update(payload).eq("id", existing[0]["id"]).execute()
-    else:
-        supabase.table("extracted_field_evidence").insert(payload).execute()
+    try:
+        if existing:
+            supabase.table("extracted_field_evidence").update(payload).eq("id", existing[0]["id"]).execute()
+        else:
+            supabase.table("extracted_field_evidence").insert(payload).execute()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "extracted_field_evidence write failed queue_id=%s field_name=%s status=%s document_id=%s error=%s",
+            queue_id,
+            field_name,
+            status,
+            doc_id,
+            exc,
+        )
+        raise HTTPException(status_code=500, detail="Failed to write field evidence") from exc
     return payload
 
 @router.post("/admin/scrape/items/{queue_id}/fields/{field_name}/verify")
