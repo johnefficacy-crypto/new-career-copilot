@@ -27,7 +27,7 @@ update public.notification_documents
 update public.notification_documents
    set content_hash = coalesce(
      content_hash,
-     encode(digest(coalesce(source_url, file_url, id::text), 'sha256'), 'hex')
+     md5(coalesce(source_url, file_url, id::text))
    )
  where content_hash is null;
 
