@@ -18,6 +18,7 @@ Schema notes:
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -49,6 +50,54 @@ from app.db.utils import execute_or_default, execute_or_raise
 from .schemas import ExtractedRecruitment, to_json_safe
 
 logger = logging.getLogger("career_copilot.scraping.runner")
+
+
+def _document_type_for_url(url: str) -> str:
+    lower = (url or "").split("?", 1)[0].lower()
+    if lower.endswith(".pdf"):
+        return "pdf"
+    if lower.endswith(".json"):
+        return "json"
+    if lower.endswith(".rss") or lower.endswith(".xml"):
+        return "rss"
+    return "html"
+
+
+def _ensure_notification_document(
+    supabase: Client,
+    *,
+    source_id: str | None,
+    scrape_run_id: str,
+    source_url: str,
+    raw_text: str,
+    metadata: dict[str, Any] | None = None,
+) -> str | None:
+    content_hash = hashlib.sha256((raw_text or source_url or "").encode("utf-8")).hexdigest()
+    payload = {
+        "source_id": source_id,
+        "scrape_run_id": scrape_run_id,
+        "source_url": source_url,
+        "final_url": source_url,
+        "document_type": _document_type_for_url(source_url),
+        "content_hash": content_hash,
+        "raw_text": raw_text,
+        "metadata": metadata or {},
+    }
+    try:
+        rows = supabase.table("notification_documents").insert(payload).execute().data or []
+    except Exception:
+        rows = []
+    if not rows:
+        rows = (
+            supabase.table("notification_documents")
+            .select("id")
+            .eq("content_hash", content_hash)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+    return rows[0].get("id") if rows else None
 
 
 
@@ -165,6 +214,19 @@ def run_scraping_pass(
             "source_registry_id": src.get("id"),
             "source_type": src.get("source_type"),
         }
+        document_id = _ensure_notification_document(
+            supabase,
+            source_id=src.get("id"),
+            scrape_run_id=run_id,
+            source_url=item_url,
+            raw_text=raw,
+            metadata={
+                "source_name": source_name,
+                "source_type": src.get("source_type"),
+                "prompt_version": PROMPT_VERSION,
+                "mock": bool(mock),
+            },
+        )
 
         queue_payload = {
             "source_url": item_url,
@@ -179,6 +241,9 @@ def run_scraping_pass(
             "official_source_resolved": not bool(src.get("requires_official_confirmation")),
             "evidence_required": bool(src.get("requires_official_confirmation")),
             "extraction_status": "ok",
+            "notification_document_id": document_id,
+            "extraction_provider": "mock" if mock else "anthropic",
+            "extraction_prompt_version": PROMPT_VERSION,
         }
         logger.info("scrape.queue_insert run_id=%s source_id=%s source_name=%s target_url=%s extraction_status=%s confidence_score=%.2f data_quality_score=%.2f duplicate_status=%s",
                     run_id, src.get("id"), source_name, item_url, "ok", confidence, normalized.data_quality_score, queue_payload["status"])

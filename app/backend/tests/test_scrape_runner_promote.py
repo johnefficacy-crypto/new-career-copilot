@@ -79,6 +79,15 @@ class RunnerQuery:
                 self.db.setdefault("scrape_queue", []).append(row)
                 return E([row])
             return E([])
+        if self.name == "notification_documents":
+            if self.payload:
+                row = {**self.payload, "id": f"doc-{len(self.db.get('notification_documents', [])) + 1}"}
+                self.db.setdefault("notification_documents", []).append(row)
+                return E([row])
+            rows = list(self.db.get("notification_documents", []))
+            if "content_hash" in self.filters:
+                rows = [r for r in rows if r.get("content_hash") == self.filters["content_hash"]]
+            return E(rows)
         return E([])
 
 
@@ -111,6 +120,8 @@ def test_run_scraping_pass_reads_source_registry():
     assert sb.db["scrape_queue"][0]["source_id"] == "src-1"
     assert sb.db["scrape_queue"][0]["source_url"].endswith("/mock-recruitment-1/")
     assert sb.db["scrape_queue"][0]["evidence_required"] is True
+    assert sb.db["scrape_queue"][0]["notification_document_id"] == "doc-1"
+    assert len(sb.db["notification_documents"]) == 3
 
 def test_promote_generates_slug_without_nameerror():
     sb=SB()
