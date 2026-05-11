@@ -62,7 +62,6 @@ def _document_type_for_url(url: str) -> str:
         return "rss"
     return "html"
 
-
 def _ensure_notification_document(
     supabase: Client,
     *,
@@ -73,6 +72,19 @@ def _ensure_notification_document(
     metadata: dict[str, Any] | None = None,
 ) -> str | None:
     content_hash = hashlib.sha256((raw_text or source_url or "").encode("utf-8")).hexdigest()
+
+    existing = (
+        supabase.table("notification_documents")
+        .select("id")
+        .eq("content_hash", content_hash)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if existing:
+        return existing[0]["id"]
+
     payload = {
         "source_id": source_id,
         "scrape_run_id": scrape_run_id,
@@ -84,9 +96,24 @@ def _ensure_notification_document(
         "raw_text": raw_text,
         "metadata": metadata or {},
     }
+
     try:
         rows = supabase.table("notification_documents").insert(payload).execute().data or []
-    except Exception as exc:  # noqa: BLE001
+        return rows[0].get("id") if rows else None
+    except Exception as exc:
+        msg = str(exc)
+        if "23505" in msg or "uq_notification_documents_hash" in msg:
+            rows = (
+                supabase.table("notification_documents")
+                .select("id")
+                .eq("content_hash", content_hash)
+                .limit(1)
+                .execute()
+                .data
+                or []
+            )
+            return rows[0].get("id") if rows else None
+
         logger.exception(
             "notification_documents insert failed source_id=%s scrape_run_id=%s source_url=%s content_hash=%s error=%s",
             source_id,
@@ -95,18 +122,7 @@ def _ensure_notification_document(
             content_hash,
             exc,
         )
-        rows = []
-    if not rows:
-        rows = (
-            supabase.table("notification_documents")
-            .select("id")
-            .eq("content_hash", content_hash)
-            .limit(1)
-            .execute()
-            .data
-            or []
-        )
-    return rows[0].get("id") if rows else None
+        return None
 
 
 
