@@ -37,6 +37,6 @@ yarn-debug.log*
 yarn-error.log*
 
 # Graphify generated outputs
-graphify-out/
+
 .graphify/
 .graphify-cache/

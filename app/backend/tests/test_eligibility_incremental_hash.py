@@ -7,14 +7,20 @@ class E:
 
 class Q:
     def __init__(self, name, db):
-        self.name=name; self.db=db; self.f={}
+        self.name=name; self.db=db; self.f={}; self.in_filters={}
     def select(self,*a,**k): return self
     def eq(self,k,v): self.f[k]=v; return self
-    def in_(self,*a,**k): return self
+    def in_(self,k,v): self.in_filters[k]=set(v); return self
     def or_(self,*a,**k): return self
     def order(self,*a,**k): return self
     def execute(self):
         rows=[r for r in self.db.get(self.name,[]) if all(r.get(k)==v for k,v in self.f.items())]
+        for key, values in self.in_filters.items():
+            if self.name == "posts" and key.startswith("recruitments."):
+                field = key.split(".", 1)[1]
+                rows = [r for r in rows if (r.get("recruitments") or {}).get(field) in values]
+            else:
+                rows = [r for r in rows if r.get(key) in values]
         return E(rows)
     def upsert(self, payload, on_conflict=None):
         rows = payload if isinstance(payload,list) else [payload]
@@ -38,7 +44,7 @@ class SB:
             "aspirant_education":[{"user_id":"u1","level":"graduate","percentage":75,"is_completed":True}],
             "aspirant_certifications":[],"aspirant_experience":[],"aspirant_preferences":[],
             "aspirant_exam_attempts":[],"aspirant_exam_credentials":[],"tracked_recruitments":[],
-            "posts":[{"id":"p1","recruitment_id":"r1","age_criteria":[],"education_criteria":[],"attempt_limits":[],"certification_criteria":[],"recruitments":{"organizations":{"state":"MH"}}}],
+            "posts":[{"id":"p1","recruitment_id":"r1","age_criteria":[],"education_criteria":[],"attempt_limits":[],"certification_criteria":[],"recruitments":{"status":"open","publish_status":"verified","organizations":{"state":"MH"}}}],
             "eligibility_results":[],"notification_alerts":[],"recruitments":[]
         }
     def table(self,n):
@@ -62,14 +68,14 @@ class FallbackQ(Q):
 
 
 class FallbackSB(SB):
-    def __init__(self):
+    def __init__(self, *, publish_status="verified", status="open"):
         super().__init__()
         self.db["posts"] = [
             {
                 "id": "p1",
                 "recruitment_id": "r1",
                 "language_requirements": [],
-                "recruitments": {"status": "open", "publish_status": "verified", "organizations": {"state": "MH"}},
+                "recruitments": {"status": status, "publish_status": publish_status, "organizations": {"state": "MH"}},
             }
         ]
         self.db["age_criteria"] = [{"post_id": "p1", "min_age": 18, "max_age": 35, "cutoff_date": "2026-01-01"}]
@@ -134,3 +140,52 @@ def test_recompute_falls_back_when_post_criteria_embed_missing(monkeypatch):
     pc = captured["post_criteria"][0]
     assert pc.age_criteria.max_age == 35
     assert pc.education_criteria.min_qualification_level == "graduate"
+
+
+def test_load_active_posts_uses_embedded_select_success_path():
+    sb = SB()
+
+    posts = runner._load_active_posts_with_criteria(sb)
+
+    assert len(posts) == 1
+    assert sb.queried_tables == ["posts"]
+
+
+def test_fallback_attaches_age_and_education_rows_to_posts():
+    sb = FallbackSB()
+
+    posts = runner._load_active_posts_with_criteria(sb)
+
+    assert posts[0]["age_criteria"][0]["max_age"] == 35
+    assert posts[0]["education_criteria"][0]["min_qualification_level"] == "graduate"
+
+
+def test_needs_review_recruitments_excluded_from_recompute(monkeypatch):
+    sb = FallbackSB(publish_status="needs_review")
+    captured = {"count": None}
+
+    def _batch(_profile, _education, _attempts, _credentials, post_criteria, **_kwargs):
+        captured["count"] = len(post_criteria)
+        return []
+
+    monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
+
+    out = runner.run_eligibility_for_user("u1", sb)
+
+    assert out["processed"] == 0
+    assert captured["count"] == 0
+
+
+def test_verified_and_published_open_or_upcoming_recruitments_included(monkeypatch):
+    for publish_status, status in (("verified", "open"), ("published", "upcoming")):
+        sb = FallbackSB(publish_status=publish_status, status=status)
+        captured = {"ids": []}
+
+        def _batch(_profile, _education, _attempts, _credentials, post_criteria, **_kwargs):
+            captured["ids"] = [pc.post_id for pc in post_criteria]
+            return []
+
+        monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
+        runner.run_eligibility_for_user("u1", sb)
+
+        assert captured["ids"] == ["p1"]

@@ -437,7 +437,7 @@ def promote_queue_item(
         except Exception:
             warnings.append("field_evidence_table_unavailable")
         extracted = ExtractedRecruitment(**(item["extracted_data"] or {}))
-        rec_id = promote_to_recruitments(extracted, supabase)
+        rec_id = promote_to_recruitments(extracted, supabase, source_id=item.get("source_id"))
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001

@@ -1,0 +1,81 @@
+flowchart TD
+  Repo["ccp-mainbuild-v1"] --> Frontend["app/frontend"]
+  Repo --> Backend["app/backend"]
+  Repo --> Supabase["app/supabase"]
+  Repo --> Docs["docs"]
+
+  Frontend --> FEIndex["src/index.js"]
+  FEIndex --> Providers["QueryClientProvider / BrowserRouter / AuthProvider / ToastProvider"]
+  Providers --> App["src/App.js"]
+  App --> PublicRoutes["routes/publicRoutes.jsx"]
+  App --> AppRoutes["routes/appRoutes.jsx"]
+  App --> AdminRoutes["routes/adminRoutes.jsx"]
+
+  PublicRoutes --> PublicPages["auth pages + Landing"]
+  AppRoutes --> DashShell["pages/DashShell.jsx"]
+  DashShell --> AppPages["Dashboard / Exams / Study / Community / Marketplace"]
+  AppPages --> AppFeatures["features/dashboard / notifications / onboarding / profile"]
+
+  AdminRoutes --> AdminShell["pages/admin/AdminShell.jsx"]
+  AdminShell --> AdminPages["admin pages"]
+  AdminPages --> RBAC["RBAC.jsx"]
+  AdminPages --> Plans["Plans.jsx"]
+  AdminPages --> Scraper["Scraper.jsx"]
+  AdminPages --> Recruitments["Recruitments.jsx"]
+  AdminPages --> Organizations["Organizations.jsx"]
+  AdminPages --> EligibilityQueue["EligibilityQueue.jsx"]
+  AdminPages --> Sources["Sources.jsx"]
+  AdminPages --> Audit["Audit.jsx"]
+  AdminPages --> NotificationsPage["Notifications.jsx"]
+
+  RBAC --> ToastProvider["shared/ui/ToastProvider.jsx"]
+  Plans --> ToastProvider
+  EligibilityQueue --> AdminAction["features/admin/shared/useAdminAction.js"]
+  AdminAction --> ToastProvider
+  Recruitments --> RecruitmentEdit["features/admin/recruitments/RecruitmentEditPanel.jsx"]
+  Organizations --> OrganizationEdit["features/admin/organizations/OrganizationEditPanel.jsx"]
+  EligibilityQueue --> EligibilityDrawer["features/admin/eligibility/EligibilityReviewDrawer.jsx"]
+  Sources --> SourceHealthBadge["features/admin/sources/SourceHealthBadge.jsx"]
+
+  AppPages --> SharedUI["shared/ui"]
+  AdminPages --> SharedUI
+  AppFeatures --> SharedUI
+  SharedUI --> SharedForms["shared/forms"]
+  SharedUI --> SharedA11y["shared/a11y"]
+  AdminPages --> ApiClient["src/lib/api.js"]
+  AppPages --> ApiClient
+  AppFeatures --> ApiClient
+
+  Backend --> Server["server.py"]
+  Server --> BackendApp["app/backend/app"]
+  BackendApp --> Core["core: auth / config / errors"]
+  BackendApp --> DB["db: supabase_client / postgres / utils"]
+  BackendApp --> Api["api"]
+  BackendApp --> Eligibility["eligibility"]
+  BackendApp --> Scraping["scraping"]
+  BackendApp --> Notifications["notifications"]
+  BackendApp --> Profile["profile"]
+  BackendApp --> Queues["queues"]
+
+  Eligibility --> EligibilityEngine["engine.py"]
+  Eligibility --> EligibilityRunner["runner.py"]
+  EligibilityRunner --> Profile
+  EligibilityRunner --> DB
+
+  Scraping --> ScrapingRunner["runner.py"]
+  ScrapingRunner --> Extractor["extractor.py"]
+  ScrapingRunner --> Normalizer["normalizer.py"]
+  ScrapingRunner --> Dedup["dedup.py"]
+  ScrapingRunner --> Aggregator["aggregator.py"]
+  ScrapingRunner --> SourcesModule["sources.py"]
+  ScrapingRunner --> DB
+
+  Notifications --> Scheduler["scheduler.py"]
+  Notifications --> Dispatcher["dispatcher.py"]
+  Notifications --> RecomputeWorker["recompute_worker.py"]
+  Notifications --> NextActions["next_actions.py"]
+  Scheduler --> Dispatcher
+  Scheduler --> RecomputeWorker
+  RecomputeWorker --> EligibilityRunner
+
+  DB --> Supabase

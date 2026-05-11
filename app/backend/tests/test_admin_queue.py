@@ -15,12 +15,15 @@ class Q:
     def execute(self):
         if self.t=='admin_audit_logs': self.s['audits'].append(self.payload); return R([{}])
         if self.t=='scrape_queue':
-            row=self.s['queue'][0]
+            rows = [r for r in self.s['queue'] if self.id is None or r.get("id") == self.id]
+            if not rows:
+                return R([])
+            row=rows[0]
             if self.payload: row.update(self.payload)
             return R([row])
         return R([])
 class SB:
-    def __init__(self): self.state={'queue':[{'id':'q1','status':'approved','notification_document_id':'doc-1','extracted_data':{'title':'t','organization_name':'Org','org_type':'central','year':2026,'official_notification_url':'https://x.gov/n'}}],'audits':[]}
+    def __init__(self): self.state={'queue':[{'id':'q1','status':'approved','source_id':'src-1','notification_document_id':'doc-1','extracted_data':{'title':'t','organization_name':'Org','org_type':'central','year':2026,'official_notification_url':'https://x.gov/n'}}],'audits':[]}
     def table(self,t): return Q(t,self.state)
 
 def test_list_sources_uses_source_registry_only(monkeypatch):
@@ -56,11 +59,23 @@ def test_reject_writes_audit(monkeypatch):
     admin_scrape.reject_queue_item('q1', {'notes':'bad'}, {'id':'a','email':'e'})
     assert any(a.get('action')=='scrape.queue.reject' for a in sb.state['audits'])
 
+
+def test_reject_duplicate_mock_queue_rows_safely(monkeypatch):
+    sb = SB()
+    sb.state["queue"].append({"id": "q2", "status": "duplicate", "source_id": "src-1", "notification_document_id": "doc-2", "extracted_data": {}})
+    monkeypatch.setattr(admin_scrape, "get_supabase_admin", lambda: sb)
+
+    out = admin_scrape.reject_queue_item("q2", {"notes": "duplicate mock"}, {"id": "a", "email": "e"})
+
+    assert out["status"] == "rejected"
+    assert sb.state["queue"][1]["reviewer_notes"] == "duplicate mock"
+    assert any(a.get("entity_id") == "q2" and a.get("action") == "scrape.queue.reject" for a in sb.state["audits"])
+
 def test_promote_never_publishes(monkeypatch):
     sb=SB(); monkeypatch.setattr(admin_scrape,'get_supabase_admin',lambda:sb)
     import app.scraping.runner as runner
     import app.scraping.schemas as schemas
-    monkeypatch.setattr(runner, 'promote_to_recruitments', lambda extracted, supabase: 'r1')
+    monkeypatch.setattr(runner, 'promote_to_recruitments', lambda extracted, supabase, **kwargs: 'r1')
     monkeypatch.setattr(admin_scrape, 'alert_users_for_new_recruitment', lambda *a, **k: 0)
     # ensure pending accepted
     sb.state['queue'][0]['status']='pending'
@@ -91,6 +106,7 @@ def test_field_verify_reject_correct_audit(monkeypatch):
     admin_scrape.reject_field('q1','apply_end_date',{'notes':'bad'},{'id':'a','email':'e'})
     admin_scrape.correct_field('q1','apply_end_date',{'corrected_value':'2026-06-01'},{'id':'a','email':'e'})
     assert any(x.get('reviewer_status')=='corrected' for x in sb.state['field'])
+    assert any(a.get('action')=='scrape.field.verify' for a in sb.state['audits'])
 
 
 def test_promote_blocks_unverified_high_risk(monkeypatch):
@@ -206,11 +222,17 @@ def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
             return super().table(t)
     sb=SB5(); monkeypatch.setattr(admin_scrape,'get_supabase_admin',lambda:sb)
     import app.scraping.runner as runner
-    monkeypatch.setattr(runner, 'promote_to_recruitments', lambda extracted, supabase: 'r1')
+    captured = {}
+    def _promote(extracted, supabase, **kwargs):
+        captured.update(kwargs)
+        return 'r1'
+    monkeypatch.setattr(runner, 'promote_to_recruitments', _promote)
     sb.state['queue'][0]['status']='approved'
     out=admin_scrape.promote_queue_item('q1', {'id':'a','email':'e'})
     assert out['publish_status']=='needs_review'
     assert sb.state['queue'][0]['status']=='approved'
+    assert captured["source_id"] == "src-1"
+    assert any(a.get('action')=='scrape.queue.promote' for a in sb.state['audits'])
 
 
 def test_promote_failure_keeps_queue_item_pending(monkeypatch):

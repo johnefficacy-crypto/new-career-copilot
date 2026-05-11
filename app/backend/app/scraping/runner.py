@@ -515,6 +515,8 @@ def _find_or_create_organization(
 def promote_to_recruitments(
     data: ExtractedRecruitment,
     supabase: Client,
+    *,
+    source_id: str | None = None,
 ) -> str:
     """Write a queue item into the canonical schema. Raises on any insert failure.
 
@@ -545,6 +547,8 @@ def promote_to_recruitments(
         "official_apply_url": data.official_apply_url,
         "source_pdf_url": data.source_pdf_url,
     }
+    if source_id:
+        rec_payload["source_id"] = source_id
     rec_rows = execute_or_raise("recruitments.insert", lambda: supabase.table("recruitments").insert(rec_payload).execute()).data or []
     if not rec_rows:
         raise RuntimeError("[promote] recruitment insert returned no row")
@@ -643,7 +647,7 @@ def promote_run(
     """
     queued = (
         supabase.table("scrape_queue")
-        .select("id, extracted_data, status")
+        .select("id, source_id, extracted_data, status")
         .eq("scrape_run_id", run_id)
         .eq("status", "pending")
         .execute()).data or []
@@ -661,7 +665,7 @@ def promote_run(
             continue
         try:
             extracted = ExtractedRecruitment(**d)
-            rec_id = promote_to_recruitments(extracted, supabase)
+            rec_id = promote_to_recruitments(extracted, supabase, source_id=item.get("source_id"))
             rec_ids.append(rec_id)
             update = {
                 "status": "approved",
