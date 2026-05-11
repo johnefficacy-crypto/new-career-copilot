@@ -7,16 +7,14 @@ Behaviour parity:
       "never auto-approve" hardening).
     * Dedupes on ``computeSimilarityKey`` + existing recruitments and
       not-yet-decided queue rows.
-    * Updates ``scrape_sources.last_scraped_at`` / ``consecutive_fails`` /
-      ``is_healthy`` on success / failure.
+    * Updates ``source_registry.last_scraped_at`` / ``last_success_at`` /
+      ``consecutive_fails`` on success / failure.
     * Persists a final ``scrape_runs`` row with ``items_found / items_new /
       items_duplicate / error_log``.
 
 Schema notes:
-    * The reference reads from the legacy ``scrape_sources`` table; the
-      current Supabase project has both ``scrape_sources`` AND
-      ``source_registry``. We honour the reference contract and read
-      from ``scrape_sources`` here (the registry is admin metadata).
+    * ``source_registry`` is the canonical runtime/admin source table.
+      ``scrape_sources`` is legacy adapter storage and is not read here.
 """
 from __future__ import annotations
 
@@ -35,7 +33,7 @@ from .extractor import (
 )
 from .dedup import fuzzy_duplicate
 from .normalizer import normalize_recruitment
-from .sources import normalize_legacy_source
+from .sources import normalize_source_registry
 from app.common.strings import slugify
 from app.common.time import utc_now_iso
 from app.core.errors import PromotionError
@@ -80,14 +78,14 @@ def run_scraping_pass(
 
     # ── 2. Load active sources from the legacy table ─────────────────────
     src_q = (
-        supabase.table("scrape_sources")
+        supabase.table("source_registry")
         .select("*")
         .eq("is_active", True)
         .order("last_scraped_at", desc=False, nullsfirst=True)
     )
     if source_ids:
         src_q = src_q.in_("id", source_ids)
-    sources: list[dict[str, Any]] = execute_or_default("scrape_sources.active.read", lambda: src_q.execute().data, []) or []
+    sources: list[dict[str, Any]] = execute_or_default("source_registry.active.read", lambda: src_q.execute().data, []) or []
 
     # ── 3. Build dedup index from existing recruitments + open queue ─────
     existing_recs = execute_or_default("recruitments.read_for_dedupe",
@@ -134,17 +132,17 @@ def run_scraping_pass(
     error_log: list[dict[str, Any]] = []
 
     for src in sources:
-        source = normalize_legacy_source(src)
+        source = normalize_source_registry(src)
         target_url = source.target_url
         try:
             raw = fetch_page_text(target_url) if not mock else f"MOCK PAGE TEXT FOR {target_url}"
             if not raw:
-                error_log.append({"source": src.get("name"), "error": "Empty response", "at": utc_now_iso()})
+                error_log.append({"source": source.name, "error": "Empty response", "at": utc_now_iso()})
                 _bump_source_failure(supabase, src)
                 continue
-            extraction = extract_recruitment_data(raw, target_url, src.get("name") or "", mock=mock)
+            extraction = extract_recruitment_data(raw, target_url, source.name, mock=mock)
             if not extraction:
-                error_log.append({"source": src.get("name"), "error": "Extraction returned null", "at": utc_now_iso()})
+                error_log.append({"source": source.name, "error": "Extraction returned null", "at": utc_now_iso()})
                 _bump_source_failure(supabase, src)
                 continue
 
@@ -170,6 +168,7 @@ def run_scraping_pass(
             queue_payload = {
                 "source_url": target_url,
                 "source_name": source.name,
+                "source_id": source.id or None,
                 "extracted_data": extracted_payload,
                 "confidence_score": confidence,
                 "scrape_run_id": run_id,
@@ -189,14 +188,14 @@ def run_scraping_pass(
                 queued_keys.add(sim_key)
 
             execute_or_default(
-                "scrape_sources.mark_success",
-                lambda src=src: supabase.table("scrape_sources")
+                "source_registry.mark_success",
+                lambda src=src: supabase.table("source_registry")
                 .update(
                     {
                         "last_scraped_at": utc_now_iso(),
                         "last_success_at": utc_now_iso(),
                         "consecutive_fails": 0,
-                        "is_healthy": True,
+                        "last_error": None,
                     }
                 )
                 .eq("id", src["id"])
@@ -205,7 +204,7 @@ def run_scraping_pass(
             )
 
         except Exception as exc:  # noqa: BLE001
-            error_log.append({"source": src.get("name"), "error": str(exc), "at": utc_now_iso()})
+            error_log.append({"source": source.name, "error": str(exc), "at": utc_now_iso()})
             _bump_source_failure(supabase, src)
 
     # ── 5. Finalise the run row ──────────────────────────────────────────
@@ -247,12 +246,12 @@ def run_scraping_pass(
 
 def _bump_source_failure(supabase: Client, src: dict[str, Any]) -> None:
     execute_or_default(
-        "scrape_sources.bump_failure",
-        lambda: supabase.table("scrape_sources")
+        "source_registry.bump_failure",
+        lambda: supabase.table("source_registry")
         .update(
             {
                 "consecutive_fails": (src.get("consecutive_fails") or 0) + 1,
-                "is_healthy": False,
+                "last_error": "scrape_failed",
             }
         )
         .eq("id", src["id"])

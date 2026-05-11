@@ -1,7 +1,7 @@
 import pytest
 
 from app.core.errors import DatabaseError, PromotionError
-from app.scraping.runner import promote_to_recruitments
+from app.scraping.runner import promote_to_recruitments, run_scraping_pass
 from app.scraping.schemas import ExtractedRecruitment
 
 class E:
@@ -16,6 +16,98 @@ class Q:
 class SB:
     def __init__(self): self.db={}
     def table(self,name): return Q(name,self.db)
+
+
+class RunnerQuery:
+    def __init__(self, name, db, calls):
+        self.name = name
+        self.db = db
+        self.calls = calls
+        self.payload = None
+        self.filters = {}
+
+    @property
+    def not_(self):
+        return self
+
+    def select(self, *args, **kwargs):
+        return self
+
+    def eq(self, key, value):
+        self.filters[key] = value
+        return self
+
+    def in_(self, key, values):
+        self.filters[key] = set(values)
+        return self
+
+    def order(self, *args, **kwargs):
+        return self
+
+    def insert(self, payload):
+        self.payload = payload
+        return self
+
+    def update(self, payload):
+        self.payload = payload
+        return self
+
+    def execute(self):
+        self.calls.append(self.name)
+        if self.name == "scrape_runs":
+            if self.payload and "started_at" in self.payload:
+                row = {**self.payload, "id": "run-1"}
+                self.db.setdefault("scrape_runs", []).append(row)
+                return E([row])
+            self.db.setdefault("scrape_runs_updates", []).append(self.payload)
+            return E([self.payload])
+        if self.name == "source_registry":
+            if self.payload:
+                self.db.setdefault("source_registry_updates", []).append(self.payload)
+                return E([self.payload])
+            rows = list(self.db.get("source_registry", []))
+            if "is_active" in self.filters:
+                rows = [r for r in rows if r.get("is_active") == self.filters["is_active"]]
+            if "id" in self.filters:
+                rows = [r for r in rows if r.get("id") in self.filters["id"]]
+            return E(rows)
+        if self.name == "recruitments":
+            return E([])
+        if self.name == "scrape_queue":
+            if self.payload:
+                row = {**self.payload, "id": "queue-1"}
+                self.db.setdefault("scrape_queue", []).append(row)
+                return E([row])
+            return E([])
+        return E([])
+
+
+class RunnerSB:
+    def __init__(self):
+        self.calls = []
+        self.db = {
+            "source_registry": [
+                {
+                    "id": "src-1",
+                    "source_name": "Free Job Alert",
+                    "source_url": "https://www.freejobalert.com/government-jobs/",
+                    "is_active": True,
+                }
+            ]
+        }
+
+    def table(self, name):
+        return RunnerQuery(name, self.db, self.calls)
+
+
+def test_run_scraping_pass_reads_source_registry():
+    sb = RunnerSB()
+    out = run_scraping_pass(sb, source_ids=["src-1"], mock=True)
+    assert out["sources_checked"] == 1
+    assert out["items_found"] == 1
+    assert "scrape_sources" not in sb.calls
+    assert sb.db["scrape_queue"][0]["source_id"] == "src-1"
+    assert sb.db["scrape_queue"][0]["source_url"] == "https://www.freejobalert.com/government-jobs/"
 
 def test_promote_generates_slug_without_nameerror():
     sb=SB()
