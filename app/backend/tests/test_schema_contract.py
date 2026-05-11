@@ -127,6 +127,13 @@ REQUIRED_COLUMNS = {
         "job_type",
         "language_requirements",
     },
+    "age_criteria": {
+        "id",
+        "post_id",
+        "min_age",
+        "max_age",
+        "cutoff_date",
+    },
     "eligibility_results": {
         "id",
         "user_id",
@@ -723,6 +730,8 @@ REQUIRED_COLUMNS = {
     "education_criteria": {
         "id",
         "post_id",
+        "min_qualification_level",
+        "allowed_disciplines",
         "allow_higher_qualification",
         "accepted_equivalent_qualifications",
         "raw_requirement_text",

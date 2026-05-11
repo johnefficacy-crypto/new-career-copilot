@@ -7,11 +7,22 @@ from app.scraping.schemas import ExtractedRecruitment
 class E:
     def __init__(self,data): self.data=data
 class Q:
-    def __init__(self,name,db): self.name=name; self.db=db
-    def upsert(self,p,**k): self.p=p; return self
-    def insert(self,p): self.p=p; self.db.setdefault(self.name,[]).append({**p,"id":f"{self.name}-1"}); return self
+    def __init__(self,name,db): self.name=name; self.db=db; self.filters={}
+    def select(self,*a,**k): return self
+    def eq(self,k,v): self.filters[k]=v; return self
+    def limit(self,*a,**k): return self
+    def upsert(self,p,**k): raise AssertionError("promotion should not require organizations.upsert")
+    def insert(self,p):
+        self.p=p
+        rows=self.db.setdefault(self.name,[])
+        rows.append({**p,"id":f"{self.name}-{len(rows) + 1}"})
+        return self
     def execute(self):
-        if self.name=="organizations": return E([{"id":"org-1"}])
+        if self.name=="organizations":
+            rows=list(self.db.get(self.name,[]))
+            if "name" in self.filters:
+                rows=[r for r in rows if r.get("name")==self.filters["name"]]
+            return E(rows)
         return E(self.db.get(self.name,[]))
 class SB:
     def __init__(self): self.db={}
@@ -131,6 +142,16 @@ def test_promote_generates_slug_without_nameerror():
     assert rec_id=="recruitments-1"
     assert sb.db["recruitments"][0]["slug"]=="ssc-cgl-2026"
     assert sb.db["recruitments"][0]["official_apply_url"]=="https://x/apply"
+    assert sb.db["organizations"][0]["name"]=="SSC"
+
+
+def test_promote_reuses_existing_organization_without_name_unique_constraint():
+    sb=SB()
+    sb.db["organizations"]=[{"id":"org-existing","name":"SSC","type":"central"}]
+    data=ExtractedRecruitment(title="SSC CHSL", organization_name="SSC", org_type="central", year=2026, notification_date="2026-01-01", apply_start_date="2026-01-02", apply_end_date="2026-01-03", official_notification_url="https://x", posts=[])
+    promote_to_recruitments(data, sb)
+    assert len(sb.db["organizations"]) == 1
+    assert sb.db["recruitments"][0]["organization_id"] == "org-existing"
 
 
 def test_promote_creates_recruitment_unit_for_unitwise_post():

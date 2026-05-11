@@ -477,6 +477,41 @@ def _map_education_level(raw: str | None) -> str:
     return "graduate"
 
 
+def _find_or_create_organization(
+    supabase: Client,
+    *,
+    name: str,
+    org_type: str | None,
+    state: str | None = None,
+    operation: str = "organizations",
+) -> str:
+    clean_name = (name or "").strip()
+    if not clean_name:
+        raise PromotionError("[promote] organization name is required")
+
+    org_rows = execute_or_raise(
+        f"{operation}.select",
+        lambda: supabase.table("organizations")
+        .select("id")
+        .eq("name", clean_name)
+        .limit(1)
+        .execute(),
+    ).data or []
+    if org_rows:
+        return org_rows[0]["id"]
+
+    org_payload = {"name": clean_name, "type": org_type}
+    if state:
+        org_payload["state"] = state
+    inserted = execute_or_raise(
+        f"{operation}.insert",
+        lambda: supabase.table("organizations").insert(org_payload).execute(),
+    ).data or []
+    if not inserted:
+        raise RuntimeError(f"[promote] organization insert returned no row for {clean_name}")
+    return inserted[0]["id"]
+
+
 def promote_to_recruitments(
     data: ExtractedRecruitment,
     supabase: Client,
@@ -487,14 +522,12 @@ def promote_to_recruitments(
     queue row's ``status='approved'`` only after this returns successfully
     (mirrors the May 2026 hardening: never mark approved on partial failure).
     """
-    # ── Organisation upsert (on_conflict='name') ──
-    org_payload = {"name": data.organization_name, "type": data.org_type}
-    org_rows = execute_or_raise("organizations.upsert", lambda: supabase.table("organizations")
-        .upsert(org_payload, on_conflict="name", ignore_duplicates=False)
-        .execute()).data or []
-    if not org_rows:
-        raise RuntimeError("[promote] organization upsert returned no row")
-    org_id: str = org_rows[0]["id"]
+    # ── Organisation find/create ──
+    org_id = _find_or_create_organization(
+        supabase,
+        name=data.organization_name,
+        org_type=data.org_type,
+    )
 
     # ── Recruitment insert ──
     rec_payload = {
@@ -532,22 +565,13 @@ def promote_to_recruitments(
             if unit_id is None:
                 unit_org_id = org_id
                 if post.unit_name and post.unit_name != data.organization_name:
-                    unit_org_rows = execute_or_raise(
-                        "organizations.upsert_unit",
-                        lambda post=post: supabase.table("organizations")
-                        .upsert(
-                            {
-                                "name": post.unit_name,
-                                "type": data.org_type,
-                                "state": post.unit_location_state,
-                            },
-                            on_conflict="name",
-                            ignore_duplicates=False,
-                        )
-                        .execute(),
-                    ).data or []
-                    if unit_org_rows:
-                        unit_org_id = unit_org_rows[0]["id"]
+                    unit_org_id = _find_or_create_organization(
+                        supabase,
+                        name=post.unit_name,
+                        org_type=data.org_type,
+                        state=post.unit_location_state,
+                        operation="organizations.unit",
+                    )
                 unit_rows = execute_or_raise(
                     "recruitment_units.insert",
                     lambda post=post, unit_org_id=unit_org_id: supabase.table("recruitment_units")
