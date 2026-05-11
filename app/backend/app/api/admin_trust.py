@@ -10,6 +10,55 @@ from app.db.supabase_client import get_supabase_admin
 
 router = APIRouter(tags=["admin-trust"])
 
+ALLOWED_SOURCE_TYPES = {
+    "aggregator",
+    "official_html",
+    "official_pdf",
+    "rss",
+    "api",
+    "sitemap",
+}
+
+SOURCE_CONFIG_FIELDS = {
+    "organization_id",
+    "source_name",
+    "short_code",
+    "source_type",
+    "category",
+    "jurisdiction",
+    "state",
+    "parent_org",
+    "source_url",
+    "official_url",
+    "notification_url",
+    "rss_url",
+    "api_url",
+    "pdf_bulletin_url",
+    "adapter_type",
+    "scrape_interval_hours",
+    "tier",
+    "trust_score",
+    "anti_bot_risk",
+    "requires_playwright",
+    "requires_login",
+    "has_captcha",
+    "pdf_only",
+    "is_active",
+    "is_verified",
+    "is_official_source",
+    "can_publish_directly",
+    "discovery_only",
+    "requires_official_confirmation",
+    "notes",
+    "org_state",
+    "insecure_tls",
+    "selectors",
+    "parser_config",
+    "scrape_config",
+    "trust_config",
+    "adapter_config",
+}
+
 
 def _audit(sb, admin: dict, action: str, entity_type: str, entity_id: str, before_payload=None, after_payload=None, metadata=None):
     sb.table("admin_audit_logs").insert({
@@ -283,6 +332,54 @@ def _validate_common(payload: dict):
         if str(payload["apply_start_date"])>str(payload["apply_end_date"]):
             raise HTTPException(status_code=400, detail="apply dates reversed")
 
+
+def _validate_source_type(body: dict, *, required: bool) -> str | None:
+    raw = body.get("source_type")
+    if raw is None or str(raw).strip() == "":
+        if required:
+            raise HTTPException(status_code=400, detail="source_type is required")
+        return None
+    value = str(raw).strip().lower()
+    if value not in ALLOWED_SOURCE_TYPES:
+        allowed = ", ".join(sorted(ALLOWED_SOURCE_TYPES))
+        raise HTTPException(status_code=400, detail=f"invalid source_type; allowed: {allowed}")
+    return value
+
+
+def _source_payload(body: dict, *, existing: dict | None = None, require_type: bool = False) -> dict:
+    source_type = _validate_source_type(body, required=require_type)
+    payload = {k: v for k, v in body.items() if k in SOURCE_CONFIG_FIELDS}
+    if source_type:
+        payload["source_type"] = source_type
+
+    effective_type = source_type or (existing or {}).get("source_type")
+    if effective_type == "aggregator":
+        payload["is_verified"] = False
+        payload["is_official_source"] = False
+        payload["can_publish_directly"] = False
+        payload["discovery_only"] = True
+        payload["requires_official_confirmation"] = True
+        payload["verification_status"] = "needs_review"
+        trust_config = dict((existing or {}).get("trust_config") or {})
+        trust_config.update(
+            {
+                "discovery_only": True,
+                "manual_review_required": True,
+                "requires_official_source": True,
+                "evidence_required": True,
+                "auto_promote": False,
+            }
+        )
+        payload["trust_config"] = trust_config
+
+    scrape_config = payload.get("scrape_config")
+    if isinstance(scrape_config, dict) and "max_items_per_run" in scrape_config:
+        try:
+            scrape_config["max_items_per_run"] = max(1, min(int(scrape_config["max_items_per_run"]), 100))
+        except Exception:
+            raise HTTPException(status_code=400, detail="scrape_config.max_items_per_run must be a number")
+    return payload
+
 @router.post("/admin/sources")
 def create_source(body: dict, admin: dict = Depends(require_permission("sources.manage"))):
     if not body.get("official_url"):
@@ -291,7 +388,7 @@ def create_source(body: dict, admin: dict = Depends(require_permission("sources.
     sb=get_supabase_admin()
     ex=sb.table("source_registry").select("id").eq("official_url", body["official_url"]).limit(1).execute().data or []
     if ex: raise HTTPException(status_code=409, detail="official_url must be unique")
-    payload={k:v for k,v in body.items() if k in {"organization_id","source_name","short_code","source_type","category","jurisdiction","state","parent_org","official_url","notification_url","rss_url","api_url","pdf_bulletin_url","adapter_type","scrape_interval_hours","tier","trust_score","anti_bot_risk","requires_playwright","requires_login","has_captcha","pdf_only","is_active","is_verified","notes","org_state","insecure_tls","selectors","requires_official_confirmation"}}
+    payload=_source_payload(body, require_type=True)
     row=(sb.table("source_registry").insert(payload).execute().data or [{}])[0]
     _audit(sb, admin, "source.create", "source", row.get("id","new"), after_payload=payload)
     return {"ok":True,"item":row}
@@ -300,7 +397,7 @@ def create_source(body: dict, admin: dict = Depends(require_permission("sources.
 def update_source(source_id: str, body: dict, admin: dict = Depends(require_permission("sources.manage"))):
     _validate_common(body); sb=get_supabase_admin(); old=(sb.table("source_registry").select("*").eq("id",source_id).limit(1).execute().data or [None])[0]
     if not old: raise HTTPException(status_code=404, detail="Source not found")
-    payload={k:v for k,v in body.items() if k in old and k!="id"}
+    payload={k:v for k,v in _source_payload(body, existing=old, require_type=False).items() if (k in old or k in SOURCE_CONFIG_FIELDS) and k!="id"}
     sb.table("source_registry").update(payload).eq("id",source_id).execute(); _audit(sb,admin,"source.update","source",source_id,before_payload=old,after_payload=payload)
     return {"ok":True}
 

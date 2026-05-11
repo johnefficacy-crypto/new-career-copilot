@@ -92,6 +92,8 @@ _HIGH_RISK_FIELDS={"apply_end_date","official_notification_url","official_apply_
 
 class ScrapeRunBody(BaseModel):
     source_ids: list[str] | None = Field(default=None, max_length=50)
+    limit: int = Field(default=25, ge=1, le=100)
+    force: bool = False
 
 
 class ReviewBody(BaseModel):
@@ -216,7 +218,10 @@ def _shape_source(row: dict[str, Any]) -> dict[str, Any]:
         "official_url": row.get("official_url") or row.get("base_url"),
         "notification_url": row.get("notification_url"),
         "url": row.get("notification_url") or row.get("base_url"),
-        "kind": row.get("source_type") or row.get("adapter_type") or "html",
+        "kind": row.get("source_type") or row.get("adapter_type"),
+        "source_type": row.get("source_type"),
+        "source_url": row.get("source_url"),
+        "category": row.get("category"),
         "tier": row.get("tier"),
         "verification_status": row.get("verification_status"),
         "is_verified": row.get("is_verified"),
@@ -230,6 +235,13 @@ def _shape_source(row: dict[str, Any]) -> dict[str, Any]:
         "last_run": row.get("last_scraped_at"),
         "status": "ok" if (row.get("consecutive_fails") or 0) == 0 else "degraded",
         "is_active": row.get("is_active"),
+        "is_official_source": row.get("is_official_source"),
+        "discovery_only": row.get("discovery_only"),
+        "requires_official_confirmation": row.get("requires_official_confirmation"),
+        "parser_config": row.get("parser_config") or {},
+        "scrape_config": row.get("scrape_config") or {},
+        "trust_config": row.get("trust_config") or {},
+        "adapter_config": row.get("adapter_config") or {},
         "consecutive_fails": row.get("consecutive_fails") or 0,
     }
 
@@ -279,6 +291,7 @@ def scrape_run_dry(
         triggered_by="admin",
         triggered_by_user=admin["id"],
         source_ids=body.source_ids,
+        limit=body.limit,
         mock=True,
     )
     _audit(supabase, admin, "scrape.run_dry", entity_type="scrape_runs",
@@ -291,7 +304,7 @@ def scrape_run(
     body: ScrapeRunBody | None = None,
     admin: dict = Depends(require_permission("scraper.manage")),
 ) -> dict[str, Any]:
-    """Run a real scrape pass (Claude extraction). Requires ANTHROPIC_API_KEY."""
+    """Run a real scrape pass. It creates review queue items and never publishes."""
     body = body or ScrapeRunBody()
     supabase = get_supabase_admin()
     summary = run_scraping_pass(
@@ -299,6 +312,7 @@ def scrape_run(
         triggered_by="admin",
         triggered_by_user=admin["id"],
         source_ids=body.source_ids,
+        limit=body.limit,
         mock=False,
     )
     _audit(supabase, admin, "scrape.run", entity_type="scrape_runs",
@@ -349,7 +363,7 @@ def list_scrape_queue(
     supabase = get_supabase_admin()
     q = (
         supabase.table("scrape_queue")
-        .select("id, source_url, source_name, raw_html, extracted_data, confidence_score, data_quality_score, status, duplicate_of, reviewer_id, reviewer_notes, reviewed_at, field_evidence, official_source_resolved, official_source_host, extraction_status, evidence_required, scraped_at")
+        .select("id, source_id, source_url, source_name, raw_html, raw_payload, extracted_data, confidence_score, data_quality_score, status, duplicate_of, reviewer_id, reviewer_notes, reviewed_at, field_evidence, official_source_resolved, official_source_host, extraction_status, evidence_required, scraped_at")
         .order("data_quality_score", desc=False, nullsfirst=True)
         .order("scraped_at", desc=True)
         .limit(limit)
@@ -383,6 +397,8 @@ def list_scrape_queue(
         r["classifier_confidence"] = cls["confidence"]
         r["classifier_reasons"] = cls["reasons"]
         ext = r.get("extracted_data") or {}
+        meta = ext.get("_meta") if isinstance(ext, dict) else {}
+        r["source_type"] = (meta or {}).get("source_type")
         dups = duplicate_candidates(ext if isinstance(ext, dict) else {}, existing)
         r["duplicate_candidates"] = dups
         r["multiple_posts_detected"] = bool((ext.get("posts") if isinstance(ext, dict) else None))

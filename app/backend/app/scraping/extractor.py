@@ -123,6 +123,11 @@ def _is_mock_mode(explicit: bool | None) -> bool:
     return key in {"", "mock", "test", "fake", "placeholder"} or key.startswith("xxx")
 
 
+def _anthropic_api_key_available() -> bool:
+    key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip().lower()
+    return bool(key) and key not in {"mock", "test", "fake", "placeholder"} and not key.startswith("xxx")
+
+
 def extract_recruitment_data(
     raw_text: str,
     source_url: str,
@@ -136,11 +141,15 @@ def extract_recruitment_data(
     if _is_mock_mode(mock):
         return _mock_extract(truncated, source_url, source_name)
 
+    if not _anthropic_api_key_available():
+        logger.warning("[extractor] ANTHROPIC_API_KEY missing or placeholder; AI extraction disabled, using deterministic extraction")
+        return _mock_extract(truncated, source_url, source_name, provider="deterministic_no_ai")
+
     try:
         import anthropic
     except ImportError:
-        logger.warning("[extractor] anthropic SDK not installed; falling back to mock")
-        return _mock_extract(truncated, source_url, source_name)
+        logger.warning("[extractor] anthropic SDK not installed; AI extraction disabled, using deterministic extraction")
+        return _mock_extract(truncated, source_url, source_name, provider="deterministic_no_anthropic_sdk")
 
     user_prompt = (
         f"Extract all recruitment notification data from the following text scraped from "
@@ -209,7 +218,7 @@ def _extract_json_object(text: str) -> str | None:
     return clean[start : end + 1].strip()
 
 
-def _mock_extract(raw_text: str, source_url: str, source_name: str) -> dict[str, Any]:
+def _mock_extract(raw_text: str, source_url: str, source_name: str, *, provider: str = "mock") -> dict[str, Any]:
     """Deterministic synthetic extraction for tests + dry runs without a model."""
     digest = hashlib.sha1(f"{source_url}|{source_name}".encode()).hexdigest()
     today = date.today()
@@ -260,7 +269,7 @@ def _mock_extract(raw_text: str, source_url: str, source_name: str) -> dict[str,
         ],
     )
     confidence = 0.7  # mocks are mid-confidence to force admin review
-    return {"data": data, "confidence": confidence, "is_mock": True}
+    return {"data": data, "confidence": confidence, "is_mock": True, "provider": provider}
 
 
 def _guess_org_type(source_name: str) -> str:

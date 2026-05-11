@@ -34,7 +34,39 @@ class SB:
 
 def test_invalid_trust_score(monkeypatch):
     monkeypatch.setattr(admin_trust,'get_supabase_admin',lambda:SB())
-    with pytest.raises(HTTPException): admin_trust.create_source({"official_url":"https://n","trust_score":2},{"id":"a","email":"e"})
+    with pytest.raises(HTTPException): admin_trust.create_source({"official_url":"https://n","source_type":"official_html","trust_score":2},{"id":"a","email":"e"})
+
+def test_create_source_requires_explicit_source_type(monkeypatch):
+    monkeypatch.setattr(admin_trust,'get_supabase_admin',lambda:SB())
+    with pytest.raises(HTTPException) as exc:
+        admin_trust.create_source({"official_url":"https://n","source_name":"No type"},{"id":"a","email":"e"})
+    assert exc.value.status_code == 400
+    assert "source_type" in str(exc.value.detail)
+
+def test_create_source_accepts_aggregator_and_sets_discovery_policy(monkeypatch):
+    sb=SB(); monkeypatch.setattr(admin_trust,'get_supabase_admin',lambda:sb)
+    out = admin_trust.create_source(
+        {
+            "official_url":"https://jobs.example/listing",
+            "source_name":"Aggregator",
+            "source_type":"aggregator",
+            "is_verified":True,
+            "trust_config":{"auto_promote":True},
+        },
+        {"id":"a","email":"e"},
+    )
+    item = out["item"]
+    assert item["source_type"] == "aggregator"
+    assert item["is_verified"] is False
+    assert item["discovery_only"] is True
+    assert item["requires_official_confirmation"] is True
+    assert item["can_publish_directly"] is False
+    assert item["trust_config"]["auto_promote"] is False
+
+def test_create_source_accepts_official_html_without_html_default(monkeypatch):
+    sb=SB(); monkeypatch.setattr(admin_trust,'get_supabase_admin',lambda:sb)
+    out = admin_trust.create_source({"official_url":"https://ssc.gov.in","source_name":"SSC","source_type":"official_html"},{"id":"a","email":"e"})
+    assert out["item"]["source_type"] == "official_html"
 
 def test_source_deactivate(monkeypatch):
     sb=SB(); monkeypatch.setattr(admin_trust,'get_supabase_admin',lambda:sb)

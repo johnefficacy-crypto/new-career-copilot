@@ -49,6 +49,42 @@ def test_list_sources_uses_source_registry_only(monkeypatch):
     assert admin_scrape._list_sources() == {"items": []}
     assert sb.calls == ["source_registry"]
 
+def test_live_scrape_endpoint_exists_and_passes_safe_review_options(monkeypatch):
+    captured = {}
+    class SBSafe:
+        pass
+
+    monkeypatch.setattr(admin_scrape, "get_supabase_admin", lambda: SBSafe())
+
+    def fake_run_scraping_pass(supabase, **kwargs):
+        captured.update(kwargs)
+        return {
+            "run_id": "run-1",
+            "status": "completed",
+            "sources_checked": 1,
+            "items_found": 1,
+            "items_new": 1,
+            "items_duplicate": 0,
+            "errors": [],
+        }
+
+    monkeypatch.setattr(admin_scrape, "run_scraping_pass", fake_run_scraping_pass)
+    monkeypatch.setattr(admin_scrape, "_audit", lambda *a, **k: None)
+
+    routes = {getattr(route, "path", "") for route in admin_scrape.router.routes}
+    assert "/admin/scrape/run" in routes
+
+    out = admin_scrape.scrape_run(
+        admin_scrape.ScrapeRunBody(source_ids=["src-1"], limit=7, force=False),
+        {"id": "admin-1", "email": "a@example.com"},
+    )
+
+    assert out["run_id"] == "run-1"
+    assert captured["source_ids"] == ["src-1"]
+    assert captured["limit"] == 7
+    assert captured["mock"] is False
+    assert captured["triggered_by"] == "admin"
+
 def test_approve_updates_status(monkeypatch):
     sb=SB(); monkeypatch.setattr(admin_scrape,'get_supabase_admin',lambda:sb)
     r=admin_scrape.approve_queue_item('q1', {'notes':'ok'}, {'id':'a','email':'e'})

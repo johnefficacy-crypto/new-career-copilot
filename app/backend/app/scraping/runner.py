@@ -121,6 +121,7 @@ def run_scraping_pass(
     triggered_by: str = "manual",
     triggered_by_user: str | None = None,
     source_ids: list[str] | None = None,
+    limit: int = 25,
     mock: bool | None = None,
 ) -> dict[str, Any]:
     """Run a single scrape pass over active sources.
@@ -195,6 +196,7 @@ def run_scraping_pass(
     total_new = 0
     total_dup = 0
     error_log: list[dict[str, Any]] = []
+    run_limit = max(1, min(int(limit or 25), 100))
 
     def queue_extraction(src: dict[str, Any], source_name: str, item_url: str, raw: str) -> bool:
         nonlocal total_found, total_new, total_dup
@@ -223,6 +225,7 @@ def run_scraping_pass(
             "source_registry_id": src.get("id"),
             "source_type": src.get("source_type"),
         }
+        extraction_provider = extraction.get("provider") or ("mock" if extraction.get("is_mock") else "anthropic")
         document_id = _ensure_notification_document(
             supabase,
             source_id=src.get("id"),
@@ -251,7 +254,7 @@ def run_scraping_pass(
             "evidence_required": bool(src.get("requires_official_confirmation")),
             "extraction_status": "ok",
             "notification_document_id": document_id,
-            "extraction_provider": "mock" if mock else "anthropic",
+            "extraction_provider": extraction_provider,
             "extraction_prompt_version": PROMPT_VERSION,
         }
         logger.info("scrape.queue_insert run_id=%s source_id=%s source_name=%s target_url=%s extraction_status=%s confidence_score=%.2f data_quality_score=%.2f duplicate_status=%s",
@@ -270,15 +273,16 @@ def run_scraping_pass(
         target_url = source.target_url
         try:
             if is_aggregator_source(src):
+                source_limit = min(run_limit, aggregator_max_items(src))
                 if mock:
-                    detail_urls = mock_aggregator_detail_urls(source, count=min(3, aggregator_max_items(src)))
+                    detail_urls = mock_aggregator_detail_urls(source, count=min(3, source_limit))
                 else:
                     listing_html = fetch_page_html(target_url)
                     if not listing_html:
                         error_log.append({"source": source.name, "url": target_url, "error": "Empty listing response", "at": utc_now_iso()})
                         _bump_source_failure(supabase, src)
                         continue
-                    detail_urls = discover_aggregator_detail_urls(listing_html, target_url, max_items=aggregator_max_items(src))
+                    detail_urls = discover_aggregator_detail_urls(listing_html, target_url, max_items=source_limit)
                 if not detail_urls:
                     error_log.append({"source": source.name, "url": target_url, "error": "No detail links discovered", "at": utc_now_iso()})
                     _bump_source_failure(supabase, src)
@@ -322,6 +326,7 @@ def run_scraping_pass(
 
             data: ExtractedRecruitment = extraction["data"]
             confidence = float(extraction.get("confidence") or 0.5)
+            extraction_provider = extraction.get("provider") or ("mock" if extraction.get("is_mock") else "anthropic")
             total_found += 1
 
             sim_key = compute_similarity_key(data)
@@ -337,6 +342,8 @@ def run_scraping_pass(
                 "warnings": normalized.warnings,
                 "normalized_fields": normalized.normalized_fields,
                 "duplicate_reason": duplicate_reason,
+                "source_registry_id": src.get("id"),
+                "source_type": src.get("source_type"),
             }
 
             queue_payload = {
@@ -350,6 +357,11 @@ def run_scraping_pass(
                 "scraped_at": utc_now_iso(),
                 # Never auto-approve — see runner.ts safety hardening note.
                 "status": "duplicate" if is_dup else "pending",
+                "official_source_resolved": not bool(src.get("requires_official_confirmation")),
+                "evidence_required": bool(src.get("requires_official_confirmation")),
+                "extraction_status": "ok",
+                "extraction_provider": extraction_provider,
+                "extraction_prompt_version": PROMPT_VERSION,
             }
             logger.info("scrape.queue_insert run_id=%s source_id=%s source_name=%s target_url=%s extraction_status=%s confidence_score=%.2f data_quality_score=%.2f duplicate_status=%s",
                         run_id, source.id, source.name, target_url, "ok", confidence, normalized.data_quality_score, queue_payload["status"])

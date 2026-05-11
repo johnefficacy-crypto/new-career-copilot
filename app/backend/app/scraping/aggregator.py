@@ -48,7 +48,13 @@ def is_aggregator_source(row: dict[str, Any]) -> bool:
 
 def aggregator_max_items(row: dict[str, Any], default: int = 25) -> int:
     parser_config = row.get("parser_config") if isinstance(row.get("parser_config"), dict) else {}
-    value = parser_config.get("max_items") or parser_config.get("max_detail_pages") or default
+    scrape_config = row.get("scrape_config") if isinstance(row.get("scrape_config"), dict) else {}
+    value = (
+        scrape_config.get("max_items_per_run")
+        or parser_config.get("max_items")
+        or parser_config.get("max_detail_pages")
+        or default
+    )
     try:
         return max(1, min(int(value), 100))
     except Exception:

@@ -135,6 +135,21 @@ def test_run_scraping_pass_reads_source_registry():
     assert len(sb.db["notification_documents"]) == 3
     assert sb.db["notification_documents"][0]["file_url"] == sb.db["notification_documents"][0]["source_url"]
 
+def test_live_scraping_pass_creates_review_queue_without_promotion(monkeypatch):
+    sb = RunnerSB()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.setattr("app.scraping.runner.fetch_page_html", lambda _url: '<a href="/recruitment-one/">Recruitment one</a><a href="/recruitment-two/">Recruitment two</a>')
+    monkeypatch.setattr("app.scraping.runner.fetch_page_text", lambda url: f"Recruitment notice for {url}")
+
+    out = run_scraping_pass(sb, source_ids=["src-1"], limit=2, mock=False)
+
+    assert out["items_found"] == 2
+    assert "recruitments" not in sb.db
+    assert all(row["status"] in {"pending", "duplicate"} for row in sb.db["scrape_queue"])
+    assert sb.db["scrape_queue"][0]["evidence_required"] is True
+    assert sb.db["scrape_queue"][0]["official_source_resolved"] is False
+    assert sb.db["scrape_queue"][0]["extraction_provider"] == "deterministic_no_ai"
+
 def test_promote_generates_slug_without_nameerror():
     sb=SB()
     data=ExtractedRecruitment(title="SSC CGL", organization_name="SSC", org_type="central", year=2026, notification_date="2026-01-01", apply_start_date="2026-01-02", apply_end_date="2026-01-03", official_notification_url="https://x", official_apply_url="https://x/apply", source_pdf_url=None, posts=[])
