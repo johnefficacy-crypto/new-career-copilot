@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, History, Pencil, Plus, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, Filter, Pencil, Plus, Search, ShieldCheck, X } from "lucide-react";
 import SourceHealthBadge from "../../features/admin/sources/SourceHealthBadge";
 import { api } from "../../lib/api";
 import { useFocusTrap } from "../../shared/a11y/useFocusTrap";
-import { AdminTable, EmptyState, ErrorState, LoadingSkeleton, RowActions, StatusBadge } from "../../shared/ui";
+import { EmptyState, ErrorState, LoadingSkeleton, RowActions, StatusBadge } from "../../shared/ui";
 import useAdminAction from "../../features/admin/shared/useAdminAction";
 import AuditTimelineDrawer from "../../features/admin/shared/AuditTimelineDrawer";
 import { adminTrustService } from "../../services/adminTrustService";
@@ -193,8 +193,18 @@ function SourceDetailsDialog({ source, result, onEdit, onClose }) {
           <Detail label="Type" value={source.source_type || source.kind} />
           <Detail label="Official URL" value={source.official_url} />
           <Detail label="Notification URL" value={source.notification_url} />
+          <Detail label="Policy" value={source.source_type === "aggregator" ? "Discovery only / official confirmation required" : "Official source candidate"} />
           <Detail label="Last error" value={source.last_error} />
           <Detail label="Notes" value={source.notes} />
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Detail label="Max items" value={source.scrape_config?.max_items_per_run} />
+            <Detail label="Rate limit" value={source.scrape_config?.rate_limit_seconds ? `${source.scrape_config.rate_limit_seconds}s` : null} />
+            <Detail label="Timeout" value={source.scrape_config?.timeout_seconds ? `${source.scrape_config.timeout_seconds}s` : null} />
+          </div>
+          <details className="rounded-xl border border-border bg-white/60 p-3">
+            <summary className="cursor-pointer text-xs font-semibold">Configuration JSON</summary>
+            <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words text-[11px]">{JSON.stringify({ scrape_config: source.scrape_config, trust_config: source.trust_config, adapter_config: source.adapter_config }, null, 2)}</pre>
+          </details>
           {result && <pre className="max-h-56 overflow-auto rounded-xl border border-border bg-white/70 p-3 text-xs">{JSON.stringify(result, null, 2)}</pre>}
         </div>
         <div className="mt-5 flex justify-end">
@@ -217,6 +227,9 @@ export default function AdminSources() {
   const [auditTarget, setAuditTarget] = useState(null);
   const [auditItems, setAuditItems] = useState([]);
   const [error, setError] = useState(null);
+  const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [policyFilter, setPolicyFilter] = useState("all");
   const { runAction, busyKey, error: actionError } = useAdminAction();
 
   const load = async () => {
@@ -253,18 +266,31 @@ export default function AdminSources() {
 
   const verify = async (source) => runAction({ key: `verify-${source.id}`, successMessage: "Source verified", action: async () => { const r = await api.post(`/api/admin/sources/${source.id}/verify`, {}); setResultById((x) => ({ ...x, [source.id]: r })); await load(); } });
   const toggle = async (id, on) => runAction({ key: `${on ? "deactivate" : "activate"}-${id}`, confirm: `${on ? "Deactivate" : "Activate"} this source?`, successMessage: `Source ${on ? "deactivated" : "activated"}`, action: async () => { await api.post(`/api/admin/sources/${id}/${on ? "deactivate" : "activate"}`, {}); await load(); } });
-  const summary = useMemo(() => ({ needsReview: items.filter((i) => i.verification_status === "needs_review").length, failed: items.filter((i) => (i.consecutive_fails || 0) > 0 || i.last_error).length, aggregators: items.filter((i) => i.source_type === "aggregator").length }), [items]);
+  const summary = useMemo(() => ({
+    total: items.length,
+    active: items.filter((i) => i.is_active !== false).length,
+    needsReview: items.filter((i) => i.verification_status === "needs_review").length,
+    failed: items.filter((i) => (i.consecutive_fails || 0) > 0 || i.last_error).length,
+    aggregators: items.filter((i) => i.source_type === "aggregator").length,
+  }), [items]);
   const showHistory = async (s) => { const d = await adminTrustService.sourceAudit(s.id); setAuditItems(d.items || []); setAuditTarget(s); };
-
-  const columns = [
-    { key: "source", header: "Source", render: (s) => <div className="max-w-[260px]"><div className="truncate font-medium">{s.org || s.source_name}</div><div className="truncate text-xs text-muted-foreground">{s.official_url || s.url || "-"}</div></div> },
-    { key: "type", header: "Type", render: (s) => <StatusBadge status={s.source_type || s.kind || "unknown"} label={sourceTypeLabel(s.source_type || s.kind)} /> },
-    { key: "policy", header: "Policy", render: (s) => s.source_type === "aggregator" ? <span className="pill pill-amber">Discovery only</span> : <span className="pill pill-sage">Official candidate</span> },
-    { key: "health", header: "Health", render: (s) => <SourceHealthBadge source={s} /> },
-    { key: "last_success", header: "Last success", render: (s) => s.last_success_at || "-" },
-    { key: "active", header: "Active", render: (s) => <StatusBadge status={s.is_active ? "active" : "disabled"} label={s.is_active ? "Active" : "Inactive"} /> },
-    { key: "details", header: "Details", render: (s) => <button className="text-xs link-under" onClick={() => setSelectedDetails(s.id)}>Show details</button> },
-  ];
+  const typeOptions = useMemo(() => Array.from(new Set(items.map((i) => i.source_type || i.kind).filter(Boolean))), [items]);
+  const filteredItems = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return items.filter((source) => {
+      const sourceType = source.source_type || source.kind || "";
+      const haystack = `${source.org || source.source_name || ""} ${source.official_url || source.url || ""} ${source.notes || ""}`.toLowerCase();
+      const matchesText = !needle || haystack.includes(needle);
+      const matchesType = typeFilter === "all" || sourceType === typeFilter;
+      const matchesPolicy =
+        policyFilter === "all"
+        || (policyFilter === "discovery" && sourceType === "aggregator")
+        || (policyFilter === "official" && sourceType !== "aggregator")
+        || (policyFilter === "failed" && ((source.consecutive_fails || 0) > 0 || source.last_error))
+        || (policyFilter === "review" && source.verification_status === "needs_review");
+      return matchesText && matchesType && matchesPolicy;
+    });
+  }, [items, policyFilter, query, typeFilter]);
 
   return (
     <div className="space-y-4" data-testid="admin-sources">
@@ -275,16 +301,52 @@ export default function AdminSources() {
         </div>
         <button className="btn btn-primary" onClick={openCreate}><Plus className="h-4 w-4" /> Add source</button>
       </div>
-      <div className="grid gap-3 text-xs md:grid-cols-3">
-        <div className="soft-card rounded-xl p-3">Sources needing review: <b>{summary.needsReview}</b></div>
-        <div className="soft-card rounded-xl p-3">Recently failed sources: <b>{summary.failed}</b></div>
-        <div className="soft-card rounded-xl p-3">Discovery aggregators: <b>{summary.aggregators}</b></div>
+      <div className="grid gap-3 text-sm md:grid-cols-5">
+        <Metric label="Total" value={summary.total} />
+        <Metric label="Active" value={summary.active} />
+        <Metric label="Needs review" value={summary.needsReview} tone="warn" />
+        <Metric label="Failed" value={summary.failed} tone="bad" />
+        <Metric label="Aggregators" value={summary.aggregators} />
       </div>
+      <section className="soft-card rounded-2xl p-4">
+        <div className="grid gap-3 lg:grid-cols-[1fr_200px_220px]">
+          <label className="relative block">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <span className="sr-only">Search sources</span>
+            <input value={query} onChange={(e) => setQuery(e.target.value)} className="w-full rounded-xl border border-border bg-white/80 py-2 pl-9 pr-3 text-sm" placeholder="Search source, URL, notes" />
+          </label>
+          <label className="relative block">
+            <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <span className="sr-only">Filter source type</span>
+            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="w-full rounded-xl border border-border bg-white/80 py-2 pl-9 pr-3 text-sm">
+              <option value="all">All source types</option>
+              {typeOptions.map((type) => <option key={type} value={type}>{sourceTypeLabel(type)}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="sr-only">Filter policy</span>
+            <select value={policyFilter} onChange={(e) => setPolicyFilter(e.target.value)} className="w-full rounded-xl border border-border bg-white/80 px-3 py-2 text-sm">
+              <option value="all">All policies</option>
+              <option value="discovery">Discovery-only aggregators</option>
+              <option value="official">Official source candidates</option>
+              <option value="review">Needs review</option>
+              <option value="failed">Recently failed</option>
+            </select>
+          </label>
+        </div>
+      </section>
       {actionError && <div className="soft-card rounded-xl p-3 text-xs text-destructive">{actionError.message}</div>}
       {loading ? <LoadingSkeleton variant="table" /> : null}
       {!loading && error ? <ErrorState title="Failed to load sources" message={error.message} onRetry={load} /> : null}
       {!loading && !error && items.length === 0 ? <EmptyState icon={ShieldCheck} title="No sources found" description="Create a source to begin trust verification." actionLabel="Add source" onAction={openCreate} /> : null}
-      {!loading && !error && items.length > 0 ? <AdminTable columns={columns} rows={items} getRowKey={(s) => s.id} renderRowActions={(s) => <RowActions groupLabel={`Row actions for ${s.org || s.source_name || "source"}`} actions={[{ label: "Edit", icon: Pencil, ariaLabel: `Edit source ${s.org || s.source_name}`, onClick: () => openEdit(s) }, { label: "Verify", icon: ShieldCheck, ariaLabel: `Verify source ${s.org || s.source_name}`, onClick: () => verify(s), disabled: s.source_type === "aggregator" || busyKey === `verify-${s.id}` }, { label: s.is_active ? "Deactivate" : "Activate", ariaLabel: `${s.is_active ? "Deactivate" : "Activate"} source ${s.org || s.source_name}`, onClick: () => toggle(s.id, !!s.is_active), disabled: busyKey === `${s.is_active ? "deactivate" : "activate"}-${s.id}` }, { label: "History", icon: History, ariaLabel: `View history for source ${s.org || s.source_name}`, onClick: () => showHistory(s) }]} />} /> : null}
+      {!loading && !error && items.length > 0 && filteredItems.length === 0 ? <EmptyState icon={Search} title="No sources match this view" description="Adjust search or filters to widen the registry." /> : null}
+      {!loading && !error && filteredItems.length > 0 ? (
+        <div className="grid gap-4 xl:grid-cols-2">
+          {filteredItems.map((source) => (
+            <SourceCard key={source.id} source={source} busyKey={busyKey} onDetails={() => setSelectedDetails(source.id)} onEdit={openEdit} onVerify={verify} onToggle={toggle} onHistory={showHistory} />
+          ))}
+        </div>
+      ) : null}
       <SourceFormDrawer open={formOpen} mode={editing ? "edit" : "create"} form={form} setForm={setForm} busy={busyKey === "create" || busyKey === `update-${editing?.id}`} error={formError} onClose={closeForm} onSubmit={save} />
       <SourceDetailsDialog source={items.find((s) => s.id === selectedDetails)} result={resultById[selectedDetails]} onEdit={openEdit} onClose={() => setSelectedDetails(null)} />
       <AuditTimelineDrawer open={!!auditTarget} title={auditTarget?.org || auditTarget?.source_name || "Source"} items={auditItems} onClose={() => setAuditTarget(null)} />
@@ -298,6 +360,57 @@ function Field({ label, children }) {
 
 function Detail({ label, value }) {
   return <div><div className="text-[11px] uppercase tracking-widest text-muted-foreground">{label}</div><div className="break-words">{value || "-"}</div></div>;
+}
+
+function Metric({ label, value, tone }) {
+  const toneClass = tone === "bad" ? "text-destructive" : tone === "warn" ? "text-amber-700" : "text-foreground";
+  return <div className="soft-card rounded-xl p-3"><div className="text-[10px] uppercase tracking-widest text-muted-foreground">{label}</div><div className={`mt-1 font-heading text-2xl ${toneClass}`}>{value}</div></div>;
+}
+
+function SourceCard({ source, busyKey, onDetails, onEdit, onVerify, onToggle, onHistory }) {
+  const sourceType = source.source_type || source.kind;
+  const isAggregator = sourceType === "aggregator";
+  const failed = (source.consecutive_fails || 0) > 0 || source.last_error;
+
+  return (
+    <article className="soft-card rounded-2xl p-4" data-testid={`source-card-${source.id}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap gap-1.5">
+            <StatusBadge status={sourceType || "unknown"} label={sourceTypeLabel(sourceType)} />
+            <StatusBadge status={source.is_active ? "active" : "disabled"} label={source.is_active ? "Active" : "Inactive"} />
+            {isAggregator ? <span className="pill pill-amber">Discovery only</span> : <span className="pill pill-sage">Official candidate</span>}
+          </div>
+          <h2 className="mt-3 truncate font-heading text-xl">{source.org || source.source_name}</h2>
+          <p className="mt-1 truncate text-xs text-muted-foreground">{source.official_url || source.url || "-"}</p>
+        </div>
+        <button className="btn btn-ghost h-9 shrink-0 text-xs" onClick={onDetails}>Details</button>
+      </div>
+      <div className="mt-4 grid gap-2 text-xs sm:grid-cols-3">
+        <Mini label="Health" value={<SourceHealthBadge source={source} />} />
+        <Mini label="Last success" value={source.last_success_at || "-"} />
+        <Mini label="Fails" value={source.consecutive_fails || 0} tone={failed ? "bad" : undefined} />
+      </div>
+      {isAggregator ? (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          Discovery-only. This source cannot satisfy official provenance by itself.
+        </div>
+      ) : null}
+      <div className="mt-4 border-t border-border pt-3">
+        <RowActions groupLabel={`Row actions for ${source.org || source.source_name || "source"}`} actions={[
+          { label: "Edit", ariaLabel: `Edit source ${source.org || source.source_name}`, onClick: () => onEdit(source) },
+          { label: "Verify", ariaLabel: `Verify source ${source.org || source.source_name}`, onClick: () => onVerify(source), disabled: isAggregator || busyKey === `verify-${source.id}` },
+          { label: source.is_active ? "Deactivate" : "Activate", ariaLabel: `${source.is_active ? "Deactivate" : "Activate"} source ${source.org || source.source_name}`, onClick: () => onToggle(source.id, !!source.is_active), disabled: busyKey === `${source.is_active ? "deactivate" : "activate"}-${source.id}` },
+          { label: "History", ariaLabel: `View history for source ${source.org || source.source_name}`, onClick: () => onHistory(source) },
+        ]} />
+      </div>
+    </article>
+  );
+}
+
+function Mini({ label, value, tone }) {
+  const toneClass = tone === "bad" ? "text-destructive" : "";
+  return <div className="min-w-0 rounded-xl border border-border bg-white/60 p-2"><div className="text-[10px] uppercase tracking-widest text-muted-foreground">{label}</div><div className={`mt-1 truncate font-semibold ${toneClass}`}>{value}</div></div>;
 }
 
 function sourceTypeLabel(value) {

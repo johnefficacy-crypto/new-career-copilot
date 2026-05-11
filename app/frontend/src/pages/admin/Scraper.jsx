@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Eye, Play, RefreshCw, Search, X } from "lucide-react";
+import { AlertTriangle, Eye, Filter, Play, RefreshCw, Search, X } from "lucide-react";
 import { api } from "../../lib/api";
 import { useFocusTrap } from "../../shared/a11y/useFocusTrap";
-import { StatusBadge, useToast } from "../../shared/ui";
+import { EmptyState, ErrorState, LoadingSkeleton, StatusBadge, useToast } from "../../shared/ui";
 
 const REVIEW_FIELDS = ["title", "organization_name", "notification_date", "apply_start_date", "apply_end_date", "total_vacancies", "official_notification_url", "official_apply_url"];
 
@@ -121,7 +121,8 @@ function LiveConfirm({ open, sources, limit, onCancel, onConfirm, busy }) {
           </div>
         </div>
         <div className="mt-4 max-h-48 overflow-auto rounded-xl bg-white/60 p-3 text-sm">
-          {sources.length ? sources.map((source) => <div key={source.id} className="flex justify-between gap-3 border-b border-border py-2 last:border-b-0"><span>{source.org || source.source_name}</span><span className="text-muted-foreground">{typeLabel(source.source_type)}</span></div>) : <div>All active sources</div>}
+          {sources.length ? sources.slice(0, 20).map((source) => <div key={source.id} className="flex justify-between gap-3 border-b border-border py-2 last:border-b-0"><span className="truncate">{source.org || source.source_name}</span><span className="shrink-0 text-muted-foreground">{typeLabel(source.source_type)}</span></div>) : <div>All active sources</div>}
+          {sources.length > 20 ? <div className="pt-2 text-xs text-muted-foreground">+{sources.length - 20} more sources</div> : null}
         </div>
         <div className="mt-3 text-sm">Max items: <b>{limit}</b></div>
         <div className="mt-5 flex justify-end gap-2">
@@ -137,25 +138,37 @@ export default function AdminScraper() {
   const [items, setItems] = useState([]);
   const [queue, setQueue] = useState([]);
   const [sources, setSources] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [running, setRunning] = useState(null);
   const [selected, setSelected] = useState(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [sourceMode, setSourceMode] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [selectedIds, setSelectedIds] = useState([]);
+  const [queueQuery, setQueueQuery] = useState("");
+  const [queueStatus, setQueueStatus] = useState("all");
   const [limit, setLimit] = useState(25);
   const [msg, setMsg] = useState(null);
   const toast = useToast();
 
   async function load() {
-    const [runs, q, src] = await Promise.all([
-      api.get("/api/admin/scrape/runs"),
-      api.get("/api/admin/scrape/queue?status=all"),
-      api.get("/api/admin/sources"),
-    ]);
-    setItems(runs.items || []);
-    setQueue(q.items || []);
-    setSources(src.items || []);
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [runs, q, src] = await Promise.all([
+        api.get("/api/admin/scrape/runs"),
+        api.get("/api/admin/scrape/queue?status=all"),
+        api.get("/api/admin/sources"),
+      ]);
+      setItems(runs.items || []);
+      setQueue(q.items || []);
+      setSources(src.items || []);
+    } catch (e) {
+      setLoadError(e);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => { load().catch(() => {}); }, []);
@@ -166,10 +179,27 @@ export default function AdminScraper() {
     if (!ids) return filteredSources;
     return filteredSources.filter((source) => ids.includes(source.id));
   }, [filteredSources, selectedIds, sourceMode]);
+  const canRunSelected = sourceMode !== "selected" || selectedIds.length > 0;
+  const queueStats = useMemo(() => ({
+    total: queue.length,
+    pending: queue.filter((item) => item.status === "pending").length,
+    duplicate: queue.filter((item) => item.status === "duplicate" || item.duplicate_of).length,
+    blocked: queue.filter((item) => (item.unverified_fields || []).length > 0).length,
+  }), [queue]);
+  const filteredQueue = useMemo(() => {
+    const needle = queueQuery.trim().toLowerCase();
+    return queue.filter((item) => {
+      const extracted = item.extracted_data || {};
+      const matchesStatus = queueStatus === "all" || item.status === queueStatus || (queueStatus === "blocked" && (item.unverified_fields || []).length > 0) || (queueStatus === "duplicate" && (item.status === "duplicate" || item.duplicate_of));
+      const haystack = `${item.source_name || ""} ${item.source_url || ""} ${extracted.title || extracted.name || ""} ${extracted.organization_name || extracted.organization || ""}`.toLowerCase();
+      return matchesStatus && (!needle || haystack.includes(needle));
+    });
+  }, [queue, queueQuery, queueStatus]);
 
   async function runDry() {
     setRunning("dry"); setMsg(null);
     try {
+      if (!canRunSelected) throw new Error("Select at least one source or switch to all active sources.");
       const r = await api.post("/api/admin/scrape/run-dry", { source_ids: selectedSourceIds(sourceMode, selectedIds), limit: Number(limit) || 25 });
       setMsg(`Dry run ${shortId(r.run_id)} ${r.status}: ${r.items_new} new, ${r.items_duplicate} duplicate.`);
       toast.success("Dry run completed. Review is still required.");
@@ -185,6 +215,7 @@ export default function AdminScraper() {
   async function runLive() {
     setRunning("live"); setMsg(null);
     try {
+      if (!canRunSelected) throw new Error("Select at least one source or switch to all active sources.");
       const r = await api.post("/api/admin/scrape/run", { source_ids: selectedSourceIds(sourceMode, selectedIds), limit: Number(limit) || 25, force: false });
       setMsg(`Live run ${shortId(r.run_id)} ${r.status}: ${r.items_new} queued for review, ${r.items_duplicate} duplicate.`);
       toast.success("Live scrape queued candidates for review. Nothing was published.");
@@ -231,7 +262,14 @@ export default function AdminScraper() {
           <h1 className="font-heading text-3xl font-semibold tracking-tight">Scrape queue trust review</h1>
           <p className="mt-1 text-muted-foreground">Promote creates draft/needs_review records only. Publishing remains a separate readiness-gated admin action.</p>
         </div>
-        <button onClick={load} className="btn btn-ghost"><RefreshCw className="h-4 w-4" /> Reload</button>
+        <button onClick={load} className="btn btn-ghost" disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Reload</button>
+      </div>
+
+      <div className="grid gap-3 text-sm md:grid-cols-4">
+        <Metric label="Queue items" value={queueStats.total} />
+        <Metric label="Pending" value={queueStats.pending} />
+        <Metric label="Duplicates" value={queueStats.duplicate} />
+        <Metric label="Needs field review" value={queueStats.blocked} tone="warn" />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
@@ -243,7 +281,7 @@ export default function AdminScraper() {
               <p className="text-sm text-muted-foreground">Safe run, no publish, review required.</p>
             </div>
           </div>
-          <button disabled={!!running} onClick={runDry} className="btn btn-ghost mt-4"><Play className={`h-4 w-4 ${running === "dry" ? "animate-spin" : ""}`} />{running === "dry" ? "Running..." : "Dry run / discover candidates"}</button>
+          <button disabled={!!running || !canRunSelected} onClick={runDry} className="btn btn-ghost mt-4"><Play className={`h-4 w-4 ${running === "dry" ? "animate-spin" : ""}`} />{running === "dry" ? "Running..." : "Dry run / discover candidates"}</button>
         </section>
         <section className="soft-card rounded-2xl p-4">
           <div className="flex items-start gap-3">
@@ -253,7 +291,7 @@ export default function AdminScraper() {
               <p className="text-sm text-muted-foreground">Creates queue items for review, does not publish.</p>
             </div>
           </div>
-          <button disabled={!!running} onClick={() => setConfirmOpen(true)} className="btn btn-primary mt-4"><Play className={`h-4 w-4 ${running === "live" ? "animate-spin" : ""}`} />Run live scrape</button>
+          <button disabled={!!running || !canRunSelected} onClick={() => setConfirmOpen(true)} className="btn btn-primary mt-4"><Play className={`h-4 w-4 ${running === "live" ? "animate-spin" : ""}`} />Run live scrape</button>
         </section>
       </div>
 
@@ -269,12 +307,40 @@ export default function AdminScraper() {
             {filteredSources.map((source) => <label key={source.id} className="flex items-center gap-2 rounded-xl border border-border bg-white/60 p-2 text-sm"><input type="checkbox" checked={selectedIds.includes(source.id)} onChange={(e) => setSelectedIds(e.target.checked ? [...selectedIds, source.id] : selectedIds.filter((id) => id !== source.id))} /><span className="truncate">{source.org || source.source_name}</span><span className="ml-auto text-xs text-muted-foreground">{typeLabel(source.source_type)}</span></label>)}
           </div>
         )}
+        {!canRunSelected ? <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">Select at least one source, or switch the run scope back to all active sources.</div> : null}
         <style>{`.input { width:100%; padding: 0.55rem 0.85rem; border-radius: 0.75rem; background: rgba(255,255,255,0.85); border: 1px solid hsl(var(--border)); font-size: 14px; }`}</style>
       </section>
 
       {msg && <div className="soft-card rounded-xl p-3 text-xs">{msg}</div>}
+      {loadError ? <ErrorState title="Failed to load scraper monitor" message={loadError.message} onRetry={load} /> : null}
 
-      <div className="overflow-auto rounded-2xl border border-border bg-white/70">
+      <section className="soft-card rounded-2xl p-4">
+        <div className="grid gap-3 lg:grid-cols-[1fr_220px]">
+          <label className="relative block">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <span className="sr-only">Search scrape queue</span>
+            <input value={queueQuery} onChange={(e) => setQueueQuery(e.target.value)} className="w-full rounded-xl border border-border bg-white/80 py-2 pl-9 pr-3 text-sm" placeholder="Search title, source, URL, organization" />
+          </label>
+          <label className="relative block">
+            <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <span className="sr-only">Filter queue status</span>
+            <select value={queueStatus} onChange={(e) => setQueueStatus(e.target.value)} className="w-full rounded-xl border border-border bg-white/80 py-2 pl-9 pr-3 text-sm">
+              <option value="all">All queue items</option>
+              <option value="pending">Pending</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+              <option value="duplicate">Duplicate</option>
+              <option value="blocked">Needs field review</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      {loading ? <LoadingSkeleton variant="table" /> : null}
+      {!loading && !loadError && queue.length === 0 ? <EmptyState icon={Search} title="No scrape queue items yet" description="Run a dry scrape or live scrape to discover candidates for manual review." /> : null}
+      {!loading && !loadError && queue.length > 0 && filteredQueue.length === 0 ? <EmptyState icon={Filter} title="No queue items match this view" description="Adjust the search or queue status filter." /> : null}
+
+      {!loading && !loadError && filteredQueue.length > 0 ? <div className="overflow-auto rounded-2xl border border-border bg-white/70">
         <table className="w-full min-w-[1040px] table-fixed text-xs">
           <thead className="bg-[#FBF6EF] text-left text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
             <tr>
@@ -288,7 +354,7 @@ export default function AdminScraper() {
             </tr>
           </thead>
           <tbody>
-            {queue.map((q) => {
+            {filteredQueue.map((q) => {
               const e = q.extracted_data || {};
               const blocked = q.unverified_fields || [];
               return (
@@ -305,12 +371,12 @@ export default function AdminScraper() {
             })}
           </tbody>
         </table>
-      </div>
+      </div> : null}
 
       <section className="soft-card rounded-2xl p-4">
         <h2 className="font-semibold">Recent runs</h2>
         <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-          {items.slice(0, 6).map((run) => <div key={run.id} className="rounded-xl border border-border bg-white/60 p-3 text-xs"><div className="font-mono">{shortId(run.id)}</div><div>{run.status} / seen {run.items_seen} / new {run.items_new}</div><div className="text-muted-foreground">{run.at || "-"}</div></div>)}
+          {items.slice(0, 6).map((run) => <div key={run.id} className="rounded-xl border border-border bg-white/60 p-3 text-xs"><div className="flex items-center justify-between gap-2"><div className="font-mono">{shortId(run.id)}</div><StatusBadge status={run.status} label={run.status} /></div><div className="mt-2">seen {run.items_seen} / new {run.items_new} / dup {run.items_duplicate}</div><div className="mt-1 truncate text-muted-foreground">{run.at || "-"}</div></div>)}
         </div>
       </section>
 
@@ -322,4 +388,9 @@ export default function AdminScraper() {
 
 function Info({ label, value }) {
   return <div className="rounded-xl border border-border bg-white/60 p-3 text-sm"><div className="text-[11px] uppercase tracking-widest text-muted-foreground">{label}</div><div className="break-words">{value || "-"}</div></div>;
+}
+
+function Metric({ label, value, tone }) {
+  const toneClass = tone === "warn" ? "text-amber-700" : "text-foreground";
+  return <div className="soft-card rounded-2xl p-4"><div className="text-[10px] uppercase tracking-widest text-muted-foreground">{label}</div><div className={`mt-1 font-heading text-3xl ${toneClass}`}>{value}</div></div>;
 }
