@@ -4,9 +4,10 @@ Generated for `D:\GovtExamAgent\ccp-mainbuild-v1` on 2026-05-11.
 
 ## Status
 
-- `graphify` executable was not available on PATH in this environment.
-- The repo instruction file `AGENTS.md` expects graph output under `graphify-out/`.
-- This report and companion graph files were generated as a local fallback from the repository layout and major import relationships.
+- `graphify`  is configured for this repository through `AGENTS.md` and Codex hooks.
+- During this report generation, the local `graphify` executable was not available on PATH.
+- This report and companion graph files were generated as a fallback from repository layout and major import relationships.
+- Full Graphify wiki output should be added under `graphify-out/wiki/` when generated locally.
 
 ## God Nodes
 
