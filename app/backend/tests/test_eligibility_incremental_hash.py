@@ -46,6 +46,44 @@ class SB:
         return Q(n,self.db)
 
 
+class FallbackQ(Q):
+    def __init__(self, name, db):
+        super().__init__(name, db)
+        self._select = ""
+
+    def select(self, *a, **k):
+        self._select = a[0] if a else ""
+        return self
+
+    def execute(self):
+        if self.name == "posts" and "age_criteria" in self._select:
+            raise RuntimeError("PGRST200 Could not find a relationship between posts and age_criteria in the schema cache")
+        return super().execute()
+
+
+class FallbackSB(SB):
+    def __init__(self):
+        super().__init__()
+        self.db["posts"] = [
+            {
+                "id": "p1",
+                "recruitment_id": "r1",
+                "language_requirements": [],
+                "recruitments": {"status": "open", "publish_status": "verified", "organizations": {"state": "MH"}},
+            }
+        ]
+        self.db["age_criteria"] = [{"post_id": "p1", "min_age": 18, "max_age": 35, "cutoff_date": "2026-01-01"}]
+        self.db["education_criteria"] = [{"post_id": "p1", "min_qualification_level": "graduate", "min_percentage": 60}]
+        self.db["age_relaxation_rules"] = []
+        self.db["post_disability_requirements"] = []
+        self.db["attempt_limits"] = []
+        self.db["certification_criteria"] = []
+
+    def table(self, n):
+        self.queried_tables.append(n)
+        return FallbackQ(n, self.db)
+
+
 def test_first_recompute_stores_profile_hash(monkeypatch):
     sb=SB()
     monkeypatch.setattr(runner, "check_eligibility_batch", lambda *a,**k: [])
@@ -76,3 +114,23 @@ def test_recompute_does_not_read_legacy_user_exam_attempts(monkeypatch):
 
     assert "aspirant_exam_attempts" in sb.queried_tables
     assert "user_exam_attempts" not in sb.queried_tables
+
+
+def test_recompute_falls_back_when_post_criteria_embed_missing(monkeypatch):
+    sb = FallbackSB()
+    captured = {}
+
+    def _batch(_profile, _education, _attempts, _credentials, post_criteria, **_kwargs):
+        captured["post_criteria"] = post_criteria
+        return []
+
+    monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
+
+    out = runner.run_eligibility_for_user("u1", sb)
+
+    assert out["processed"] == 0
+    assert "age_criteria" in sb.queried_tables
+    assert "education_criteria" in sb.queried_tables
+    pc = captured["post_criteria"][0]
+    assert pc.age_criteria.max_age == 35
+    assert pc.education_criteria.min_qualification_level == "graduate"

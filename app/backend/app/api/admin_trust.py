@@ -127,10 +127,18 @@ def validate_recruitment_publish_readiness(recruitment_id: str, admin: dict):
                 blocking.append("apply_dates_reversed")
         except Exception:
             blocking.append("apply_dates_invalid")
-    if not rec.get("posts") and not rec.get("posts_unavailable"):
+    posts = rec.get("posts") or []
+    if not posts and not rec.get("posts_unavailable"):
         blocking.append("posts_missing")
-    if not rec.get("rules_unavailable") and not rec.get("min_age") and not rec.get("max_age"):
-        blocking.append("eligibility_rules_missing")
+    if not rec.get("rules_unavailable"):
+        post_ids = [p.get("id") for p in posts if p.get("id")]
+        has_post_rules = False
+        if post_ids:
+            age_rows = sb.table("age_criteria").select("id").in_("post_id", post_ids).limit(1).execute().data or []
+            edu_rows = sb.table("education_criteria").select("id").in_("post_id", post_ids).limit(1).execute().data or []
+            has_post_rules = bool(age_rows or edu_rows)
+        if not has_post_rules and not rec.get("min_age") and not rec.get("max_age"):
+            blocking.append("eligibility_rules_missing")
     source = None
     if rec.get("source_id"):
         source_rows = (

@@ -11,6 +11,7 @@ class Q:
         if k=='id': self._id=v
         if k=='official_url': self._payload=('official_url',v)
         return self
+    def in_(self,*a,**k): return self
     def limit(self,*a,**k): return self
     def insert(self,p): self._payload=p; return self
     def update(self,p): self._payload=p; return self

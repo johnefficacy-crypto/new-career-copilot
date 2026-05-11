@@ -76,6 +76,97 @@ def _profile_hash(mapped_profile: dict[str, Any]) -> str:
     return hashlib.sha256(_stable_json(payload).encode("utf-8")).hexdigest()
 
 
+def _looks_like_missing_embed(exc: Exception) -> bool:
+    text = str(exc)
+    return (
+        "PGRST200" in text
+        or "Could not find a relationship" in text
+        or "schema cache" in text
+    )
+
+
+def _attach_rows_by_post(posts: list[dict[str, Any]], table: str, rows: list[dict[str, Any]]) -> None:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        post_id = row.get("post_id")
+        if post_id:
+            grouped.setdefault(post_id, []).append(row)
+    for post in posts:
+        post[table] = grouped.get(post.get("id"), [])
+
+
+def _load_active_posts_with_criteria(supabase: Client) -> list[dict[str, Any]]:
+    """Load active post criteria, falling back when criteria embeds are unavailable."""
+    embedded_select = """
+                id,
+                recruitment_id,
+                language_requirements,
+                recruitments!inner ( status, publish_status, organizations ( state ) ),
+                age_criteria ( min_age, max_age, cutoff_date ),
+                age_relaxation_rules ( reservation_category, condition_key, additional_years, max_age_cap, cumulative, source_note ),
+                education_criteria ( min_qualification_level, min_percentage, allowed_disciplines, allow_higher_qualification, accepted_equivalent_qualifications, raw_requirement_text ),
+                post_disability_requirements ( disability_code, physical_requirement_code, suitable, source_note ),
+                certification_criteria ( mandatory, certifications ( name, issuer ) ),
+                attempt_limits ( category, max_attempts )
+                """
+    try:
+        return (
+            supabase.table("posts")
+            .select(embedded_select)
+            .in_("recruitments.status", ["open", "upcoming"])
+            .in_("recruitments.publish_status", ["verified", "published"])
+            .execute()
+            .data
+            or []
+        )
+    except Exception as exc:  # noqa: BLE001
+        if not _looks_like_missing_embed(exc):
+            raise
+        logger.warning("eligibility.posts_fetch_embed_unavailable; using criteria fallback: %s", exc)
+
+    posts = (
+        supabase.table("posts")
+        .select("id, recruitment_id, language_requirements, recruitments!inner ( status, publish_status, organizations ( state ) )")
+        .in_("recruitments.status", ["open", "upcoming"])
+        .in_("recruitments.publish_status", ["verified", "published"])
+        .execute()
+        .data
+        or []
+    )
+    post_ids = [p["id"] for p in posts if p.get("id")]
+    if not post_ids:
+        return posts
+
+    for table, select_cols in (
+        ("age_criteria", "post_id, min_age, max_age, cutoff_date"),
+        ("age_relaxation_rules", "post_id, reservation_category, condition_key, additional_years, max_age_cap, cumulative, source_note"),
+        ("education_criteria", "post_id, min_qualification_level, min_percentage, allowed_disciplines, allow_higher_qualification, accepted_equivalent_qualifications, raw_requirement_text"),
+        ("post_disability_requirements", "post_id, disability_code, physical_requirement_code, suitable, source_note"),
+        ("attempt_limits", "post_id, category, max_attempts"),
+    ):
+        try:
+            rows = supabase.table(table).select(select_cols).in_("post_id", post_ids).execute().data or []
+        except Exception as exc:  # noqa: BLE001
+            logger.info("eligibility.%s fallback skipped: %s", table, exc)
+            rows = []
+        _attach_rows_by_post(posts, table, rows)
+
+    try:
+        cert_rows = (
+            supabase.table("certification_criteria")
+            .select("post_id, mandatory, certifications ( name, issuer, aliases )")
+            .in_("post_id", post_ids)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.info("eligibility.certification_criteria fallback skipped: %s", exc)
+        cert_rows = []
+    _attach_rows_by_post(posts, "certification_criteria", cert_rows)
+    return posts
+
+
 def run_eligibility_for_user(
     user_id: str,
     supabase: Client,
@@ -144,27 +235,7 @@ def run_eligibility_for_user(
     # 033). Trust gate is `verified` or `published`; lifecycle gate is
     # `open` or `upcoming`.
     try:
-        posts_resp = (
-            supabase.table("posts")
-            .select(
-                """
-                id,
-                recruitment_id,
-                language_requirements,
-                recruitments!inner ( status, publish_status, organizations ( state ) ),
-                age_criteria ( min_age, max_age, cutoff_date ),
-                age_relaxation_rules ( reservation_category, condition_key, additional_years, max_age_cap, cumulative, source_note ),
-                education_criteria ( min_qualification_level, min_percentage, allowed_disciplines, allow_higher_qualification, accepted_equivalent_qualifications, raw_requirement_text ),
-                post_disability_requirements ( disability_code, physical_requirement_code, suitable, source_note ),
-                certification_criteria ( mandatory, certifications ( name, issuer ) ),
-                attempt_limits ( category, max_attempts )
-                """
-            )
-            .in_("recruitments.status", ["open", "upcoming"])
-            .in_("recruitments.publish_status", ["verified", "published"])
-            .execute()
-        )
-        posts: list[dict[str, Any]] = posts_resp.data or []
+        posts = _load_active_posts_with_criteria(supabase)
     except Exception as exc:  # noqa: BLE001
         log_warning_with_context(logger, "eligibility.posts_fetch_required", exc, user_id=user_id)
         raise DatabaseError("Failed required select on posts") from exc

@@ -174,6 +174,49 @@ def test_promote_creates_recruitment_unit_for_unitwise_post():
     assert sb.db["posts"][0]["language_requirements"] == ["hindi"]
 
 
+def test_promote_creates_organization_recruitment_posts_and_criteria():
+    sb = SB()
+    data = ExtractedRecruitment(
+        title="Golden Recruitment",
+        organization_name="Golden Org",
+        org_type="central",
+        year=2026,
+        notification_date="2026-01-01",
+        apply_start_date="2026-01-02",
+        apply_end_date="2026-01-31",
+        official_notification_url="https://example.gov/notice",
+        official_apply_url="https://example.gov/apply",
+        source_pdf_url=None,
+        posts=[
+            {
+                "post_name": "Inspector",
+                "group_type": "B",
+                "pay_level": "7",
+                "min_age": 18,
+                "max_age": 32,
+                "education_required": "Bachelor's degree from a recognised university",
+            },
+            {
+                "post_name": "Junior Assistant",
+                "group_type": "C",
+                "pay_level": "2",
+                "min_age": 18,
+                "max_age": 27,
+                "education_required": "12th pass / Senior Secondary",
+            },
+        ],
+    )
+
+    rec_id = promote_to_recruitments(data, sb)
+
+    assert rec_id == "recruitments-1"
+    assert sb.db["organizations"][0]["name"] == "Golden Org"
+    assert sb.db["recruitments"][0]["publish_status"] == "needs_review"
+    assert len(sb.db["posts"]) == 2
+    assert [r["max_age"] for r in sb.db["age_criteria"]] == [32, 27]
+    assert [r["min_qualification_level"] for r in sb.db["education_criteria"]] == ["graduate", "12th"]
+
+
 def test_promote_raises_when_post_insert_returns_no_rows():
     class SBPostFail(SB):
         def table(self, name):
