@@ -143,6 +143,7 @@ def test_field_evidence_fallback_document_created(monkeypatch):
     assert out["ok"] is True
     assert sb.state["queue"][0]["notification_document_id"] == "doc-fallback"
     assert sb.state["field"][0]["document_id"] == "doc-fallback"
+    assert sb.state["docs"][0]["file_url"] == sb.state["docs"][0]["source_url"]
 
 
 def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):

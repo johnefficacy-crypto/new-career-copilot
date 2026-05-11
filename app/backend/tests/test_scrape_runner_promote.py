@@ -122,6 +122,7 @@ def test_run_scraping_pass_reads_source_registry():
     assert sb.db["scrape_queue"][0]["evidence_required"] is True
     assert sb.db["scrape_queue"][0]["notification_document_id"] == "doc-1"
     assert len(sb.db["notification_documents"]) == 3
+    assert sb.db["notification_documents"][0]["file_url"] == sb.db["notification_documents"][0]["source_url"]
 
 def test_promote_generates_slug_without_nameerror():
     sb=SB()

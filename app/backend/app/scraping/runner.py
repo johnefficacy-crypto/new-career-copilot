@@ -78,6 +78,7 @@ def _ensure_notification_document(
         "scrape_run_id": scrape_run_id,
         "source_url": source_url,
         "final_url": source_url,
+        "file_url": source_url,
         "document_type": _document_type_for_url(source_url),
         "content_hash": content_hash,
         "raw_text": raw_text,
@@ -85,7 +86,15 @@ def _ensure_notification_document(
     }
     try:
         rows = supabase.table("notification_documents").insert(payload).execute().data or []
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "notification_documents insert failed source_id=%s scrape_run_id=%s source_url=%s content_hash=%s error=%s",
+            source_id,
+            scrape_run_id,
+            source_url,
+            content_hash,
+            exc,
+        )
         rows = []
     if not rows:
         rows = (

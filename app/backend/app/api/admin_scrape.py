@@ -120,6 +120,7 @@ def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, 
                 "scrape_run_id": qrow.get("scrape_run_id"),
                 "source_url": source_url or f"manual://scrape_queue/{queue_id}",
                 "final_url": source_url,
+                "file_url": source_url or f"manual://scrape_queue/{queue_id}",
                 "document_type": "unknown",
                 "content_hash": content_hash,
                 "raw_text": json.dumps(extracted_data, default=str),
@@ -127,7 +128,14 @@ def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, 
             }
             try:
                 nd_rows = supabase.table("notification_documents").insert(nd_payload).execute().data or []
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "fallback notification_document insert failed queue_id=%s source_url=%s content_hash=%s error=%s",
+                    queue_id,
+                    nd_payload.get("source_url"),
+                    content_hash,
+                    exc,
+                )
                 nd_rows = []
             if not nd_rows:
                 nd_rows = (supabase.table("notification_documents").select("id").eq("content_hash", content_hash).limit(1).execute().data or [])
