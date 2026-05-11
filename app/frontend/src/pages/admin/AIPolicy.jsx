@@ -1,20 +1,21 @@
 import React, { useEffect, useState } from "react";
 import { Bot, ShieldCheck } from "lucide-react";
 import { api } from "../../lib/api";
+import { LoadingSkeleton, StatusBadge } from "../../shared/ui";
 
 export default function AdminAIPolicy() {
   const [d, setD] = useState(null);
   useEffect(() => {
     api.get("/api/admin/ai-policy").then(setD).catch(() => {});
   }, []);
-  if (!d) return <div>Loading...</div>;
+  if (!d) return <div className="space-y-4" data-testid="admin-ai-policy"><LoadingSkeleton variant="cards" /></div>;
   const rules = Array.isArray(d.rules) ? d.rules : [];
   return (
     <div className="space-y-6" data-testid="admin-ai-policy">
       <div>
         <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">AI policy</div>
         <h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight">What the model is allowed to say.</h1>
-        <p className="text-muted-foreground mt-1">Current model: <span className="pill pill-dusk">{d.model}</span> / Target: <span className="pill pill-clay">{d.swap_target}</span></p>
+        <p className="text-muted-foreground mt-1">Current model: <StatusBadge status="active" label={d.model} /> <span className="mx-1">/</span> Target: <StatusBadge status="pending" label={d.swap_target} /></p>
       </div>
       <div className="grid md:grid-cols-2 gap-4">
         {rules.map((r, idx) => (

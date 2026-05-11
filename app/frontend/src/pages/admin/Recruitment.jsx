@@ -1,5 +1,6 @@
-import React from "react";
-import { Search, Filter, ExternalLink } from "lucide-react";
+import React, { useMemo, useState } from "react";
+import { ExternalLink, Filter, Search } from "lucide-react";
+import { EmptyState, StatusBadge } from "../../shared/ui";
 
 const ROWS = [
   { id: "SSC-CGL-26", title: "SSC CGL 2026", org: "Staff Selection Commission", status: "verified", posts: 21, source: "ssc.nic.in", updated: "12:42" },
@@ -10,73 +11,70 @@ const ROWS = [
   { id: "SBI-PO-26", title: "SBI PO 2026", org: "State Bank of India", status: "needs_review", posts: 2, source: "sbi.co.in/careers", updated: "2d ago" },
 ];
 
-const STATUS_STYLE = {
-  draft: "bg-white/10 text-white/70",
-  needs_review: "bg-amber-500/20 text-amber-300",
-  verified: "bg-emerald-500/20 text-emerald-300",
-  published: "bg-[#F56A3F]/20 text-[#FFAB00]",
-};
+const FILTERS = ["all", "draft", "needs_review", "verified", "published"];
 
-export default function AdminRecruitments() {
+export default function AdminRecruitmentPreview() {
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("all");
+
+  const rows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return ROWS.filter((row) => (status === "all" || row.status === status) && (!needle || `${row.title} ${row.org} ${row.source}`.toLowerCase().includes(needle)));
+  }, [query, status]);
+
   return (
     <div className="space-y-5">
-      <div className="flex items-end justify-between flex-wrap gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.22em] text-white/40 font-semibold">Recruitments</div>
-          <h1 className="mt-1 font-heading text-3xl font-black tracking-tighter">Publish workflow</h1>
-          <p className="text-white/60 text-sm mt-1">draft → needs_review → verified → published</p>
+          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Recruitments</div>
+          <h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight">Publish workflow preview.</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Draft to review to verified to published, shown with the same quiet admin styling as the live workflow.</p>
         </div>
-        <button className="bg-white text-[#0B0F19] rounded-full px-4 py-2 text-sm font-semibold">+ New recruitment</button>
+        <button className="btn btn-primary">New recruitment</button>
       </div>
 
-      <div className="flex gap-2 flex-wrap">
-        {["All · 214", "Draft · 12", "Needs review · 38", "Verified · 44", "Published · 120"].map((t, i) => (
-          <button key={t} className={`text-xs font-semibold px-3 py-1.5 rounded-full ${i === 2 ? "bg-white text-[#0B0F19]" : "border border-white/10 hover:bg-white/5"}`}>{t}</button>
-        ))}
+      <div className="soft-card rounded-2xl p-4">
+        <div className="grid gap-3 lg:grid-cols-[1fr_220px]">
+          <label className="relative block">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <span className="sr-only">Search recruitments</span>
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search title, organization, source" className="w-full rounded-xl border border-border bg-white/80 py-2 pl-9 pr-3 text-sm" />
+          </label>
+          <label className="relative block">
+            <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <span className="sr-only">Filter status</span>
+            <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full rounded-xl border border-border bg-white/80 py-2 pl-9 pr-3 text-sm">
+              {FILTERS.map((filter) => <option key={filter} value={filter}>{filter === "all" ? "All statuses" : filter.replace("_", " ")}</option>)}
+            </select>
+          </label>
+        </div>
       </div>
 
-      <div className="rounded-2xl glass-dark p-3">
-        <div className="flex items-center gap-2 px-2 py-2 border-b border-white/10">
-          <Search className="h-4 w-4 text-white/40" />
-          <input placeholder="Search by title, organization, source…" className="flex-1 bg-transparent text-sm outline-none placeholder:text-white/40" />
-          <button className="text-xs px-3 py-1.5 rounded-lg border border-white/10 inline-flex items-center gap-1"><Filter className="h-3.5 w-3.5" /> Filter</button>
+      {rows.length === 0 ? <EmptyState title="No preview rows match this view" description="Adjust the search or filter." /> : (
+        <div className="grid gap-4 xl:grid-cols-2">
+          {rows.map((row) => (
+            <article key={row.id} className="soft-card rounded-2xl p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <StatusBadge status={row.status} label={row.status.replace("_", " ")} />
+                  <h2 className="mt-3 truncate font-heading text-xl">{row.title}</h2>
+                  <p className="mt-1 truncate text-sm text-muted-foreground">{row.org} / <span className="font-mono">{row.id}</span></p>
+                </div>
+                <button className="btn btn-ghost text-xs">Review</button>
+              </div>
+              <div className="mt-4 grid gap-2 text-xs sm:grid-cols-3">
+                <Mini label="Posts" value={row.posts} />
+                <Mini label="Source" value={<span className="inline-flex min-w-0 items-center gap-1 truncate">{row.source}<ExternalLink className="h-3 w-3 shrink-0" /></span>} />
+                <Mini label="Updated" value={row.updated} />
+              </div>
+            </article>
+          ))}
         </div>
-        <table className="w-full text-sm mt-2">
-          <thead>
-            <tr className="text-[10px] uppercase tracking-[0.22em] text-white/40 font-semibold">
-              <th className="text-left py-2 px-3">Recruitment</th>
-              <th className="text-left py-2 px-3">Status</th>
-              <th className="text-left py-2 px-3">Posts</th>
-              <th className="text-left py-2 px-3">Source</th>
-              <th className="text-left py-2 px-3">Updated</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {ROWS.map((r) => (
-              <tr key={r.id} className="border-t border-white/5 hover:bg-white/5">
-                <td className="py-3 px-3">
-                  <div className="font-bold">{r.title}</div>
-                  <div className="text-[11px] text-white/50">{r.org} · <span className="font-mono">{r.id}</span></div>
-                </td>
-                <td className="py-3 px-3">
-                  <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full ${STATUS_STYLE[r.status]}`}>
-                    {r.status.replace("_", " ")}
-                  </span>
-                </td>
-                <td className="py-3 px-3 font-mono">{r.posts}</td>
-                <td className="py-3 px-3 text-white/70 inline-flex items-center gap-1 font-mono text-[12px]">
-                  {r.source} <ExternalLink className="h-3 w-3" />
-                </td>
-                <td className="py-3 px-3 text-white/50 font-mono text-[12px]">{r.updated}</td>
-                <td className="py-3 px-3">
-                  <button className="text-xs font-semibold text-[#FFAB00] hover:underline">Review →</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      )}
     </div>
   );
+}
+
+function Mini({ label, value }) {
+  return <div className="rounded-xl border border-border bg-white/60 p-2"><div className="text-[10px] uppercase tracking-widest text-muted-foreground">{label}</div><div className="mt-1 truncate font-semibold">{value}</div></div>;
 }
