@@ -580,10 +580,28 @@ def eligibility_queue(_admin: dict = Depends(require_permission("scraper.manage"
         .data
         or []
     )
+    queue_ids = [p["id"] for p in pending_rows if p.get("id")]
+    evidence_by_queue: dict[str, dict[str, str]] = {qid: {} for qid in queue_ids}
+    if queue_ids:
+        try:
+            frows = (
+                supabase.table("extracted_field_evidence")
+                .select("scrape_queue_id, field_name, reviewer_status")
+                .in_("scrape_queue_id", queue_ids)
+                .execute()
+                .data
+                or []
+            )
+            for qid, group in group_by(frows, "scrape_queue_id").items():
+                evidence_by_queue[qid] = {fr.get("field_name"): fr.get("reviewer_status") for fr in group}
+        except Exception:
+            evidence_by_queue = {qid: {} for qid in queue_ids}
 
     def _shape(p: dict[str, Any]) -> dict[str, Any]:
         d = p.get("extracted_data") or {}
         normalized = p.get("extracted_fields") if isinstance(p.get("extracted_fields"), dict) else None
+        reviewed = evidence_by_queue.get(p["id"], {})
+        missing = [f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified", "corrected"}]
         return {
             "id": p["id"],
             "slug": p["id"],
@@ -599,6 +617,10 @@ def eligibility_queue(_admin: dict = Depends(require_permission("scraper.manage"
             "raw_extracted_item": d if isinstance(d, dict) else {},
             "normalized_item": normalized if isinstance(normalized, dict) else (d if isinstance(d, dict) else {}),
             "previous_extraction": p.get("raw_payload") if isinstance(p.get("raw_payload"), dict) else None,
+            "field_evidence_status": reviewed,
+            "high_risk_fields": sorted(list(_HIGH_RISK_FIELDS)),
+            "unverified_fields": sorted(missing),
+            "promotable": len(missing) == 0,
             "promoted_recruitment_snapshot": None,
             "confidence_history": None,
         }

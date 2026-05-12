@@ -3,7 +3,11 @@ import { AlertTriangle, CheckCircle2, FileCheck2, Filter, Link as LinkIcon, Sear
 import RecruitmentEditPanel from "../../features/admin/recruitments/RecruitmentEditPanel";
 import RecruitmentTrustActions from "../../features/admin/recruitments/RecruitmentTrustActions";
 import useAdminAction from "../../features/admin/shared/useAdminAction";
-import { api } from "../../lib/api";
+import { api, getApiBlockingIssues } from "../../lib/api";
+import AdminWorkflowStepper from "../../features/admin/workflow/AdminWorkflowStepper";
+import NextActionCallout from "../../features/admin/workflow/NextActionCallout";
+import BlockerList from "../../features/admin/workflow/BlockerList";
+import { getNextActionForRecruitment } from "../../features/admin/workflow/adminWorkflowContract";
 import { useFocusTrap } from "../../shared/a11y/useFocusTrap";
 import { EmptyState, ErrorState, LoadingSkeleton, StatusBadge } from "../../shared/ui";
 
@@ -69,6 +73,14 @@ function RecruitmentDrawer({ row, onClose, onAction, onSave, busyKey }) {
           <StatusBadge status={row.organization_verified ? "verified" : "pending"} label={row.organization_verified ? "Organization verified" : "Organization pending"} />
           <StatusBadge status={row.source_provenance ? "verified" : "pending"} label={row.source_provenance ? "Source linked" : "Source missing"} />
         </div>
+        <div className="mt-4">
+          <NextActionCallout
+            message={getNextActionForRecruitment(row)}
+            href={row.publish_status === "published" ? "/admin/eligibility-queue" : undefined}
+            actionLabel={row.publish_status === "published" ? "Open Eligibility Ops" : undefined}
+            tone={(row.blocking_issues || []).length ? "warn" : "info"}
+          />
+        </div>
 
         <section className="mt-5 soft-card rounded-2xl p-4">
           <div className="flex items-start justify-between gap-3">
@@ -88,7 +100,7 @@ function RecruitmentDrawer({ row, onClose, onAction, onSave, busyKey }) {
         </section>
 
         <section className="mt-5 grid gap-4 md:grid-cols-2">
-          <IssuePanel title="Blocking issues" tone="destructive" items={row.blocking_issues} empty="No publish blockers reported." />
+          <IssuePanel title="Blocking issues" items={row.blocking_issues} empty="No publish blockers reported." renderBlockers />
           <IssuePanel title="Warnings" tone="amber" items={row.warnings} empty="No warnings reported." />
         </section>
 
@@ -141,10 +153,7 @@ function RecruitmentCard({ row, onOpen, onAction, busyKey }) {
       <div className="mt-4 rounded-xl border border-border bg-white/60 p-3">
         <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Readiness</div>
         {blocked ? (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {(row.blocking_issues || []).slice(0, 4).map((issue) => <span key={issue} className="pill pill-amber">{issue}</span>)}
-            {(row.blocking_issues || []).length > 4 && <span className="pill pill-dusk">+{row.blocking_issues.length - 4}</span>}
-          </div>
+          <div className="mt-2"><BlockerList blockers={(row.blocking_issues || []).slice(0, 3)} /></div>
         ) : (
           <p className="mt-2 text-sm text-muted-foreground">No current publish blockers reported.</p>
         )}
@@ -179,7 +188,7 @@ export default function AdminRecruitments() {
   const act = async (id, action, opts = {}) => runAction({
     key: `${action}-${id}`,
     confirm: opts.confirm,
-    successMessage: `${action} completed`,
+    successMessage: action === "publish" ? "Recruitment published. Next: monitor eligibility recompute and notification pipeline." : `${action} completed`,
     errorMessage: `${action} failed`,
     action: async () => { await api.post(`/api/admin/recruitments/${id}/${action}`, {}); await load(); },
   });
@@ -208,6 +217,7 @@ export default function AdminRecruitments() {
 
   return (
     <div className="space-y-5" data-testid="admin-recruitments">
+      <AdminWorkflowStepper currentStep={["Recruitment Draft", "Validate", "Publish"]} />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Recruitments / trust workflow</div>
@@ -247,7 +257,10 @@ export default function AdminRecruitments() {
         </div>
       </section>
 
-      {actionError && <div className="soft-card rounded-xl border-destructive/30 p-3 text-xs text-destructive" data-testid="admin-recruitments-message">{actionError.message}</div>}
+      {actionError && <div className="soft-card rounded-xl border-destructive/30 p-3 text-xs text-destructive" data-testid="admin-recruitments-message">
+        <div>{actionError.message}</div>
+        <div className="mt-2 text-foreground"><BlockerList blockers={getApiBlockingIssues(actionError)} empty="" /></div>
+      </div>}
 
       {loading ? <LoadingSkeleton variant="table" /> : null}
       {!loading && error ? <ErrorState title="Failed to load recruitments" message={error.message} onRetry={load} /> : null}
@@ -296,11 +309,13 @@ function UrlPanel({ title, url }) {
   );
 }
 
-function IssuePanel({ title, items = [], empty }) {
+function IssuePanel({ title, items = [], empty, renderBlockers = false }) {
   return (
     <div className="soft-card rounded-2xl p-4">
       <div className="flex items-center gap-2 text-sm font-semibold"><AlertTriangle className="h-4 w-4" aria-hidden="true" /> {title}</div>
-      {items?.length ? (
+      {renderBlockers ? (
+        <div className="mt-3"><BlockerList blockers={items} empty={empty} /></div>
+      ) : items?.length ? (
         <div className="mt-3 flex flex-wrap gap-1.5">
           {items.map((item) => <span key={item} className="pill pill-amber">{item}</span>)}
         </div>

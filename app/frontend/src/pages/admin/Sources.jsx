@@ -2,20 +2,16 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Filter, Pencil, Plus, Search, ShieldCheck, X } from "lucide-react";
 import SourceHealthBadge from "../../features/admin/sources/SourceHealthBadge";
 import { api } from "../../lib/api";
+import AdminWorkflowStepper from "../../features/admin/workflow/AdminWorkflowStepper";
+import NextActionCallout from "../../features/admin/workflow/NextActionCallout";
+import { NEXT_ACTION_MESSAGES, SOURCE_TYPE_LABELS } from "../../features/admin/workflow/adminWorkflowContract";
 import { useFocusTrap } from "../../shared/a11y/useFocusTrap";
 import { EmptyState, ErrorState, LoadingSkeleton, RowActions, StatusBadge } from "../../shared/ui";
 import useAdminAction from "../../features/admin/shared/useAdminAction";
 import AuditTimelineDrawer from "../../features/admin/shared/AuditTimelineDrawer";
 import { adminTrustService } from "../../services/adminTrustService";
 
-const SOURCE_TYPES = [
-  { value: "aggregator", label: "Aggregator/listing page" },
-  { value: "official_html", label: "Official HTML page" },
-  { value: "official_pdf", label: "Official PDF" },
-  { value: "rss", label: "RSS feed" },
-  { value: "sitemap", label: "Sitemap" },
-  { value: "api", label: "API source" },
-];
+const SOURCE_TYPES = Object.entries(SOURCE_TYPE_LABELS).map(([value, label]) => ({ value, label }));
 
 const EMPTY_FORM = {
   source_name: "",
@@ -160,7 +156,7 @@ function SourceFormDrawer({ open, mode, form, setForm, busy, error, onClose, onS
             <input type="checkbox" checked={!!form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />
           </label>
           <label className={`soft-card flex items-center justify-between rounded-xl p-3 text-sm ${isAggregator ? "opacity-60" : ""}`}>
-            <span>Verified</span>
+            <span>Verified official source</span>
             <input type="checkbox" disabled={isAggregator} checked={!isAggregator && !!form.is_verified} onChange={(e) => setForm({ ...form, is_verified: e.target.checked })} />
           </label>
         </div>
@@ -193,7 +189,7 @@ function SourceDetailsDialog({ source, result, onEdit, onClose }) {
           <Detail label="Type" value={source.source_type || source.kind} />
           <Detail label="Official URL" value={source.official_url} />
           <Detail label="Notification URL" value={source.notification_url} />
-          <Detail label="Policy" value={source.source_type === "aggregator" ? "Discovery only / official confirmation required" : "Official source candidate"} />
+          <Detail label="Trust policy" value={source.source_type === "aggregator" ? "Discovery only / official confirmation required / cannot publish from this source alone" : "Official source candidate"} />
           <Detail label="Last error" value={source.last_error} />
           <Detail label="Notes" value={source.notes} />
           <div className="grid gap-3 sm:grid-cols-3">
@@ -254,7 +250,7 @@ export default function AdminSources() {
     const key = editing ? `update-${editing.id}` : "create";
     await runAction({
       key,
-      successMessage: editing ? "Source updated" : "Source created",
+      successMessage: editing ? "Source updated" : "Source created. Next: verify source or run dry scrape if already trusted.",
       action: async () => {
         if (editing) await api.put(`/api/admin/sources/${editing.id}`, payload);
         else await api.post("/api/admin/sources", payload);
@@ -264,7 +260,7 @@ export default function AdminSources() {
     });
   };
 
-  const verify = async (source) => runAction({ key: `verify-${source.id}`, successMessage: "Source verified", action: async () => { const r = await api.post(`/api/admin/sources/${source.id}/verify`, {}); setResultById((x) => ({ ...x, [source.id]: r })); await load(); } });
+  const verify = async (source) => runAction({ key: `verify-${source.id}`, successMessage: "Source verified. Next: use Scraper to discover candidates.", errorMessage: "Source verification failed. Review backend warnings/errors and fix the source URL or trust policy.", action: async () => { const r = await api.post(`/api/admin/sources/${source.id}/verify`, {}); setResultById((x) => ({ ...x, [source.id]: r })); await load(); } });
   const toggle = async (id, on) => runAction({ key: `${on ? "deactivate" : "activate"}-${id}`, confirm: `${on ? "Deactivate" : "Activate"} this source?`, successMessage: `Source ${on ? "deactivated" : "activated"}`, action: async () => { await api.post(`/api/admin/sources/${id}/${on ? "deactivate" : "activate"}`, {}); await load(); } });
   const summary = useMemo(() => ({
     total: items.length,
@@ -291,9 +287,17 @@ export default function AdminSources() {
       return matchesText && matchesType && matchesPolicy;
     });
   }, [items, policyFilter, query, typeFilter]);
+  const workflowMessage = useMemo(() => {
+    const unverifiedOfficial = items.some((source) => (source.source_type || source.kind) !== "aggregator" && !source.is_verified);
+    if (unverifiedOfficial) return NEXT_ACTION_MESSAGES.sourceVerify;
+    if (items.some((source) => (source.source_type || source.kind) === "aggregator")) return NEXT_ACTION_MESSAGES.aggregatorDiscovery;
+    return NEXT_ACTION_MESSAGES.runDryScrape;
+  }, [items]);
 
   return (
     <div className="space-y-4" data-testid="admin-sources">
+      <AdminWorkflowStepper currentStep="Sources" />
+      <NextActionCallout message={workflowMessage} href="/admin/scraper" actionLabel="Open Scraper" tone={workflowMessage === NEXT_ACTION_MESSAGES.aggregatorDiscovery ? "warn" : "info"} />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="font-heading text-3xl">Sources trust</h1>
@@ -379,7 +383,7 @@ function SourceCard({ source, busyKey, onDetails, onEdit, onVerify, onToggle, on
           <div className="flex flex-wrap gap-1.5">
             <StatusBadge status={sourceType || "unknown"} label={sourceTypeLabel(sourceType)} />
             <StatusBadge status={source.is_active ? "active" : "disabled"} label={source.is_active ? "Active" : "Inactive"} />
-            {isAggregator ? <span className="pill pill-amber">Discovery only</span> : <span className="pill pill-sage">Official candidate</span>}
+            {isAggregator ? <span className="pill pill-amber">Discovery only</span> : <span className="pill pill-sage">{source.is_verified ? "Verified official source" : "Official candidate"}</span>}
           </div>
           <h2 className="mt-3 truncate font-heading text-xl">{source.org || source.source_name}</h2>
           <p className="mt-1 truncate text-xs text-muted-foreground">{source.official_url || source.url || "-"}</p>
@@ -393,7 +397,7 @@ function SourceCard({ source, busyKey, onDetails, onEdit, onVerify, onToggle, on
       </div>
       {isAggregator ? (
         <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-          Discovery-only. This source cannot satisfy official provenance by itself.
+          Discovery only. Cannot publish from this source alone.
         </div>
       ) : null}
       <div className="mt-4 border-t border-border pt-3">

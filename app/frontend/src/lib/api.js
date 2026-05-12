@@ -30,6 +30,41 @@ function formatApiErrorDetail(detail) {
   return String(detail);
 }
 
+export function getApiErrorDetail(error) {
+  return error?.detail ?? error?.data?.detail ?? error?.data?.message ?? error?.message;
+}
+
+export function getApiErrorMessage(error) {
+  const detail = getApiErrorDetail(error);
+  if (detail && typeof detail === "object" && typeof detail.message === "string") return detail.message;
+  return formatApiErrorDetail(detail);
+}
+
+export function getApiErrorFieldList(error, key) {
+  const detail = getApiErrorDetail(error);
+  const value = error?.[key] ?? (detail && typeof detail === "object" ? detail[key] : undefined) ?? error?.data?.[key];
+  return Array.isArray(value) ? value : [];
+}
+
+export function getApiBlockingIssues(error) {
+  return getApiErrorFieldList(error, "blocking_issues");
+}
+
+export function getApiUnverifiedFields(error) {
+  return getApiErrorFieldList(error, "unverified_fields");
+}
+
+function attachStructuredErrorFields(err, data, detail) {
+  const detailObj = detail && typeof detail === "object" ? detail : {};
+  const dataObj = data && typeof data === "object" ? data : {};
+  err.data = data;
+  err.detail = detail;
+  err.blocking_issues = detailObj.blocking_issues || dataObj.blocking_issues || [];
+  err.unverified_fields = detailObj.unverified_fields || dataObj.unverified_fields || [];
+  err.warnings = detailObj.warnings || dataObj.warnings || [];
+  return err;
+}
+
 export async function apiFetch(path, options = {}) {
   if (!BACKEND_URL) {
     throw new Error("Missing REACT_APP_BACKEND_URL. Set it in frontend .env before running the app.");
@@ -50,7 +85,8 @@ export async function apiFetch(path, options = {}) {
     const detail = typeof data === "object" ? data?.detail || data?.message : data;
     const err = new Error(formatApiErrorDetail(detail) || `API ${res.status}`);
     err.status = res.status;
-    err.data = data;
+    err.message = getApiErrorMessage({ data, detail }) || err.message;
+    attachStructuredErrorFields(err, data, detail);
     throw err;
   }
   return data;

@@ -1,25 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Eye, Filter, Play, RefreshCw, Search, X } from "lucide-react";
-import { api } from "../../lib/api";
+import { api, getApiUnverifiedFields } from "../../lib/api";
+import AdminWorkflowStepper from "../../features/admin/workflow/AdminWorkflowStepper";
+import NextActionCallout from "../../features/admin/workflow/NextActionCallout";
+import FieldReviewGroup from "../../features/admin/workflow/FieldReviewGroup";
+import { HIGH_RISK_QUEUE_FIELDS, NEXT_ACTION_MESSAGES, QUEUE_ACTION_LABELS, RECOMMENDED_REVIEW_FIELDS, SOURCE_TYPE_LABELS } from "../../features/admin/workflow/adminWorkflowContract";
 import { useFocusTrap } from "../../shared/a11y/useFocusTrap";
 import { EmptyState, ErrorState, LoadingSkeleton, StatusBadge, useToast } from "../../shared/ui";
-
-const REVIEW_FIELDS = ["title", "organization_name", "notification_date", "apply_start_date", "apply_end_date", "total_vacancies", "official_notification_url", "official_apply_url"];
 
 function shortId(value) {
   return value ? String(value).slice(0, 8) : "-";
 }
 
 function typeLabel(value) {
-  const labels = {
-    aggregator: "Aggregator",
-    official_html: "Official HTML",
-    official_pdf: "Official PDF",
-    rss: "RSS",
-    sitemap: "Sitemap",
-    api: "API",
-  };
-  return labels[value] || value || "Unknown";
+  return SOURCE_TYPE_LABELS[value] || value || "Unknown";
 }
 
 function selectedSourceIds(mode, selected) {
@@ -29,7 +23,6 @@ function selectedSourceIds(mode, selected) {
 function QueueDetailDrawer({ item, onClose, onAction, onFieldAction }) {
   const panelRef = useRef(null);
   const closeRef = useRef(null);
-  const [corrections, setCorrections] = useState({});
   useFocusTrap({ active: !!item, containerRef: panelRef, onEscape: onClose, initialFocusRef: closeRef });
   if (!item) return null;
   const extracted = item.extracted_data || {};
@@ -58,31 +51,25 @@ function QueueDetailDrawer({ item, onClose, onAction, onFieldAction }) {
 
         <section className="mt-5 soft-card rounded-2xl p-4">
           <h3 className="font-semibold">Admin review actions</h3>
+          <p className="mt-1 text-sm text-muted-foreground">Promotion creates a canonical recruitment draft with publish_status=needs_review. It does not publish and does not send alerts.</p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <button className="btn btn-ghost" onClick={() => onAction(item.id, "approve")}>Approve queue item</button>
-            <button className="btn btn-ghost" onClick={() => onAction(item.id, "reject")}>Reject</button>
-            <button className="btn btn-primary" disabled={!item.promotable} title={item.unverified_fields?.length ? `Verify: ${item.unverified_fields.join(", ")}` : ""} onClick={() => onAction(item.id, "promote")}>Promote to draft</button>
+            <button className="btn btn-ghost" onClick={() => onAction(item.id, "approve")}>{QUEUE_ACTION_LABELS.approve}</button>
+            <button className="btn btn-ghost" onClick={() => onAction(item.id, "reject")}>{QUEUE_ACTION_LABELS.reject}</button>
+            <button className="btn btn-primary" disabled={!item.promotable} title={item.unverified_fields?.length ? `Verify: ${item.unverified_fields.join(", ")}` : ""} onClick={() => onAction(item.id, "promote")}>{QUEUE_ACTION_LABELS.promote}</button>
           </div>
-          {item.unverified_fields?.length ? <div className="mt-2 text-xs text-amber-700">High-risk fields still need review: {item.unverified_fields.join(", ")}</div> : null}
+          {item.unverified_fields?.length ? <div className="mt-2 text-xs text-amber-700">Backend blockers: {item.unverified_fields.join(", ")}</div> : null}
         </section>
 
         <section className="mt-5 soft-card rounded-2xl p-4">
           <h3 className="font-semibold">Field evidence</h3>
-          <div className="mt-3 space-y-3">
-            {REVIEW_FIELDS.map((field) => (
-              <div key={field} className="rounded-xl border border-border bg-white/60 p-3 text-xs">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div><b>{field}</b>: <span className="break-words">{String(extracted[field] ?? "-")}</span></div>
-                  <StatusBadge status={evidence[field] || "unverified"} label={evidence[field] || "unverified"} />
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button className="btn btn-ghost h-8 text-xs" onClick={() => onFieldAction(item.id, field, "verify")}>Verify</button>
-                  <button className="btn btn-ghost h-8 text-xs" onClick={() => onFieldAction(item.id, field, "reject")}>Reject</button>
-                  <input className="min-w-[180px] flex-1 rounded-lg border border-border bg-white px-2 py-1" value={corrections[field] || ""} onChange={(e) => setCorrections({ ...corrections, [field]: e.target.value })} placeholder="Corrected value" />
-                  <button className="btn btn-ghost h-8 text-xs" disabled={!corrections[field]} onClick={() => onFieldAction(item.id, field, "correct", corrections[field])}>Correct</button>
-                </div>
-              </div>
-            ))}
+          <div className="mt-3">
+            <FieldReviewGroup
+              extracted={extracted}
+              evidence={evidence}
+              requiredFields={HIGH_RISK_QUEUE_FIELDS}
+              recommendedFields={RECOMMENDED_REVIEW_FIELDS}
+              onFieldAction={(field, action, correctedValue) => onFieldAction(item.id, field, action, correctedValue)}
+            />
           </div>
         </section>
 
@@ -186,6 +173,7 @@ export default function AdminScraper() {
     duplicate: queue.filter((item) => item.status === "duplicate" || item.duplicate_of).length,
     blocked: queue.filter((item) => (item.unverified_fields || []).length > 0).length,
   }), [queue]);
+  const workflowMessage = msg && msg.includes("Live run") ? NEXT_ACTION_MESSAGES.reviewQueue : NEXT_ACTION_MESSAGES.runDryFirst;
   const filteredQueue = useMemo(() => {
     const needle = queueQuery.trim().toLowerCase();
     return queue.filter((item) => {
@@ -232,12 +220,17 @@ export default function AdminScraper() {
   const act = async (id, action) => {
     try {
       const r = await api.post(`/api/admin/scrape/items/${id}/${action}`, { notes: "admin review" });
-      setMsg(`${action}: ${JSON.stringify(r)}`);
-      toast.success(`${action} completed.`);
+      if (action === "promote") {
+        setMsg(`Recruitment draft created. Next: open Recruitments and validate publish readiness. ${JSON.stringify(r)}`);
+        toast.success("Recruitment draft created. Next: open Recruitments and validate publish readiness.");
+      } else {
+        setMsg(`${QUEUE_ACTION_LABELS[action] || action}: ${JSON.stringify(r)}`);
+        toast.success(`${QUEUE_ACTION_LABELS[action] || action} completed.`);
+      }
       await load();
     } catch (e) {
-      const fields = e?.detail?.unverified_fields || [];
-      const text = fields.length ? `Promote blocked. Verify: ${fields.join(", ")}` : `${action} failed: ${e.message}`;
+      const fields = getApiUnverifiedFields(e);
+      const text = fields.length ? `Promote blocked. Verify required fields: ${fields.join(", ")}` : `${action} failed: ${e.message}`;
       setMsg(text);
       toast.error(text);
     }
@@ -257,6 +250,8 @@ export default function AdminScraper() {
 
   return (
     <div className="space-y-6" data-testid="admin-scraper">
+      <AdminWorkflowStepper currentStep={["Scrape", "Queue Review"]} />
+      <NextActionCallout message={workflowMessage} href="/admin/recruitments" actionLabel="Open Recruitments" tone="info" />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="font-heading text-3xl font-semibold tracking-tight">Scrape queue trust review</h1>
@@ -278,7 +273,7 @@ export default function AdminScraper() {
             <Search className="mt-1 h-5 w-5 text-clay-700" />
             <div>
               <h2 className="font-semibold">Dry run / discover candidates</h2>
-              <p className="text-sm text-muted-foreground">Safe run, no publish, review required.</p>
+              <p className="text-sm text-muted-foreground">Run dry scrape first. No publishing occurs; review is still required.</p>
             </div>
           </div>
           <button disabled={!!running || !canRunSelected} onClick={runDry} className="btn btn-ghost mt-4"><Play className={`h-4 w-4 ${running === "dry" ? "animate-spin" : ""}`} />{running === "dry" ? "Running..." : "Dry run / discover candidates"}</button>
@@ -291,7 +286,7 @@ export default function AdminScraper() {
               <p className="text-sm text-muted-foreground">Creates queue items for review, does not publish.</p>
             </div>
           </div>
-          <button disabled={!!running || !canRunSelected} onClick={() => setConfirmOpen(true)} className="btn btn-primary mt-4"><Play className={`h-4 w-4 ${running === "live" ? "animate-spin" : ""}`} />Run live scrape</button>
+          <button disabled={!!running || !canRunSelected} onClick={() => setConfirmOpen(true)} className="btn btn-primary mt-4"><Play className={`h-4 w-4 ${running === "live" ? "animate-spin" : ""}`} />{running === "live" ? "Running..." : "Run live scrape"}</button>
         </section>
       </div>
 
@@ -365,7 +360,7 @@ export default function AdminScraper() {
                   <td className="truncate px-3 py-3">{e.apply_start_date || "-"} to {e.apply_end_date || "-"}</td>
                   <td className="px-3 py-3"><div>conf {q.confidence_score ?? "-"}</div><div className="text-[10px] text-muted-foreground">quality {q.data_quality_score ?? "-"}</div></td>
                   <td className="px-3 py-3"><div className="flex flex-wrap gap-1"><StatusBadge status={q.status} label={q.status} /><StatusBadge status={q.duplicate_of ? "duplicate" : "new"} label={q.duplicate_of ? "Duplicate" : "New"} /><StatusBadge status={q.extraction_status || "unknown"} label={q.extraction_status || "unknown"} /><StatusBadge status={q.source_type || "unknown"} label={typeLabel(q.source_type)} /></div>{blocked.length ? <div className="mt-1 truncate text-[10px] text-amber-700">Verify: {blocked.join(", ")}</div> : null}</td>
-                  <td className="px-3 py-3"><div className="flex flex-wrap gap-1"><button className="btn btn-ghost h-8 text-xs" onClick={() => setSelected(q)}><Eye className="h-3.5 w-3.5" />Details</button><button className="btn btn-primary h-8 text-xs" disabled={!q.promotable} onClick={() => act(q.id, "promote")}>Promote</button></div></td>
+                  <td className="px-3 py-3"><div className="flex flex-wrap gap-1"><button className="btn btn-ghost h-8 text-xs" onClick={() => setSelected(q)}><Eye className="h-3.5 w-3.5" />Details</button><button className="btn btn-primary h-8 text-xs" disabled={!q.promotable} onClick={() => act(q.id, "promote")}>Promote to recruitment draft</button></div></td>
                 </tr>
               );
             })}
