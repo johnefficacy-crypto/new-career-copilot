@@ -52,6 +52,13 @@ from .schemas import ExtractedRecruitment, to_json_safe
 logger = logging.getLogger("career_copilot.scraping.runner")
 
 
+class DuplicatePromotionError(PromotionError):
+    def __init__(self, *, existing_recruitment_id: str, slug: str):
+        super().__init__("Recruitment already exists")
+        self.existing_recruitment_id = existing_recruitment_id
+        self.slug = slug
+
+
 def _document_type_for_url(url: str) -> str:
     lower = (url or "").split("?", 1)[0].lower()
     if lower.endswith(".pdf"):
@@ -290,6 +297,7 @@ def run_scraping_pass(
         try:
             if is_aggregator_source(src):
                 source_limit = min(run_limit, aggregator_max_items(src))
+                adapter_config = src.get("adapter_config") if isinstance(src.get("adapter_config"), dict) else {}
                 if mock:
                     detail_urls = mock_aggregator_detail_urls(source, count=min(3, source_limit))
                 else:
@@ -298,7 +306,24 @@ def run_scraping_pass(
                         error_log.append({"source": source.name, "url": target_url, "error": "Empty listing response", "at": utc_now_iso()})
                         _bump_source_failure(supabase, src)
                         continue
-                    detail_urls = discover_aggregator_detail_urls(listing_html, target_url, max_items=source_limit)
+                    detail_urls = discover_aggregator_detail_urls(
+                        listing_html,
+                        target_url,
+                        max_items=source_limit,
+                        include_patterns=adapter_config.get("include_patterns") or None,
+                        exclude_patterns=adapter_config.get("exclude_patterns") or None,
+                        allowed_domains=adapter_config.get("allowed_domains") or None,
+                    )
+                    discovery_stats = getattr(discover_aggregator_detail_urls, "last_stats", {})
+                    logger.info(
+                        "aggregator.discovery source_id=%s source_name=%s discovered=%s filtered_include=%s filtered_exclude=%s filtered_domain=%s",
+                        src.get("id"),
+                        source.name,
+                        discovery_stats.get("discovered", len(detail_urls)),
+                        discovery_stats.get("include", 0),
+                        discovery_stats.get("exclude", 0),
+                        discovery_stats.get("domain", 0),
+                    )
                 if not detail_urls:
                     error_log.append({"source": source.name, "url": target_url, "error": "No detail links discovered", "at": utc_now_iso()})
                     _bump_source_failure(supabase, src)
@@ -560,8 +585,15 @@ def promote_to_recruitments(
     )
 
     # ── Recruitment insert ──
+    slug = compute_promotion_slug(data)
+    existing = execute_or_raise(
+        "recruitments.read_duplicate_slug",
+        lambda: supabase.table("recruitments").select("id,slug").eq("slug", slug).limit(1).execute(),
+    ).data or []
+    if existing:
+        raise DuplicatePromotionError(existing_recruitment_id=existing[0]["id"], slug=slug)
     rec_payload = {
-        "slug": f"{slugify(data.title)}-{data.year}",
+        "slug": slug,
         "organization_id": org_id,
         "name": data.title,
         "year": data.year,
@@ -659,6 +691,10 @@ def promote_to_recruitments(
                 ).execute())
 
     return rec_id
+
+
+def compute_promotion_slug(data: ExtractedRecruitment) -> str:
+    return f"{slugify(data.title)}-{data.year}"
 
 
 def promote_run(

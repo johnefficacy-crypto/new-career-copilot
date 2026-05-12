@@ -54,6 +54,15 @@ export function getApiUnverifiedFields(error) {
   return getApiErrorFieldList(error, "unverified_fields");
 }
 
+export function getApiExistingRecruitmentId(error) {
+  const detail = getApiErrorDetail(error);
+  return error?.existing_recruitment_id ?? (detail && typeof detail === "object" ? detail.existing_recruitment_id : undefined) ?? error?.data?.existing_recruitment_id;
+}
+
+export function getApiNextActions(error) {
+  return getApiErrorFieldList(error, "next_actions");
+}
+
 function attachStructuredErrorFields(err, data, detail) {
   const detailObj = detail && typeof detail === "object" ? detail : {};
   const dataObj = data && typeof data === "object" ? data : {};
@@ -62,6 +71,9 @@ function attachStructuredErrorFields(err, data, detail) {
   err.blocking_issues = detailObj.blocking_issues || dataObj.blocking_issues || [];
   err.unverified_fields = detailObj.unverified_fields || dataObj.unverified_fields || [];
   err.warnings = detailObj.warnings || dataObj.warnings || [];
+  err.code = detailObj.code || dataObj.code;
+  err.existing_recruitment_id = detailObj.existing_recruitment_id || dataObj.existing_recruitment_id;
+  err.next_actions = detailObj.next_actions || dataObj.next_actions || [];
   return err;
 }
 

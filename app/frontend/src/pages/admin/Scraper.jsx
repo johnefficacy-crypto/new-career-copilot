@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Eye, Filter, Play, RefreshCw, Search, X } from "lucide-react";
-import { api, getApiUnverifiedFields } from "../../lib/api";
+import { api, getApiExistingRecruitmentId, getApiNextActions, getApiUnverifiedFields } from "../../lib/api";
 import AdminWorkflowStepper from "../../features/admin/workflow/AdminWorkflowStepper";
 import NextActionCallout from "../../features/admin/workflow/NextActionCallout";
 import FieldReviewGroup from "../../features/admin/workflow/FieldReviewGroup";
-import { HIGH_RISK_QUEUE_FIELDS, NEXT_ACTION_MESSAGES, QUEUE_ACTION_LABELS, RECOMMENDED_REVIEW_FIELDS, SOURCE_TYPE_LABELS } from "../../features/admin/workflow/adminWorkflowContract";
+import { HIGH_RISK_QUEUE_FIELDS, NEXT_ACTION_MESSAGES, RECOMMENDED_REVIEW_FIELDS, SOURCE_TYPE_LABELS } from "../../features/admin/workflow/adminWorkflowContract";
 import { useFocusTrap } from "../../shared/a11y/useFocusTrap";
 import { EmptyState, ErrorState, LoadingSkeleton, StatusBadge, useToast } from "../../shared/ui";
 
@@ -20,13 +20,25 @@ function selectedSourceIds(mode, selected) {
   return mode === "selected" ? selected : null;
 }
 
-function QueueDetailDrawer({ item, onClose, onAction, onFieldAction }) {
+function reviewState(item) {
+  if (item.status === "rejected") return { key: "rejected", label: "Rejected", reason: "Candidate rejected" };
+  if (item.status === "merged") return { key: "merged", label: "Merged", reason: "Merged into existing recruitment" };
+  if (item.promoted_recruitment_id) return { key: "promoted", label: "Promoted", reason: "Draft created" };
+  if (item.status === "duplicate" || item.duplicate_of || (item.duplicate_candidates || []).length) return { key: "duplicate", label: "Duplicate", reason: "Existing recruitment candidate found" };
+  if ((item.unverified_fields || []).length) return { key: "blocked", label: "Needs review", reason: `Verify: ${item.unverified_fields.join(", ")}` };
+  if (item.promotable) return { key: "ready", label: "Ready to promote", reason: "Required fields verified" };
+  return { key: "pending", label: "Pending", reason: "Awaiting review" };
+}
+
+function QueueDetailDrawer({ item, onClose, onAction, onFieldAction, onMerge }) {
   const panelRef = useRef(null);
   const closeRef = useRef(null);
   useFocusTrap({ active: !!item, containerRef: panelRef, onEscape: onClose, initialFocusRef: closeRef });
   if (!item) return null;
   const extracted = item.extracted_data || {};
   const evidence = item.field_evidence_status || item.field_evidence || {};
+  const state = reviewState(item);
+  const primaryDuplicate = (item.duplicate_candidates || [])[0];
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/30">
@@ -36,6 +48,7 @@ function QueueDetailDrawer({ item, onClose, onAction, onFieldAction }) {
           <div className="min-w-0">
             <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Scrape queue item</div>
             <h2 id="queue-detail-title" className="truncate font-heading text-2xl">{extracted.title || extracted.name || item.source_name || "Candidate"}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">Queue {shortId(item.id)} · {item.source_name || "Unknown source"} · {typeLabel(item.source_type)}</p>
           </div>
           <button ref={closeRef} className="btn btn-ghost h-9 w-9 p-0" onClick={onClose} aria-label="Close queue details"><X className="h-4 w-4" /></button>
         </div>
@@ -49,18 +62,36 @@ function QueueDetailDrawer({ item, onClose, onAction, onFieldAction }) {
           <Info label="Official provenance" value={item.official_source_resolved ? "Resolved" : "Required / unresolved"} />
         </section>
 
+        {primaryDuplicate ? (
+          <section className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+            <h3 className="font-semibold">Duplicate candidate found</h3>
+            <p className="mt-1">Compare with existing recruitment before creating a new draft.</p>
+            <div className="mt-3 rounded-xl bg-white/70 p-3 text-xs">
+              <div className="font-semibold">{primaryDuplicate.name}</div>
+              <div>Score: {primaryDuplicate.score ?? "-"} · {(primaryDuplicate.reasons || []).join(", ") || "match"}</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <a className="btn btn-ghost h-8 text-xs" href={`/admin/recruitments?open=${primaryDuplicate.recruitment_id}`}>Open recruitment</a>
+                <button className="btn btn-primary h-8 text-xs" onClick={() => onMerge(item.id, primaryDuplicate.recruitment_id)}>Merge reviewed fields</button>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
         <section className="mt-5 soft-card rounded-2xl p-4">
-          <h3 className="font-semibold">Admin review actions</h3>
+          <h3 className="font-semibold">Next action: {state.label}</h3>
           <p className="mt-1 text-sm text-muted-foreground">Promotion creates a canonical recruitment draft with publish_status=needs_review. It does not publish and does not send alerts.</p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <button className="btn btn-ghost" onClick={() => onAction(item.id, "approve")}>{QUEUE_ACTION_LABELS.approve}</button>
-            <button className="btn btn-ghost" onClick={() => onAction(item.id, "reject")}>{QUEUE_ACTION_LABELS.reject}</button>
-            <button className="btn btn-primary" disabled={!item.promotable} title={item.unverified_fields?.length ? `Verify: ${item.unverified_fields.join(", ")}` : ""} onClick={() => onAction(item.id, "promote")}>{QUEUE_ACTION_LABELS.promote}</button>
+            {state.key === "blocked" ? <button className="btn btn-primary" onClick={() => document.getElementById("queue-field-review")?.scrollIntoView({ block: "start" })}>Review missing fields</button> : null}
+            {state.key === "ready" ? <button className="btn btn-primary" onClick={() => onAction(item.id, "promote")}>Promote to new recruitment draft</button> : null}
+            {state.key === "duplicate" ? <button className="btn btn-primary" onClick={() => primaryDuplicate && onMerge(item.id, primaryDuplicate.recruitment_id)} disabled={!primaryDuplicate}>Merge into existing recruitment</button> : null}
+            {(state.key === "duplicate") ? <button className="btn btn-ghost" onClick={() => onAction(item.id, "mark-duplicate")}>Mark duplicate</button> : null}
+            {["promoted", "merged"].includes(state.key) && item.promoted_recruitment_id ? <a className="btn btn-primary" href={`/admin/recruitments?open=${item.promoted_recruitment_id}`}>Open recruitment</a> : null}
+            {!["promoted", "merged", "rejected"].includes(state.key) ? <button className="btn btn-ghost" onClick={() => onAction(item.id, "reject")}>Reject candidate</button> : null}
           </div>
           {item.unverified_fields?.length ? <div className="mt-2 text-xs text-amber-700">Backend blockers: {item.unverified_fields.join(", ")}</div> : null}
         </section>
 
-        <section className="mt-5 soft-card rounded-2xl p-4">
+        <section id="queue-field-review" className="mt-5 soft-card rounded-2xl p-4">
           <h3 className="font-semibold">Field evidence</h3>
           <div className="mt-3">
             <FieldReviewGroup
@@ -134,7 +165,7 @@ export default function AdminScraper() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [selectedIds, setSelectedIds] = useState([]);
   const [queueQuery, setQueueQuery] = useState("");
-  const [queueStatus, setQueueStatus] = useState("all");
+  const [queueFilter, setQueueFilter] = useState("all");
   const [limit, setLimit] = useState(25);
   const [msg, setMsg] = useState(null);
   const toast = useToast();
@@ -170,19 +201,24 @@ export default function AdminScraper() {
   const queueStats = useMemo(() => ({
     total: queue.length,
     pending: queue.filter((item) => item.status === "pending").length,
-    duplicate: queue.filter((item) => item.status === "duplicate" || item.duplicate_of).length,
-    blocked: queue.filter((item) => (item.unverified_fields || []).length > 0).length,
+    duplicate: queue.filter((item) => reviewState(item).key === "duplicate").length,
+    blocked: queue.filter((item) => reviewState(item).key === "blocked").length,
+    ready: queue.filter((item) => reviewState(item).key === "ready").length,
+    promoted: queue.filter((item) => reviewState(item).key === "promoted").length,
+    merged: queue.filter((item) => reviewState(item).key === "merged").length,
+    rejected: queue.filter((item) => reviewState(item).key === "rejected").length,
   }), [queue]);
   const workflowMessage = msg && msg.includes("Live run") ? NEXT_ACTION_MESSAGES.reviewQueue : NEXT_ACTION_MESSAGES.runDryFirst;
-  const filteredQueue = useMemo(() => {
+  const visibleQueue = useMemo(() => {
     const needle = queueQuery.trim().toLowerCase();
     return queue.filter((item) => {
       const extracted = item.extracted_data || {};
-      const matchesStatus = queueStatus === "all" || item.status === queueStatus || (queueStatus === "blocked" && (item.unverified_fields || []).length > 0) || (queueStatus === "duplicate" && (item.status === "duplicate" || item.duplicate_of));
+      const stateKey = reviewState(item).key;
+      const matchesStatus = queueFilter === "all" || stateKey === queueFilter || (queueFilter === "pending" && item.status === "pending");
       const haystack = `${item.source_name || ""} ${item.source_url || ""} ${extracted.title || extracted.name || ""} ${extracted.organization_name || extracted.organization || ""}`.toLowerCase();
       return matchesStatus && (!needle || haystack.includes(needle));
     });
-  }, [queue, queueQuery, queueStatus]);
+  }, [queue, queueFilter, queueQuery]);
 
   async function runDry() {
     setRunning("dry"); setMsg(null);
@@ -224,13 +260,33 @@ export default function AdminScraper() {
         setMsg(`Recruitment draft created. Next: open Recruitments and validate publish readiness. ${JSON.stringify(r)}`);
         toast.success("Recruitment draft created. Next: open Recruitments and validate publish readiness.");
       } else {
-        setMsg(`${QUEUE_ACTION_LABELS[action] || action}: ${JSON.stringify(r)}`);
-        toast.success(`${QUEUE_ACTION_LABELS[action] || action} completed.`);
+        setMsg(`${action}: ${JSON.stringify(r)}`);
+        toast.success(`${action} completed.`);
       }
       await load();
     } catch (e) {
       const fields = getApiUnverifiedFields(e);
-      const text = fields.length ? `Promote blocked. Verify required fields: ${fields.join(", ")}` : `${action} failed: ${e.message}`;
+      const existingId = getApiExistingRecruitmentId(e);
+      const nextActions = getApiNextActions(e);
+      const text = fields.length
+        ? `Promote blocked. Verify required fields: ${fields.join(", ")}`
+        : existingId
+          ? `Duplicate recruitment exists (${existingId.slice(0, 8)}). Next: ${nextActions.join(", ") || "compare or merge reviewed fields."}`
+          : `${action} failed: ${e.message}`;
+      setMsg(text);
+      toast.error(text);
+    }
+  };
+
+  const mergeIntoRecruitment = async (queueId, recruitmentId) => {
+    try {
+      const r = await api.post(`/api/admin/scrape/items/${queueId}/merge-into/${recruitmentId}`, { notes: "duplicate merge from scraper queue" });
+      setMsg(`Merged into existing recruitment. Updated: ${(r.updated_fields || []).join(", ") || "none"}.`);
+      toast.success("Merged into existing recruitment.");
+      await load();
+      setSelected(null);
+    } catch (e) {
+      const text = `Merge failed: ${e.message}`;
       setMsg(text);
       toast.error(text);
     }
@@ -260,11 +316,21 @@ export default function AdminScraper() {
         <button onClick={load} className="btn btn-ghost" disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Reload</button>
       </div>
 
-      <div className="grid gap-3 text-sm md:grid-cols-4">
-        <Metric label="Queue items" value={queueStats.total} />
-        <Metric label="Pending" value={queueStats.pending} />
-        <Metric label="Duplicates" value={queueStats.duplicate} />
-        <Metric label="Needs field review" value={queueStats.blocked} tone="warn" />
+      <div className="flex flex-wrap gap-2">
+        {[
+          ["all", "All", queueStats.total],
+          ["pending", "Pending", queueStats.pending],
+          ["duplicate", "Duplicates", queueStats.duplicate],
+          ["blocked", "Needs review", queueStats.blocked],
+          ["ready", "Ready", queueStats.ready],
+          ["promoted", "Promoted", queueStats.promoted],
+          ["merged", "Merged", queueStats.merged],
+          ["rejected", "Rejected", queueStats.rejected],
+        ].map(([key, label, value]) => (
+          <button key={key} type="button" onClick={() => setQueueFilter(key)} className={`rounded-full border px-3 py-1.5 text-xs ${queueFilter === key ? "border-dusk-700 bg-dusk-700 text-white" : "border-border bg-white/70 text-foreground/75 hover:bg-clay-100"}`}>
+            {label} <span className="font-mono">{value}</span>
+          </button>
+        ))}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
@@ -310,57 +376,41 @@ export default function AdminScraper() {
       {loadError ? <ErrorState title="Failed to load scraper monitor" message={loadError.message} onRetry={load} /> : null}
 
       <section className="soft-card rounded-2xl p-4">
-        <div className="grid gap-3 lg:grid-cols-[1fr_220px]">
+        <div className="grid gap-3">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <span className="sr-only">Search scrape queue</span>
             <input value={queueQuery} onChange={(e) => setQueueQuery(e.target.value)} className="w-full rounded-xl border border-border bg-white/80 py-2 pl-9 pr-3 text-sm" placeholder="Search title, source, URL, organization" />
-          </label>
-          <label className="relative block">
-            <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <span className="sr-only">Filter queue status</span>
-            <select value={queueStatus} onChange={(e) => setQueueStatus(e.target.value)} className="w-full rounded-xl border border-border bg-white/80 py-2 pl-9 pr-3 text-sm">
-              <option value="all">All queue items</option>
-              <option value="pending">Pending</option>
-              <option value="approved">Approved</option>
-              <option value="rejected">Rejected</option>
-              <option value="duplicate">Duplicate</option>
-              <option value="blocked">Needs field review</option>
-            </select>
           </label>
         </div>
       </section>
 
       {loading ? <LoadingSkeleton variant="table" /> : null}
       {!loading && !loadError && queue.length === 0 ? <EmptyState icon={Search} title="No scrape queue items yet" description="Run a dry scrape or live scrape to discover candidates for manual review." /> : null}
-      {!loading && !loadError && queue.length > 0 && filteredQueue.length === 0 ? <EmptyState icon={Filter} title="No queue items match this view" description="Adjust the search or queue status filter." /> : null}
+      {!loading && !loadError && queue.length > 0 && visibleQueue.length === 0 ? <EmptyState icon={Filter} title="No queue items match this view" description="Adjust search or filter chips." /> : null}
 
-      {!loading && !loadError && filteredQueue.length > 0 ? <div className="overflow-auto rounded-2xl border border-border bg-white/70">
-        <table className="w-full min-w-[1040px] table-fixed text-xs">
+      {!loading && !loadError && visibleQueue.length > 0 ? <div className="overflow-auto rounded-2xl border border-border bg-white/70">
+        <table className="w-full min-w-[900px] table-fixed text-xs">
           <thead className="bg-[#FBF6EF] text-left text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
             <tr>
-              <th className="w-[220px] px-3 py-3">Source</th>
-              <th className="w-[260px] px-3 py-3">Title</th>
-              <th className="w-[160px] px-3 py-3">Org guess</th>
-              <th className="w-[150px] px-3 py-3">Dates</th>
-              <th className="w-[170px] px-3 py-3">Signals</th>
-              <th className="w-[160px] px-3 py-3">Status</th>
+              <th className="w-[280px] px-3 py-3">Candidate</th>
+              <th className="w-[260px] px-3 py-3">Source / URL</th>
+              <th className="w-[180px] px-3 py-3">Review state</th>
+              <th className="w-[120px] px-3 py-3">Data quality</th>
               <th className="w-[190px] px-3 py-3">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {filteredQueue.map((q) => {
+            {visibleQueue.map((q) => {
               const e = q.extracted_data || {};
-              const blocked = q.unverified_fields || [];
+              const state = reviewState(q);
               return (
                 <tr key={q.id} className="border-t border-border align-middle" data-testid={`scrape-row-${q.id}`}>
-                  <td className="px-3 py-3"><div className="truncate font-medium">{q.source_name}</div><div className="truncate text-[10px] text-muted-foreground">{q.source_url}</div></td>
-                  <td className="px-3 py-3"><div className="truncate font-medium">{e.title || e.name || "-"}</div><div className="truncate text-[10px] text-muted-foreground">{shortId(q.id)}</div></td>
-                  <td className="truncate px-3 py-3">{e.organization_name || e.organization || "-"}</td>
-                  <td className="truncate px-3 py-3">{e.apply_start_date || "-"} to {e.apply_end_date || "-"}</td>
+                  <td className="px-3 py-3"><div className="truncate font-medium">{e.title || e.name || "-"}</div><div className="truncate text-[10px] text-muted-foreground">Queue {shortId(q.id)} · {q.source_name || "-"}</div></td>
+                  <td className="px-3 py-3"><div className="truncate">{typeLabel(q.source_type)}</div><div className="truncate text-[10px] text-muted-foreground">{q.source_url}</div></td>
+                  <td className="px-3 py-3"><StatusBadge status={state.key} label={state.label} /><div className="mt-1 truncate text-[10px] text-muted-foreground">{state.reason}</div></td>
                   <td className="px-3 py-3"><div>conf {q.confidence_score ?? "-"}</div><div className="text-[10px] text-muted-foreground">quality {q.data_quality_score ?? "-"}</div></td>
-                  <td className="px-3 py-3"><div className="flex flex-wrap gap-1"><StatusBadge status={q.status} label={q.status} /><StatusBadge status={q.duplicate_of ? "duplicate" : "new"} label={q.duplicate_of ? "Duplicate" : "New"} /><StatusBadge status={q.extraction_status || "unknown"} label={q.extraction_status || "unknown"} /><StatusBadge status={q.source_type || "unknown"} label={typeLabel(q.source_type)} /></div>{blocked.length ? <div className="mt-1 truncate text-[10px] text-amber-700">Verify: {blocked.join(", ")}</div> : null}</td>
-                  <td className="px-3 py-3"><div className="flex flex-wrap gap-1"><button className="btn btn-ghost h-8 text-xs" onClick={() => setSelected(q)}><Eye className="h-3.5 w-3.5" />Details</button><button className="btn btn-primary h-8 text-xs" disabled={!q.promotable} onClick={() => act(q.id, "promote")}>Promote to recruitment draft</button></div></td>
+                  <td className="px-3 py-3"><QueueRowAction item={q} state={state} onOpen={() => setSelected(q)} onPromote={() => act(q.id, "promote")} /></td>
                 </tr>
               );
             })}
@@ -375,17 +425,25 @@ export default function AdminScraper() {
         </div>
       </section>
 
-      <QueueDetailDrawer item={selected} onClose={() => setSelected(null)} onAction={act} onFieldAction={fieldAct} />
+      <QueueDetailDrawer item={selected} onClose={() => setSelected(null)} onAction={act} onFieldAction={fieldAct} onMerge={mergeIntoRecruitment} />
       <LiveConfirm open={confirmOpen} sources={sourceMode === "selected" ? runSources : []} limit={limit} busy={running === "live"} onCancel={() => setConfirmOpen(false)} onConfirm={runLive} />
     </div>
   );
 }
 
-function Info({ label, value }) {
-  return <div className="rounded-xl border border-border bg-white/60 p-3 text-sm"><div className="text-[11px] uppercase tracking-widest text-muted-foreground">{label}</div><div className="break-words">{value || "-"}</div></div>;
+function QueueRowAction({ item, state, onOpen, onPromote }) {
+  if (["blocked", "duplicate", "rejected"].includes(state.key)) {
+    return <button className="btn btn-primary h-8 text-xs" onClick={onOpen}><Eye className="h-3.5 w-3.5" />{state.key === "duplicate" ? "Compare / Merge" : state.key === "rejected" ? "View" : "Review fields"}</button>;
+  }
+  if (state.key === "ready") {
+    return <button className="btn btn-primary h-8 text-xs" onClick={onPromote}>Promote</button>;
+  }
+  if (["promoted", "merged"].includes(state.key) && item.promoted_recruitment_id) {
+    return <a className="btn btn-primary h-8 text-xs" href={`/admin/recruitments?open=${item.promoted_recruitment_id}`}>Open recruitment</a>;
+  }
+  return <button className="btn btn-ghost h-8 text-xs" onClick={onOpen}><Eye className="h-3.5 w-3.5" />View</button>;
 }
 
-function Metric({ label, value, tone }) {
-  const toneClass = tone === "warn" ? "text-amber-700" : "text-foreground";
-  return <div className="soft-card rounded-2xl p-4"><div className="text-[10px] uppercase tracking-widest text-muted-foreground">{label}</div><div className={`mt-1 font-heading text-3xl ${toneClass}`}>{value}</div></div>;
+function Info({ label, value }) {
+  return <div className="rounded-xl border border-border bg-white/60 p-3 text-sm"><div className="text-[11px] uppercase tracking-widest text-muted-foreground">{label}</div><div className="break-words">{value || "-"}</div></div>;
 }

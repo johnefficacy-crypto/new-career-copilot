@@ -66,10 +66,22 @@ def mock_aggregator_detail_urls(source: ScrapeSource, count: int = 3) -> list[st
     return [f"{base}/mock-recruitment-{idx + 1}/" for idx in range(count)]
 
 
-def discover_aggregator_detail_urls(html_text: str, base_url: str, *, max_items: int = 25) -> list[str]:
+def discover_aggregator_detail_urls(
+    html_text: str,
+    base_url: str,
+    *,
+    max_items: int = 25,
+    include_patterns: list[str] | None = None,
+    exclude_patterns: list[str] | None = None,
+    allowed_domains: list[str] | None = None,
+) -> list[str]:
     base_host = _host(base_url)
+    include = _normalise_patterns(include_patterns)
+    exclude = _normalise_patterns(exclude_patterns)
+    allowed = {_normalise_host(x) for x in (allowed_domains or []) if _normalise_host(x)}
     seen: set[str] = set()
     urls: list[str] = []
+    stats = {"domain": 0, "include": 0, "exclude": 0}
 
     for href, label_html in _ANCHOR_RE.findall(html_text or ""):
         href = html.unescape(href or "").strip()
@@ -79,11 +91,26 @@ def discover_aggregator_detail_urls(html_text: str, base_url: str, *, max_items:
         parsed = urlparse(absolute)
         if parsed.scheme not in {"http", "https"}:
             continue
-        if base_host and _host(absolute) != base_host:
+        target_host = _host(absolute)
+        if allowed:
+            if target_host not in allowed:
+                stats["domain"] += 1
+                continue
+        elif base_host and target_host != base_host:
+            stats["domain"] += 1
             continue
 
         label = _clean_label(label_html)
-        if not _looks_like_detail(absolute, label):
+        haystack = f"{absolute} {label}".lower()
+        if include:
+            if not _matches_any(haystack, include):
+                stats["include"] += 1
+                continue
+        elif not _looks_like_detail(absolute, label):
+            stats["include"] += 1
+            continue
+        if exclude and _matches_any(haystack, exclude):
+            stats["exclude"] += 1
             continue
         if absolute in seen:
             continue
@@ -93,6 +120,8 @@ def discover_aggregator_detail_urls(html_text: str, base_url: str, *, max_items:
         if len(urls) >= max_items:
             break
 
+    # Kept as a print-free return helper; runner logs these stats when it calls discovery.
+    discover_aggregator_detail_urls.last_stats = {"discovered": len(urls), **stats}  # type: ignore[attr-defined]
     return urls
 
 
@@ -104,6 +133,23 @@ def _clean_label(label_html: str) -> str:
 
 def _host(url: str) -> str:
     return (urlparse(url).hostname or "").lower().removeprefix("www.")
+
+
+def _normalise_host(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    return _host(raw)
+
+
+def _normalise_patterns(patterns: list[str] | None) -> list[str]:
+    return [str(p).strip().lower() for p in (patterns or []) if str(p).strip()]
+
+
+def _matches_any(value: str, patterns: list[str]) -> bool:
+    return any(pattern in value for pattern in patterns)
 
 
 def _looks_like_detail(url: str, label: str) -> bool:

@@ -116,7 +116,8 @@ function SourceFormDrawer({ open, mode, form, setForm, busy, error, onClose, onS
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Source registry</div>
-            <h2 id="source-form-title" className="font-heading text-2xl">{mode === "edit" ? "Edit source" : "Add source"}</h2>
+            <h2 id="source-form-title" className="font-heading text-2xl">{mode === "edit" ? "Editing source" : "Add source"}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{mode === "edit" ? `${form.source_name || "Unnamed source"} · ${sourceTypeLabel(form.source_type)} · ${form.is_active ? "active" : "inactive"} · ${form.is_verified ? "verified" : "unverified"}` : "Define where scraper can discover recruitment candidates."}</p>
           </div>
           <button ref={closeRef} type="button" className="btn btn-ghost h-9 w-9 p-0" onClick={onClose} aria-label="Close source form"><X className="h-4 w-4" /></button>
         </div>
@@ -124,7 +125,7 @@ function SourceFormDrawer({ open, mode, form, setForm, busy, error, onClose, onS
         {isAggregator && (
           <div className="mt-4 flex gap-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <div>Aggregator sources are discovery-only. They cannot satisfy official source provenance by themselves.</div>
+            <div>Aggregator sources are discovery-only. They can find candidates but cannot be used as final official proof.</div>
           </div>
         )}
 
@@ -144,11 +145,17 @@ function SourceFormDrawer({ open, mode, form, setForm, busy, error, onClose, onS
           <Field label="Rate limit seconds"><input className="input" type="number" min="0" value={form.rate_limit_seconds} onChange={(e) => setForm({ ...form, rate_limit_seconds: e.target.value })} /></Field>
           <Field label="Timeout seconds"><input className="input" type="number" min="1" value={form.timeout_seconds} onChange={(e) => setForm({ ...form, timeout_seconds: e.target.value })} /></Field>
           <Field label="Source role"><input className="input" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} /></Field>
-          <Field label="Link include patterns"><textarea className="input min-h-[90px]" value={form.include_patterns} onChange={(e) => setForm({ ...form, include_patterns: e.target.value })} /></Field>
-          <Field label="Link exclude patterns"><textarea className="input min-h-[90px]" value={form.exclude_patterns} onChange={(e) => setForm({ ...form, exclude_patterns: e.target.value })} /></Field>
-          <Field label="Allowed domains"><textarea className="input min-h-[90px]" value={form.allowed_domains} onChange={(e) => setForm({ ...form, allowed_domains: e.target.value })} /></Field>
           <Field label="Notes"><textarea className="input min-h-[90px]" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
         </div>
+
+        <details className="mt-5 rounded-xl border border-border bg-white/50 p-3">
+          <summary className="cursor-pointer text-sm font-semibold">Advanced crawler rules</summary>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <Field label="Only follow links matching these patterns" help="Examples: recruitment, vacancy, notification, apply-online"><textarea className="input min-h-[90px]" value={form.include_patterns} onChange={(e) => setForm({ ...form, include_patterns: e.target.value })} /></Field>
+            <Field label="Ignore links matching these patterns" help="Examples: login, syllabus, admit-card, result, handbook, user_manual"><textarea className="input min-h-[90px]" value={form.exclude_patterns} onChange={(e) => setForm({ ...form, exclude_patterns: e.target.value })} /></Field>
+            <Field label="Allowed domains for discovered links" help="Examples: ncs.gov.in, indgovtjobs.net"><textarea className="input min-h-[90px]" value={form.allowed_domains} onChange={(e) => setForm({ ...form, allowed_domains: e.target.value })} /></Field>
+          </div>
+        </details>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-2">
           <label className="soft-card flex items-center justify-between rounded-xl p-3 text-sm">
@@ -275,13 +282,14 @@ export default function AdminSources() {
     const needle = query.trim().toLowerCase();
     return items.filter((source) => {
       const sourceType = source.source_type || source.kind || "";
-      const haystack = `${source.org || source.source_name || ""} ${source.official_url || source.url || ""} ${source.notes || ""}`.toLowerCase();
+      const haystack = `${source.org || source.source_name || ""} ${source.official_url || source.url || ""} ${sourceType} ${source.notes || ""}`.toLowerCase();
       const matchesText = !needle || haystack.includes(needle);
       const matchesType = typeFilter === "all" || sourceType === typeFilter;
       const matchesPolicy =
         policyFilter === "all"
         || (policyFilter === "discovery" && sourceType === "aggregator")
-        || (policyFilter === "official" && sourceType !== "aggregator")
+        || (policyFilter === "official_verified" && sourceType !== "aggregator" && source.is_verified)
+        || (policyFilter === "inactive" && source.is_active === false)
         || (policyFilter === "failed" && ((source.consecutive_fails || 0) > 0 || source.last_error))
         || (policyFilter === "review" && source.verification_status === "needs_review");
       return matchesText && matchesType && matchesPolicy;
@@ -313,7 +321,7 @@ export default function AdminSources() {
         <Metric label="Aggregators" value={summary.aggregators} />
       </div>
       <section className="soft-card rounded-2xl p-4">
-        <div className="grid gap-3 lg:grid-cols-[1fr_200px_220px]">
+        <div className="grid gap-3 lg:grid-cols-[1fr_200px]">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <span className="sr-only">Search sources</span>
@@ -327,16 +335,18 @@ export default function AdminSources() {
               {typeOptions.map((type) => <option key={type} value={type}>{sourceTypeLabel(type)}</option>)}
             </select>
           </label>
-          <label className="block">
-            <span className="sr-only">Filter policy</span>
-            <select value={policyFilter} onChange={(e) => setPolicyFilter(e.target.value)} className="w-full rounded-xl border border-border bg-white/80 px-3 py-2 text-sm">
-              <option value="all">All policies</option>
-              <option value="discovery">Discovery-only aggregators</option>
-              <option value="official">Official source candidates</option>
-              <option value="review">Needs review</option>
-              <option value="failed">Recently failed</option>
-            </select>
-          </label>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {[
+            ["all", "All"],
+            ["official_verified", "Official verified"],
+            ["review", "Needs review"],
+            ["failed", "Failed"],
+            ["discovery", "Aggregator discovery-only"],
+            ["inactive", "Inactive"],
+          ].map(([value, label]) => (
+            <button key={value} type="button" onClick={() => setPolicyFilter(value)} className={`rounded-full border px-3 py-1.5 text-xs ${policyFilter === value ? "border-dusk-700 bg-dusk-700 text-white" : "border-border bg-white/70 text-foreground/75 hover:bg-clay-100"}`}>{label}</button>
+          ))}
         </div>
       </section>
       {actionError && <div className="soft-card rounded-xl p-3 text-xs text-destructive">{actionError.message}</div>}
@@ -358,8 +368,8 @@ export default function AdminSources() {
   );
 }
 
-function Field({ label, children }) {
-  return <label className="block text-sm"><div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</div>{children}</label>;
+function Field({ label, help, children }) {
+  return <label className="block text-sm"><div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</div>{children}{help ? <div className="mt-1 text-[11px] text-muted-foreground">{help}</div> : null}</label>;
 }
 
 function Detail({ label, value }) {
@@ -403,7 +413,7 @@ function SourceCard({ source, busyKey, onDetails, onEdit, onVerify, onToggle, on
       <div className="mt-4 border-t border-border pt-3">
         <RowActions groupLabel={`Row actions for ${source.org || source.source_name || "source"}`} actions={[
           { label: "Edit", ariaLabel: `Edit source ${source.org || source.source_name}`, onClick: () => onEdit(source) },
-          { label: "Verify", ariaLabel: `Verify source ${source.org || source.source_name}`, onClick: () => onVerify(source), disabled: isAggregator || busyKey === `verify-${source.id}` },
+          ...(!source.is_verified ? [{ label: "Verify", ariaLabel: `Verify source ${source.org || source.source_name}`, onClick: () => onVerify(source), disabled: isAggregator || busyKey === `verify-${source.id}` }] : []),
           { label: source.is_active ? "Deactivate" : "Activate", ariaLabel: `${source.is_active ? "Deactivate" : "Activate"} source ${source.org || source.source_name}`, onClick: () => onToggle(source.id, !!source.is_active), disabled: busyKey === `${source.is_active ? "deactivate" : "activate"}-${source.id}` },
           { label: "History", ariaLabel: `View history for source ${source.org || source.source_name}`, onClick: () => onHistory(source) },
         ]} />

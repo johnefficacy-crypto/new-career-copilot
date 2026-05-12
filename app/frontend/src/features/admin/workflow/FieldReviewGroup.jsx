@@ -3,7 +3,21 @@ import { StatusBadge } from "../../../shared/ui";
 
 function FieldRow({ field, value, status, onFieldAction }) {
   const [correction, setCorrection] = useState("");
+  const [editing, setEditing] = useState(false);
   const label = status || "unverified";
+  const compact = ["verified", "corrected"].includes(label) && !editing;
+  if (compact) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-white/60 p-2 text-xs">
+        <div className="min-w-0">
+          <span className="font-semibold text-sage-700">✓ {field}</span>
+          <span className="ml-2 text-muted-foreground">{label}</span>
+          {label === "corrected" ? <span className="ml-2 break-words">Corrected value: {String(value ?? "-")}</span> : null}
+        </div>
+        <button type="button" className="btn btn-ghost h-7 text-[11px]" onClick={() => setEditing(true)}>{label === "corrected" ? "Edit correction" : "Edit"}</button>
+      </div>
+    );
+  }
   return (
     <div className="rounded-xl border border-border bg-white/60 p-3 text-xs">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -16,7 +30,8 @@ function FieldRow({ field, value, status, onFieldAction }) {
         <button className="btn btn-ghost h-8 text-xs" onClick={() => onFieldAction(field, "verify")}>Verify</button>
         <button className="btn btn-ghost h-8 text-xs" onClick={() => onFieldAction(field, "reject")}>Reject</button>
         <input className="min-w-[180px] flex-1 rounded-lg border border-border bg-white px-2 py-1" value={correction} onChange={(e) => setCorrection(e.target.value)} placeholder="Corrected value" />
-        <button className="btn btn-ghost h-8 text-xs" disabled={!correction} onClick={() => onFieldAction(field, "correct", correction)}>Correct</button>
+        <button className="btn btn-ghost h-8 text-xs" disabled={!correction} onClick={() => { onFieldAction(field, "correct", correction); setEditing(false); }}>Correct</button>
+        {editing ? <button className="btn btn-ghost h-8 text-xs" onClick={() => setEditing(false)}>Cancel</button> : null}
       </div>
     </div>
   );

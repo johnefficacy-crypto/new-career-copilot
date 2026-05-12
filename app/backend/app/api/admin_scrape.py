@@ -178,15 +178,62 @@ def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, 
         raise HTTPException(status_code=500, detail="Failed to write field evidence") from exc
     return payload
 
+
+def build_effective_extracted_data(supabase, queue_id: str) -> dict:
+    rows = (
+        supabase.table("scrape_queue")
+        .select("extracted_data")
+        .eq("id", queue_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+    data = dict(rows[0].get("extracted_data") or {})
+    evidence = (
+        supabase.table("extracted_field_evidence")
+        .select("field_name, reviewer_status, corrected_value")
+        .eq("scrape_queue_id", queue_id)
+        .execute()
+        .data
+        or []
+    )
+    for row in evidence:
+        if row.get("reviewer_status") == "corrected" and row.get("corrected_value") is not None:
+            data[row.get("field_name")] = row.get("corrected_value")
+    return data
+
+
+def patch_scrape_queue_extracted_field(supabase, queue_id: str, field_name: str, value):
+    rows = (
+        supabase.table("scrape_queue")
+        .select("extracted_data")
+        .eq("id", queue_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+    data = dict(rows[0].get("extracted_data") or {})
+    data[field_name] = value
+    supabase.table("scrape_queue").update({"extracted_data": data}).eq("id", queue_id).execute()
+    return data
+
 @router.post("/admin/scrape/items/{queue_id}/fields/{field_name}/verify")
 def verify_field(queue_id: str, field_name: str, body: ReviewBody | None = None, admin: dict = Depends(require_permission("scraper.manage"))):
     _validate_queue_id(queue_id)
     if isinstance(body, dict):
         body = ReviewBody(**body)
     body=body or ReviewBody()
-    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "verified", admin, notes=body.notes)
+    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "verified", admin, notes=body.notes, corrected_value=body.corrected_value)
+    if body.corrected_value is not None:
+        patch_scrape_queue_extracted_field(sb, queue_id, field_name, body.corrected_value)
     _audit(sb, admin, "scrape.field.verify", entity_type="scrape_field", entity_id=f"{queue_id}:{field_name}", new_value=data)
-    return {"ok": True, **data}
+    return {"ok": True, "field_name": field_name, "reviewer_status": "verified", **data, "effective_extracted_data": build_effective_extracted_data(sb, queue_id)}
 
 @router.post("/admin/scrape/items/{queue_id}/fields/{field_name}/reject")
 def reject_field(queue_id: str, field_name: str, body: ReviewBody | None = None, admin: dict = Depends(require_permission("scraper.manage"))):
@@ -205,8 +252,10 @@ def correct_field(queue_id: str, field_name: str, body: ReviewBody | None = None
         body = ReviewBody(**body)
     body=body or ReviewBody()
     sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "corrected", admin, notes=body.notes, corrected_value=body.corrected_value)
+    if body.corrected_value is not None:
+        patch_scrape_queue_extracted_field(sb, queue_id, field_name, body.corrected_value)
     _audit(sb, admin, "scrape.field.correct", entity_type="scrape_field", entity_id=f"{queue_id}:{field_name}", new_value=data)
-    return {"ok": True, **data}
+    return {"ok": True, "field_name": field_name, "reviewer_status": "corrected", "corrected_value": body.corrected_value, **data, "effective_extracted_data": build_effective_extracted_data(sb, queue_id)}
 
 
 
@@ -363,7 +412,7 @@ def list_scrape_queue(
     supabase = get_supabase_admin()
     q = (
         supabase.table("scrape_queue")
-        .select("id, source_id, source_url, source_name, raw_html, raw_payload, extracted_data, confidence_score, data_quality_score, status, duplicate_of, reviewer_id, reviewer_notes, reviewed_at, field_evidence, official_source_resolved, official_source_host, extraction_status, evidence_required, scraped_at")
+        .select("id, source_id, source_url, source_name, raw_html, raw_payload, extracted_data, confidence_score, data_quality_score, status, duplicate_of, promoted_recruitment_id, reviewer_id, reviewer_notes, reviewed_at, field_evidence, official_source_resolved, official_source_host, extraction_status, evidence_required, scraped_at")
         .order("data_quality_score", desc=False, nullsfirst=True)
         .order("scraped_at", desc=True)
         .limit(limit)
@@ -421,7 +470,7 @@ def promote_queue_item(
     queue_id: str,
     admin: dict = Depends(require_permission("recruitments.manage")),
 ) -> dict[str, Any]:
-    from app.scraping.runner import promote_to_recruitments
+    from app.scraping.runner import DuplicatePromotionError, promote_to_recruitments
     from app.scraping.schemas import ExtractedRecruitment
 
     supabase = get_supabase_admin()
@@ -452,10 +501,19 @@ def promote_queue_item(
             raise
         except Exception:
             warnings.append("field_evidence_table_unavailable")
-        extracted = ExtractedRecruitment(**(item["extracted_data"] or {}))
+        effective_data = build_effective_extracted_data(supabase, queue_id)
+        extracted = ExtractedRecruitment(**effective_data)
         rec_id = promote_to_recruitments(extracted, supabase, source_id=item.get("source_id"))
     except HTTPException:
         raise
+    except DuplicatePromotionError as exc:
+        raise HTTPException(status_code=409, detail={
+            "message": "Recruitment already exists",
+            "reason": "duplicate_slug",
+            "existing_recruitment_id": exc.existing_recruitment_id,
+            "slug": exc.slug,
+            "next_actions": ["open_existing_recruitment", "merge_reviewed_fields", "mark_duplicate"],
+        }) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("scrape queue promotion failed queue_id=%s", queue_id)
         raise HTTPException(status_code=500, detail="Promote failed") from PromotionError("promotion write failed")
@@ -494,6 +552,75 @@ def promote_run_endpoint(
     return result
 
 
+
+
+@router.post("/admin/scrape/items/{queue_id}/merge-into/{recruitment_id}")
+def merge_queue_item_into_recruitment(
+    queue_id: str,
+    recruitment_id: str,
+    body: dict | None = None,
+    admin: dict = Depends(require_permission("recruitments.manage")),
+) -> dict[str, Any]:
+    body = body or {}
+    force_fields = set(body.get("force_fields") or [])
+    supabase = get_supabase_admin()
+    qrows = supabase.table("scrape_queue").select("id, source_id, extracted_data, status").eq("id", queue_id).limit(1).execute().data or []
+    if not qrows:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+    rec_rows = supabase.table("recruitments").select("*").eq("id", recruitment_id).limit(1).execute().data or []
+    if not rec_rows:
+        raise HTTPException(status_code=404, detail="Recruitment not found")
+    existing = rec_rows[0]
+    effective = build_effective_extracted_data(supabase, queue_id)
+    evidence = supabase.table("extracted_field_evidence").select("field_name, reviewer_status").eq("scrape_queue_id", queue_id).execute().data or []
+    corrected_fields = {r.get("field_name") for r in evidence if r.get("reviewer_status") == "corrected"}
+    safe_fields = ["official_notification_url", "official_apply_url", "apply_start_date", "apply_end_date", "notification_date", "total_vacancies", "source_pdf_url"]
+    patch: dict[str, Any] = {}
+    skipped: dict[str, str] = {}
+    for field in safe_fields:
+        value = effective.get(field)
+        if value in (None, ""):
+            continue
+        if field in corrected_fields or field in force_fields or existing.get(field) in (None, ""):
+            patch[field] = value
+        else:
+            skipped[field] = "existing_value_present"
+    if qrows[0].get("source_id") and (not existing.get("source_id") or "source_id" in force_fields):
+        patch["source_id"] = qrows[0].get("source_id")
+    if body.get("review_notes"):
+        patch["review_notes"] = body.get("review_notes")
+    before = {k: existing.get(k) for k in patch}
+    if patch:
+        supabase.table("recruitments").update(patch).eq("id", recruitment_id).execute()
+    supabase.table("scrape_queue").update({
+        "status": "merged",
+        "promoted_recruitment_id": recruitment_id,
+        "reviewer_id": admin["id"],
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        "reviewer_notes": body.get("notes"),
+    }).eq("id", queue_id).execute()
+    _audit(supabase, admin, "scrape.queue.merge", entity_type="scrape_queue", entity_id=queue_id, new_value={"recruitment_id": recruitment_id, "before": before, "after": patch, "skipped_fields": skipped})
+    return {"ok": True, "status": "merged", "recruitment_id": recruitment_id, "updated_fields": sorted(patch.keys()), "skipped_fields": skipped}
+
+
+@router.post("/admin/scrape/items/{queue_id}/mark-duplicate")
+def mark_queue_item_duplicate(
+    queue_id: str,
+    body: dict | None = None,
+    admin: dict = Depends(require_permission("scraper.manage")),
+) -> dict[str, Any]:
+    body = body or {}
+    supabase = get_supabase_admin()
+    rows = supabase.table("scrape_queue").update({
+        "status": "duplicate",
+        "reviewer_id": admin["id"],
+        "reviewer_notes": body.get("notes"),
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", queue_id).execute().data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+    _audit(supabase, admin, "scrape.queue.mark_duplicate", entity_type="scrape_queue", entity_id=queue_id, new_value=body)
+    return {"ok": True, "id": queue_id, "status": "duplicate"}
 
 
 @router.post("/admin/scrape/items/{queue_id}/approve")

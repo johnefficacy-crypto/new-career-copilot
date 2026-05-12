@@ -3,19 +3,24 @@ import { getFocusableElements } from './focusable';
 
 export function useFocusTrap({ active, containerRef, onEscape, initialFocusRef }) {
   const previousFocusRef = useRef(null);
+  const wasActiveRef = useRef(false);
 
   useEffect(() => {
     if (!active) return undefined;
 
-    previousFocusRef.current = document.activeElement;
+    const opened = !wasActiveRef.current;
+    wasActiveRef.current = true;
+    if (opened) previousFocusRef.current = document.activeElement;
     const container = containerRef?.current;
     if (!container) return undefined;
 
-    const initialTarget = initialFocusRef?.current;
-    const focusables = getFocusableElements(container);
-    const first = initialTarget || focusables[0] || container;
-    if (first && typeof first.focus === 'function') {
-      first.focus();
+    if (opened) {
+      const initialTarget = initialFocusRef?.current;
+      const focusables = getFocusableElements(container);
+      const first = initialTarget || focusables[0] || container;
+      if (first && typeof first.focus === 'function') {
+        first.focus();
+      }
     }
 
     const onKeyDown = (event) => {
@@ -47,10 +52,25 @@ export function useFocusTrap({ active, containerRef, onEscape, initialFocusRef }
     container.addEventListener('keydown', onKeyDown);
     return () => {
       container.removeEventListener('keydown', onKeyDown);
+      if (!active) {
+        wasActiveRef.current = false;
+        const prev = previousFocusRef.current;
+        if (prev && typeof prev.focus === 'function') {
+          prev.focus();
+        }
+      }
+    };
+  }, [active, containerRef, onEscape, initialFocusRef]);
+
+  useEffect(() => {
+    if (active) return undefined;
+    if (wasActiveRef.current) {
       const prev = previousFocusRef.current;
       if (prev && typeof prev.focus === 'function') {
         prev.focus();
       }
-    };
-  }, [active, containerRef, onEscape, initialFocusRef]);
+    }
+    wasActiveRef.current = false;
+    return undefined;
+  }, [active]);
 }
