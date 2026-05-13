@@ -135,6 +135,129 @@ def _ensure_notification_document(
         return None
 
 
+# ─── RSS adapter pass ─────────────────────────────────────────────────────
+
+
+def _run_rss_pass(
+    supabase: Client,
+    *,
+    src: dict[str, Any],
+    source: Any,
+    run_id: str,
+    target_url: str,
+    run_limit: int,
+    queue_extraction: Any,
+    error_log: list[dict[str, Any]],
+    mock: bool,
+) -> bool:
+    """Fetch + parse an RSS / Atom feed and queue each entry as a
+    candidate detail. Returns ``True`` if at least one entry was queued.
+
+    Each entry is classified via :func:`aggregator.classify_aggregator_link`;
+    lifecycle events (admit cards, results, corrigenda) are skipped so a
+    feed of mixed events doesn't pollute the recruitment queue. Resolver
+    is run against the entry's summary when present and against the
+    entry link's HTML body when fetched.
+    """
+    from .aggregator import classify_aggregator_link
+    from .fetcher import fetch_rss
+
+    if mock:
+        # Mock mode: synthesise three entries from the source URL.
+        entries = [
+            type("E", (), {
+                "title": f"{source.name} mock {i}",
+                "link": f"{target_url.rstrip('/')}/mock-rss-{i}/",
+                "summary": f"Mock RSS body for entry {i}",
+                "published": None,
+            })()
+            for i in range(1, 4)
+        ]
+    else:
+        result, entries = fetch_rss(target_url)
+        if not result.ok or not entries:
+            error_log.append({
+                "source": source.name,
+                "url": target_url,
+                "error": result.error or "empty_feed",
+                "at": utc_now_iso(),
+            })
+            return False
+
+    queued_any = False
+    entries = entries[:run_limit]
+    for entry in entries:
+        link = (entry.link or "").strip()
+        title = (entry.title or "").strip()
+        if not link:
+            # Skip entries with no canonical link — we can't link the
+            # extracted row back to a real document.
+            continue
+        event_type = classify_aggregator_link(title, link)
+        if event_type != "new_recruitment":
+            logger.info(
+                "rss.lifecycle_skipped source_id=%s url=%s event=%s",
+                src.get("id"), link, event_type,
+            )
+            continue
+
+        listing_id = _upsert_aggregator_listing(
+            supabase,
+            source_id=src.get("id"),
+            scrape_run_id=run_id,
+            detail_url=link,
+            label=title,
+            event_type=event_type,
+        )
+        _record_listing_observation(
+            supabase,
+            listing_id=listing_id,
+            source_id=src.get("id"),
+            scrape_run_id=run_id,
+            observed_url=link,
+            observed_label=title,
+            content_hash=None,
+        )
+
+        # Try to upgrade the entry link to an official source. In mock
+        # mode there's no real HTML to inspect, so we just queue the
+        # entry's summary as the raw text.
+        resolver_result = None
+        item_url = link
+        if mock:
+            raw_text = entry.summary or f"{title}\n\n{link}"
+        else:
+            detail_html = fetch_page_html(link)
+            if not detail_html:
+                # Fall back to the entry summary if we can't reach the link.
+                raw_text = entry.summary or title
+            else:
+                raw_text = strip_html(detail_html)
+                resolver_result = resolve_with_registry(detail_html, link, source)
+                if resolver_result:
+                    official_html = fetch_page_html(resolver_result.official_url)
+                    if official_html:
+                        item_url = resolver_result.official_url
+                        raw_text = strip_html(official_html)
+                        _mark_listing_status(
+                            supabase, listing_id,
+                            "official_source_found",
+                            official_source_url=resolver_result.official_url,
+                        )
+                    else:
+                        resolver_result = None
+                        _mark_listing_status(supabase, listing_id, "needs_official_source")
+                else:
+                    _mark_listing_status(supabase, listing_id, "needs_official_source")
+
+        if queue_extraction(
+            src, source.name, item_url, raw_text,
+            listing_id=listing_id, resolver_result=resolver_result,
+        ):
+            queued_any = True
+    return queued_any
+
+
 # ─── Change-detection helper ──────────────────────────────────────────────
 
 
@@ -679,7 +802,53 @@ def run_scraping_pass(
                 error_message=f"no_fetch_url for adapter_type={source.adapter_type or 'html'}",
             )
             continue
-        if source.adapter_type and source.adapter_type.lower() in {"rss", "api", "pdf"}:
+        if source.adapter_type and source.adapter_type.lower() == "rss":
+            try:
+                if not _run_rss_pass(
+                    supabase,
+                    src=src,
+                    source=source,
+                    run_id=run_id,
+                    target_url=target_url,
+                    run_limit=run_limit,
+                    queue_extraction=queue_extraction,
+                    error_log=error_log,
+                    mock=mock,
+                ):
+                    _bump_source_failure(
+                        supabase, src,
+                        error_class="empty_feed",
+                        error_message="rss adapter returned no entries",
+                        attempted_url=target_url,
+                    )
+                    continue
+                execute_or_default(
+                    "source_registry.mark_success",
+                    lambda src=src: supabase.table("source_registry").update({
+                        "last_scraped_at": utc_now_iso(),
+                        "last_success_at": utc_now_iso(),
+                        "consecutive_fails": 0,
+                        "last_error": None,
+                        "last_error_class": None,
+                        "last_error_message": None,
+                        "last_error_at": None,
+                        "last_error_http_status": None,
+                        "last_error_url": None,
+                    }).eq("id", src["id"]).execute(),
+                    None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                error_class, error_message = _classify_exception(exc)
+                error_log.append({"source": source.name, "error": error_class, "error_message": error_message, "at": utc_now_iso()})
+                _bump_source_failure(
+                    supabase, src,
+                    error_class=error_class,
+                    error_message=error_message,
+                    attempted_url=target_url,
+                )
+            continue
+
+        if source.adapter_type and source.adapter_type.lower() in {"api", "pdf"}:
             logger.info(
                 "scrape.adapter_not_implemented source_id=%s source_name=%s adapter_type=%s",
                 src.get("id"), source.name, source.adapter_type,
