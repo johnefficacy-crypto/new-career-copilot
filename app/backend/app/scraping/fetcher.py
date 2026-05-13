@@ -265,7 +265,13 @@ def parse_rss_feed(xml_text: str | None) -> list[RssEntry]:
     return entries
 
 
-def fetch_rss(url: str, *, timeout: float = 15.0) -> tuple[FetchResult, list[RssEntry]]:
+def fetch_rss(
+    url: str,
+    *,
+    timeout: float = 15.0,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
+) -> tuple[FetchResult, list[RssEntry]]:
     """Fetch an RSS / Atom feed and return both the raw FetchResult and
     the parsed entries.
 
@@ -273,15 +279,38 @@ def fetch_rss(url: str, *, timeout: float = 15.0) -> tuple[FetchResult, list[Rss
     callers that want the underlying document for hashing /
     notification_documents storage still get it. Entries come back as a
     list — empty when parsing fails.
+
+    Conditional fetch: pass ``if_none_match`` / ``if_modified_since``
+    to send standard caching headers. A 304 response yields
+    ``FetchResult(ok=False, status_code=304, error="not_modified")``
+    with an empty entries list so the caller can short-circuit
+    re-discovery for unchanged feeds.
     """
     if not url:
         return FetchResult(ok=False, url="", error="empty_url"), []
 
+    headers = dict(_DEFAULT_HEADERS)
+    if if_none_match:
+        headers["If-None-Match"] = if_none_match
+    if if_modified_since:
+        headers["If-Modified-Since"] = if_modified_since
+
     try:
-        resp = httpx.get(url, headers=_DEFAULT_HEADERS, timeout=timeout, follow_redirects=True)
+        resp = httpx.get(url, headers=headers, timeout=timeout, follow_redirects=True)
     except Exception as exc:  # noqa: BLE001
         logger.warning("[fetcher] rss request failed url=%s error=%s", url, exc)
         return FetchResult(ok=False, url=url, error=str(exc)), []
+
+    if resp.status_code == 304:
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=304,
+            final_url=str(resp.url),
+            etag=resp.headers.get("etag") or if_none_match,
+            last_modified=resp.headers.get("last-modified") or if_modified_since,
+            error="not_modified",
+        ), []
 
     try:
         resp.raise_for_status()
@@ -437,23 +466,44 @@ def fetch_api(
     *,
     adapter_config: dict[str, Any] | None = None,
     timeout: float = 15.0,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
 ) -> tuple[FetchResult, list[ApiEntry]]:
     """Fetch a JSON endpoint and return a FetchResult plus parsed entries.
 
     Network and HTTP errors collapse into ``FetchResult(ok=False, error=...)``
     so callers handle them the same way as RSS / HTML.
+
+    Conditional fetch: ``if_none_match`` / ``if_modified_since`` send
+    standard caching headers; a 304 response yields ``ok=False`` /
+    ``error="not_modified"`` with an empty entries list.
     """
     if not url:
         return FetchResult(ok=False, url="", error="empty_url"), []
 
     api_headers = dict(_DEFAULT_HEADERS)
     api_headers["Accept"] = "application/json, */*;q=0.9"
+    if if_none_match:
+        api_headers["If-None-Match"] = if_none_match
+    if if_modified_since:
+        api_headers["If-Modified-Since"] = if_modified_since
 
     try:
         resp = httpx.get(url, headers=api_headers, timeout=timeout, follow_redirects=True)
     except Exception as exc:  # noqa: BLE001
         logger.warning("[fetcher] api request failed url=%s error=%s", url, exc)
         return FetchResult(ok=False, url=url, error=str(exc)), []
+
+    if resp.status_code == 304:
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=304,
+            final_url=str(resp.url),
+            etag=resp.headers.get("etag") or if_none_match,
+            last_modified=resp.headers.get("last-modified") or if_modified_since,
+            error="not_modified",
+        ), []
 
     try:
         resp.raise_for_status()
