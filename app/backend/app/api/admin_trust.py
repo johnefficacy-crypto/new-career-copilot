@@ -626,6 +626,71 @@ def update_education_criteria(recruitment_id: str, post_id: str, criteria_id: st
     return {"ok": True}
 
 
+@router.get("/admin/eligibility-ops")
+def eligibility_ops(_admin: dict = Depends(require_permission("scraper.manage"))):
+    """Downstream eligibility recompute monitoring.
+
+    Distinct from /admin/eligibility-queue, which is upstream promotion
+    of scraped candidates. This endpoint surfaces signals admins need
+    after publish: recompute backlog, failures, stale results, and
+    published recruitments that have not yet been recomputed for users.
+    """
+    sb = get_supabase_admin()
+
+    def _count(table: str, filters):
+        try:
+            q = sb.table(table).select("id", count="exact")
+            for col, val in filters.items():
+                q = q.eq(col, val)
+            return q.execute().count or 0
+        except Exception:
+            return 0
+
+    pending = _count("eligibility_recompute_queue", {"status": "pending"})
+    failed = _count("eligibility_recompute_queue", {"status": "failed"})
+
+    stale = 0
+    try:
+        stale_rows = (
+            sb.table("eligibility_results")
+            .select("id", count="exact")
+            .eq("is_stale", True)
+            .execute()
+        )
+        stale = stale_rows.count or 0
+    except Exception:
+        stale = 0
+
+    published_awaiting = 0
+    try:
+        pub_ids = [
+            r.get("id") for r in (
+                sb.table("recruitments").select("id").eq("publish_status", "published").limit(500).execute().data or []
+            )
+            if r.get("id")
+        ]
+        if pub_ids:
+            queued = (
+                sb.table("eligibility_recompute_queue")
+                .select("recruitment_id", count="exact")
+                .in_("recruitment_id", pub_ids)
+                .eq("status", "pending")
+                .execute()
+                .count
+                or 0
+            )
+            published_awaiting = queued
+    except Exception:
+        published_awaiting = 0
+
+    return {
+        "pending_recomputes": pending,
+        "failed_recomputes": failed,
+        "stale_results": stale,
+        "published_awaiting": published_awaiting,
+    }
+
+
 @router.put("/admin/organizations/{organization_id}")
 def update_organization(organization_id: str, body: dict, admin: dict = Depends(require_permission("organizations.manage"))):
     sb=get_supabase_admin(); old=(sb.table("organizations").select("*").eq("id",organization_id).limit(1).execute().data or [None])[0]
