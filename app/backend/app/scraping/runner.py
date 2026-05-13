@@ -32,9 +32,11 @@ from .extractor import (
     fetch_page_html,
     fetch_page_text,
 )
+from .fetcher import strip_html
 from .dedup import find_duplicate
 from .normalizer import normalize_recruitment
 from .promotion_gate import evaluate_promotion_gate
+from .resolver import ResolverResult, resolve_official_source
 from .sources import normalize_source_registry
 from .aggregator import (
     aggregator_max_items,
@@ -131,6 +133,130 @@ def _ensure_notification_document(
         )
         return None
 
+
+# ─── Aggregator candidate layer helpers ────────────────────────────────────
+
+
+def _listing_hash(source_id: str | None, detail_url: str) -> str:
+    return hashlib.sha256(f"{source_id or ''}|{detail_url}".encode("utf-8")).hexdigest()
+
+
+def _upsert_aggregator_listing(
+    supabase: Client,
+    *,
+    source_id: str | None,
+    scrape_run_id: str,
+    detail_url: str,
+    label: str,
+    event_type: str,
+) -> str | None:
+    """Insert-or-touch an ``aggregator_listings`` row for a detail URL.
+
+    Returns the listing id on success or ``None`` if the table is
+    unavailable (older deployments before migration 038). The runner
+    treats a ``None`` listing id as "candidate layer not active" and
+    keeps writing the queue row directly.
+    """
+    if not source_id:
+        return None
+    listing_hash = _listing_hash(source_id, detail_url)
+    try:
+        existing = (
+            supabase.table("aggregator_listings")
+            .select("id")
+            .eq("source_id", source_id)
+            .eq("listing_hash", listing_hash)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if existing:
+            listing_id = existing[0]["id"]
+            supabase.table("aggregator_listings").update(
+                {
+                    "last_seen_at": utc_now_iso(),
+                    "scrape_run_id": scrape_run_id,
+                    "event_type": event_type,
+                }
+            ).eq("id", listing_id).execute()
+            return listing_id
+
+        rows = (
+            supabase.table("aggregator_listings")
+            .insert(
+                {
+                    "source_id": source_id,
+                    "scrape_run_id": scrape_run_id,
+                    "listing_url": detail_url,
+                    "listing_title": label or detail_url,
+                    "listing_hash": listing_hash,
+                    "event_type": event_type,
+                    "status": "discovered",
+                }
+            )
+            .execute()
+            .data
+            or []
+        )
+        return rows[0].get("id") if rows else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "aggregator_listings unavailable source_id=%s detail_url=%s error=%s",
+            source_id, detail_url, exc,
+        )
+        return None
+
+
+def _record_listing_observation(
+    supabase: Client,
+    *,
+    listing_id: str | None,
+    source_id: str | None,
+    scrape_run_id: str,
+    observed_url: str,
+    observed_label: str,
+    content_hash: str | None,
+) -> None:
+    if not listing_id or not source_id:
+        return
+    try:
+        supabase.table("listing_observations").insert(
+            {
+                "listing_id": listing_id,
+                "source_id": source_id,
+                "scrape_run_id": scrape_run_id,
+                "observed_url": observed_url,
+                "observed_label": observed_label or None,
+                "content_hash": content_hash,
+            }
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "listing_observations insert failed listing_id=%s error=%s",
+            listing_id, exc,
+        )
+
+
+def _mark_listing_status(
+    supabase: Client,
+    listing_id: str | None,
+    status: str,
+    *,
+    official_source_url: str | None = None,
+) -> None:
+    if not listing_id:
+        return
+    payload: dict[str, Any] = {"status": status, "updated_at": utc_now_iso()}
+    if official_source_url is not None:
+        payload["official_source_url"] = official_source_url
+    try:
+        supabase.table("aggregator_listings").update(payload).eq("id", listing_id).execute()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "aggregator_listings status update failed listing_id=%s status=%s error=%s",
+            listing_id, status, exc,
+        )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -233,12 +359,21 @@ def run_scraping_pass(
     error_log: list[dict[str, Any]] = []
     run_limit = max(1, min(int(limit or 25), 100))
 
-    def queue_extraction(src: dict[str, Any], source_name: str, item_url: str, raw: str) -> bool:
+    def queue_extraction(
+        src: dict[str, Any],
+        source_name: str,
+        item_url: str,
+        raw: str,
+        *,
+        listing_id: str | None = None,
+        resolver_result: ResolverResult | None = None,
+    ) -> str | None:
+        """Run extraction → dedup → queue insert. Returns inserted queue id or None on failure."""
         nonlocal total_found, total_new, total_dup
         extraction = extract_recruitment_data(raw, item_url, source_name, mock=mock)
         if not extraction:
             error_log.append({"source": source_name, "url": item_url, "error": "Extraction returned null", "at": utc_now_iso()})
-            return False
+            return None
 
         data: ExtractedRecruitment = extraction["data"]
         confidence = float(extraction.get("confidence") or 0.5)
@@ -262,6 +397,9 @@ def run_scraping_pass(
             "duplicate_matched_fields": decision.matched_fields,
             "source_registry_id": src.get("id"),
             "source_type": src.get("source_type"),
+            "aggregator_listing_id": listing_id,
+            "resolver_reason": resolver_result.reason if resolver_result else None,
+            "resolver_host": resolver_result.host if resolver_result else None,
         }
         extraction_provider = extraction.get("provider") or ("mock" if extraction.get("is_mock") else "anthropic")
         document_id = _ensure_notification_document(
@@ -275,8 +413,22 @@ def run_scraping_pass(
                 "source_type": src.get("source_type"),
                 "prompt_version": PROMPT_VERSION,
                 "mock": bool(mock),
+                "aggregator_listing_id": listing_id,
+                "resolver_host": resolver_result.host if resolver_result else None,
             },
         )
+
+        # Resolver upgrades aggregator-derived rows: when the runner has
+        # already substituted the official URL for ``item_url``, the queue
+        # row is treated as evidence-grade and the trust gate flips on.
+        if resolver_result is not None:
+            official_source_resolved = True
+            official_source_host = resolver_result.host
+            evidence_required = False
+        else:
+            official_source_resolved = not bool(src.get("requires_official_confirmation"))
+            official_source_host = None
+            evidence_required = bool(src.get("requires_official_confirmation"))
 
         queue_payload = {
             "source_url": item_url,
@@ -291,17 +443,19 @@ def run_scraping_pass(
             "scraped_at": utc_now_iso(),
             # Never auto-approve — see runner.ts safety hardening note.
             "status": "duplicate" if decision.is_duplicate else "pending",
-            "official_source_resolved": not bool(src.get("requires_official_confirmation")),
-            "evidence_required": bool(src.get("requires_official_confirmation")),
+            "official_source_resolved": official_source_resolved,
+            "official_source_host": official_source_host,
+            "evidence_required": evidence_required,
             "extraction_status": "ok",
             "notification_document_id": document_id,
             "extraction_provider": extraction_provider,
             "extraction_prompt_version": PROMPT_VERSION,
         }
         logger.info(
-            "scrape.queue_insert run_id=%s source_id=%s source_name=%s target_url=%s extraction_status=%s confidence_score=%.2f data_quality_score=%.2f duplicate_status=%s duplicate_reason=%s",
+            "scrape.queue_insert run_id=%s source_id=%s source_name=%s target_url=%s extraction_status=%s confidence_score=%.2f data_quality_score=%.2f duplicate_status=%s duplicate_reason=%s resolver=%s",
             run_id, src.get("id"), source_name, item_url, "ok",
             confidence, normalized.data_quality_score, queue_payload["status"], decision.reason,
+            resolver_result.reason if resolver_result else None,
         )
         inserted = execute_or_raise(
             "scrape_queue.insert",
@@ -315,7 +469,7 @@ def run_scraping_pass(
             total_new += 1
             if inserted_id:
                 queued_id_by_key.setdefault(sim_key, inserted_id)
-        return True
+        return inserted_id
 
     for src in sources:
         source = normalize_source_registry(src)
@@ -404,12 +558,84 @@ def run_scraping_pass(
                     )
                     continue
                 found_before = total_found
-                for detail_url in detail_urls:
-                    raw = fetch_page_text(detail_url) if not mock else f"MOCK DETAIL PAGE TEXT FOR {detail_url}"
-                    if not raw:
-                        error_log.append({"source": source.name, "url": detail_url, "error": "Empty response", "at": utc_now_iso()})
-                        continue
-                    queue_extraction(src, source.name, detail_url, raw)
+                # Build a uniform list of (url, label, event_type) tuples
+                # regardless of mock vs live so the rest of the loop stays
+                # branch-free.
+                if mock:
+                    detail_entries: list[tuple[str, str, str]] = [
+                        (u, "", "new_recruitment") for u in detail_urls
+                    ]
+                else:
+                    detail_entries = [
+                        (link.url, link.label, link.event_type) for link in discovery.links
+                    ]
+
+                for detail_url, label, event_type in detail_entries:
+                    if mock:
+                        detail_html = None
+                        raw_text = f"MOCK DETAIL PAGE TEXT FOR {detail_url}"
+                    else:
+                        detail_html = fetch_page_html(detail_url)
+                        if not detail_html:
+                            error_log.append({"source": source.name, "url": detail_url, "error": "Empty response", "at": utc_now_iso()})
+                            continue
+                        raw_text = strip_html(detail_html)
+
+                    listing_id = _upsert_aggregator_listing(
+                        supabase,
+                        source_id=src.get("id"),
+                        scrape_run_id=run_id,
+                        detail_url=detail_url,
+                        label=label,
+                        event_type=event_type,
+                    )
+                    _record_listing_observation(
+                        supabase,
+                        listing_id=listing_id,
+                        source_id=src.get("id"),
+                        scrape_run_id=run_id,
+                        observed_url=detail_url,
+                        observed_label=label,
+                        content_hash=None,
+                    )
+
+                    # Try to upgrade the aggregator detail page to an
+                    # official source. When the resolver finds a real
+                    # ``.gov.in`` / registry-host anchor we fetch *that*
+                    # and pass its body to the extractor; aggregator
+                    # paraphrasing never becomes canonical truth.
+                    resolver_result: ResolverResult | None = None
+                    item_url = detail_url
+                    raw_for_extraction = raw_text
+                    if not mock and detail_html:
+                        resolver_result = resolve_official_source(detail_html, detail_url, source)
+                        if resolver_result:
+                            official_html = fetch_page_html(resolver_result.official_url)
+                            if official_html:
+                                item_url = resolver_result.official_url
+                                raw_for_extraction = strip_html(official_html)
+                                _mark_listing_status(
+                                    supabase, listing_id,
+                                    "official_source_found",
+                                    official_source_url=resolver_result.official_url,
+                                )
+                            else:
+                                # Resolver pointed at an unreachable URL;
+                                # fall back to the aggregator body but
+                                # record that we tried.
+                                resolver_result = None
+                                _mark_listing_status(supabase, listing_id, "needs_official_source")
+                        else:
+                            _mark_listing_status(supabase, listing_id, "needs_official_source")
+
+                    queue_extraction(
+                        src,
+                        source.name,
+                        item_url,
+                        raw_for_extraction,
+                        listing_id=listing_id,
+                        resolver_result=resolver_result,
+                    )
                 if total_found == found_before:
                     _bump_source_failure(
                         supabase, src,

@@ -107,6 +107,16 @@ def _fetch_html(url: str, *, timeout: float) -> FetchResult:
     )
 
 
+def strip_html(html: str) -> str:
+    """Public alias of the HTML→plain-text reducer used inside fetch().
+
+    Exposed so callers that already have raw HTML in hand (the aggregator
+    runner fetches HTML once for the resolver and reuses the stripped
+    text for extraction) don't have to round-trip through ``fetch()``.
+    """
+    return _strip_html(html)
+
+
 def _strip_html(html: str) -> str:
     text = re.sub(r"<script[^>]*>[\s\S]*?</script>", " ", html, flags=re.IGNORECASE)
     text = re.sub(r"<style[^>]*>[\s\S]*?</style>", " ", text, flags=re.IGNORECASE)
