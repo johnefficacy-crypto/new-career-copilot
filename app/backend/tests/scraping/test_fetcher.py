@@ -219,3 +219,81 @@ def test_parse_rss_empty_input():
 
 def test_parse_rss_malformed_xml_returns_empty():
     assert parse_rss_feed("<rss><not-valid") == []
+
+
+# ── PR P1 follow-up: JSON-API adapter ───────────────────────────────────────
+
+
+from app.scraping.fetcher import ApiEntry, parse_json_feed
+
+
+_WORDPRESS_PAYLOAD = [
+    {
+        "id": 1,
+        "date": "2026-01-01T00:00:00",
+        "link": "https://upsc.gov.in/cse-2026",
+        "title": {"rendered": "UPSC CSE 2026"},
+        "excerpt": {"rendered": "Civil Services 2026"},
+    },
+    {
+        "id": 2,
+        "date": "2026-02-01T00:00:00",
+        "link": "https://upsc.gov.in/cds-2026",
+        "title": {"rendered": "UPSC CDS 2026"},
+        "excerpt": {"rendered": "Combined Defence Services 2026"},
+    },
+]
+
+
+def test_parse_json_feed_wordpress_shape():
+    entries = parse_json_feed(_WORDPRESS_PAYLOAD)
+    assert len(entries) == 2
+    assert entries[0].title == "UPSC CSE 2026"
+    assert entries[0].link == "https://upsc.gov.in/cse-2026"
+    assert entries[0].summary == "Civil Services 2026"
+    assert entries[0].published == "2026-01-01T00:00:00"
+
+
+def test_parse_json_feed_with_entries_path():
+    payload = {"meta": {"count": 2}, "data": {"items": _WORDPRESS_PAYLOAD}}
+    entries = parse_json_feed(payload, adapter_config={"entries_path": "data.items"})
+    assert len(entries) == 2
+
+
+def test_parse_json_feed_custom_field_mapping():
+    payload = [
+        {"heading": "Custom title", "url": "https://x.gov.in/n", "blurb": "summary", "issued_on": "2026-03-01"},
+    ]
+    entries = parse_json_feed(
+        payload,
+        adapter_config={
+            "title_field": "heading",
+            "link_field": "url",
+            "summary_field": "blurb",
+            "date_field": "issued_on",
+        },
+    )
+    assert entries == [ApiEntry(
+        title="Custom title",
+        link="https://x.gov.in/n",
+        summary="summary",
+        published="2026-03-01",
+    )]
+
+
+def test_parse_json_feed_picks_first_list_when_no_path_set():
+    payload = {"meta": {}, "items": _WORDPRESS_PAYLOAD}
+    entries = parse_json_feed(payload)
+    assert len(entries) == 2
+
+
+def test_parse_json_feed_skips_entries_without_link_or_title():
+    payload = [{"unrelated": "value"}, _WORDPRESS_PAYLOAD[0]]
+    entries = parse_json_feed(payload)
+    assert len(entries) == 1
+
+
+def test_parse_json_feed_empty_input():
+    assert parse_json_feed(None) == []
+    assert parse_json_feed({}) == []
+    assert parse_json_feed("not a json object") == []

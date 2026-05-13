@@ -312,3 +312,190 @@ def fetch_rss(url: str, *, timeout: float = 15.0) -> tuple[FetchResult, list[Rss
     )
     entries = parse_rss_feed(xml_text)
     return result, entries
+
+
+# ─── JSON-API adapter ───────────────────────────────────────────────────────
+
+
+@dataclass
+class ApiEntry:
+    title: str
+    link: str
+    summary: str = ""
+    published: str | None = None
+
+
+def _drill(obj: Any, path: str) -> Any:
+    """Walk a dotted path through a JSON object. Returns ``None`` when
+    any intermediate key is missing. Lists are returned as-is so callers
+    can detect them; numeric indices in the path are also supported.
+    """
+    cur: Any = obj
+    if not path:
+        return obj
+    for part in path.split("."):
+        if cur is None:
+            return None
+        if isinstance(cur, list):
+            try:
+                cur = cur[int(part)]
+            except (ValueError, IndexError, TypeError):
+                return None
+        elif isinstance(cur, dict):
+            cur = cur.get(part)
+        else:
+            return None
+    return cur
+
+
+def _first_field(entry: Any, candidates: list[str]) -> str:
+    """Return the first non-empty string value among ``candidates`` keys
+    on ``entry``. Candidates may be dotted paths."""
+    if not isinstance(entry, (dict, list)):
+        return ""
+    for key in candidates:
+        value = _drill(entry, key) if "." in key else (
+            entry.get(key) if isinstance(entry, dict) else None
+        )
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if value is not None and not isinstance(value, (dict, list)):
+            text = str(value).strip()
+            if text:
+                return text
+    return ""
+
+
+def parse_json_feed(
+    payload: Any,
+    *,
+    adapter_config: dict[str, Any] | None = None,
+) -> list[ApiEntry]:
+    """Parse a decoded JSON payload into a flat list of entries.
+
+    ``adapter_config`` controls how we drill into the payload and map
+    fields:
+      * ``entries_path``: dotted path to the list of entries
+        (e.g. ``"data.items"``). When empty / unset the function picks
+        the payload itself if it's a list, otherwise the first list
+        value found one level deep.
+      * ``title_field`` / ``link_field`` / ``summary_field`` /
+        ``date_field``: each is either a string or a list of fallback
+        keys (dotted paths allowed). Sensible defaults match
+        WordPress-style REST shapes (``rendered.title``, ``link``,
+        ``excerpt.rendered``, ``date``).
+    """
+    cfg = adapter_config or {}
+
+    entries_obj: Any = None
+    entries_path = (cfg.get("entries_path") or "").strip()
+    if entries_path:
+        entries_obj = _drill(payload, entries_path)
+    elif isinstance(payload, list):
+        entries_obj = payload
+    elif isinstance(payload, dict):
+        # Heuristic: pick the first list-valued field one level deep.
+        for v in payload.values():
+            if isinstance(v, list):
+                entries_obj = v
+                break
+
+    if not isinstance(entries_obj, list):
+        return []
+
+    def _as_keys(value: Any, default: list[str]) -> list[str]:
+        if isinstance(value, str) and value:
+            return [value]
+        if isinstance(value, list) and value:
+            return [str(x) for x in value if x]
+        return default
+
+    title_keys = _as_keys(cfg.get("title_field"), ["title.rendered", "title", "name", "subject"])
+    link_keys = _as_keys(cfg.get("link_field"), ["link", "url", "guid"])
+    summary_keys = _as_keys(cfg.get("summary_field"), ["excerpt.rendered", "summary", "description", "content"])
+    date_keys = _as_keys(cfg.get("date_field"), ["date", "published", "pubDate", "updated"])
+
+    out: list[ApiEntry] = []
+    for entry in entries_obj:
+        if not isinstance(entry, (dict, list)):
+            continue
+        title = _first_field(entry, title_keys)
+        link = _first_field(entry, link_keys)
+        if not link and not title:
+            continue
+        out.append(ApiEntry(
+            title=title,
+            link=link,
+            summary=_first_field(entry, summary_keys),
+            published=_first_field(entry, date_keys) or None,
+        ))
+    return out
+
+
+def fetch_api(
+    url: str,
+    *,
+    adapter_config: dict[str, Any] | None = None,
+    timeout: float = 15.0,
+) -> tuple[FetchResult, list[ApiEntry]]:
+    """Fetch a JSON endpoint and return a FetchResult plus parsed entries.
+
+    Network and HTTP errors collapse into ``FetchResult(ok=False, error=...)``
+    so callers handle them the same way as RSS / HTML.
+    """
+    if not url:
+        return FetchResult(ok=False, url="", error="empty_url"), []
+
+    api_headers = dict(_DEFAULT_HEADERS)
+    api_headers["Accept"] = "application/json, */*;q=0.9"
+
+    try:
+        resp = httpx.get(url, headers=api_headers, timeout=timeout, follow_redirects=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] api request failed url=%s error=%s", url, exc)
+        return FetchResult(ok=False, url=url, error=str(exc)), []
+
+    try:
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] api http error url=%s status=%s error=%s", url, resp.status_code, exc)
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=resp.status_code,
+            final_url=str(resp.url),
+            error=f"http_{resp.status_code}",
+        ), []
+
+    raw_bytes = resp.content
+    content_hash = hashlib.sha256(raw_bytes).hexdigest() if raw_bytes else None
+    try:
+        import json as _json
+        payload = _json.loads(resp.text) if resp.text else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] api invalid json url=%s error=%s", url, exc)
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=resp.status_code,
+            final_url=str(resp.url),
+            content_hash=content_hash,
+            text=resp.text,
+            raw_bytes=raw_bytes,
+            error="invalid_json",
+        ), []
+
+    result = FetchResult(
+        ok=True,
+        url=url,
+        status_code=resp.status_code,
+        final_url=str(resp.url),
+        content_type=resp.headers.get("content-type"),
+        etag=resp.headers.get("etag"),
+        last_modified=resp.headers.get("last-modified"),
+        content_hash=content_hash,
+        text=resp.text,
+        raw_bytes=raw_bytes,
+    )
+    entries = parse_json_feed(payload, adapter_config=adapter_config)
+    return result, entries
