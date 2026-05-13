@@ -591,7 +591,13 @@ def parse_pdf_bytes(raw_bytes: bytes | None) -> str:
     return re.sub(r"\s{2,}", " ", joined).strip()
 
 
-def fetch_pdf(url: str, *, timeout: float = 30.0) -> FetchResult:
+def fetch_pdf(
+    url: str,
+    *,
+    timeout: float = 30.0,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
+) -> FetchResult:
     """Fetch a PDF bulletin and return its extracted text in ``FetchResult.text``.
 
     ``raw_bytes`` keeps the original PDF body so the runner can hash it
@@ -599,18 +605,38 @@ def fetch_pdf(url: str, *, timeout: float = 30.0) -> FetchResult:
     PDFs surface as ``FetchResult(ok=False, error='empty_pdf')`` so the
     runner can bump source-failure detail without spuriously queueing
     blank rows.
+
+    Conditional fetch: ``if_none_match`` / ``if_modified_since`` send
+    standard caching headers; a 304 response yields
+    ``FetchResult(ok=False, status_code=304, error="not_modified")`` so
+    the runner can skip re-parsing an unchanged bulletin.
     """
     if not url:
         return FetchResult(ok=False, url="", error="empty_url")
 
     pdf_headers = dict(_DEFAULT_HEADERS)
     pdf_headers["Accept"] = "application/pdf, */*;q=0.9"
+    if if_none_match:
+        pdf_headers["If-None-Match"] = if_none_match
+    if if_modified_since:
+        pdf_headers["If-Modified-Since"] = if_modified_since
 
     try:
         resp = httpx.get(url, headers=pdf_headers, timeout=timeout, follow_redirects=True)
     except Exception as exc:  # noqa: BLE001
         logger.warning("[fetcher] pdf request failed url=%s error=%s", url, exc)
         return FetchResult(ok=False, url=url, error=str(exc))
+
+    if resp.status_code == 304:
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=304,
+            final_url=str(resp.url),
+            etag=resp.headers.get("etag") or if_none_match,
+            last_modified=resp.headers.get("last-modified") or if_modified_since,
+            error="not_modified",
+        )
 
     try:
         resp.raise_for_status()

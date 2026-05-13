@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from .discipline_aliases import disciplines_intersect, word_boundary_match
 from .schemas import (
     BatchEligibilityResult,
     EligibilityCheck,
@@ -557,15 +558,22 @@ def check_eligibility(
                 discipline_ok = True
                 discipline_detail = ""
                 if ec.allowed_disciplines and len(ec.allowed_disciplines) > 0:
-                    user_stream = (edu.stream or "").lower()
-                    user_degree = (edu.degree or "").lower()
                     flat: list[str] = []
                     for v in ec.allowed_disciplines.values():
                         if isinstance(v, list):
-                            flat.extend(str(x).lower() for x in v)
+                            flat.extend(str(x) for x in v)
                         elif isinstance(v, str):
-                            flat.append(v.lower())
-                    matched = any(d in user_stream or d in user_degree for d in flat)
+                            flat.append(v)
+                    user_forms = [edu.stream, edu.degree]
+                    # Two-step match: prefer the alias registry (canonical
+                    # buckets) and fall back to a whole-word match when
+                    # either side has no canonical mapping. Legacy raw
+                    # substring matching had clear false positives
+                    # ("cs" ⊂ "physics", "me" ⊂ "medicine") which the
+                    # registry + word-boundary fallback eliminates.
+                    matched = disciplines_intersect(user_forms, flat)
+                    if not matched:
+                        matched = word_boundary_match(user_forms, flat)
                     if not matched:
                         discipline_ok = False
                         discipline_detail = (
