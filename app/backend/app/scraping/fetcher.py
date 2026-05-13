@@ -687,6 +687,9 @@ def fetch_pdf(
 class SitemapEntry:
     loc: str
     lastmod: str | None = None
+    # True when this entry came from a ``<sitemap>`` element (child
+    # sitemap to recurse into); False for ``<url>`` leaf entries.
+    is_sitemap: bool = False
 
 
 def parse_sitemap(xml_text: str | None) -> list[SitemapEntry]:
@@ -724,8 +727,57 @@ def parse_sitemap(xml_text: str | None) -> list[SitemapEntry]:
         if not loc:
             continue
         lastmod = _text_of(child, "lastmod") or None
-        entries.append(SitemapEntry(loc=loc, lastmod=lastmod))
+        entries.append(SitemapEntry(loc=loc, lastmod=lastmod, is_sitemap=(local == "sitemap")))
     return entries
+
+
+def fetch_sitemap_recursive(
+    url: str,
+    *,
+    timeout: float = 15.0,
+    max_depth: int = 2,
+    max_total: int = 1000,
+) -> tuple[FetchResult, list[SitemapEntry]]:
+    """Fetch a sitemap, recursing into child sitemaps up to ``max_depth``.
+
+    Returns the FetchResult of the *root* fetch (so caller can read its
+    ETag / Last-Modified for change-detection bookkeeping) and a flat
+    list of leaf URL entries (``is_sitemap=False``). Child sitemap
+    fetches whose status isn't 200 are skipped silently — partial
+    coverage is better than refusing the whole tree because one branch
+    failed.
+
+    ``max_total`` caps the flattened entry count so a runaway
+    sitemapindex (some sites publish thousands of children) can't
+    explode the run.
+    """
+    root_result, top_entries = fetch_sitemap(url, timeout=timeout)
+    if not root_result.ok:
+        return root_result, []
+
+    leaves: list[SitemapEntry] = []
+    queue: list[tuple[SitemapEntry, int]] = [(e, 1) for e in top_entries]
+
+    while queue and len(leaves) < max_total:
+        entry, depth = queue.pop(0)
+        if not entry.is_sitemap:
+            leaves.append(entry)
+            continue
+        if depth >= max_depth:
+            # Beyond the recursion budget — treat the index entry as a
+            # leaf URL so the operator at least sees it in the queue.
+            leaves.append(SitemapEntry(loc=entry.loc, lastmod=entry.lastmod))
+            continue
+        child_result, child_entries = fetch_sitemap(entry.loc, timeout=timeout)
+        if not child_result.ok:
+            logger.warning(
+                "[fetcher] sitemap recurse failed url=%s status=%s error=%s",
+                entry.loc, child_result.status_code, child_result.error,
+            )
+            continue
+        for child in child_entries:
+            queue.append((child, depth + 1))
+    return root_result, leaves[:max_total]
 
 
 def fetch_sitemap(
