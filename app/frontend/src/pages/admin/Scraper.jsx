@@ -16,6 +16,13 @@ function typeLabel(value) {
   return SOURCE_TYPE_LABELS[value] || value || "Unknown";
 }
 
+function formatScorePct(value) {
+  if (value == null || value === "") return "-";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "-";
+  return `${Math.round(Math.max(0, Math.min(1, n)) * 100)}%`;
+}
+
 function selectedSourceIds(mode, selected) {
   return mode === "selected" ? selected : null;
 }
@@ -409,7 +416,7 @@ export default function AdminScraper() {
                   <td className="px-3 py-3"><div className="truncate font-medium">{e.title || e.name || "-"}</div><div className="truncate text-[10px] text-muted-foreground">Queue {shortId(q.id)} · {q.source_name || "-"}</div></td>
                   <td className="px-3 py-3"><div className="truncate">{typeLabel(q.source_type)}</div><div className="truncate text-[10px] text-muted-foreground">{q.source_url}</div></td>
                   <td className="px-3 py-3"><StatusBadge status={state.key} label={state.label} /><div className="mt-1 truncate text-[10px] text-muted-foreground">{state.reason}</div></td>
-                  <td className="px-3 py-3"><div>conf {q.confidence_score ?? "-"}</div><div className="text-[10px] text-muted-foreground">quality {q.data_quality_score ?? "-"}</div></td>
+                  <td className="px-3 py-3"><div>conf {formatScorePct(q.confidence_score)}</div><div className="text-[10px] text-muted-foreground">quality {formatScorePct(q.data_quality_score)}</div></td>
                   <td className="px-3 py-3"><QueueRowAction item={q} state={state} onOpen={() => setSelected(q)} onPromote={() => act(q.id, "promote")} /></td>
                 </tr>
               );
