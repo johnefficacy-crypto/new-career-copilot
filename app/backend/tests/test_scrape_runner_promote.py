@@ -1462,3 +1462,69 @@ def test_runner_remembers_listing_headers_after_first_fetch(monkeypatch):
         u.get("last_listing_modified") == "Mon, 02 Feb 2026 00:00:00 GMT"
         for u in updates
     )
+
+
+# ── Conditional fetch for RSS / JSON-API runner passes ──────────────────────
+
+
+def test_runner_rss_skips_on_304_and_marks_success(monkeypatch):
+    from app.scraping import runner as runner_mod
+    from app.scraping.fetcher import FetchResult, RssEntry
+
+    sb = RunnerSB()
+    sb.db["source_registry"] = [{
+        "id": "src-rss",
+        "source_name": "RSS",
+        "adapter_type": "rss",
+        "rss_url": "https://example.gov.in/feed.xml",
+        "is_active": True,
+        "last_listing_etag": 'W/"prev"',
+    }]
+
+    def _fake_fetch_rss(url, *, if_none_match=None, if_modified_since=None, timeout=15.0):
+        assert if_none_match == 'W/"prev"'
+        return FetchResult(ok=False, url=url, status_code=304, error="not_modified"), []
+
+    monkeypatch.setattr("app.scraping.fetcher.fetch_rss", _fake_fetch_rss)
+    monkeypatch.setattr(runner_mod, "fetch_page_html", lambda url: None)
+
+    out = run_scraping_pass(sb, source_ids=["src-rss"], mock=False)
+    # 304 → no queue rows, source marked success (no error_log entry).
+    assert out["items_found"] == 0
+    assert all(e.get("error") != "empty_feed" for e in out.get("errors", []))
+    updates = sb.db.get("source_registry_updates", [])
+    assert any(u.get("consecutive_fails") == 0 for u in updates)
+
+
+def test_runner_api_writes_back_caching_headers_on_200(monkeypatch):
+    from app.scraping import runner as runner_mod
+    from app.scraping.fetcher import ApiEntry, FetchResult
+
+    sb = RunnerSB()
+    sb.db["source_registry"] = [{
+        "id": "src-api",
+        "source_name": "API",
+        "adapter_type": "api",
+        "api_url": "https://example.gov.in/wp-json",
+        "is_active": True,
+        "last_listing_etag": 'W/"old"',
+    }]
+
+    def _fake_fetch_api(url, *, adapter_config=None, if_none_match=None, if_modified_since=None, timeout=15.0):
+        return FetchResult(
+            ok=True, url=url, status_code=200,
+            text='[]', raw_bytes=b'[]',
+            etag='W/"new"', last_modified="Wed, 02 Feb 2026 00:00:00 GMT",
+        ), [ApiEntry(title="Notice", link="https://upsc.gov.in/n", summary="")]
+
+    monkeypatch.setattr("app.scraping.fetcher.fetch_api", _fake_fetch_api)
+    monkeypatch.setattr(runner_mod, "fetch_page_html", lambda url: "<html></html>")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    run_scraping_pass(sb, source_ids=["src-api"], mock=False, limit=5)
+    updates = sb.db.get("source_registry_updates", [])
+    assert any(
+        u.get("last_listing_etag") == 'W/"new"' and
+        u.get("last_listing_modified") == "Wed, 02 Feb 2026 00:00:00 GMT"
+        for u in updates
+    )

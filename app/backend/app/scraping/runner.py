@@ -294,7 +294,30 @@ def _run_rss_pass(
             for i in range(1, 4)
         ]
     else:
-        result, entries = fetch_rss(target_url)
+        prior_etag = src.get("last_listing_etag")
+        prior_modified = src.get("last_listing_modified")
+        result, entries = fetch_rss(
+            target_url,
+            if_none_match=prior_etag,
+            if_modified_since=prior_modified,
+        )
+        if not result.ok and result.error == "not_modified":
+            logger.info(
+                "rss.feed_unchanged source_id=%s url=%s",
+                src.get("id"), target_url,
+            )
+            return True
+        if result.ok and (result.etag or result.last_modified):
+            # Remember caching headers for the next pass.
+            execute_or_default(
+                "source_registry.update_listing_headers",
+                lambda src=src, etag=result.etag, mod=result.last_modified:
+                    supabase.table("source_registry").update({
+                        "last_listing_etag": etag,
+                        "last_listing_modified": mod,
+                    }).eq("id", src["id"]).execute(),
+                None,
+            )
         if not result.ok or not entries:
             error_log.append({
                 "source": source.name,
@@ -492,7 +515,30 @@ def _run_api_pass(
             for i in range(1, 4)
         ]
     else:
-        result, entries = fetch_api(target_url, adapter_config=source.adapter_config)
+        prior_etag = src.get("last_listing_etag")
+        prior_modified = src.get("last_listing_modified")
+        result, entries = fetch_api(
+            target_url,
+            adapter_config=source.adapter_config,
+            if_none_match=prior_etag,
+            if_modified_since=prior_modified,
+        )
+        if not result.ok and result.error == "not_modified":
+            logger.info(
+                "api.feed_unchanged source_id=%s url=%s",
+                src.get("id"), target_url,
+            )
+            return True
+        if result.ok and (result.etag or result.last_modified):
+            execute_or_default(
+                "source_registry.update_listing_headers",
+                lambda src=src, etag=result.etag, mod=result.last_modified:
+                    supabase.table("source_registry").update({
+                        "last_listing_etag": etag,
+                        "last_listing_modified": mod,
+                    }).eq("id", src["id"]).execute(),
+                None,
+            )
         if not result.ok or not entries:
             error_log.append({
                 "source": source.name,
