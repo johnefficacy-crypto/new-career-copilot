@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState,} from "react";
+import React, { useEffect, useState,} from "react";
 import { Loader2, Save } from "lucide-react";
 import { FormProvider, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -24,8 +24,9 @@ export default function Profile() {
   const state = useProfileData();
   const methods = useForm({ resolver: zodResolver(profileSchema), defaultValues: {} });
 
-  useEffect(() => {    
+  useEffect(() => {
     methods.reset(state.form || {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- methods.reset is stable; including methods would re-fire on every render
   }, [state.form]);
 
   async function onSubmit(values) {
