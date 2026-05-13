@@ -1,0 +1,13 @@
+import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { ChevronRight } from "lucide-react";
+import { api } from "../lib/api";
+import { useAuth } from "../lib/authContext";
+import AccountIdentity from "../features/onboarding/AccountIdentity";
+import PersonalDetails from "../features/onboarding/PersonalDetails";
+import CategoryReservations from "../features/onboarding/CategoryReservations";
+import EducationBackground from "../features/onboarding/EducationBackground";
+import CareerGoals from "../features/onboarding/CareerGoals";
+import ExamReadiness from "../features/onboarding/ExamReadiness";
+import StudyPreferences from "../features/onboarding/StudyPreferences";
+import OnboardingComplete from "../features/onboarding/OnboardingComplete";
