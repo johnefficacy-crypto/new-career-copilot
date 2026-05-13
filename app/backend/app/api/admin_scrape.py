@@ -23,6 +23,7 @@ import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -646,6 +647,111 @@ def promote_run_endpoint(
     return result
 
 
+
+
+class ResolveOfficialSourceBody(BaseModel):
+    source_id: str = Field(..., min_length=1, max_length=64)
+    official_notification_url: str | None = Field(default=None, max_length=2048)
+    official_apply_url: str | None = Field(default=None, max_length=2048)
+    source_pdf_url: str | None = Field(default=None, max_length=2048)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/admin/scrape/items/{queue_id}/resolve-official-source")
+def resolve_official_source_for_queue_item(
+    queue_id: str,
+    body: ResolveOfficialSourceBody,
+    admin: dict = Depends(require_permission("recruitments.manage")),
+) -> dict[str, Any]:
+    """Mark a queue item as backed by a verified official source.
+
+    Promotion is gated by ``official_source_resolved``; aggregator
+    candidates fail the gate by default. This endpoint lets an admin
+    attach a verified, non-aggregator source to the queue row, patch the
+    aggregator-paraphrased official URLs with the values the admin has
+    confirmed, and flip the gate flag on. Promotion is *not* triggered;
+    the admin still has to click Promote after the gate passes.
+    """
+    _validate_queue_id(queue_id)
+    supabase = get_supabase_admin()
+
+    qrows = (
+        supabase.table("scrape_queue")
+        .select("id, source_id, extracted_data, status")
+        .eq("id", queue_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not qrows:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+    queue_row = qrows[0]
+
+    src_rows = (
+        supabase.table("source_registry")
+        .select("id, source_name, source_type, is_verified, discovery_only, is_active, official_url")
+        .eq("id", body.source_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not src_rows:
+        raise HTTPException(status_code=404, detail="Source not found")
+    source = src_rows[0]
+
+    if not source.get("is_verified"):
+        raise HTTPException(status_code=409, detail={"message": "Selected source is not verified", "reason": "source_unverified"})
+    if source.get("source_type") == "aggregator" or source.get("discovery_only"):
+        raise HTTPException(status_code=409, detail={"message": "Aggregator/discovery-only sources cannot be used as official proof", "reason": "source_discovery_only"})
+    if source.get("is_active") is False:
+        raise HTTPException(status_code=409, detail={"message": "Selected source is inactive", "reason": "source_inactive"})
+
+    # Patch official URLs into extracted_data so promote_to_recruitments
+    # writes the admin-confirmed values into the canonical recruitment row.
+    extracted = dict(queue_row.get("extracted_data") or {})
+    if body.official_notification_url:
+        extracted["official_notification_url"] = body.official_notification_url
+    if body.official_apply_url:
+        extracted["official_apply_url"] = body.official_apply_url
+    if body.source_pdf_url:
+        extracted["source_pdf_url"] = body.source_pdf_url
+
+    primary_url = body.official_notification_url or body.official_apply_url or source.get("official_url") or ""
+    official_host = (urlparse(primary_url).hostname or "").lower() if primary_url else None
+
+    update: dict[str, Any] = {
+        "source_id": body.source_id,
+        "official_source_resolved": True,
+        "official_source_host": official_host,
+        "evidence_required": False,
+        "extracted_data": extracted,
+    }
+    supabase.table("scrape_queue").update(update).eq("id", queue_id).execute()
+
+    _audit(
+        supabase,
+        admin,
+        "scrape.queue.resolve_official_source",
+        entity_type="scrape_queue",
+        entity_id=queue_id,
+        new_value={
+            "source_id": body.source_id,
+            "official_source_host": official_host,
+            "official_notification_url": body.official_notification_url,
+            "official_apply_url": body.official_apply_url,
+            "source_pdf_url": body.source_pdf_url,
+            "notes": body.notes,
+        },
+    )
+    return {
+        "ok": True,
+        "queue_id": queue_id,
+        "source_id": body.source_id,
+        "official_source_resolved": True,
+        "official_source_host": official_host,
+    }
 
 
 @router.post("/admin/scrape/items/{queue_id}/merge-into/{recruitment_id}")

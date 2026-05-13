@@ -9,6 +9,7 @@ import AdminActionChecklist from "../../features/admin/workflow/AdminActionCheck
 import AdminFixPanel from "../../features/admin/workflow/AdminFixPanel";
 import NextActionCallout from "../../features/admin/workflow/NextActionCallout";
 import useAdminNextActions from "../../features/admin/workflow/useAdminNextActions";
+import OfficialSourceResolver from "../../features/admin/workflow/OfficialSourceResolver";
 
 const TABS = [
   { id: "source", label: "Source Setup" },
@@ -34,6 +35,7 @@ export default function OperationsConsole() {
   const [loadError, setLoadError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState(null);
+  const [resolverOpen, setResolverOpen] = useState(false);
 
   const { runAction, busyKey, error: actionError } = useAdminAction();
 
@@ -201,6 +203,19 @@ export default function OperationsConsole() {
     });
   }, [runAction, loadAll]);
 
+  const resolveOfficialSource = useCallback(async (payload) => {
+    if (!queueId) return;
+    await runAction({
+      key: `resolve-official-${queueId}`,
+      successMessage: "Official source resolved. Promotion gate flipped open.",
+      action: async () => {
+        await api.post(`/api/admin/scrape/items/${queueId}/resolve-official-source`, payload);
+        setResolverOpen(false);
+        await loadAll();
+      },
+    });
+  }, [queueId, runAction, loadAll]);
+
   const runScrape = useCallback(async (mode) => {
     const key = mode === "dry" ? "scrape-dry" : "scrape-live";
     await runAction({
@@ -297,8 +312,16 @@ export default function OperationsConsole() {
             onValidate={validate}
             onVerify={verify}
             onPublish={publish}
-            onOpenOfficialSourceResolver={() => updateParams({ tab: "draft" })}
+            onOpenOfficialSourceResolver={() => setResolverOpen(true)}
             busy={Boolean(busyKey)}
+          />
+          <OfficialSourceResolver
+            open={resolverOpen && Boolean(selectedQueueItem)}
+            sources={sources}
+            queueItem={selectedQueueItem}
+            busy={Boolean(busyKey)}
+            onClose={() => setResolverOpen(false)}
+            onSubmit={resolveOfficialSource}
           />
         </div>
       </div>
