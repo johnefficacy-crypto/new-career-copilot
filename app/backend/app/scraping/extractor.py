@@ -25,8 +25,7 @@ import re
 from datetime import date, timedelta
 from typing import Any
 
-import httpx
-
+from .fetcher import fetch_page_html, fetch_page_text  # noqa: F401  (re-export)
 from .schemas import ExtractedPost, ExtractedRecruitment
 
 logger = logging.getLogger("career_copilot.scraping.extractor")
@@ -65,50 +64,6 @@ CONFIDENCE CALIBRATION:
   0.7 — title, org, dates, vacancies, but some posts missing age or education.
   0.5 — only title/org/dates — post-level data missing or ambiguous.
   <0.3 — text appears to be a listing/index page, not a real notification."""
-
-
-# ─── HTML / page text ───────────────────────────────────────────────────────
-
-
-_DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; CareerCopilot-Scraper/1.0; +https://careercopilot.in/bot)",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-IN,en;q=0.9",
-}
-
-
-def fetch_page_text(url: str, *, timeout: float = 15.0) -> str | None:
-    try:
-        resp = httpx.get(url, headers=_DEFAULT_HEADERS, timeout=timeout, follow_redirects=True)
-        resp.raise_for_status()
-        return _strip_html(resp.text)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("[fetcher] failed %s: %s", url, exc)
-        return None
-
-
-def fetch_page_html(url: str, *, timeout: float = 15.0) -> str | None:
-    try:
-        resp = httpx.get(url, headers=_DEFAULT_HEADERS, timeout=timeout, follow_redirects=True)
-        resp.raise_for_status()
-        return resp.text
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("[fetcher] failed %s: %s", url, exc)
-        return None
-
-
-def _strip_html(html: str) -> str:
-    text = re.sub(r"<script[^>]*>[\s\S]*?</script>", " ", html, flags=re.IGNORECASE)
-    text = re.sub(r"<style[^>]*>[\s\S]*?</style>", " ", text, flags=re.IGNORECASE)
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = (
-        text.replace("&nbsp;", " ")
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", '"')
-    )
-    return re.sub(r"\s{2,}", " ", text).strip()
 
 
 # ─── Mock-aware Claude extractor ────────────────────────────────────────────

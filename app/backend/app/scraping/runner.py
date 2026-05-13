@@ -297,7 +297,35 @@ def run_scraping_pass(
 
     for src in sources:
         source = normalize_source_registry(src)
-        target_url = source.target_url
+        target_url = source.primary_fetch_url()
+        if not target_url:
+            logger.warning(
+                "scrape.source_config_invalid source_id=%s source_name=%s adapter_type=%s reason=no_fetch_url",
+                src.get("id"), source.name, source.adapter_type,
+            )
+            error_log.append({
+                "source": source.name,
+                "error": "source_config_invalid",
+                "reason": "no_fetch_url",
+                "adapter_type": source.adapter_type,
+                "at": utc_now_iso(),
+            })
+            _bump_source_failure(supabase, src)
+            continue
+        if source.adapter_type and source.adapter_type.lower() in {"rss", "api", "pdf"}:
+            logger.info(
+                "scrape.adapter_not_implemented source_id=%s source_name=%s adapter_type=%s",
+                src.get("id"), source.name, source.adapter_type,
+            )
+            error_log.append({
+                "source": source.name,
+                "url": target_url,
+                "error": "adapter_not_implemented",
+                "adapter_type": source.adapter_type,
+                "at": utc_now_iso(),
+            })
+            _bump_source_failure(supabase, src)
+            continue
         try:
             if is_aggregator_source(src):
                 source_limit = min(run_limit, aggregator_max_items(src))
@@ -503,6 +531,33 @@ def _find_or_create_organization(
     return inserted[0]["id"]
 
 
+def _compensate_promotion(
+    supabase: Client,
+    created: list[tuple[str, str]],
+    *,
+    reason: str,
+) -> None:
+    """Delete rows inserted during a failed promotion, in reverse FK order.
+
+    Promotion writes organizations, recruitments, units, posts, age_criteria,
+    and education_criteria through separate calls. We can't run them in one
+    DB transaction without an RPC, so on partial failure we walk back the
+    list of rows we definitely created on this call and delete them. Only
+    rows recorded in ``created`` are touched — organizations are reused
+    across recruitments and are never touched here.
+    """
+    if not created:
+        return
+    for table, row_id in reversed(created):
+        try:
+            supabase.table(table).delete().eq("id", row_id).execute()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[promote] compensation delete failed table=%s id=%s reason=%s error=%s",
+                table, row_id, reason, exc,
+            )
+
+
 def promote_to_recruitments(
     data: ExtractedRecruitment,
     supabase: Client,
@@ -514,6 +569,13 @@ def promote_to_recruitments(
     Returns the new ``recruitments.id``. The caller should update the
     queue row's ``status='approved'`` only after this returns successfully
     (mirrors the May 2026 hardening: never mark approved on partial failure).
+
+    Atomicity: the inserts span several tables and can't share one
+    Postgres transaction without an RPC. If any insert after the
+    ``recruitments`` row fails, we compensate by deleting every row this
+    call created (in reverse FK order) before re-raising. The
+    organization row is intentionally left in place — it may be reused
+    by other recruitments and is safe to keep.
     """
     # ── Organisation find/create ──
     org_id = _find_or_create_organization(
@@ -552,81 +614,99 @@ def promote_to_recruitments(
         raise RuntimeError("[promote] recruitment insert returned no row")
     rec_id: str = rec_rows[0]["id"]
 
-    # ── Posts + age_criteria + education_criteria ──
-    unit_ids: dict[tuple[str | None, str | None, str | None, str | None], str] = {}
-    for post in data.posts or []:
-        unit_id = None
-        if post.unit_name or post.unit_code:
-            unit_key = (
-                post.unit_code,
-                post.unit_name,
-                post.unit_location_state,
-                post.unit_location_city,
-            )
-            unit_id = unit_ids.get(unit_key)
-            if unit_id is None:
-                unit_org_id = org_id
-                if post.unit_name and post.unit_name != data.organization_name:
-                    unit_org_id = _find_or_create_organization(
-                        supabase,
-                        name=post.unit_name,
-                        org_type=data.org_type,
-                        state=post.unit_location_state,
-                        operation="organizations.unit",
-                    )
-                unit_rows = execute_or_raise(
-                    "recruitment_units.insert",
-                    lambda post=post, unit_org_id=unit_org_id: supabase.table("recruitment_units")
-                    .insert(
+    created: list[tuple[str, str]] = [("recruitments", rec_id)]
+
+    try:
+        # ── Posts + age_criteria + education_criteria ──
+        unit_ids: dict[tuple[str | None, str | None, str | None, str | None], str] = {}
+        for post in data.posts or []:
+            unit_id = None
+            if post.unit_name or post.unit_code:
+                unit_key = (
+                    post.unit_code,
+                    post.unit_name,
+                    post.unit_location_state,
+                    post.unit_location_city,
+                )
+                unit_id = unit_ids.get(unit_key)
+                if unit_id is None:
+                    unit_org_id = org_id
+                    if post.unit_name and post.unit_name != data.organization_name:
+                        unit_org_id = _find_or_create_organization(
+                            supabase,
+                            name=post.unit_name,
+                            org_type=data.org_type,
+                            state=post.unit_location_state,
+                            operation="organizations.unit",
+                        )
+                    unit_rows = execute_or_raise(
+                        "recruitment_units.insert",
+                        lambda post=post, unit_org_id=unit_org_id: supabase.table("recruitment_units")
+                        .insert(
+                            {
+                                "recruitment_id": rec_id,
+                                "organization_id": unit_org_id,
+                                "unit_code": post.unit_code,
+                                "unit_name": post.unit_name,
+                                "location_state": post.unit_location_state,
+                                "location_city": post.unit_location_city,
+                            }
+                        )
+                        .execute(),
+                    ).data or []
+                    if not unit_rows:
+                        raise PromotionError(f"unit insert returned no row for recruitment={rec_id}")
+                    unit_id = unit_rows[0]["id"]
+                    unit_ids[unit_key] = unit_id
+                    created.append(("recruitment_units", unit_id))
+            post_payload = {
+                "recruitment_id": rec_id,
+                "post_name": post.post_name,
+                "group_type": post.group_type,
+                "pay_level": post.pay_level,
+                "job_type": "direct",
+                "recruitment_unit_id": unit_id,
+                "language_requirements": post.language_requirements or [],
+            }
+            post_rows = execute_or_raise("posts.insert", lambda: supabase.table("posts").insert(post_payload).execute()).data or []
+            if not post_rows:
+                raise PromotionError(f"post insert returned no row for recruitment={rec_id}")
+            post_id = post_rows[0]["id"]
+            created.append(("posts", post_id))
+
+            if post.min_age or post.max_age:
+                age_rows = execute_or_raise(
+                    "age_criteria.insert",
+                    lambda post=post, post_id=post_id: supabase.table("age_criteria").insert(
                         {
-                            "recruitment_id": rec_id,
-                            "organization_id": unit_org_id,
-                            "unit_code": post.unit_code,
-                            "unit_name": post.unit_name,
-                            "location_state": post.unit_location_state,
-                            "location_city": post.unit_location_city,
+                            "post_id": post_id,
+                            "min_age": post.min_age,
+                            "max_age": post.max_age,
+                            "cutoff_date": data.apply_end_date,
                         }
-                    )
-                    .execute(),
+                    ).execute(),
                 ).data or []
-                if not unit_rows:
-                    raise PromotionError(f"unit insert returned no row for recruitment={rec_id}")
-                unit_id = unit_rows[0]["id"]
-                unit_ids[unit_key] = unit_id
-        post_payload = {
-            "recruitment_id": rec_id,
-            "post_name": post.post_name,
-            "group_type": post.group_type,
-            "pay_level": post.pay_level,
-            "job_type": "direct",
-            "recruitment_unit_id": unit_id,
-            "language_requirements": post.language_requirements or [],
-        }
-        post_rows = execute_or_raise("posts.insert", lambda: supabase.table("posts").insert(post_payload).execute()).data or []
-        if not post_rows:
-            raise PromotionError(f"post insert returned no row for recruitment={rec_id}")
-        post_id = post_rows[0]["id"]
+                if age_rows:
+                    created.append(("age_criteria", age_rows[0]["id"]))
 
-        if post.min_age or post.max_age:
-            execute_or_raise("age_criteria.insert", lambda: supabase.table("age_criteria").insert(
-                    {
-                        "post_id": post_id,
-                        "min_age": post.min_age,
-                        "max_age": post.max_age,
-                        "cutoff_date": data.apply_end_date,
-                    }
-                ).execute())
-
-        if post.education_required:
-            execute_or_raise("education_criteria.insert", lambda: supabase.table("education_criteria").insert(
-                    {
-                        "post_id": post_id,
-                        "min_qualification_level": _map_education_level(post.education_required),
-                        "allowed_disciplines": (
-                            {"primary": post.disciplines} if post.disciplines else None
-                        ),
-                    }
-                ).execute())
+            if post.education_required:
+                edu_rows = execute_or_raise(
+                    "education_criteria.insert",
+                    lambda post=post, post_id=post_id: supabase.table("education_criteria").insert(
+                        {
+                            "post_id": post_id,
+                            "min_qualification_level": _map_education_level(post.education_required),
+                            "allowed_disciplines": (
+                                {"primary": post.disciplines} if post.disciplines else None
+                            ),
+                        }
+                    ).execute(),
+                ).data or []
+                if edu_rows:
+                    created.append(("education_criteria", edu_rows[0]["id"]))
+    except Exception:
+        _compensate_promotion(supabase, created, reason="post_insert_failed")
+        raise
 
     return rec_id
 

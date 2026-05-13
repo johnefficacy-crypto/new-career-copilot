@@ -369,6 +369,87 @@ def test_promote_run_blocks_when_official_source_unresolved(monkeypatch):
     assert out["errors"][0]["reason"] == "unverified_official_source"
 
 
+# ── PR 2: source config invalidation + adapter routing + promotion rollback ─
+
+
+def test_runner_skips_source_with_no_fetch_url():
+    sb = RunnerSB()
+    # No URL fields at all → primary_fetch_url() is None → source_config_invalid.
+    sb.db["source_registry"] = [{
+        "id": "src-empty",
+        "source_name": "No URL",
+        "is_active": True,
+    }]
+    out = run_scraping_pass(sb, source_ids=["src-empty"], mock=True)
+    assert out["items_found"] == 0
+    assert out["sources_checked"] == 1
+    assert any(e.get("error") == "source_config_invalid" for e in out["errors"])
+
+
+def test_runner_skips_rss_adapter_as_not_implemented():
+    sb = RunnerSB()
+    sb.db["source_registry"] = [{
+        "id": "src-rss",
+        "source_name": "RSS feed",
+        "adapter_type": "rss",
+        "rss_url": "https://example.gov.in/feed.xml",
+        "is_active": True,
+    }]
+    out = run_scraping_pass(sb, source_ids=["src-rss"], mock=True)
+    assert out["items_found"] == 0
+    assert any(e.get("error") == "adapter_not_implemented" and e.get("adapter_type") == "rss" for e in out["errors"])
+
+
+def test_promotion_rolls_back_recruitment_when_post_fails():
+    """If a post insert returns no row, the recruitment row should be deleted."""
+    db: dict[str, list[dict]] = {}
+    deleted: list[tuple[str, str]] = []
+
+    class FailingQ:
+        def __init__(self, name, db):
+            self.name = name
+            self.db = db
+            self.payload = None
+            self.filters: dict = {}
+        def select(self, *a, **k): return self
+        def eq(self, k, v): self.filters[k] = v; return self
+        def limit(self, *a, **k): return self
+        def insert(self, p): self.payload = p; return self
+        def delete(self): self._delete = True; return self
+        def execute(self):
+            if getattr(self, "_delete", False):
+                deleted.append((self.name, self.filters.get("id", "")))
+                return E([])
+            if self.payload is not None:
+                if self.name == "posts":
+                    return E([])  # simulate row not created
+                rows = self.db.setdefault(self.name, [])
+                row = {**self.payload, "id": f"{self.name}-{len(rows)+1}"}
+                rows.append(row)
+                return E([row])
+            if self.name == "organizations":
+                rows = list(self.db.get("organizations", []))
+                if "name" in self.filters:
+                    rows = [r for r in rows if r.get("name") == self.filters["name"]]
+                return E(rows)
+            if self.name == "recruitments":
+                return E([])  # duplicate-slug lookup empty so we proceed to insert
+            return E(self.db.get(self.name, []))
+
+    class SBFail:
+        def __init__(self): self.db = db
+        def table(self, name): return FailingQ(name, self.db)
+
+    sb = SBFail()
+    data = ExtractedRecruitment(
+        title="Test", organization_name="Test Org", org_type="Other",
+        year=2026, official_notification_url="https://x", posts=[{"post_name": "A"}],
+    )
+    with pytest.raises(PromotionError):
+        promote_to_recruitments(data, sb)
+    assert ("recruitments", "recruitments-1") in deleted
+
+
 def test_promote_run_blocks_when_high_risk_fields_unverified():
     db = {
         "scrape_queue": [{
