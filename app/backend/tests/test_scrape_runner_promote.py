@@ -52,6 +52,11 @@ class RunnerQuery:
         self.filters[key] = set(values)
         return self
 
+    def is_(self, key, value):
+        # supabase-py: ``is_("recruitment_id", "null")`` → IS NULL
+        self.filters[f"_is_{key}"] = None if value == "null" else value
+        return self
+
     def order(self, *args, **kwargs):
         return self
 
@@ -151,12 +156,25 @@ class RunnerQuery:
                 return E([row])
             return E(list(self.db.get("candidate_observations", [])))
         if self.name == "recruitment_events":
-            if self.payload:
+            if self.payload is not None and "id" in self.filters:
+                # Update path: stamp recruitment_id on a specific row.
+                rows = self.db.setdefault("recruitment_events", [])
+                for row in rows:
+                    if row.get("id") == self.filters["id"]:
+                        row.update(self.payload)
+                        return E([row])
+                return E([])
+            if self.payload is not None:
                 rows = self.db.setdefault("recruitment_events", [])
                 row = {**self.payload, "id": f"re-{len(rows) + 1}"}
                 rows.append(row)
                 return E([row])
-            return E(list(self.db.get("recruitment_events", [])))
+            rows = list(self.db.get("recruitment_events", []))
+            if "_is_recruitment_id" in self.filters and self.filters["_is_recruitment_id"] is None:
+                rows = [r for r in rows if r.get("recruitment_id") is None]
+            if "source_id" in self.filters:
+                rows = [r for r in rows if r.get("source_id") == self.filters["source_id"]]
+            return E(rows)
         return E([])
 
 
@@ -1300,3 +1318,76 @@ def test_promote_handles_missing_rich_fields_cleanly():
     assert sb.db.get("exam_patterns", []) == []
     assert sb.db.get("skill_tests", []) == []
     assert sb.db.get("age_relaxation_rules", []) == []
+
+
+# ── Lifecycle reconciliation on promotion ───────────────────────────────────
+
+
+def _RunnerSBWithRpc(rpc_response):
+    """RunnerSB-like, but supabase.rpc('promote_recruitment', ...) returns
+    the given response object so the RPC happy-path is exercised."""
+    class _SB(RunnerSB):
+        def rpc(self, name, params):
+            outer = self
+            class _Exec:
+                def execute(self_inner):
+                    return rpc_response
+            return _Exec()
+    return _SB()
+
+
+def test_promote_stamps_unattached_lifecycle_events_on_host_match():
+    """A recruitment whose official_notification_url shares the host
+    with a previously-observed lifecycle event gets that event stamped
+    with the new recruitment_id on promotion."""
+    sb = _RunnerSBWithRpc(type("R", (), {"data": "rec-new-1"})())
+    sb.db["recruitment_events"] = [
+        {
+            "id": "re-1", "source_id": "src-1",
+            "recruitment_id": None, "event_type": "admit_card",
+            "payload": {"discovered_url": "https://ssc.nic.in/admit-card/2026"},
+        },
+        # Different host → must NOT be stamped.
+        {
+            "id": "re-2", "source_id": "src-1",
+            "recruitment_id": None, "event_type": "result",
+            "payload": {"discovered_url": "https://upsc.gov.in/result/2026"},
+        },
+        # Different source → must NOT be stamped even if host matches.
+        {
+            "id": "re-3", "source_id": "src-OTHER",
+            "recruitment_id": None, "event_type": "admit_card",
+            "payload": {"discovered_url": "https://ssc.nic.in/other"},
+        },
+    ]
+    data = ExtractedRecruitment(
+        title="SSC CGL 2026", organization_name="SSC", org_type="SSC", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="https://ssc.nic.in/cgl-2026",
+        posts=[{"post_name": "Inspector"}],
+    )
+    rec_id = promote_to_recruitments(data, sb, source_id="src-1")
+    assert rec_id == "rec-new-1"
+
+    by_id = {r["id"]: r for r in sb.db["recruitment_events"]}
+    assert by_id["re-1"]["recruitment_id"] == "rec-new-1"
+    assert by_id["re-2"]["recruitment_id"] is None
+    assert by_id["re-3"]["recruitment_id"] is None
+
+
+def test_promote_skips_reconcile_when_no_source_id_or_url():
+    sb = _RunnerSBWithRpc(type("R", (), {"data": "rec-new-2"})())
+    sb.db["recruitment_events"] = [{
+        "id": "re-a", "source_id": "src-1",
+        "recruitment_id": None, "event_type": "admit_card",
+        "payload": {"discovered_url": "https://ssc.nic.in/admit"},
+    }]
+    data = ExtractedRecruitment(
+        title="X", organization_name="X", org_type="Other", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="",
+        posts=[{"post_name": "A"}],
+    )
+    # No source_id → reconciliation early-exits, event stays unattached.
+    promote_to_recruitments(data, sb, source_id=None)
+    assert sb.db["recruitment_events"][0]["recruitment_id"] is None

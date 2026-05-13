@@ -138,6 +138,83 @@ def _ensure_notification_document(
 # ─── Lifecycle event persistence ──────────────────────────────────────────
 
 
+def _reconcile_lifecycle_events(
+    supabase: Client,
+    *,
+    recruitment_id: str,
+    source_id: str | None,
+    official_url: str | None,
+) -> int:
+    """Stamp newly-promoted ``recruitment_id`` onto unattached lifecycle
+    events that very likely belong to this recruitment.
+
+    Matching rule: ``recruitment_events`` row must have
+    ``recruitment_id IS NULL``, the same ``source_id``, and a
+    ``payload.discovered_url`` whose host matches the promoted
+    recruitment's ``official_notification_url`` host. Without a
+    matching host we leave the event alone — better to keep an
+    unattached event than to mis-stamp.
+
+    Returns the count of rows updated. Errors are logged and swallowed
+    (the promotion itself already succeeded — we don't want
+    reconciliation failures to bubble up).
+    """
+    if not recruitment_id or not source_id:
+        return 0
+    target_host = ""
+    try:
+        from urllib.parse import urlparse
+        target_host = (urlparse(official_url or "").hostname or "").lower().removeprefix("www.")
+    except Exception:
+        return 0
+    if not target_host:
+        return 0
+
+    try:
+        rows = (
+            supabase.table("recruitment_events")
+            .select("id, payload")
+            .is_("recruitment_id", "null")
+            .eq("source_id", source_id)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("reconcile_lifecycle_events lookup failed: %s", exc)
+        return 0
+
+    stamped = 0
+    for row in rows:
+        payload = row.get("payload") or {}
+        discovered_url = payload.get("discovered_url") if isinstance(payload, dict) else None
+        if not isinstance(discovered_url, str) or not discovered_url:
+            continue
+        try:
+            from urllib.parse import urlparse as _u
+            row_host = (_u(discovered_url).hostname or "").lower().removeprefix("www.")
+        except Exception:
+            continue
+        if row_host != target_host:
+            continue
+        try:
+            supabase.table("recruitment_events").update(
+                {"recruitment_id": recruitment_id}
+            ).eq("id", row["id"]).execute()
+            stamped += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "recruitment_events reconcile update failed id=%s error=%s",
+                row.get("id"), exc,
+            )
+    if stamped:
+        logger.info(
+            "scrape.reconcile_lifecycle_events recruitment_id=%s source_id=%s host=%s stamped=%s",
+            recruitment_id, source_id, target_host, stamped,
+        )
+    return stamped
+
+
 def _record_lifecycle_event(
     supabase: Client,
     *,
@@ -1934,6 +2011,12 @@ def promote_to_recruitments(
             head = rec_id[0]
             rec_id = head["recruitment_id"] if isinstance(head, dict) and "recruitment_id" in head else head
         if isinstance(rec_id, str) and rec_id:
+            _reconcile_lifecycle_events(
+                supabase,
+                recruitment_id=rec_id,
+                source_id=source_id,
+                official_url=data.official_notification_url,
+            )
             return rec_id
     except DuplicatePromotionError:
         raise
@@ -1955,7 +2038,14 @@ def promote_to_recruitments(
                 exc,
             )
 
-    return _promote_to_recruitments_compensation(data, supabase, source_id=source_id, slug=slug)
+    rec_id = _promote_to_recruitments_compensation(data, supabase, source_id=source_id, slug=slug)
+    _reconcile_lifecycle_events(
+        supabase,
+        recruitment_id=rec_id,
+        source_id=source_id,
+        official_url=data.official_notification_url,
+    )
+    return rec_id
 
 
 def _promote_to_recruitments_compensation(
