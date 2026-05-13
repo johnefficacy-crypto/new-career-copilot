@@ -126,11 +126,26 @@ def normalize_source_registry(row: dict[str, Any]) -> ScrapeSource:
 
 
 def normalize_legacy_source(row: dict[str, Any]) -> ScrapeSource:
-    """Adapter for the deprecated ``scrape_sources`` table.
+    """Legacy-only adapter for the deprecated ``scrape_sources`` table.
 
-    Kept for tests and any one-off importer that still reads the legacy
-    table. Runtime callers should use :func:`normalize_source_registry`.
+    .. deprecated::
+        ``scrape_sources`` is not part of the runtime contract. The
+        runner reads ``source_registry`` exclusively via
+        :func:`normalize_source_registry`. This helper exists solely for
+        one-off importers and historical tests that still touch the old
+        table. New callers must use :func:`normalize_source_registry`;
+        importing this function from runtime modules is a bug.
+
+    Emits a ``DeprecationWarning`` so accidental runtime use shows up in
+    test output and admin tooling logs.
     """
+    import warnings as _warnings
+
+    _warnings.warn(
+        "normalize_legacy_source is deprecated; use normalize_source_registry",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     base = str(row.get("base_url") or "")
     path = str(row.get("notification_path") or "")
     crawl_url: str | None
