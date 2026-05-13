@@ -12,9 +12,10 @@ Rules covered (matching the reference repo, no additions):
        allowed-disciplines match. Final-year ⇒ ``is_conditional``.
     3. Attempts — per-category attempt limit with null fallback.
     4. Required exam credentials — set membership.
-    5. Nationality — Indian only (matches reference behaviour).
-    6. Domicile — only enforced when ``org_state`` is non-null
-       (state PSC posts).
+    5. Nationality — Indian only. Missing nationality is treated as
+       unverifiable (conditional), not as a silent pass.
+    6. Domicile — only enforced when the canonical criteria explicitly
+       set ``requires_domicile=True`` (in conjunction with ``org_state``).
 
 This module is pure — no I/O, no Supabase imports — so it is fully
 testable and reusable from server actions, API routes, or workers.
@@ -24,7 +25,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .schemas import (
-    AttemptLimit,
     BatchEligibilityResult,
     EligibilityCheck,
     EligibilityCheckResult,
@@ -115,6 +115,16 @@ def _parse_iso_date(value: str) -> datetime:
     return datetime.fromisoformat(value + "T00:00:00+00:00")
 
 
+def _exact_age_years(dob: datetime, cutoff: datetime) -> int:
+    # Calendar age "as on cutoff date": full-year difference, minus one if
+    # the birthday has not yet occurred by the cutoff. Handles leap-year DOB
+    # (Feb 29) by comparing (month, day) directly against the cutoff.
+    age = cutoff.year - dob.year
+    if (cutoff.month, cutoff.day) < (dob.month, dob.day):
+        age -= 1
+    return age
+
+
 def _normalise_token(value: str | None) -> str:
     return (value or "").lower().strip().replace("-", "_").replace(" ", "_")
 
@@ -176,12 +186,40 @@ def check_eligibility(
     if criteria.age_criteria is not None:
         ac = criteria.age_criteria
         dob_str = profile.dob or profile.date_of_birth
-        try:
-            cutoff = _parse_iso_date(ac.cutoff_date) if ac.cutoff_date else datetime.now(timezone.utc)
-        except Exception:
-            cutoff = datetime.now(timezone.utc)
 
-        if not dob_str:
+        cutoff: datetime | None = None
+        cutoff_invalid = False
+        if ac.cutoff_date:
+            try:
+                cutoff = _parse_iso_date(ac.cutoff_date)
+            except Exception:
+                cutoff_invalid = True
+
+        if cutoff_invalid:
+            is_conditional = True
+            checks.append(
+                EligibilityCheck(
+                    rule="age",
+                    passed=False,
+                    detail=(
+                        f"Age criterion is unverifiable: cutoff_date "
+                        f"{ac.cutoff_date!r} is not a valid date."
+                    ),
+                )
+            )
+        elif cutoff is None:
+            is_conditional = True
+            checks.append(
+                EligibilityCheck(
+                    rule="age",
+                    passed=False,
+                    detail=(
+                        "Age criterion is unverifiable: no cutoff_date provided "
+                        "in canonical criteria."
+                    ),
+                )
+            )
+        elif not dob_str:
             checks.append(
                 EligibilityCheck(
                     rule="age",
@@ -197,11 +235,10 @@ def check_eligibility(
                     EligibilityCheck(rule="age", passed=False, detail="Invalid date of birth.")
                 )
             else:
-                age_at_cutoff = int(
-                    (cutoff - dob).total_seconds() // (365.25 * 24 * 60 * 60)
-                )
+                age_at_cutoff = _exact_age_years(dob, cutoff)
 
                 notice_relaxation = _notice_age_relaxation(profile, criteria)
+                age_unverifiable_note: str | None = None
                 if notice_relaxation is None and profile.ex_serviceman and profile.service_years is not None:
                     cat_relax = _category_relaxation_years(profile)
                     age_for_max = age_at_cutoff - profile.service_years - 3
@@ -211,6 +248,16 @@ def check_eligibility(
                         + (f" + {cat_relax} yr category relaxation" if cat_relax > 0 else "")
                     )
                     age_for_max -= cat_relax
+                elif notice_relaxation is None and profile.ex_serviceman and profile.service_years is None:
+                    # Ex-serviceman relaxation depends on rendered service. Without
+                    # service_years we cannot apply or deny the relaxation — mark
+                    # the rule unverifiable rather than silently falling back.
+                    age_unverifiable_note = (
+                        "Ex-serviceman status set but service_years is missing — "
+                        "cannot verify ex-serviceman age relaxation."
+                    )
+                    age_for_max = age_at_cutoff
+                    relax_note = "ex-serviceman service_years missing"
                 else:
                     relaxation = _category_relaxation_years(profile)
                     total_relaxation = (
@@ -232,10 +279,16 @@ def check_eligibility(
                     elif max_age_cap is not None:
                         effective_max_age = max_age_cap
 
-                min_ok = ac.min_age is None or age_at_cutoff >= ac.min_age
-                max_ok = effective_max_age is None or age_for_max <= effective_max_age
-
-                if not min_ok:
+                if age_unverifiable_note is not None:
+                    is_conditional = True
+                    checks.append(
+                        EligibilityCheck(
+                            rule="age",
+                            passed=False,
+                            detail=age_unverifiable_note,
+                        )
+                    )
+                elif not (ac.min_age is None or age_at_cutoff >= ac.min_age):
                     checks.append(
                         EligibilityCheck(
                             rule="age",
@@ -246,7 +299,7 @@ def check_eligibility(
                             ),
                         )
                     )
-                elif not max_ok:
+                elif not (effective_max_age is None or age_for_max <= effective_max_age):
                     checks.append(
                         EligibilityCheck(
                             rule="age",
@@ -483,7 +536,7 @@ def check_eligibility(
 
     # ── 3. Attempt limit ────────────────────────────────────────────────────
     if criteria.attempt_limits:
-        user_category = (profile.category or "general").lower()
+        user_category = _normalize_category(profile.category)
         record = next(
             (a for a in exam_attempts if a.recruitment_id == criteria.recruitment_id), None
         )
@@ -493,7 +546,8 @@ def check_eligibility(
             (
                 limit
                 for limit in criteria.attempt_limits
-                if (limit.category or "").lower() == user_category
+                if limit.category is not None
+                and _normalize_category(limit.category) == user_category
             ),
             None,
         ) or next((limit for limit in criteria.attempt_limits if limit.category is None), None)
@@ -546,25 +600,41 @@ def check_eligibility(
                 checks.append(EligibilityCheck(rule="certification_optional", passed=True, detail=f"Optional certification: {cc.name or 'unspecified'}."))
 
     # ── 5. Nationality ──────────────────────────────────────────────────────
-    nationality = (profile.nationality or "indian").lower()
-    nationality_ok = nationality == "indian"
-    checks.append(
-        EligibilityCheck(
-            rule="nationality",
-            passed=nationality_ok,
-            detail=(
-                "Indian nationality confirmed."
-                if nationality_ok
-                else "Only Indian nationals are eligible."
-            ),
+    if profile.nationality is None or not profile.nationality.strip():
+        is_conditional = True
+        checks.append(
+            EligibilityCheck(
+                rule="nationality",
+                passed=False,
+                detail=(
+                    "Nationality not provided — cannot verify eligibility. "
+                    "Indian nationality is required."
+                ),
+            )
         )
-    )
+    else:
+        nationality = profile.nationality.lower().strip()
+        nationality_ok = nationality == "indian"
+        checks.append(
+            EligibilityCheck(
+                rule="nationality",
+                passed=nationality_ok,
+                detail=(
+                    "Indian nationality confirmed."
+                    if nationality_ok
+                    else "Only Indian nationals are eligible."
+                ),
+            )
+        )
 
     # ── 6. Domicile / state PSC ─────────────────────────────────────────────
-    if criteria.org_state:
+    # Domicile is only enforced when the canonical criteria explicitly say so
+    # (`requires_domicile=True`). `org_state` alone is organisational metadata
+    # — many state-organisation posts are open to all-India candidates.
+    if criteria.requires_domicile and criteria.org_state:
         user_state = (profile.domicile_state or "").lower().strip()
         post_state = criteria.org_state.lower().strip()
-        domicile_ok = user_state == post_state
+        domicile_ok = bool(user_state) and user_state == post_state
         checks.append(
             EligibilityCheck(
                 rule="domicile",
@@ -612,4 +682,3 @@ def check_eligibility_batch(
         )
         for pc in post_criteria_list
     ]
-    user_certs: list[UserCertification] = getattr(profile, "_user_certifications", []) or []
