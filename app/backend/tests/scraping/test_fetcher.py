@@ -477,3 +477,49 @@ def test_fetch_pdf_returns_not_modified_on_304(monkeypatch):
     assert result.status_code == 304
     assert result.error == "not_modified"
     assert captured["If-None-Match"] == 'W/"pdf-1"'
+
+
+# ── Sitemap adapter ─────────────────────────────────────────────────────────
+
+
+from app.scraping.fetcher import SitemapEntry, parse_sitemap
+
+
+_URLSET_SAMPLE = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://ssc.nic.in/cgl-2026</loc>
+    <lastmod>2026-01-01</lastmod>
+  </url>
+  <url>
+    <loc>https://ssc.nic.in/chsl-2026</loc>
+  </url>
+</urlset>
+"""
+
+_INDEX_SAMPLE = """<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap>
+    <loc>https://ssc.nic.in/sitemap-recruitments.xml</loc>
+    <lastmod>2026-02-01</lastmod>
+  </sitemap>
+</sitemapindex>
+"""
+
+
+def test_parse_sitemap_urlset():
+    entries = parse_sitemap(_URLSET_SAMPLE)
+    assert len(entries) == 2
+    assert entries[0] == SitemapEntry(loc="https://ssc.nic.in/cgl-2026", lastmod="2026-01-01")
+    assert entries[1] == SitemapEntry(loc="https://ssc.nic.in/chsl-2026", lastmod=None)
+
+
+def test_parse_sitemap_index_returns_inner_locs():
+    entries = parse_sitemap(_INDEX_SAMPLE)
+    assert entries == [SitemapEntry(loc="https://ssc.nic.in/sitemap-recruitments.xml", lastmod="2026-02-01")]
+
+
+def test_parse_sitemap_empty_or_malformed():
+    assert parse_sitemap("") == []
+    assert parse_sitemap(None) == []
+    assert parse_sitemap("<urlset><not-valid") == []

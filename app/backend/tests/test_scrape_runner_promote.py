@@ -1608,3 +1608,66 @@ def test_runner_releases_lock_after_successful_pass():
     # And the per-source claim itself was stamped at some point.
     claim_updates = [u for u in updates if isinstance(u.get("currently_scraping_at"), str) and u.get("currently_scraping_at")]
     assert claim_updates, "expected a claim update"
+
+
+def test_runner_sitemap_adapter_queues_entries_in_mock_mode():
+    sb = RunnerSB()
+    sb.db["source_registry"] = [{
+        "id": "src-sm",
+        "source_name": "Sitemap source",
+        "adapter_type": "sitemap",
+        "adapter_config": {"sitemap_url": "https://example.gov.in/sitemap.xml"},
+        "is_active": True,
+    }]
+    out = run_scraping_pass(sb, source_ids=["src-sm"], mock=True)
+    assert out["items_found"] == 3
+    assert all(r["source_id"] == "src-sm" for r in sb.db.get("scrape_queue", []))
+
+
+# ── Detail-page conditional fetch (RSS/API/sitemap) ─────────────────────────
+
+
+def test_runner_rss_skips_detail_page_on_304(monkeypatch):
+    """RSS detail fetch with prior caching headers should short-circuit
+    on 304: no extraction, no queue row, but listing observation kept."""
+    from app.scraping import runner as runner_mod
+    from app.scraping.fetcher import FetchResult, RssEntry
+
+    sb = RunnerSB()
+    sb.db["source_registry"] = [{
+        "id": "src-rss",
+        "source_name": "RSS",
+        "adapter_type": "rss",
+        "rss_url": "https://example.gov.in/feed.xml",
+        "is_active": True,
+    }]
+
+    cached_link = "https://example.gov.in/notice-cached"
+
+    def _fake_fetch_rss(url, *, if_none_match=None, if_modified_since=None, timeout=15.0):
+        return FetchResult(ok=True, url=url, status_code=200, text="<rss/>", raw_bytes=b"<rss/>"), [
+            RssEntry(title="Cached notice", link=cached_link, summary=""),
+        ]
+
+    monkeypatch.setattr("app.scraping.fetcher.fetch_rss", _fake_fetch_rss)
+    monkeypatch.setattr(
+        runner_mod, "_lookup_prior_document_headers",
+        lambda _sb, url: ({"etag": 'W/"prev"', "last_modified": None} if url == cached_link else {"etag": None, "last_modified": None}),
+    )
+
+    def _fake_fetch(url, *, adapter_type=None, if_none_match=None, if_modified_since=None, timeout=15.0):
+        if url == cached_link and if_none_match == 'W/"prev"':
+            return FetchResult(ok=False, url=url, status_code=304, error="not_modified")
+        return FetchResult(ok=True, url=url, status_code=200, text="body", raw_bytes=b"<html></html>")
+
+    monkeypatch.setattr(runner_mod, "fetch", _fake_fetch)
+    monkeypatch.setattr(runner_mod, "fetch_page_html", lambda url: None)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    run_scraping_pass(sb, source_ids=["src-rss"], mock=False, limit=5)
+    # No queue rows for the cached link — it short-circuited.
+    queue_rows = sb.db.get("scrape_queue", [])
+    assert all(r["source_url"] != cached_link for r in queue_rows)
+    # Listing observation was still recorded so admin sees the source is alive.
+    listings = sb.db.get("aggregator_listings", [])
+    assert any(l["listing_url"] == cached_link for l in listings)
