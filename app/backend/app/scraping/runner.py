@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -378,12 +379,18 @@ def _run_rss_pass(
         if mock:
             raw_text = entry.summary or f"{title}\n\n{link}"
         else:
-            detail_html = fetch_page_html(link)
-            if not detail_html:
-                # Fall back to the entry summary if we can't reach the link.
+            outcome = _fetch_detail_conditional(supabase, link)
+            if outcome.skipped:
+                logger.info(
+                    "rss.detail_unchanged source_id=%s url=%s",
+                    src.get("id"), link,
+                )
+                continue
+            detail_html = outcome.detail_html
+            if outcome.error or not detail_html:
                 raw_text = entry.summary or title
             else:
-                raw_text = strip_html(detail_html)
+                raw_text = outcome.raw_text
                 resolver_result = resolve_with_registry(detail_html, link, source)
                 if resolver_result:
                     official_html = fetch_page_html(resolver_result.official_url)
@@ -528,11 +535,18 @@ def _run_sitemap_pass(
         if mock:
             raw_text = f"MOCK SITEMAP DETAIL FOR {link}"
         else:
-            detail_html = fetch_page_html(link)
-            if not detail_html:
-                error_log.append({"source": source.name, "url": link, "error": "Empty detail response", "at": utc_now_iso()})
+            outcome = _fetch_detail_conditional(supabase, link, lastmod_hint=getattr(entry, "lastmod", None))
+            if outcome.skipped:
+                logger.info(
+                    "sitemap.detail_unchanged source_id=%s url=%s",
+                    src.get("id"), link,
+                )
                 continue
-            raw_text = strip_html(detail_html)
+            if outcome.error or not outcome.detail_html:
+                error_log.append({"source": source.name, "url": link, "error": outcome.error or "Empty detail response", "at": utc_now_iso()})
+                continue
+            detail_html = outcome.detail_html
+            raw_text = outcome.raw_text
             resolver_result = resolve_with_registry(detail_html, link, source)
             if resolver_result:
                 official_html = fetch_page_html(resolver_result.official_url)
@@ -762,11 +776,18 @@ def _run_api_pass(
         if mock:
             raw_text = entry.summary or f"{title}\n\n{link}"
         else:
-            detail_html = fetch_page_html(link)
-            if not detail_html:
+            outcome = _fetch_detail_conditional(supabase, link)
+            if outcome.skipped:
+                logger.info(
+                    "api.detail_unchanged source_id=%s url=%s",
+                    src.get("id"), link,
+                )
+                continue
+            detail_html = outcome.detail_html
+            if outcome.error or not detail_html:
                 raw_text = entry.summary or title
             else:
-                raw_text = strip_html(detail_html)
+                raw_text = outcome.raw_text
                 resolver_result = resolve_with_registry(detail_html, link, source)
                 if resolver_result:
                     official_html = fetch_page_html(resolver_result.official_url)
@@ -793,6 +814,68 @@ def _run_api_pass(
 
 
 # ─── Change-detection helper ──────────────────────────────────────────────
+
+
+@dataclass
+class _DetailFetchOutcome:
+    """Result of a feed-adapter detail fetch.
+
+    * ``skipped`` is True when the server returned 304 — caller should
+      record an observation but skip extraction.
+    * ``raw_text`` / ``detail_html`` are the stripped body and the raw
+      HTML for the resolver, both populated on successful 200.
+    * ``error`` carries the typed FetchResult.error when the fetch
+      failed for a reason other than 304 (caller logs to error_log).
+    """
+    skipped: bool = False
+    raw_text: str = ""
+    detail_html: str = ""
+    error: str | None = None
+
+
+def _fetch_detail_conditional(
+    supabase: Client,
+    link: str,
+    *,
+    lastmod_hint: str | None = None,
+) -> _DetailFetchOutcome:
+    """Detail-page fetch with ETag / Last-Modified short-circuit.
+
+    Looks up prior caching headers from notification_documents for
+    ``link``. When prior headers exist (or the caller passes a
+    ``lastmod_hint``, e.g. from a sitemap entry's ``<lastmod>``) we
+    use the structured ``fetch()`` with conditional headers; on 304 we
+    return ``skipped=True`` so the runner can record an observation
+    without re-extracting. Without prior headers, falls back to the
+    legacy ``fetch_page_html(link)`` path so existing tests and call
+    sites that monkeypatch ``fetch_page_html`` keep working.
+    """
+    prior = _lookup_prior_document_headers(supabase, link)
+    prior_etag = prior.get("etag")
+    prior_modified = prior.get("last_modified") or lastmod_hint
+
+    if not prior_etag and not prior_modified:
+        detail_html = fetch_page_html(link)
+        if not detail_html:
+            return _DetailFetchOutcome(error="empty_response")
+        return _DetailFetchOutcome(raw_text=strip_html(detail_html), detail_html=detail_html)
+
+    result = fetch(
+        link,
+        adapter_type="html",
+        if_none_match=prior_etag,
+        if_modified_since=prior_modified,
+    )
+    if not result.ok and result.error == "not_modified":
+        return _DetailFetchOutcome(skipped=True)
+    if not result.ok or not result.text:
+        return _DetailFetchOutcome(error=result.error or "empty_response")
+    raw_text = result.text
+    try:
+        detail_html = (result.raw_bytes or b"").decode("utf-8", errors="replace") or result.text
+    except Exception:
+        detail_html = result.text
+    return _DetailFetchOutcome(raw_text=raw_text, detail_html=detail_html)
 
 
 def _lookup_prior_document_headers(
