@@ -1671,3 +1671,50 @@ def test_runner_rss_skips_detail_page_on_304(monkeypatch):
     # Listing observation was still recorded so admin sees the source is alive.
     listings = sb.db.get("aggregator_listings", [])
     assert any(l["listing_url"] == cached_link for l in listings)
+
+
+# ── Atomic claim RPC ────────────────────────────────────────────────────────
+
+
+class _ClaimRpcSB(RunnerSB):
+    """RunnerSB that exposes supabase.rpc('claim_source_for_scrape', ...)
+    backed by ``rpc_returns`` (callable returning the rpc result)."""
+    def __init__(self, rpc_returns):
+        super().__init__()
+        self.rpc_returns = rpc_returns
+        self.rpc_calls: list[tuple[str, dict]] = []
+
+    def rpc(self, name, params):
+        outer = self
+        class _Exec:
+            def execute(self_inner):
+                outer.rpc_calls.append((name, params))
+                return type("R", (), {"data": outer.rpc_returns(name, params)})()
+        return _Exec()
+
+
+def test_claim_rpc_called_first_when_available():
+    sb = _ClaimRpcSB(rpc_returns=lambda name, params: True)
+    out = run_scraping_pass(sb, source_ids=["src-1"], mock=True)
+    # RPC was called for the claim
+    assert any(name == "claim_source_for_scrape" for name, _ in sb.rpc_calls)
+    # Pass succeeded
+    assert out["items_found"] == 3
+
+
+def test_claim_rpc_returning_false_skips_source():
+    sb = _ClaimRpcSB(rpc_returns=lambda name, params: False)
+    out = run_scraping_pass(sb, source_ids=["src-1"], mock=True)
+    assert out["items_found"] == 0
+    assert any(e.get("error") == "concurrent_lock_held" for e in out["errors"])
+
+
+def test_claim_falls_back_to_read_then_update_on_rpc_missing():
+    """When the RPC raises 'function does not exist' we use the legacy
+    read-then-update path, which still produces a successful pass."""
+    def _missing(name, params):
+        raise RuntimeError("function public.claim_source_for_scrape does not exist")
+    sb = _ClaimRpcSB(rpc_returns=_missing)
+    out = run_scraping_pass(sb, source_ids=["src-1"], mock=True)
+    # The fallback happened: source got claimed via read-then-update.
+    assert out["items_found"] == 3

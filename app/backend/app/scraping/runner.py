@@ -1980,13 +1980,44 @@ def _try_claim_source(supabase: Client, src: dict[str, Any]) -> bool:
     for the run. A claim older than ``_CLAIM_STALE_AFTER_SECONDS`` is
     treated as crashed and gets overwritten.
 
-    Lock-infrastructure failures return ``True`` rather than blocking
-    the pass — losing scrape coverage is worse than the small race
-    window on cache columns.
+    Primary path: the ``claim_source_for_scrape(uuid, integer)`` Postgres
+    function added by migration 085. ``UPDATE … WHERE … RETURNING``
+    guarantees that two concurrent callers always see exactly one
+    success between them — no read-then-update race.
+
+    Fallback: when the RPC is unavailable (older deploy / schema cache
+    miss) we use the previous read-then-update path so behaviour stays
+    identical pre-migration. Lock-infrastructure failures (DB
+    unreachable) still return ``True`` rather than blocking the pass.
     """
     src_id = src.get("id")
     if not src_id:
         return False
+
+    # Try the atomic RPC first.
+    try:
+        rpc_response = supabase.rpc(
+            "claim_source_for_scrape",
+            {"p_source_id": src_id, "p_stale_seconds": _CLAIM_STALE_AFTER_SECONDS},
+        ).execute()
+        claimed = rpc_response.data
+        # Some clients return [True]/[False]; normalise.
+        if isinstance(claimed, list) and claimed:
+            claimed = claimed[0]
+        if isinstance(claimed, bool):
+            if not claimed:
+                logger.info("scrape.source_locked source_id=%s reason=rpc_returned_false", src_id)
+            return claimed
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc).lower()
+        if "claim_source_for_scrape" in msg and ("does not exist" in msg or "not found" in msg):
+            logger.info("claim_source_for_scrape RPC unavailable; using read-then-update fallback")
+        elif "pgrst202" in msg or "42883" in msg:
+            logger.info("claim_source_for_scrape RPC unavailable; using read-then-update fallback")
+        else:
+            logger.warning("claim_source_for_scrape RPC failed; using read-then-update fallback: %s", exc)
+
+    # Read-then-update fallback (older deploys without migration 085).
     try:
         from datetime import datetime, timedelta, timezone
         cutoff = (datetime.now(timezone.utc) - timedelta(seconds=_CLAIM_STALE_AFTER_SECONDS)).isoformat()
