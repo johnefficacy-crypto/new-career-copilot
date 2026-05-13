@@ -177,6 +177,7 @@ REQUIRED_COLUMNS = {
         "data_quality_score",
         "status",
         "duplicate_of",
+        "duplicate_recruitment_id",
         "reviewer_id",
         "reviewer_notes",
         "reviewed_at",

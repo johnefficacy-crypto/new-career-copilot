@@ -35,6 +35,7 @@ from app.db.supabase_client import get_supabase_admin
 from app.scraping.alerts import alert_users_for_new_recruitment
 from app.scraping.runner import promote_run, run_scraping_pass
 from app.scraping.intelligence import classify_item, duplicate_candidates, BLOCKED
+from app.scraping.promotion_gate import HIGH_RISK_FIELDS as _HIGH_RISK_FIELDS_SHARED, evaluate_promotion_gate
 
 logger = logging.getLogger("career_copilot.api.admin_scrape")
 
@@ -87,7 +88,7 @@ def _audit(supabase, actor: dict, action: str, *, entity_type: str | None = None
 
 router = APIRouter(tags=["admin-scrape"])
 
-_HIGH_RISK_FIELDS={"apply_end_date","official_notification_url","official_apply_url","organization_name","total_vacancies"}
+_HIGH_RISK_FIELDS = _HIGH_RISK_FIELDS_SHARED
 
 
 class ScrapeRunBody(BaseModel):
@@ -489,18 +490,18 @@ def promote_queue_item(
     if item["status"] not in {"approved", "pending", "needs_review"}:
         raise HTTPException(status_code=409, detail=f"Item is already {item['status']}")
     try:
-        # High-risk fields should be reviewed before promotion where evidence table exists.
-        warnings=[]
-        try:
-            frows=(supabase.table("extracted_field_evidence").select("field_name, reviewer_status").eq("scrape_queue_id", queue_id).execute().data or [])
-            reviewed={r.get("field_name"):r.get("reviewer_status") for r in frows}
-            missing=[f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified","corrected"}]
-            if missing:
-                raise HTTPException(status_code=409, detail={"message":"High-risk fields unverified","unverified_fields":missing})
-        except HTTPException:
-            raise
-        except Exception:
-            warnings.append("field_evidence_table_unavailable")
+        gate = evaluate_promotion_gate(supabase, item)
+        if not gate.ok:
+            if gate.reason == "unverified_official_source":
+                raise HTTPException(
+                    status_code=409,
+                    detail={"message": "Official source not resolved", "reason": gate.reason},
+                )
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "High-risk fields unverified", "unverified_fields": gate.unverified_fields},
+            )
+        warnings = list(gate.warnings)
         effective_data = build_effective_extracted_data(supabase, queue_id)
         extracted = ExtractedRecruitment(**effective_data)
         rec_id = promote_to_recruitments(extracted, supabase, source_id=item.get("source_id"))
