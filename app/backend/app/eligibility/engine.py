@@ -529,11 +529,16 @@ def check_eligibility(
                 marks_ok = True
                 marks_detail = ""
                 if ec.min_percentage is not None:
-                    user_pct = (
-                        edu.percentage
-                        if edu.percentage is not None
-                        else (edu.cgpa * 10 if edu.cgpa is not None else None)
-                    )
+                    # Convert CGPA → percentage using the candidate's actual
+                    # transcript scale. Legacy default is 10.0 (most Indian
+                    # universities) for rows without an explicit basis.
+                    if edu.percentage is not None:
+                        user_pct = edu.percentage
+                    elif edu.cgpa is not None:
+                        cgpa_basis = edu.cgpa_basis if edu.cgpa_basis is not None else 10.0
+                        user_pct = (edu.cgpa / cgpa_basis) * 100.0
+                    else:
+                        user_pct = None
                     if user_pct is None:
                         marks_ok = False
                         marks_detail = (
