@@ -499,3 +499,106 @@ def fetch_api(
     )
     entries = parse_json_feed(payload, adapter_config=adapter_config)
     return result, entries
+
+
+# ─── PDF adapter ────────────────────────────────────────────────────────────
+
+
+def parse_pdf_bytes(raw_bytes: bytes | None) -> str:
+    """Extract text from a PDF byte string using pypdf.
+
+    Returns an empty string on any parse failure — callers (the runner)
+    treat empty text as "extract failed for this source" and surface a
+    typed error. Whitespace between extracted page-fragments is
+    collapsed so the downstream extractor's 16k truncation buys more
+    real content.
+    """
+    if not raw_bytes:
+        return ""
+    try:
+        import io
+        from pypdf import PdfReader  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] pypdf import failed: %s", exc)
+        return ""
+    try:
+        reader = PdfReader(io.BytesIO(raw_bytes))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] pdf open failed: %s", exc)
+        return ""
+    parts: list[str] = []
+    for page in reader.pages:
+        try:
+            text = page.extract_text() or ""
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[fetcher] pdf page extract failed: %s", exc)
+            continue
+        if text.strip():
+            parts.append(text)
+    if not parts:
+        return ""
+    joined = "\n".join(parts)
+    return re.sub(r"\s{2,}", " ", joined).strip()
+
+
+def fetch_pdf(url: str, *, timeout: float = 30.0) -> FetchResult:
+    """Fetch a PDF bulletin and return its extracted text in ``FetchResult.text``.
+
+    ``raw_bytes`` keeps the original PDF body so the runner can hash it
+    for ``notification_documents`` evidence storage. Empty / unreadable
+    PDFs surface as ``FetchResult(ok=False, error='empty_pdf')`` so the
+    runner can bump source-failure detail without spuriously queueing
+    blank rows.
+    """
+    if not url:
+        return FetchResult(ok=False, url="", error="empty_url")
+
+    pdf_headers = dict(_DEFAULT_HEADERS)
+    pdf_headers["Accept"] = "application/pdf, */*;q=0.9"
+
+    try:
+        resp = httpx.get(url, headers=pdf_headers, timeout=timeout, follow_redirects=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] pdf request failed url=%s error=%s", url, exc)
+        return FetchResult(ok=False, url=url, error=str(exc))
+
+    try:
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] pdf http error url=%s status=%s error=%s", url, resp.status_code, exc)
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=resp.status_code,
+            final_url=str(resp.url),
+            error=f"http_{resp.status_code}",
+        )
+
+    raw_bytes = resp.content
+    content_hash = hashlib.sha256(raw_bytes).hexdigest() if raw_bytes else None
+    text = parse_pdf_bytes(raw_bytes)
+    if not text:
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=resp.status_code,
+            final_url=str(resp.url),
+            content_type=resp.headers.get("content-type"),
+            etag=resp.headers.get("etag"),
+            last_modified=resp.headers.get("last-modified"),
+            content_hash=content_hash,
+            raw_bytes=raw_bytes,
+            error="empty_pdf",
+        )
+    return FetchResult(
+        ok=True,
+        url=url,
+        status_code=resp.status_code,
+        final_url=str(resp.url),
+        content_type=resp.headers.get("content-type") or "application/pdf",
+        etag=resp.headers.get("etag"),
+        last_modified=resp.headers.get("last-modified"),
+        content_hash=content_hash,
+        text=text,
+        raw_bytes=raw_bytes,
+    )

@@ -309,6 +309,75 @@ def _run_rss_pass(
     return queued_any
 
 
+# ─── PDF adapter pass ─────────────────────────────────────────────────────
+
+
+def _run_pdf_pass(
+    supabase: Client,
+    *,
+    src: dict[str, Any],
+    source: Any,
+    run_id: str,
+    target_url: str,
+    queue_extraction: Any,
+    error_log: list[dict[str, Any]],
+    mock: bool,
+) -> bool:
+    """Fetch a PDF bulletin, extract its text, and queue it as a single
+    recruitment candidate.
+
+    Most government PDF bulletins describe one recruitment notification
+    end-to-end (eligibility, dates, vacancies). The pass treats the PDF
+    as a single "detail page": fetch + extract text once, run resolver
+    against the PDF URL itself (no anchors to follow), queue the
+    extracted body.
+
+    Multi-recruitment bulletins (e.g. monthly state-PSC roundups) need
+    source-specific splitter logic that lives in a future per-source
+    resolver; this default keeps the safer one-PDF-one-recruitment
+    contract.
+    """
+    from .fetcher import fetch_pdf
+
+    if mock:
+        raw_text = f"MOCK PDF BULLETIN BODY FOR {target_url}"
+    else:
+        result = fetch_pdf(target_url)
+        if not result.ok or not result.text:
+            error_log.append({
+                "source": source.name,
+                "url": target_url,
+                "error": result.error or "empty_pdf",
+                "at": utc_now_iso(),
+            })
+            return False
+        raw_text = result.text
+
+    listing_id = _upsert_aggregator_listing(
+        supabase,
+        source_id=src.get("id"),
+        scrape_run_id=run_id,
+        detail_url=target_url,
+        label=source.name,
+        event_type="new_recruitment",
+    )
+    _record_listing_observation(
+        supabase,
+        listing_id=listing_id,
+        source_id=src.get("id"),
+        scrape_run_id=run_id,
+        observed_url=target_url,
+        observed_label=source.name,
+        content_hash=None,
+    )
+
+    queued = queue_extraction(
+        src, source.name, target_url, raw_text,
+        listing_id=listing_id, resolver_result=None,
+    )
+    return bool(queued)
+
+
 # ─── JSON-API adapter pass ────────────────────────────────────────────────
 
 
@@ -1069,23 +1138,48 @@ def run_scraping_pass(
             continue
 
         if source.adapter_type and source.adapter_type.lower() == "pdf":
-            logger.info(
-                "scrape.adapter_not_implemented source_id=%s source_name=%s adapter_type=%s",
-                src.get("id"), source.name, source.adapter_type,
-            )
-            error_log.append({
-                "source": source.name,
-                "url": target_url,
-                "error": "adapter_not_implemented",
-                "adapter_type": source.adapter_type,
-                "at": utc_now_iso(),
-            })
-            _bump_source_failure(
-                supabase, src,
-                error_class="adapter_not_implemented",
-                error_message=f"adapter_type={source.adapter_type} not yet supported",
-                attempted_url=target_url,
-            )
+            try:
+                if not _run_pdf_pass(
+                    supabase,
+                    src=src,
+                    source=source,
+                    run_id=run_id,
+                    target_url=target_url,
+                    queue_extraction=queue_extraction,
+                    error_log=error_log,
+                    mock=mock,
+                ):
+                    _bump_source_failure(
+                        supabase, src,
+                        error_class="empty_pdf",
+                        error_message="pdf adapter returned no extractable text",
+                        attempted_url=target_url,
+                    )
+                    continue
+                execute_or_default(
+                    "source_registry.mark_success",
+                    lambda src=src: supabase.table("source_registry").update({
+                        "last_scraped_at": utc_now_iso(),
+                        "last_success_at": utc_now_iso(),
+                        "consecutive_fails": 0,
+                        "last_error": None,
+                        "last_error_class": None,
+                        "last_error_message": None,
+                        "last_error_at": None,
+                        "last_error_http_status": None,
+                        "last_error_url": None,
+                    }).eq("id", src["id"]).execute(),
+                    None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                error_class, error_message = _classify_exception(exc)
+                error_log.append({"source": source.name, "error": error_class, "error_message": error_message, "at": utc_now_iso()})
+                _bump_source_failure(
+                    supabase, src,
+                    error_class=error_class,
+                    error_message=error_message,
+                    attempted_url=target_url,
+                )
             continue
         try:
             if is_aggregator_source(src):

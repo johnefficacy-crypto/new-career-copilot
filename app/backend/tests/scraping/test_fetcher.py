@@ -297,3 +297,86 @@ def test_parse_json_feed_empty_input():
     assert parse_json_feed(None) == []
     assert parse_json_feed({}) == []
     assert parse_json_feed("not a json object") == []
+
+
+# ── PR P1 follow-up: PDF adapter ────────────────────────────────────────────
+
+
+from app.scraping.fetcher import fetch_pdf, parse_pdf_bytes
+
+
+def test_parse_pdf_bytes_empty_input():
+    assert parse_pdf_bytes(b"") == ""
+    assert parse_pdf_bytes(None) == ""
+
+
+def test_parse_pdf_bytes_malformed_input_returns_empty():
+    # Not a real PDF — pypdf raises; helper returns "" rather than propagating.
+    assert parse_pdf_bytes(b"not a pdf") == ""
+
+
+def test_fetch_pdf_returns_empty_url_error():
+    result = fetch_pdf("")
+    assert result.ok is False
+    assert result.error == "empty_url"
+
+
+def test_fetch_pdf_returns_empty_pdf_when_text_extraction_yields_nothing(monkeypatch):
+    """A scanned PDF / image-only PDF extracts to empty string. fetch_pdf
+    surfaces that as ok=False / error='empty_pdf' so the runner bumps
+    typed source-failure detail instead of queueing a blank row."""
+    class _Resp:
+        status_code = 200
+        content = b"%PDF-1.7\nfake\n%%EOF"
+        text = ""
+        url = "https://example.gov.in/bulletin.pdf"
+        headers = {"content-type": "application/pdf"}
+        def raise_for_status(self): pass
+
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", lambda *a, **k: _Resp())
+    monkeypatch.setattr("app.scraping.fetcher.parse_pdf_bytes", lambda raw: "")
+    result = fetch_pdf("https://example.gov.in/bulletin.pdf")
+    assert result.ok is False
+    assert result.error == "empty_pdf"
+    assert result.content_hash and len(result.content_hash) == 64
+
+
+def test_fetch_pdf_returns_extracted_text_on_success(monkeypatch):
+    class _Resp:
+        status_code = 200
+        content = b"%PDF-1.7\nfake\n%%EOF"
+        text = ""
+        url = "https://example.gov.in/bulletin.pdf"
+        headers = {"content-type": "application/pdf", "etag": '"v1"'}
+        def raise_for_status(self): pass
+
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", lambda *a, **k: _Resp())
+    monkeypatch.setattr(
+        "app.scraping.fetcher.parse_pdf_bytes",
+        lambda raw: "Notification: SSC CGL 2026. Apply online by 2026-02-15.",
+    )
+    result = fetch_pdf("https://example.gov.in/bulletin.pdf")
+    assert result.ok is True
+    assert result.status_code == 200
+    assert result.content_type == "application/pdf"
+    assert result.etag == '"v1"'
+    assert "SSC CGL 2026" in result.text
+
+
+def test_fetch_pdf_propagates_http_status_error(monkeypatch):
+    import httpx as _httpx
+
+    class _Resp:
+        status_code = 404
+        content = b""
+        text = ""
+        url = "https://example.gov.in/missing.pdf"
+        headers = {}
+        def raise_for_status(self):
+            raise _httpx.HTTPStatusError("404", request=None, response=self)
+
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", lambda *a, **k: _Resp())
+    result = fetch_pdf("https://example.gov.in/missing.pdf")
+    assert result.ok is False
+    assert result.status_code == 404
+    assert result.error == "http_404"
