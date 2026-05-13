@@ -1593,6 +1593,110 @@ def _persist_post_vacancies(
             created.append(("vacancy_reservations", rows[0]["id"]))
 
 
+def _persist_post_exam_pattern(
+    supabase: Client,
+    *,
+    post: Any,
+    post_id: str,
+    created: list[tuple[str, str]],
+) -> None:
+    """Write ``post.exam_pattern`` into the canonical ``exam_patterns`` table.
+
+    Each item should be a dict like ``{"section": str, "questions": int,
+    "marks": int, "duration_minutes": int, "negative_marking": str | None}``.
+    Empty / non-list values are no-ops.
+    """
+    pattern = getattr(post, "exam_pattern", None)
+    if not isinstance(pattern, list):
+        return
+    for sort_order, stage in enumerate(pattern):
+        if not isinstance(stage, dict):
+            continue
+        section = stage.get("section") or stage.get("section_name") or ""
+        payload: dict[str, Any] = {
+            "post_id": post_id,
+            "stage_name": str(stage.get("stage_name") or section or "stage"),
+            "section_name": (str(section) if section else None),
+            "question_count": stage.get("questions") if isinstance(stage.get("questions"), int) else None,
+            "marks": stage.get("marks") if isinstance(stage.get("marks"), int) else None,
+            "duration_minutes": stage.get("duration_minutes") if isinstance(stage.get("duration_minutes"), int) else None,
+            "negative_marking": (str(stage.get("negative_marking")) if stage.get("negative_marking") is not None else None),
+            "sort_order": sort_order,
+        }
+        rows = execute_or_raise(
+            "exam_patterns.insert",
+            lambda payload=payload: supabase.table("exam_patterns").insert(payload).execute(),
+        ).data or []
+        if rows:
+            created.append(("exam_patterns", rows[0]["id"]))
+
+
+def _persist_post_skill_tests(
+    supabase: Client,
+    *,
+    post: Any,
+    post_id: str,
+    created: list[tuple[str, str]],
+) -> None:
+    """Write ``post.skill_tests`` into ``skill_tests``.
+
+    Items: ``{"type": str, "wpm": int | None, "duration_minutes": int | None}``.
+    """
+    tests = getattr(post, "skill_tests", None)
+    if not isinstance(tests, list):
+        return
+    for test in tests:
+        if not isinstance(test, dict):
+            continue
+        test_type = test.get("type") or test.get("test_type")
+        if not test_type:
+            continue
+        wpm = test.get("wpm") or test.get("speed_requirement")
+        payload: dict[str, Any] = {
+            "post_id": post_id,
+            "test_type": str(test_type),
+            "speed_requirement": (str(wpm) if wpm is not None else None),
+            "duration_minutes": test.get("duration_minutes") if isinstance(test.get("duration_minutes"), int) else None,
+            "evaluation_formula": test.get("evaluation_formula"),
+        }
+        rows = execute_or_raise(
+            "skill_tests.insert",
+            lambda payload=payload: supabase.table("skill_tests").insert(payload).execute(),
+        ).data or []
+        if rows:
+            created.append(("skill_tests", rows[0]["id"]))
+
+
+def _persist_post_age_relaxation(
+    supabase: Client,
+    *,
+    post: Any,
+    post_id: str,
+    created: list[tuple[str, str]],
+) -> None:
+    """Write ``post.age_relaxation`` (dict of category → years) into
+    ``age_relaxation_rules``. One row per category. Non-dict values are
+    no-ops; non-integer year values are skipped.
+    """
+    relax = getattr(post, "age_relaxation", None)
+    if not isinstance(relax, dict):
+        return
+    for category, years in relax.items():
+        if not isinstance(years, int) or years < 0:
+            continue
+        payload: dict[str, Any] = {
+            "post_id": post_id,
+            "reservation_category": str(category),
+            "additional_years": years,
+        }
+        rows = execute_or_raise(
+            "age_relaxation_rules.insert",
+            lambda payload=payload: supabase.table("age_relaxation_rules").insert(payload).execute(),
+        ).data or []
+        if rows:
+            created.append(("age_relaxation_rules", rows[0]["id"]))
+
+
 def _compensate_promotion(
     supabase: Client,
     created: list[tuple[str, str]],
@@ -1654,6 +1758,9 @@ def _build_promotion_rpc_payload(
             "unit_location_state": post.unit_location_state,
             "unit_location_city": post.unit_location_city,
             "language_requirements": post.language_requirements or [],
+            "exam_pattern": post.exam_pattern,
+            "skill_tests": post.skill_tests,
+            "age_relaxation": post.age_relaxation,
         })
     return {
         "slug": slug,
@@ -1909,6 +2016,10 @@ def _promote_to_recruitments_compensation(
                 ).data or []
                 if edu_rows:
                     created.append(("education_criteria", edu_rows[0]["id"]))
+
+            _persist_post_exam_pattern(supabase, post=post, post_id=post_id, created=created)
+            _persist_post_skill_tests(supabase, post=post, post_id=post_id, created=created)
+            _persist_post_age_relaxation(supabase, post=post, post_id=post_id, created=created)
     except Exception:
         _compensate_promotion(supabase, created, reason="post_insert_failed")
         raise
