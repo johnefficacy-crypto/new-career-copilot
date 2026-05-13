@@ -197,8 +197,10 @@ def test_invalid_cutoff_date_is_unverifiable():
         _post(age_criteria=AgeCriteria(min_age=18, max_age=32, cutoff_date="not-a-date")),
     )
     # Must NOT silently fall back to today's date; must surface a failing age
-    # check and not be eligible.
+    # check, not be eligible, AND surface as conditional so callers can
+    # distinguish "bad canonical data" from a hard age disqualification.
     assert result.is_eligible is False
+    assert result.is_conditional is True
     age_check = next(c for c in result.checks if c.rule == "age")
     assert age_check.passed is False
     assert "unverifiable" in age_check.detail.lower()
@@ -216,6 +218,8 @@ def test_missing_nationality_is_unverifiable():
     assert nationality_check.passed is False
     assert "not provided" in nationality_check.detail.lower()
     assert result.is_eligible is False
+    # Missing legal identity data is a profile gap, not a hard disqualification.
+    assert result.is_conditional is True
 
 
 def test_ex_serviceman_without_service_years_is_unverifiable():
@@ -237,6 +241,25 @@ def test_ex_serviceman_without_service_years_is_unverifiable():
     assert age_check.passed is False
     assert "service_years" in age_check.detail
     assert result.is_eligible is False
+    assert result.is_conditional is True
+
+
+def test_hard_age_failure_is_not_conditional():
+    # Sanity check the opposite path: a candidate who simply exceeds max_age
+    # is NOT conditional — they are hard-disqualified. This guards against
+    # the unverifiable-rule exemption accidentally swallowing real failures.
+    result = check_eligibility(
+        _profile(date_of_birth="1980-01-01"),  # 46 at 2026-01-01
+        _education(),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post(age_criteria=AgeCriteria(min_age=18, max_age=32, cutoff_date="2026-01-01")),
+    )
+    age_check = next(c for c in result.checks if c.rule == "age")
+    assert age_check.passed is False
+    assert "exceeds maximum" in age_check.detail
+    assert result.is_eligible is False
+    assert result.is_conditional is False
 
 
 @pytest.mark.parametrize(
@@ -260,6 +283,36 @@ def test_attempt_limits_use_normalized_category(limit_category, user_category, e
         _post(attempt_limits=[AttemptLimit(category=limit_category, max_attempts=3)]),
     )
     assert result.is_eligible is expected
+
+
+@pytest.mark.parametrize(
+    "limit_category,user_category",
+    [
+        # Unknown limit categories MUST NOT silently match anyone — they would
+        # previously collapse to "general" via _normalize_category and apply to
+        # general candidates.
+        ("xyz_unknown", "general"),
+        ("obc-ncl", "general"),  # hyphen vs underscore: not in known token set
+        ("typo_general", "general"),
+        # Unknown USER category must not match a "general" limit either.
+        ("general", "xyz_unknown"),
+    ],
+)
+def test_attempt_limits_unknown_category_does_not_collapse_to_general(
+    limit_category, user_category
+):
+    # Only a category-specific limit is supplied (no None-category fallback).
+    # With the unknown spelling on either side, no limit should apply, so
+    # the candidate must not be hit with an attempt cap they never matched.
+    result = check_eligibility(
+        _profile(category=user_category),
+        _education(),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=3)],
+        [UserExamCredential(exam_key="gate")],
+        _post(attempt_limits=[AttemptLimit(category=limit_category, max_attempts=3)]),
+    )
+    assert result.is_eligible is True
+    assert all(c.rule != "attempts" for c in result.checks)
 
 
 def test_org_state_alone_does_not_force_domicile():
