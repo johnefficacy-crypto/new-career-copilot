@@ -95,7 +95,7 @@ PyJWT==2.12.1
 pyparsing==3.3.2
 pyroaring==1.1.0
 pytest==9.0.3
-pypdf==5.1.0
+pypdf==6.10.2
 pytest-cov==7.0.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
