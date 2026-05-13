@@ -261,7 +261,15 @@ def verify_organization(organization_id: str, admin: dict = Depends(require_perm
 @router.get("/admin/recruitments")
 def admin_recruitments(_admin: dict = Depends(require_permission("recruitments.manage"))):
     sb=get_supabase_admin()
-    rows=sb.table("recruitments").select("id,name,publish_status,status,official_notification_url,official_apply_url,published_by,published_at,review_notes,source_id,organizations(name,is_verified)").order("created_at", desc=True).limit(200).execute().data or []
+    # Inline blocker-fix form needs editable fields (organization_id, source_id,
+    # apply window, total_vacancies, notification_date) — select them too so the
+    # Operations Console can pre-fill the form without a per-row GET.
+    rows=sb.table("recruitments").select(
+        "id,name,publish_status,status,organization_id,source_id,"
+        "official_notification_url,official_apply_url,source_pdf_url,"
+        "apply_start_date,apply_end_date,notification_date,total_vacancies,"
+        "published_by,published_at,review_notes,organizations(name,is_verified)"
+    ).order("created_at", desc=True).limit(200).execute().data or []
     items=[]
     for r in rows:
         try:
@@ -269,7 +277,29 @@ def admin_recruitments(_admin: dict = Depends(require_permission("recruitments.m
         except Exception as exc:  # noqa: BLE001
             ready={"blocking_issues":["readiness_check_failed"],"warnings":[str(exc)]}
         org=(r.get("organizations") or {})
-        items.append({"id":r.get("id"),"name":r.get("name"),"publish_status":r.get("publish_status"),"lifecycle_status":r.get("status"),"organization":org.get("name"),"organization_verified":org.get("is_verified"),"official_notification_url":r.get("official_notification_url"),"official_apply_url":r.get("official_apply_url"),"source_provenance":1 if r.get("source_id") else 0,"blocking_issues":ready.get("blocking_issues",[]),"warnings":ready.get("warnings",[]),"published_by":r.get("published_by"),"published_at":r.get("published_at"),"review_notes":r.get("review_notes")})
+        items.append({
+            "id":r.get("id"),
+            "name":r.get("name"),
+            "publish_status":r.get("publish_status"),
+            "lifecycle_status":r.get("status"),
+            "organization":org.get("name"),
+            "organization_id":r.get("organization_id"),
+            "organization_verified":org.get("is_verified"),
+            "source_id":r.get("source_id"),
+            "official_notification_url":r.get("official_notification_url"),
+            "official_apply_url":r.get("official_apply_url"),
+            "source_pdf_url":r.get("source_pdf_url"),
+            "apply_start_date":r.get("apply_start_date"),
+            "apply_end_date":r.get("apply_end_date"),
+            "notification_date":r.get("notification_date"),
+            "total_vacancies":r.get("total_vacancies"),
+            "source_provenance":1 if r.get("source_id") else 0,
+            "blocking_issues":ready.get("blocking_issues",[]),
+            "warnings":ready.get("warnings",[]),
+            "published_by":r.get("published_by"),
+            "published_at":r.get("published_at"),
+            "review_notes":r.get("review_notes"),
+        })
     return {"items": items}
 
 @router.get("/admin/organizations")

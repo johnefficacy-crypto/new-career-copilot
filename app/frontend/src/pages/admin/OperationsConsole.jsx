@@ -11,9 +11,12 @@ import NextActionCallout from "../../features/admin/workflow/NextActionCallout";
 import useAdminNextActions from "../../features/admin/workflow/useAdminNextActions";
 import OfficialSourceResolver from "../../features/admin/workflow/OfficialSourceResolver";
 import DuplicateMergePreview from "../../features/admin/workflow/DuplicateMergePreview";
+import { scoreToPct } from "../../features/admin/workflow/scoreUtils";
 
+// "Select Source" rather than "Source Setup" — create/edit/verify still live
+// on /admin/sources to avoid duplicating the source registry drawer here.
 const TABS = [
-  { id: "source", label: "Source Setup" },
+  { id: "source", label: "Select Source" },
   { id: "scrape", label: "Scrape Run" },
   { id: "queue", label: "Queue Review" },
   { id: "draft", label: "Draft Fixes" },
@@ -38,6 +41,7 @@ export default function OperationsConsole() {
   const [msg, setMsg] = useState(null);
   const [resolverOpen, setResolverOpen] = useState(false);
   const [mergeTarget, setMergeTarget] = useState(null); // { id, name } of recruitment to merge into
+  const [queueFilter, setQueueFilter] = useState(() => searchParams.get("queue_status") || "pending");
 
   const { runAction, busyKey, error: actionError } = useAdminAction();
 
@@ -57,7 +61,9 @@ export default function OperationsConsole() {
       const [s, r, q, recs] = await Promise.all([
         api.get("/api/admin/sources"),
         api.get("/api/admin/scrape/runs?limit=10"),
-        api.get("/api/admin/scrape/queue?status=pending&limit=50"),
+        // status=all so admins can also inspect merged/rejected/duplicate rows
+        // without leaving the console; filtering is local via filter chips.
+        api.get("/api/admin/scrape/queue?status=all&limit=50"),
         api.get("/api/admin/recruitments"),
       ]);
       setSources(s.items || []);
@@ -206,7 +212,11 @@ export default function OperationsConsole() {
   }, [runAction, loadAll]);
 
   const openMergePreview = useCallback((_item, dup) => {
-    setMergeTarget({ id: dup.id, name: dup.name || dup.title || dup.id });
+    // Backend duplicate_candidates() ships {recruitment_id, name, ...} — there
+    // is no `id` field. Falling back to `id` covers any legacy payload shape.
+    const targetId = dup?.recruitment_id || dup?.id;
+    if (!targetId) return;
+    setMergeTarget({ id: targetId, name: dup.name || dup.title || targetId });
   }, []);
 
   const confirmMerge = useCallback(async ({ force_fields }) => {
@@ -223,12 +233,14 @@ export default function OperationsConsole() {
   }, [queueId, mergeTarget, runAction, loadAll]);
 
   const markDuplicate = useCallback(async (item, dup) => {
+    const targetId = dup?.recruitment_id || dup?.id;
+    if (!targetId) return;
     await runAction({
       key: `mark-dup-${item.id}`,
-      confirm: `Mark "${item.recruitment || item.id}" as duplicate of "${dup.name || dup.id}"?`,
+      confirm: `Mark "${item.recruitment || item.id}" as duplicate of "${dup.name || targetId}"?`,
       successMessage: "Marked as duplicate.",
       action: async () => {
-        await api.post(`/api/admin/scrape/items/${item.id}/mark-duplicate`, { notes: `duplicate of ${dup.id}` });
+        await api.post(`/api/admin/scrape/items/${item.id}/mark-duplicate`, { notes: `duplicate of ${targetId}` });
         await loadAll();
       },
     });
@@ -323,7 +335,13 @@ export default function OperationsConsole() {
             />
           )}
           {tab === "queue" && (
-            <QueueList items={queue} selectedId={queueId} onSelect={(id) => updateParams({ queue_id: id, tab: "draft" })} />
+            <QueueList
+              items={queue}
+              selectedId={queueId}
+              filter={queueFilter}
+              onFilterChange={(value) => { setQueueFilter(value); updateParams({ queue_status: value === "pending" ? null : value }); }}
+              onSelect={(id) => updateParams({ queue_id: id, tab: "draft" })}
+            />
           )}
           {(tab === "draft" || tab === "publish") && (
             <RecruitmentList items={recruitments} selectedId={recruitmentId} onSelect={(id) => updateParams({ recruitment_id: id })} />
@@ -338,6 +356,7 @@ export default function OperationsConsole() {
             queueItem={tab === "draft" ? selectedQueueItem : null}
             recruitment={tab === "publish" ? selectedRecruitment : null}
             validateResult={validateResult}
+            sources={sources}
             onQueueFieldAction={queueFieldAction}
             onPromote={promote}
             onMergeIntoExisting={openMergePreview}
@@ -386,7 +405,14 @@ function SourceList({ sources, selectedId, onSelect }) {
   if (!sources.length) return <EmptyState title="No sources yet" description="Add a source from the Source Registry." actionLabel="Open Source Registry" actionHref="/admin/sources" />;
   return (
     <section className="soft-card rounded-2xl p-3" data-testid="ops-source-list">
-      <div className="text-[11px] uppercase tracking-widest text-muted-foreground mb-2">Sources</div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Select source</div>
+        <a className="text-[11px] link-under" href="/admin/sources" data-testid="ops-manage-sources">Manage sources</a>
+      </div>
+      <p className="text-[11px] text-muted-foreground mb-2">
+        Pick a verified source to scrape against. Create, edit, or verify sources in the{" "}
+        <a className="link-under" href="/admin/sources">Source Registry</a>.
+      </p>
       <ul className="space-y-1">
         {sources.map((s) => (
           <li key={s.id}>
@@ -426,27 +452,61 @@ function ScrapeRunPanel({ runs, source, onRunDry, onRunLive, busy }) {
   );
 }
 
-function QueueList({ items, selectedId, onSelect }) {
-  if (!items.length) return <EmptyState title="Queue empty" description="Run a dry scrape to populate the queue." />;
+const QUEUE_FILTERS = [
+  { key: "pending", label: "Pending" },
+  { key: "approved", label: "Promoted" },
+  { key: "merged", label: "Merged" },
+  { key: "duplicate", label: "Duplicate" },
+  { key: "rejected", label: "Rejected" },
+  { key: "all", label: "All" },
+];
+
+function QueueList({ items, selectedId, filter = "pending", onFilterChange, onSelect }) {
+  const filtered = filter === "all" ? items : items.filter((q) => (q.status || "pending") === filter);
   return (
     <section className="soft-card rounded-2xl p-3" data-testid="ops-queue-list">
-      <div className="text-[11px] uppercase tracking-widest text-muted-foreground mb-2">Pending queue ({items.length})</div>
-      <ul className="space-y-1 max-h-[60vh] overflow-y-auto">
-        {items.map((q) => {
-          const conf = Number(q.confidence_score ?? q.confidence ?? 0);
-          const quality = typeof q.data_quality_score === "number" ? Math.round(Math.max(0, Math.min(1, q.data_quality_score)) * 100) : null;
-          return (
-            <li key={q.id}>
-              <button type="button" onClick={() => onSelect(q.id)} className={`w-full text-left rounded-xl border px-3 py-2 text-xs ${selectedId === q.id ? "border-dusk-700 bg-dusk-700/10" : "border-border bg-white/60"}`} data-testid={`ops-queue-${q.id}`}>
-                <div className="font-semibold truncate">{q.recruitment || q.extracted_data?.title || q.source_name || q.id}</div>
-                <div className="text-[10px] text-muted-foreground">
-                  conf {Math.round(conf * 100)}%{quality != null ? ` · quality ${quality}%` : ""}{(q.unverified_fields || []).length ? ` · ${q.unverified_fields.length} unverified` : ""}{q.official_source_resolved === false ? " · official unresolved" : ""}
-                </div>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Queue ({filtered.length}/{items.length})</div>
+      </div>
+      <div className="flex flex-wrap gap-1 mb-2" role="tablist" aria-label="Queue status filter">
+        {QUEUE_FILTERS.map((f) => (
+          <button
+            key={f.key}
+            type="button"
+            role="tab"
+            aria-selected={filter === f.key}
+            onClick={() => onFilterChange?.(f.key)}
+            className={`rounded-full border px-2 py-0.5 text-[10px] ${filter === f.key ? "border-dusk-700 bg-dusk-700 text-white" : "border-border bg-white/70 text-foreground/75 hover:bg-clay-100"}`}
+            data-testid={`queue-filter-${f.key}`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+      {filtered.length === 0 ? (
+        <p className="text-xs text-muted-foreground py-2">No queue items in this view.</p>
+      ) : (
+        <ul className="space-y-1 max-h-[60vh] overflow-y-auto">
+          {filtered.map((q) => {
+            const conf = scoreToPct(q.confidence_score ?? q.confidence);
+            const quality = scoreToPct(q.data_quality_score);
+            const statusLabel = (q.status || "pending");
+            return (
+              <li key={q.id}>
+                <button type="button" onClick={() => onSelect(q.id)} className={`w-full text-left rounded-xl border px-3 py-2 text-xs ${selectedId === q.id ? "border-dusk-700 bg-dusk-700/10" : "border-border bg-white/60"}`} data-testid={`ops-queue-${q.id}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-semibold truncate flex-1">{q.recruitment || q.extracted_data?.title || q.source_name || q.id}</div>
+                    <span className="pill pill-dusk text-[9px] uppercase">{statusLabel}</span>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    conf {conf != null ? `${conf}%` : "-"}{quality != null ? ` · quality ${quality}%` : ""}{(q.unverified_fields || []).length ? ` · ${q.unverified_fields.length} unverified` : ""}{q.official_source_resolved === false ? " · official unresolved" : ""}
+                  </div>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </section>
   );
 }

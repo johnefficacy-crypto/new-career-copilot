@@ -7,6 +7,7 @@ import FieldReviewGroup from "../../features/admin/workflow/FieldReviewGroup";
 import { HIGH_RISK_QUEUE_FIELDS, NEXT_ACTION_MESSAGES, RECOMMENDED_REVIEW_FIELDS, SOURCE_TYPE_LABELS } from "../../features/admin/workflow/adminWorkflowContract";
 import { useFocusTrap } from "../../shared/a11y/useFocusTrap";
 import { EmptyState, ErrorState, LoadingSkeleton, StatusBadge, useToast } from "../../shared/ui";
+import { formatScorePct } from "../../features/admin/workflow/scoreUtils";
 
 function shortId(value) {
   return value ? String(value).slice(0, 8) : "-";
@@ -14,13 +15,6 @@ function shortId(value) {
 
 function typeLabel(value) {
   return SOURCE_TYPE_LABELS[value] || value || "Unknown";
-}
-
-function formatScorePct(value) {
-  if (value == null || value === "") return "-";
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "-";
-  return `${Math.round(Math.max(0, Math.min(1, n)) * 100)}%`;
 }
 
 function selectedSourceIds(mode, selected) {

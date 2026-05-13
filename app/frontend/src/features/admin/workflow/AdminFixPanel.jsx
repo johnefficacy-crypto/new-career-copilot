@@ -5,7 +5,9 @@ import FieldReviewGroup from "./FieldReviewGroup";
 import PostEligibilityReviewGroup from "./PostEligibilityReviewGroup";
 import BlockerList from "./BlockerList";
 import RecruitmentCriteriaPanel from "../recruitments/RecruitmentCriteriaPanel";
+import RecruitmentBlockerFixForm from "../recruitments/RecruitmentBlockerFixForm";
 import { HIGH_RISK_QUEUE_FIELDS, RECOMMENDED_REVIEW_FIELDS } from "./adminWorkflowContract";
+import { scoreToPct, isLowQuality } from "./scoreUtils";
 
 // AdminFixPanel concentrates blocker display + fix controls for both the
 // selected scrape_queue item and the selected canonical recruitment so admins
@@ -15,6 +17,7 @@ export default function AdminFixPanel({
   queueItem,
   recruitment,
   validateResult,
+  sources = [],
   onQueueFieldAction,
   onPromote,
   onMergeIntoExisting,
@@ -50,6 +53,7 @@ export default function AdminFixPanel({
         <RecruitmentFixSection
           recruitment={recruitment}
           validateResult={validateResult}
+          sources={sources}
           onValidate={onValidate}
           onVerify={onVerify}
           onPublish={onPublish}
@@ -64,9 +68,8 @@ function QueueFixSection({ item, onFieldAction, onPromote, onMergeIntoExisting, 
   const blockers = item.unverified_fields || [];
   const dups = item.duplicate_candidates || [];
   const officialUnresolved = item.official_source_resolved === false;
-  const dataQuality = typeof item.data_quality_score === "number" ? item.data_quality_score : null;
-  const dataQualityPct = dataQuality != null ? Math.round(Math.max(0, Math.min(1, dataQuality)) * 100) : null;
-  const lowQuality = dataQualityPct != null && dataQualityPct < 60;
+  const dataQualityPct = scoreToPct(item.data_quality_score);
+  const lowQuality = isLowQuality(item.data_quality_score);
 
   return (
     <section className="soft-card rounded-2xl p-4" data-testid="queue-fix-section">
@@ -134,9 +137,11 @@ function QueueFixSection({ item, onFieldAction, onPromote, onMergeIntoExisting, 
         <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
           <div className="font-semibold text-amber-900">Possible duplicates</div>
           <ul className="mt-2 space-y-1 text-xs">
-            {dups.slice(0, 3).map((d, i) => (
-              <li key={d.id || i} className="flex flex-wrap items-center justify-between gap-2">
-                <span>{d.name || d.title || d.id}</span>
+            {dups.slice(0, 3).map((d, i) => {
+              const dupId = d.recruitment_id || d.id;
+              return (
+              <li key={dupId || i} className="flex flex-wrap items-center justify-between gap-2">
+                <span>{d.name || d.title || dupId}</span>
                 <div className="flex gap-1">
                   <button type="button" className="btn btn-ghost h-7 text-[11px]" onClick={() => onMergeIntoExisting?.(item, d)} disabled={busy}>
                     Preview merge
@@ -146,7 +151,8 @@ function QueueFixSection({ item, onFieldAction, onPromote, onMergeIntoExisting, 
                   </button>
                 </div>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </div>
       ) : null}
@@ -178,9 +184,21 @@ function onQueueFieldActionSafe(handler, id, field, action, correctedValue) {
   }
 }
 
-function RecruitmentFixSection({ recruitment, validateResult, onValidate, onVerify, onPublish, busy }) {
+function RecruitmentFixSection({ recruitment, validateResult, sources = [], onValidate, onVerify, onPublish, busy }) {
   const blockers = (validateResult?.blocking_issues || recruitment.blocking_issues || []);
   const [reviewing, setReviewing] = useState(false);
+  const NON_CRITERIA_BLOCKERS = new Set([
+    "organization_missing",
+    "organization_unverified",
+    "official_notification_url_missing",
+    "official_apply_url_missing_while_open",
+    "apply_dates_reversed",
+    "apply_dates_invalid",
+    "source_provenance_missing",
+    "source_provenance_not_found",
+    "unverified_source_provenance",
+  ]);
+  const nonCriteriaBlockers = blockers.filter((b) => NON_CRITERIA_BLOCKERS.has(b));
   return (
     <section className="soft-card rounded-2xl p-4" data-testid="recruitment-fix-section">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -199,6 +217,17 @@ function RecruitmentFixSection({ recruitment, validateResult, onValidate, onVeri
       <div className="mt-3">
         <BlockerList blockers={blockers} />
       </div>
+
+      {nonCriteriaBlockers.length ? (
+        <div className="mt-4" data-testid="recruitment-blocker-fix-section">
+          <RecruitmentBlockerFixForm
+            recruitment={recruitment}
+            blockers={nonCriteriaBlockers}
+            sources={sources}
+            onChanged={() => onValidate?.(recruitment)}
+          />
+        </div>
+      ) : null}
 
       {(blockers.includes("posts_missing") || blockers.includes("eligibility_rules_missing")) ? (
         <div className="mt-4" data-testid="recruitment-criteria-section">
