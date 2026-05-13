@@ -700,7 +700,12 @@ def test_runner_records_typed_failure_detail_on_empty_fetch(monkeypatch):
     assert out["status"] == "failed"
     updates = sb.db.get("source_registry_updates", [])
     assert updates, "expected source_registry to be updated"
-    last = updates[-1]
+    # The very last update is the per-source lock release (sets
+    # currently_scraping_at=None); skip it and find the typed
+    # failure-detail update.
+    failure_updates = [u for u in updates if "last_error_class" in u]
+    assert failure_updates, "expected a typed failure update"
+    last = failure_updates[-1]
     assert last["last_error_class"] == "empty_response"
     assert last["last_error_message"]
     assert last["last_error_url"] == "https://upsc.gov.in/notices"
@@ -1556,3 +1561,50 @@ def test_runner_pdf_skips_on_304_and_marks_success(monkeypatch):
     assert all(e.get("error") != "empty_pdf" for e in out.get("errors", []))
     updates = sb.db.get("source_registry_updates", [])
     assert any(u.get("consecutive_fails") == 0 for u in updates)
+
+
+# ── Per-source concurrency lock ─────────────────────────────────────────────
+
+
+def test_runner_skips_source_with_fresh_concurrency_claim():
+    """A source whose currently_scraping_at is recent gets skipped with
+    error='concurrent_lock_held' (no fetch happens)."""
+    sb = RunnerSB()
+    from datetime import datetime, timezone
+    sb.db["source_registry"][0]["currently_scraping_at"] = datetime.now(timezone.utc).isoformat()
+
+    out = run_scraping_pass(sb, source_ids=["src-1"], mock=True)
+    assert out["items_found"] == 0
+    assert any(e.get("error") == "concurrent_lock_held" for e in out["errors"])
+    # No queue rows because we never entered the body.
+    assert sb.db.get("scrape_queue", []) == []
+
+
+def test_runner_takes_over_stale_concurrency_claim():
+    """A claim older than the stale threshold is treated as crashed and
+    gets overwritten so the source eventually recovers."""
+    sb = RunnerSB()
+    from datetime import datetime, timedelta, timezone
+    stale_when = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    sb.db["source_registry"][0]["currently_scraping_at"] = stale_when
+
+    out = run_scraping_pass(sb, source_ids=["src-1"], mock=True)
+    assert out["items_found"] == 3  # mock aggregator returns 3 detail URLs
+    # The lock got released at the end (claim -> None), and a typed
+    # success update preceded it.
+    updates = sb.db.get("source_registry_updates", [])
+    assert any(u.get("currently_scraping_at") is None for u in updates)
+
+
+def test_runner_releases_lock_after_successful_pass():
+    """After a normal pass the source's currently_scraping_at is back
+    to NULL so the next pass can claim it again."""
+    sb = RunnerSB()
+    run_scraping_pass(sb, source_ids=["src-1"], mock=True)
+    # Last update on the source is the release (NULL).
+    updates = sb.db.get("source_registry_updates", [])
+    release_updates = [u for u in updates if u.get("currently_scraping_at") is None]
+    assert release_updates, "expected a release update"
+    # And the per-source claim itself was stamped at some point.
+    claim_updates = [u for u in updates if isinstance(u.get("currently_scraping_at"), str) and u.get("currently_scraping_at")]
+    assert claim_updates, "expected a claim update"
