@@ -1171,3 +1171,88 @@ def test_runner_rss_lifecycle_event_persisted_in_live_mode(monkeypatch):
     run_scraping_pass(sb, source_ids=["src-rss"], mock=False, limit=5)
     events = sb.db.get("recruitment_events", [])
     assert any(e["event_type"] == "admit_card" for e in events)
+
+
+# ── Rich-field canonical persistence (P1 follow-up) ─────────────────────────
+
+
+def test_promote_writes_exam_patterns():
+    sb = SB()
+    data = ExtractedRecruitment(
+        title="T", organization_name="O", org_type="Other", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="https://x",
+        posts=[{
+            "post_name": "Inspector",
+            "exam_pattern": [
+                {"section": "General Awareness", "questions": 25, "marks": 50, "duration_minutes": 30, "negative_marking": "0.5"},
+                {"section": "Reasoning", "questions": 25, "marks": 50, "duration_minutes": 30, "negative_marking": "0.5"},
+            ],
+        }],
+    )
+    promote_to_recruitments(data, sb)
+    rows = sb.db.get("exam_patterns", [])
+    assert len(rows) == 2
+    assert rows[0]["section_name"] == "General Awareness"
+    assert rows[0]["question_count"] == 25
+    assert rows[0]["marks"] == 50
+    assert rows[0]["duration_minutes"] == 30
+    assert rows[0]["sort_order"] == 0
+    assert rows[1]["sort_order"] == 1
+
+
+def test_promote_writes_skill_tests():
+    sb = SB()
+    data = ExtractedRecruitment(
+        title="T", organization_name="O", org_type="Other", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="https://x",
+        posts=[{
+            "post_name": "Junior Assistant",
+            "skill_tests": [
+                {"type": "typing", "wpm": 35, "duration_minutes": 10},
+                {"type": "stenography", "wpm": 80, "duration_minutes": 5},
+            ],
+        }],
+    )
+    promote_to_recruitments(data, sb)
+    rows = sb.db.get("skill_tests", [])
+    assert len(rows) == 2
+    types = sorted(r["test_type"] for r in rows)
+    assert types == ["stenography", "typing"]
+    by_type = {r["test_type"]: r for r in rows}
+    assert by_type["typing"]["speed_requirement"] == "35"
+    assert by_type["typing"]["duration_minutes"] == 10
+
+
+def test_promote_writes_age_relaxation_rules():
+    sb = SB()
+    data = ExtractedRecruitment(
+        title="T", organization_name="O", org_type="Other", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="https://x",
+        posts=[{
+            "post_name": "Officer",
+            "age_relaxation": {"SC": 5, "ST": 5, "OBC": 3, "PwBD": 10},
+        }],
+    )
+    promote_to_recruitments(data, sb)
+    rows = sb.db.get("age_relaxation_rules", [])
+    by_cat = {r["reservation_category"]: r["additional_years"] for r in rows}
+    assert by_cat == {"SC": 5, "ST": 5, "OBC": 3, "PwBD": 10}
+
+
+def test_promote_handles_missing_rich_fields_cleanly():
+    """A post with no exam_pattern / skill_tests / age_relaxation
+    produces zero rows in the new canonical tables."""
+    sb = SB()
+    data = ExtractedRecruitment(
+        title="T", organization_name="O", org_type="Other", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="https://x",
+        posts=[{"post_name": "X"}],
+    )
+    promote_to_recruitments(data, sb)
+    assert sb.db.get("exam_patterns", []) == []
+    assert sb.db.get("skill_tests", []) == []
+    assert sb.db.get("age_relaxation_rules", []) == []
