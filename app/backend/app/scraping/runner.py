@@ -238,6 +238,118 @@ def _record_listing_observation(
         )
 
 
+def _upsert_recruitment_candidate(
+    supabase: Client,
+    *,
+    canonical_key: str,
+    title_hint: str | None,
+    organization_hint: str | None,
+    year_hint: int | None,
+    new_status: str,
+) -> str | None:
+    """Insert-or-touch a ``recruitment_candidates`` row keyed by canonical_key.
+
+    Returns the candidate id, or ``None`` if the table is unavailable.
+    ``new_status`` is applied on insert and only on update when it
+    represents a stricter step in the lifecycle than the existing one
+    (we never downgrade a candidate's status here).
+    """
+    try:
+        existing = (
+            supabase.table("recruitment_candidates")
+            .select("id, status")
+            .eq("canonical_key", canonical_key)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if existing:
+            candidate_id = existing[0]["id"]
+            payload: dict[str, Any] = {"updated_at": utc_now_iso()}
+            if _candidate_status_rank(new_status) > _candidate_status_rank(
+                existing[0].get("status") or "unverified"
+            ):
+                payload["status"] = new_status
+            supabase.table("recruitment_candidates").update(payload).eq(
+                "id", candidate_id
+            ).execute()
+            return candidate_id
+
+        rows = (
+            supabase.table("recruitment_candidates")
+            .insert(
+                {
+                    "canonical_key": canonical_key,
+                    "title_hint": title_hint,
+                    "organization_hint": organization_hint,
+                    "year_hint": year_hint,
+                    "status": new_status,
+                }
+            )
+            .execute()
+            .data
+            or []
+        )
+        return rows[0].get("id") if rows else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "recruitment_candidates unavailable canonical_key=%s error=%s",
+            canonical_key, exc,
+        )
+        return None
+
+
+_CANDIDATE_STATUS_ORDER = (
+    "unverified",
+    "aggregator_confirmed",
+    "official_notification_found",
+    "extraction_pending",
+    "extraction_complete",
+    "needs_review",
+    "verified",
+    "promoted",
+    "rejected",
+)
+
+
+def _candidate_status_rank(status: str) -> int:
+    try:
+        return _CANDIDATE_STATUS_ORDER.index(status)
+    except ValueError:
+        return -1
+
+
+def _record_candidate_observation(
+    supabase: Client,
+    *,
+    candidate_id: str | None,
+    listing_id: str | None,
+    source_id: str | None,
+    scrape_queue_id: str | None,
+    confidence_score: float | None,
+    payload: dict[str, Any],
+) -> None:
+    if not candidate_id or not source_id:
+        return
+    try:
+        supabase.table("candidate_observations").insert(
+            {
+                "candidate_id": candidate_id,
+                "listing_id": listing_id,
+                "source_id": source_id,
+                "scrape_queue_id": scrape_queue_id,
+                "confidence_score": confidence_score,
+                "payload": payload,
+            }
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "candidate_observations insert failed candidate_id=%s error=%s",
+            candidate_id, exc,
+        )
+
+
 def _mark_listing_status(
     supabase: Client,
     listing_id: str | None,
@@ -469,6 +581,38 @@ def run_scraping_pass(
             total_new += 1
             if inserted_id:
                 queued_id_by_key.setdefault(sim_key, inserted_id)
+
+        # Candidate merge: tie this queue row to a canonical candidate keyed
+        # by ``recruitment_key(org, year, title)``. Future PRs upgrade the
+        # candidate status as it moves through review/promotion.
+        candidate_status = (
+            "official_notification_found"
+            if resolver_result is not None
+            else "aggregator_confirmed"
+        )
+        candidate_id = _upsert_recruitment_candidate(
+            supabase,
+            canonical_key=sim_key,
+            title_hint=data.title,
+            organization_hint=data.organization_name,
+            year_hint=data.year,
+            new_status=candidate_status,
+        )
+        _record_candidate_observation(
+            supabase,
+            candidate_id=candidate_id,
+            listing_id=listing_id,
+            source_id=src.get("id"),
+            scrape_queue_id=inserted_id,
+            confidence_score=confidence,
+            payload={
+                "duplicate_status": queue_payload["status"],
+                "duplicate_reason": decision.reason,
+                "resolver_reason": resolver_result.reason if resolver_result else None,
+                "resolver_host": resolver_result.host if resolver_result else None,
+                "data_quality_score": normalized.data_quality_score,
+            },
+        )
         return inserted_id
 
     for src in sources:
@@ -899,6 +1043,65 @@ def _find_or_create_organization(
     return inserted[0]["id"]
 
 
+def _persist_post_vacancies(
+    supabase: Client,
+    *,
+    post: Any,
+    post_id: str,
+    created: list[tuple[str, str]],
+) -> None:
+    """Write per-post vacancies into ``vacancy_reservations``.
+
+    Two cases:
+      * ``post.category_vacancies`` is a dict ({"UR": 50, "SC": 15, ...}) →
+        one row per key, with ``vertical_category`` set.
+      * Only ``post.vacancies`` is a plain integer → one unreserved row
+        with ``vertical_category=NULL``.
+
+    A post with neither writes no rows. Each inserted row id is recorded
+    in ``created`` so the compensation path can roll it back.
+    """
+    category_map = getattr(post, "category_vacancies", None)
+    if isinstance(category_map, dict) and category_map:
+        for category, count in category_map.items():
+            if not isinstance(count, int) or count < 0:
+                continue
+            rows = execute_or_raise(
+                "vacancy_reservations.insert",
+                lambda category=category, count=count, post_id=post_id: supabase.table(
+                    "vacancy_reservations"
+                )
+                .insert(
+                    {
+                        "post_id": post_id,
+                        "vertical_category": category,
+                        "vacancy_count": count,
+                    }
+                )
+                .execute(),
+            ).data or []
+            if rows:
+                created.append(("vacancy_reservations", rows[0]["id"]))
+        return
+
+    total = getattr(post, "vacancies", None)
+    if isinstance(total, int) and total > 0:
+        rows = execute_or_raise(
+            "vacancy_reservations.insert",
+            lambda total=total, post_id=post_id: supabase.table("vacancy_reservations")
+            .insert(
+                {
+                    "post_id": post_id,
+                    "vertical_category": None,
+                    "vacancy_count": total,
+                }
+            )
+            .execute(),
+        ).data or []
+        if rows:
+            created.append(("vacancy_reservations", rows[0]["id"]))
+
+
 def _compensate_promotion(
     supabase: Client,
     created: list[tuple[str, str]],
@@ -1041,6 +1244,12 @@ def promote_to_recruitments(
                 raise PromotionError(f"post insert returned no row for recruitment={rec_id}")
             post_id = post_rows[0]["id"]
             created.append(("posts", post_id))
+
+            # Persist per-post vacancies into the canonical
+            # ``vacancy_reservations`` table. Single totals land as one
+            # unreserved row; category-wise vacancies expand into one row
+            # per vertical category (UR/SC/ST/OBC/EWS).
+            _persist_post_vacancies(supabase, post=post, post_id=post_id, created=created)
 
             if post.min_age or post.max_age:
                 # Indian notices often specify a separate "age as on" date;
