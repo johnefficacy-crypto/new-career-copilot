@@ -21,7 +21,9 @@ class ExtractedPost(BaseModel):
     unit_name: str | None = None
     unit_location_state: str | None = None
     unit_location_city: str | None = None
-    language_requirements: list[str] | None = None
+    certificates_requirements: list[str] | None = None      
+    
+    # changed language_requirements to certificates_requirement as some exams are certificate-gated
 
 
 class ExtractedRecruitment(BaseModel):
