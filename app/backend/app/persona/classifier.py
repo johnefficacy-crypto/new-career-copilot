@@ -40,6 +40,7 @@ PREPARATION_STAGES = {
     "intermediate",
     "repeater",
     "final_window_aspirant",
+    "restarting_aspirant",
     "unknown",
 }
 
@@ -367,6 +368,115 @@ def _scores(signals: dict[str, Any]) -> dict[str, float]:
     }
 
 
+# ─── Tiny-question answer overrides (PR2) ──────────────────────────────────
+#
+# Answers from the progressive tiny-question card are deterministic, user-
+# confirmed signals. They take precedence over inferred behaviour when the
+# user has explicitly told us where they are. We never AI-interpret an
+# answer — only the exact registered option value is honoured.
+
+_PREP_ANSWER_TO_STAGE = {
+    "just_starting": "beginner",
+    "studied_before_restarting": "restarting_aspirant",
+    "currently_preparing": None,  # leave inferred value alone
+    "already_attempted_exam": "repeater",
+    "final_revision_phase": "final_window_aspirant",
+}
+
+_WEEKDAY_ANSWER_TO_TIME = {
+    "less_than_1_hour": "low_availability",
+    "1_to_2_hours": "low_availability",
+    "2_to_4_hours": None,  # leave inferred value alone
+    "4_plus_hours": "high_availability",
+}
+
+
+def _apply_answer_overrides(
+    dimensions: dict[str, str],
+    signals: dict[str, Any],
+    evidence: list,
+) -> None:
+    answers = signals.get("persona_question_answers") or {}
+    if not isinstance(answers, dict) or not answers:
+        return
+
+    prep_answer = answers.get("preparation_stage_self_assessment")
+    if prep_answer in _PREP_ANSWER_TO_STAGE and _PREP_ANSWER_TO_STAGE[prep_answer]:
+        dimensions["preparation_stage"] = _PREP_ANSWER_TO_STAGE[prep_answer]
+        _evidence(
+            evidence,
+            "preparation_stage",
+            dimensions["preparation_stage"],
+            "tiny_question_answer",
+            {"preparation_stage_self_assessment": prep_answer},
+        )
+
+    weekday_answer = answers.get("weekday_study_availability")
+    if (
+        weekday_answer in _WEEKDAY_ANSWER_TO_TIME
+        and _WEEKDAY_ANSWER_TO_TIME[weekday_answer]
+        # don't override working_professional — that's a stronger flag
+        and dimensions.get("time_constraint") != "working_professional"
+    ):
+        dimensions["time_constraint"] = _WEEKDAY_ANSWER_TO_TIME[weekday_answer]
+        _evidence(
+            evidence,
+            "time_constraint",
+            dimensions["time_constraint"],
+            "tiny_question_answer",
+            {"weekday_study_availability": weekday_answer},
+        )
+
+    mock_answer = answers.get("mock_behavior")
+    if mock_answer == "avoid_mocks" or mock_answer == "not_started_mocks_yet":
+        dimensions["learning_behavior"] = "mock_avoider"
+        _evidence(
+            evidence,
+            "learning_behavior",
+            "mock_avoider",
+            "tiny_question_answer",
+            {"mock_behavior": mock_answer},
+        )
+    elif mock_answer == "take_mocks_but_skip_analysis":
+        dimensions["learning_behavior"] = "high_mock_low_review"
+        _evidence(
+            evidence,
+            "learning_behavior",
+            "high_mock_low_review",
+            "tiny_question_answer",
+            {"mock_behavior": mock_answer},
+        )
+
+    revision_answer = answers.get("revision_behavior")
+    # Only apply the revision_backlog_heavy override when we don't already
+    # have a stronger behaviour signal from mock_behavior.
+    if revision_answer == "rarely" and dimensions.get("learning_behavior") in {
+        "insufficient_data",
+        "consistent_executor",
+    }:
+        dimensions["learning_behavior"] = "revision_backlog_heavy"
+        _evidence(
+            evidence,
+            "learning_behavior",
+            "revision_backlog_heavy",
+            "tiny_question_answer",
+            {"revision_behavior": revision_answer},
+        )
+
+    blocker_answer = answers.get("study_consistency_blocker")
+    if blocker_answer in {"phone_distraction", "unclear_plan"}:
+        current = dimensions.get("execution_risk")
+        if current in {None, "unknown", "low"}:
+            dimensions["execution_risk"] = "medium"
+            _evidence(
+                evidence,
+                "execution_risk",
+                "medium",
+                "tiny_question_answer",
+                {"study_consistency_blocker": blocker_answer},
+            )
+
+
 # ─── Entrypoint ────────────────────────────────────────────────────────────
 def classify_persona(signals: dict[str, Any] | None) -> dict[str, Any]:
     """Pure function: signals -> persona dict. Safe with empty or partial input."""
@@ -381,7 +491,7 @@ def classify_persona(signals: dict[str, Any] | None) -> dict[str, Any]:
     motivation = _classify_motivation(signals, behavior, evidence)
     resource = _classify_resource_constraint(signals, evidence)
 
-    dimensions = {
+    dimensions: dict[str, str] = {
         "discovery_stage": discovery,
         "preparation_stage": preparation,
         "time_constraint": time_constraint,
@@ -390,6 +500,9 @@ def classify_persona(signals: dict[str, Any] | None) -> dict[str, Any]:
         "motivation_state": motivation,
         "resource_constraint": resource,
     }
+
+    # PR2: deterministic overrides from tiny-question answers (no AI).
+    _apply_answer_overrides(dimensions, signals, evidence)
 
     return {
         "dimensions": dimensions,
