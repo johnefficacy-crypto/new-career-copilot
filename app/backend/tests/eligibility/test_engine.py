@@ -189,12 +189,18 @@ def test_exact_age_birthday_cutoff(dob, cutoff, expected_age, expected_eligible)
 
 
 def test_invalid_cutoff_date_is_unverifiable():
+    # Defense in depth: AgeCriteria's validator catches bad cutoff_date at
+    # the boundary now, but the engine's runtime parse keeps its own
+    # try/except for canonical data that bypassed validation. Use
+    # `model_construct` to simulate that path without triggering the
+    # validator.
+    bad_ac = AgeCriteria.model_construct(min_age=18, max_age=32, cutoff_date="not-a-date")
     result = check_eligibility(
         _profile(date_of_birth="2000-01-01"),
         _education(),
         [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
         [UserExamCredential(exam_key="gate")],
-        _post(age_criteria=AgeCriteria(min_age=18, max_age=32, cutoff_date="not-a-date")),
+        _post(age_criteria=bad_ac),
     )
     # Must NOT silently fall back to today's date; must surface a failing age
     # check, not be eligible, AND surface as conditional so callers can
@@ -203,7 +209,115 @@ def test_invalid_cutoff_date_is_unverifiable():
     assert result.is_conditional is True
     age_check = next(c for c in result.checks if c.rule == "age")
     assert age_check.passed is False
+    assert age_check.is_unverifiable is True
     assert "unverifiable" in age_check.detail.lower()
+
+
+def test_age_criteria_validator_rejects_bad_cutoff_at_boundary():
+    # The other half of the contract: bad data shouldn't even reach the
+    # engine. AgeCriteria's validator rejects unparseable cutoff_date.
+    import pytest as _pytest
+
+    with _pytest.raises(Exception) as excinfo:
+        AgeCriteria(min_age=18, max_age=32, cutoff_date="not-a-date")
+    assert "ISO" in str(excinfo.value)
+
+
+def test_age_criteria_validator_rejects_min_greater_than_max():
+    import pytest as _pytest
+
+    with _pytest.raises(Exception) as excinfo:
+        AgeCriteria(min_age=40, max_age=32, cutoff_date="2026-01-01")
+    assert "cannot exceed" in str(excinfo.value)
+
+
+def test_attempt_limit_validator_rejects_negative():
+    from app.eligibility.schemas import AttemptLimit
+    import pytest as _pytest
+
+    with _pytest.raises(Exception):
+        AttemptLimit(category="general", max_attempts=-1)
+
+
+def test_education_criteria_validator_rejects_out_of_range_percentage():
+    from app.eligibility.schemas import EducationCriteria
+    import pytest as _pytest
+
+    with _pytest.raises(Exception):
+        EducationCriteria(min_qualification_level="graduate", min_percentage=150.0)
+
+
+def test_age_relaxation_rule_validator_rejects_negative_years():
+    from app.eligibility.schemas import AgeRelaxationRule
+    import pytest as _pytest
+
+    with _pytest.raises(Exception):
+        AgeRelaxationRule(additional_years=-3)
+
+
+def test_unverifiable_flag_set_on_unverifiable_age_checks():
+    # All four unverifiable age branches must tag the check with
+    # is_unverifiable=True. Downstream UI/audit can render conditional
+    # cases distinctly without needing to parse the detail string.
+    cases = [
+        # invalid cutoff
+        AgeCriteria.model_construct(min_age=18, max_age=32, cutoff_date="garbage"),
+        # missing cutoff
+        AgeCriteria.model_construct(min_age=18, max_age=32, cutoff_date=None),
+    ]
+    for bad_ac in cases:
+        result = check_eligibility(
+            _profile(date_of_birth="2000-01-01"),
+            _education(),
+            [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+            [UserExamCredential(exam_key="gate")],
+            _post(age_criteria=bad_ac),
+        )
+        age_check = next(c for c in result.checks if c.rule == "age")
+        assert age_check.is_unverifiable is True
+
+
+def test_unverifiable_flag_not_set_on_hard_age_failure():
+    # Hard age-over-max failure is a real disqualification — must NOT be
+    # tagged unverifiable.
+    result = check_eligibility(
+        _profile(date_of_birth="1980-01-01"),  # age 46 at cutoff
+        _education(),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post(age_criteria=AgeCriteria(min_age=18, max_age=32, cutoff_date="2026-01-01")),
+    )
+    age_check = next(c for c in result.checks if c.rule == "age")
+    assert age_check.passed is False
+    assert age_check.is_unverifiable is False
+    assert result.is_conditional is False
+
+
+def test_unverifiable_flag_set_on_missing_nationality():
+    result = check_eligibility(
+        _profile(nationality=None),
+        _education(),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post(),
+    )
+    nat_check = next(c for c in result.checks if c.rule == "nationality")
+    assert nat_check.is_unverifiable is True
+
+
+def test_unverifiable_flag_not_set_on_non_indian_nationality():
+    # Wrong-nationality is a hard fail, NOT a missing-data case.
+    result = check_eligibility(
+        _profile(nationality="American"),
+        _education(),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post(),
+    )
+    nat_check = next(c for c in result.checks if c.rule == "nationality")
+    assert nat_check.passed is False
+    assert nat_check.is_unverifiable is False
+    assert result.is_conditional is False
 
 
 def test_missing_nationality_is_unverifiable():

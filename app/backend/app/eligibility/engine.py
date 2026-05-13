@@ -210,10 +210,11 @@ def check_eligibility(
 ) -> EligibilityCheckResult:
     checks: list[EligibilityCheck] = []
     is_conditional = False
-    # Rule names whose failing check represents missing/unverifiable input
-    # rather than a hard disqualification. These must be excluded from the
-    # `non_edu_failures` aggregation so the result surfaces as conditional.
-    unverifiable_rules: set[str] = set()
+    # Each unverifiable failure carries `is_unverifiable=True` on the
+    # EligibilityCheck itself (see schemas.py). The aggregation below uses
+    # that structured flag rather than a side-channel rule-name set, so
+    # downstream consumers reading the persisted `checks` JSON see the
+    # same conditional/hard distinction the engine made.
     user_certs: list[UserCertification] = user_certifications or []
 
     # ── 1. Age ──────────────────────────────────────────────────────────────
@@ -231,11 +232,11 @@ def check_eligibility(
 
         if cutoff_invalid:
             is_conditional = True
-            unverifiable_rules.add("age")
             checks.append(
                 EligibilityCheck(
                     rule="age",
                     passed=False,
+                    is_unverifiable=True,
                     detail=(
                         f"Age criterion is unverifiable: cutoff_date "
                         f"{ac.cutoff_date!r} is not a valid date."
@@ -244,11 +245,11 @@ def check_eligibility(
             )
         elif cutoff is None:
             is_conditional = True
-            unverifiable_rules.add("age")
             checks.append(
                 EligibilityCheck(
                     rule="age",
                     passed=False,
+                    is_unverifiable=True,
                     detail=(
                         "Age criterion is unverifiable: no cutoff_date provided "
                         "in canonical criteria."
@@ -257,11 +258,11 @@ def check_eligibility(
             )
         elif not dob_str:
             is_conditional = True
-            unverifiable_rules.add("age")
             checks.append(
                 EligibilityCheck(
                     rule="age",
                     passed=False,
+                    is_unverifiable=True,
                     detail="Date of birth not provided — cannot verify age eligibility.",
                 )
             )
@@ -270,9 +271,13 @@ def check_eligibility(
                 dob = _parse_iso_date(dob_str)
             except Exception:
                 is_conditional = True
-                unverifiable_rules.add("age")
                 checks.append(
-                    EligibilityCheck(rule="age", passed=False, detail="Invalid date of birth.")
+                    EligibilityCheck(
+                        rule="age",
+                        passed=False,
+                        is_unverifiable=True,
+                        detail="Invalid date of birth.",
+                    )
                 )
             else:
                 age_at_cutoff = _exact_age_years(dob, cutoff)
@@ -321,11 +326,11 @@ def check_eligibility(
 
                 if age_unverifiable_note is not None:
                     is_conditional = True
-                    unverifiable_rules.add("age")
                     checks.append(
                         EligibilityCheck(
                             rule="age",
                             passed=False,
+                            is_unverifiable=True,
                             detail=age_unverifiable_note,
                         )
                     )
@@ -647,11 +652,11 @@ def check_eligibility(
     # ── 5. Nationality ──────────────────────────────────────────────────────
     if profile.nationality is None or not profile.nationality.strip():
         is_conditional = True
-        unverifiable_rules.add("nationality")
         checks.append(
             EligibilityCheck(
                 rule="nationality",
                 passed=False,
+                is_unverifiable=True,
                 detail=(
                     "Nationality not provided — cannot verify eligibility. "
                     "Indian nationality is required."
@@ -707,7 +712,7 @@ def check_eligibility(
     non_edu_failures = [
         c for c in failed_checks
         if c.rule not in ("education", "exam_credential", "language")
-        and c.rule not in unverifiable_rules
+        and not c.is_unverifiable
     ]
     final_conditional = is_conditional and not non_edu_failures and not is_eligible
 
