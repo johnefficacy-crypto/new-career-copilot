@@ -754,6 +754,118 @@ def resolve_official_source_for_queue_item(
     }
 
 
+_MERGE_PREVIEW_FIELDS = [
+    "official_notification_url",
+    "official_apply_url",
+    "apply_start_date",
+    "apply_end_date",
+    "notification_date",
+    "total_vacancies",
+    "source_pdf_url",
+]
+
+
+@router.get("/admin/scrape/items/{queue_id}/merge-preview/{recruitment_id}")
+def merge_preview(
+    queue_id: str,
+    recruitment_id: str,
+    _admin: dict = Depends(require_permission("recruitments.manage")),
+) -> dict[str, Any]:
+    """Show what merging this queue item into the recruitment would do.
+
+    Returns one row per safe field with current/queue/corrected values
+    and the decision the merge endpoint would take. ``force_available``
+    means the field has a non-empty existing value, so the merge skips
+    it unless the admin forces it. ``update`` means the queue value
+    wins (existing is empty, or the queue value is admin-corrected).
+    """
+    _validate_queue_id(queue_id)
+    supabase = get_supabase_admin()
+    qrows = (
+        supabase.table("scrape_queue")
+        .select("id, source_id, extracted_data")
+        .eq("id", queue_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not qrows:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+    rec_rows = (
+        supabase.table("recruitments")
+        .select("*")
+        .eq("id", recruitment_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rec_rows:
+        raise HTTPException(status_code=404, detail="Recruitment not found")
+    existing = rec_rows[0]
+    queue_extracted = qrows[0].get("extracted_data") or {}
+    effective = build_effective_extracted_data(supabase, queue_id)
+    evidence = (
+        supabase.table("extracted_field_evidence")
+        .select("field_name, reviewer_status, corrected_value")
+        .eq("scrape_queue_id", queue_id)
+        .execute()
+        .data
+        or []
+    )
+    corrected_lookup = {
+        r.get("field_name"): r.get("corrected_value")
+        for r in evidence
+        if r.get("reviewer_status") == "corrected"
+    }
+
+    fields: list[dict[str, Any]] = []
+    for field in _MERGE_PREVIEW_FIELDS:
+        queue_value = queue_extracted.get(field) if isinstance(queue_extracted, dict) else None
+        corrected = corrected_lookup.get(field)
+        effective_value = effective.get(field) if isinstance(effective, dict) else None
+        current = existing.get(field)
+        row = {
+            "field": field,
+            "current_value": current,
+            "queue_value": queue_value,
+            "corrected_value": corrected,
+            "effective_value": effective_value,
+        }
+        if effective_value in (None, ""):
+            row["decision"] = "skip"
+            row["reason"] = "no_queue_value"
+        elif corrected is not None or current in (None, ""):
+            row["decision"] = "update"
+            row["reason"] = "corrected" if corrected is not None else "existing_empty"
+        else:
+            row["decision"] = "force_available"
+            row["reason"] = "existing_value_present"
+        fields.append(row)
+
+    # source_id row gives admins a separate signal for provenance reassignment.
+    queue_source = qrows[0].get("source_id")
+    fields.append({
+        "field": "source_id",
+        "current_value": existing.get("source_id"),
+        "queue_value": queue_source,
+        "corrected_value": None,
+        "effective_value": queue_source,
+        "decision": "skip" if queue_source in (None, "") else (
+            "update" if existing.get("source_id") in (None, "") else "force_available"
+        ),
+        "reason": "existing_value_present" if existing.get("source_id") and queue_source else None,
+    })
+
+    return {
+        "ok": True,
+        "queue_id": queue_id,
+        "recruitment_id": recruitment_id,
+        "fields": fields,
+    }
+
+
 @router.post("/admin/scrape/items/{queue_id}/merge-into/{recruitment_id}")
 def merge_queue_item_into_recruitment(
     queue_id: str,

@@ -10,6 +10,7 @@ import AdminFixPanel from "../../features/admin/workflow/AdminFixPanel";
 import NextActionCallout from "../../features/admin/workflow/NextActionCallout";
 import useAdminNextActions from "../../features/admin/workflow/useAdminNextActions";
 import OfficialSourceResolver from "../../features/admin/workflow/OfficialSourceResolver";
+import DuplicateMergePreview from "../../features/admin/workflow/DuplicateMergePreview";
 
 const TABS = [
   { id: "source", label: "Source Setup" },
@@ -36,6 +37,7 @@ export default function OperationsConsole() {
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState(null);
   const [resolverOpen, setResolverOpen] = useState(false);
+  const [mergeTarget, setMergeTarget] = useState(null); // { id, name } of recruitment to merge into
 
   const { runAction, busyKey, error: actionError } = useAdminAction();
 
@@ -203,6 +205,35 @@ export default function OperationsConsole() {
     });
   }, [runAction, loadAll]);
 
+  const openMergePreview = useCallback((_item, dup) => {
+    setMergeTarget({ id: dup.id, name: dup.name || dup.title || dup.id });
+  }, []);
+
+  const confirmMerge = useCallback(async ({ force_fields }) => {
+    if (!queueId || !mergeTarget?.id) return;
+    await runAction({
+      key: `merge-${queueId}-${mergeTarget.id}`,
+      successMessage: "Merged into existing recruitment.",
+      action: async () => {
+        await api.post(`/api/admin/scrape/items/${queueId}/merge-into/${mergeTarget.id}`, { force_fields });
+        setMergeTarget(null);
+        await loadAll();
+      },
+    });
+  }, [queueId, mergeTarget, runAction, loadAll]);
+
+  const markDuplicate = useCallback(async (item, dup) => {
+    await runAction({
+      key: `mark-dup-${item.id}`,
+      confirm: `Mark "${item.recruitment || item.id}" as duplicate of "${dup.name || dup.id}"?`,
+      successMessage: "Marked as duplicate.",
+      action: async () => {
+        await api.post(`/api/admin/scrape/items/${item.id}/mark-duplicate`, { notes: `duplicate of ${dup.id}` });
+        await loadAll();
+      },
+    });
+  }, [runAction, loadAll]);
+
   const resolveOfficialSource = useCallback(async (payload) => {
     if (!queueId) return;
     await runAction({
@@ -309,6 +340,8 @@ export default function OperationsConsole() {
             validateResult={validateResult}
             onQueueFieldAction={queueFieldAction}
             onPromote={promote}
+            onMergeIntoExisting={openMergePreview}
+            onMarkDuplicate={markDuplicate}
             onValidate={validate}
             onVerify={verify}
             onPublish={publish}
@@ -322,6 +355,14 @@ export default function OperationsConsole() {
             busy={Boolean(busyKey)}
             onClose={() => setResolverOpen(false)}
             onSubmit={resolveOfficialSource}
+          />
+          <DuplicateMergePreview
+            open={Boolean(mergeTarget && queueId)}
+            queueId={queueId}
+            recruitment={mergeTarget}
+            busy={Boolean(busyKey)}
+            onClose={() => setMergeTarget(null)}
+            onConfirmMerge={confirmMerge}
           />
         </div>
       </div>
