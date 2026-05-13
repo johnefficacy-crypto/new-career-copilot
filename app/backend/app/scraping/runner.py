@@ -1901,6 +1901,73 @@ def _persist_post_skill_tests(
             created.append(("skill_tests", rows[0]["id"]))
 
 
+def _persist_post_fees(
+    supabase: Client,
+    *,
+    post: Any,
+    post_id: str,
+    created: list[tuple[str, str]],
+) -> None:
+    """Write ``post.fees`` (dict category → amount, plus optional
+    ``currency`` key) into the canonical ``post_fees`` table.
+
+    One row per non-currency key with a numeric value. Negative or
+    non-numeric amounts are skipped silently.
+    """
+    fees = getattr(post, "fees", None)
+    if not isinstance(fees, dict):
+        return
+    currency = str(fees.get("currency") or "INR")
+    for category, amount in fees.items():
+        if category == "currency":
+            continue
+        if not isinstance(amount, (int, float)) or amount < 0:
+            continue
+        payload: dict[str, Any] = {
+            "post_id": post_id,
+            "category": str(category),
+            "amount": amount,
+            "currency": currency,
+        }
+        rows = execute_or_raise(
+            "post_fees.insert",
+            lambda payload=payload: supabase.table("post_fees").insert(payload).execute(),
+        ).data or []
+        if rows:
+            created.append(("post_fees", rows[0]["id"]))
+
+
+def _persist_post_selection_process(
+    supabase: Client,
+    *,
+    post: Any,
+    post_id: str,
+    created: list[tuple[str, str]],
+) -> None:
+    """Write ``post.selection_process`` (ordered list of stage labels)
+    into ``post_selection_stages``. Order is preserved via sort_order.
+    Non-string / empty entries are skipped.
+    """
+    stages = getattr(post, "selection_process", None)
+    if not isinstance(stages, list):
+        return
+    for sort_order, stage in enumerate(stages):
+        label = str(stage).strip() if stage is not None else ""
+        if not label:
+            continue
+        payload: dict[str, Any] = {
+            "post_id": post_id,
+            "stage_label": label,
+            "sort_order": sort_order,
+        }
+        rows = execute_or_raise(
+            "post_selection_stages.insert",
+            lambda payload=payload: supabase.table("post_selection_stages").insert(payload).execute(),
+        ).data or []
+        if rows:
+            created.append(("post_selection_stages", rows[0]["id"]))
+
+
 def _persist_post_age_relaxation(
     supabase: Client,
     *,
@@ -1995,6 +2062,8 @@ def _build_promotion_rpc_payload(
             "exam_pattern": post.exam_pattern,
             "skill_tests": post.skill_tests,
             "age_relaxation": post.age_relaxation,
+            "fees": post.fees,
+            "selection_process": post.selection_process,
         })
     return {
         "slug": slug,
@@ -2271,6 +2340,8 @@ def _promote_to_recruitments_compensation(
             _persist_post_exam_pattern(supabase, post=post, post_id=post_id, created=created)
             _persist_post_skill_tests(supabase, post=post, post_id=post_id, created=created)
             _persist_post_age_relaxation(supabase, post=post, post_id=post_id, created=created)
+            _persist_post_fees(supabase, post=post, post_id=post_id, created=created)
+            _persist_post_selection_process(supabase, post=post, post_id=post_id, created=created)
     except Exception:
         _compensate_promotion(supabase, created, reason="post_insert_failed")
         raise
