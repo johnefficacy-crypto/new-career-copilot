@@ -386,6 +386,10 @@ def run_eligibility_for_user(
             "is_eligible": r.result.is_eligible,
             "is_conditional": r.result.is_conditional,
             "fail_reasons": r.result.fail_reasons,
+            # Full rule-by-rule verdict, JSONB. Lets admins audit *why* a
+            # candidate fell into eligible / conditional / ineligible without
+            # re-running the engine.
+            "checks": [c.model_dump() for c in r.result.checks],
             "computed_at": now,
             "profile_hash": profile_hash,
             "criteria_hash": criteria_hash_by_post[r.post_id],

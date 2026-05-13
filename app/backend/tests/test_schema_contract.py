@@ -154,6 +154,7 @@ REQUIRED_COLUMNS = {
         "is_conditional",
         "fail_reasons",
         "pass_reasons",
+        "checks",
         "computed_at",
     },
     "eligibility_recompute_queue": {

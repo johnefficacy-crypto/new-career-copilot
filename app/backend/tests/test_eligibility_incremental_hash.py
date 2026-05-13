@@ -245,6 +245,134 @@ def test_recompute_writes_criteria_hash_and_rules_version(monkeypatch):
     assert len(written["criteria_hash"]) == 64  # SHA-256 hex
 
 
+def test_recompute_persists_full_check_list(monkeypatch):
+    # `eligibility_results.checks` must carry the structured rule-by-rule
+    # verdict, not just the fail_reasons strings. Admins need to see *every*
+    # rule's pass/fail status for audit, even passed ones.
+    sb = SB()
+    from app.eligibility.schemas import (
+        BatchEligibilityResult,
+        EligibilityCheck,
+        EligibilityCheckResult,
+    )
+
+    sample_checks = [
+        EligibilityCheck(rule="age", passed=True, detail="Age 24 in range"),
+        EligibilityCheck(rule="education", passed=False, detail="Below 60%"),
+        EligibilityCheck(rule="nationality", passed=True, detail="Indian"),
+    ]
+
+    def _batch(_profile, _ed, _at, _cr, post_criteria, **_k):
+        return [
+            BatchEligibilityResult(
+                post_id=pc.post_id,
+                recruitment_id=pc.recruitment_id,
+                result=EligibilityCheckResult(
+                    is_eligible=False,
+                    is_conditional=False,
+                    checks=sample_checks,
+                    fail_reasons=["Below 60%"],
+                ),
+            )
+            for pc in post_criteria
+        ]
+
+    monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
+    runner.run_eligibility_for_user("u1", sb)
+    written = sb.db["eligibility_results"][0]
+    assert "checks" in written
+    persisted = written["checks"]
+    assert isinstance(persisted, list)
+    assert len(persisted) == 3
+    # Every persisted element is the JSON form of EligibilityCheck.
+    rules = {c["rule"] for c in persisted}
+    assert rules == {"age", "education", "nationality"}
+    education_check = next(c for c in persisted if c["rule"] == "education")
+    assert education_check["passed"] is False
+    assert "Below 60%" in education_check["detail"]
+    # Passed checks must also be persisted — fail_reasons drops them, but the
+    # structured column should not.
+    age_check = next(c for c in persisted if c["rule"] == "age")
+    assert age_check["passed"] is True
+
+
+def test_recompute_persists_empty_checks_when_no_criteria(monkeypatch):
+    # When the engine has no rules to evaluate (rare), persist an empty
+    # array, not NULL — keeps downstream readers from having to branch.
+    sb = SB()
+    from app.eligibility.schemas import BatchEligibilityResult, EligibilityCheckResult
+
+    def _batch(_profile, _ed, _at, _cr, post_criteria, **_k):
+        return [
+            BatchEligibilityResult(
+                post_id=pc.post_id,
+                recruitment_id=pc.recruitment_id,
+                result=EligibilityCheckResult(
+                    is_eligible=True, is_conditional=False, checks=[], fail_reasons=[]
+                ),
+            )
+            for pc in post_criteria
+        ]
+
+    monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
+    runner.run_eligibility_for_user("u1", sb)
+    written = sb.db["eligibility_results"][0]
+    assert written["checks"] == []
+
+
+def test_recompute_overwrites_stale_checks(monkeypatch):
+    # When criteria_hash / rules_version invalidates a cached row, the new
+    # `checks` array must replace the old one — not be appended.
+    sb = SB()
+    from app.eligibility.schemas import (
+        BatchEligibilityResult,
+        EligibilityCheck,
+        EligibilityCheckResult,
+    )
+
+    # Seed a stale row with old checks.
+    sb.db["eligibility_results"].append(
+        {
+            "user_id": "u1",
+            "post_id": "p1",
+            "recruitment_id": "r1",
+            "profile_hash": "old",
+            "criteria_hash": "old",
+            "rules_version": "old",
+            "is_eligible": False,
+            "is_conditional": False,
+            "fail_reasons": ["old reason"],
+            "checks": [{"rule": "old_rule", "passed": False, "detail": "old detail"}],
+            "computed_at": "2020-01-01T00:00:00Z",
+        }
+    )
+
+    def _batch(_profile, _ed, _at, _cr, post_criteria, **_k):
+        return [
+            BatchEligibilityResult(
+                post_id=pc.post_id,
+                recruitment_id=pc.recruitment_id,
+                result=EligibilityCheckResult(
+                    is_eligible=True,
+                    is_conditional=False,
+                    checks=[
+                        EligibilityCheck(rule="nationality", passed=True, detail="Indian")
+                    ],
+                    fail_reasons=[],
+                ),
+            )
+            for pc in post_criteria
+        ]
+
+    monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
+    runner.run_eligibility_for_user("u1", sb)
+    rows = sb.db["eligibility_results"]
+    assert len(rows) == 1  # upsert, not insert
+    new_checks = rows[0]["checks"]
+    assert len(new_checks) == 1
+    assert new_checks[0]["rule"] == "nationality"
+
+
 def test_criteria_hash_stable_under_list_reordering():
     # Hash must be insensitive to the order of list-valued criteria (the DB
     # has no inherent ordering for attempt_limits, age_relaxation_rules etc.)
