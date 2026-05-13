@@ -1265,16 +1265,79 @@ def run_scraping_pass(
                 if mock:
                     detail_urls = mock_aggregator_detail_urls(source, count=min(3, source_limit))
                 else:
-                    listing_html = fetch_page_html(target_url)
-                    if not listing_html:
-                        error_log.append({"source": source.name, "url": target_url, "error": "Empty listing response", "at": utc_now_iso()})
-                        _bump_source_failure(
-                            supabase, src,
-                            error_class="empty_listing_response",
-                            error_message="aggregator listing fetch returned no HTML",
-                            attempted_url=target_url,
+                    # Conditional listing fetch: when we have caching
+                    # headers on file from a prior pass, send them and
+                    # short-circuit on 304. Discovery (and the rest of
+                    # the aggregator path) skips entirely for unchanged
+                    # listings. Migration 044 added the storage columns.
+                    prior_etag = src.get("last_listing_etag")
+                    prior_modified = src.get("last_listing_modified")
+                    if prior_etag or prior_modified:
+                        listing_result = fetch(
+                            target_url,
+                            adapter_type="html",
+                            if_none_match=prior_etag,
+                            if_modified_since=prior_modified,
                         )
-                        continue
+                        if not listing_result.ok and listing_result.error == "not_modified":
+                            logger.info(
+                                "scrape.listing_unchanged source_id=%s source_name=%s url=%s",
+                                src.get("id"), source.name, target_url,
+                            )
+                            execute_or_default(
+                                "source_registry.mark_success_unchanged",
+                                lambda src=src: supabase.table("source_registry").update({
+                                    "last_scraped_at": utc_now_iso(),
+                                    "last_success_at": utc_now_iso(),
+                                    "consecutive_fails": 0,
+                                    "last_error": None,
+                                    "last_error_class": None,
+                                    "last_error_message": None,
+                                    "last_error_at": None,
+                                    "last_error_http_status": None,
+                                    "last_error_url": None,
+                                }).eq("id", src["id"]).execute(),
+                                None,
+                            )
+                            continue
+                        if not listing_result.ok or not listing_result.text:
+                            error_log.append({"source": source.name, "url": target_url, "error": listing_result.error or "empty_listing_response", "at": utc_now_iso()})
+                            _bump_source_failure(
+                                supabase, src,
+                                error_class=listing_result.error or "empty_listing_response",
+                                error_message="aggregator listing fetch returned no HTML",
+                                http_status=listing_result.status_code,
+                                attempted_url=target_url,
+                            )
+                            continue
+                        # Reconstruct HTML from raw_bytes for downstream
+                        # discovery (which walks anchors). FetchResult.text
+                        # is already stripped.
+                        try:
+                            listing_html = (listing_result.raw_bytes or b"").decode("utf-8", errors="replace") or listing_result.text
+                        except Exception:
+                            listing_html = listing_result.text
+                        # Remember the new caching headers for the next pass.
+                        execute_or_default(
+                            "source_registry.update_listing_headers",
+                            lambda src=src, etag=listing_result.etag, mod=listing_result.last_modified:
+                                supabase.table("source_registry").update({
+                                    "last_listing_etag": etag,
+                                    "last_listing_modified": mod,
+                                }).eq("id", src["id"]).execute(),
+                            None,
+                        )
+                    else:
+                        listing_html = fetch_page_html(target_url)
+                        if not listing_html:
+                            error_log.append({"source": source.name, "url": target_url, "error": "Empty listing response", "at": utc_now_iso()})
+                            _bump_source_failure(
+                                supabase, src,
+                                error_class="empty_listing_response",
+                                error_message="aggregator listing fetch returned no HTML",
+                                attempted_url=target_url,
+                            )
+                            continue
                     discovery = discover_aggregator_detail_urls(
                         listing_html,
                         target_url,
