@@ -236,6 +236,48 @@ def test_promote_creates_organization_recruitment_posts_and_criteria():
     assert [r["min_qualification_level"] for r in sb.db["education_criteria"]] == ["graduate", "12th"]
 
 
+def test_promote_uses_post_age_cutoff_when_present():
+    sb = SB()
+    data = ExtractedRecruitment(
+        title="T", organization_name="O", org_type="Other", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="https://x",
+        posts=[{"post_name": "A", "min_age": 18, "max_age": 32, "age_cutoff_date": "2026-08-01"}],
+    )
+    promote_to_recruitments(data, sb)
+    assert sb.db["age_criteria"][0]["cutoff_date"] == "2026-08-01"
+
+
+def test_promote_falls_back_to_apply_end_date_when_post_cutoff_missing():
+    sb = SB()
+    data = ExtractedRecruitment(
+        title="T", organization_name="O", org_type="Other", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="https://x",
+        posts=[{"post_name": "A", "min_age": 18, "max_age": 32}],
+    )
+    promote_to_recruitments(data, sb)
+    assert sb.db["age_criteria"][0]["cutoff_date"] == "2026-12-31"
+
+
+def test_promote_writes_raw_requirement_text_into_education_criteria():
+    sb = SB()
+    data = ExtractedRecruitment(
+        title="T", organization_name="O", org_type="Other", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="https://x",
+        posts=[{
+            "post_name": "A",
+            "education_required": "Bachelor's degree",
+            "raw_requirement_text": "Bachelor's degree in any discipline from a recognised university; preferred: CS/IT",
+        }],
+    )
+    promote_to_recruitments(data, sb)
+    edu = sb.db["education_criteria"][0]
+    assert edu["min_qualification_level"] == "graduate"
+    assert edu["raw_requirement_text"].startswith("Bachelor's degree in any discipline")
+
+
 def test_promote_raises_when_post_insert_returns_no_rows():
     class SBPostFail(SB):
         def table(self, name):
