@@ -294,13 +294,16 @@ def _guess_org_type(source_name: str) -> str:
 # ─── Dedup key ──────────────────────────────────────────────────────────────
 
 
+def recruitment_key(org_name: str | None, year: int | None, title: str | None) -> str:
+    """Canonical similarity key. Used identically for canonical recruitments,
+    open queue rows, and new extractions so the three indexes stay aligned."""
+    norm = lambda s: re.sub(r"[^a-z0-9]", "", (s or "").lower())  # noqa: E731
+    return f"{norm(org_name)}-{year or 0}-{norm(title)[:30]}"
+
+
 def compute_similarity_key(data: ExtractedRecruitment) -> str:
-    org = re.sub(r"[^a-z0-9]", "", (data.organization_name or "").lower())
-    year = str(data.year or 0)
-    title_words = "".join((data.title or "").lower().split()[:4])
-    return f"{org}-{year}-{title_words}"
+    return recruitment_key(data.organization_name, data.year, data.title)
 
 
 def build_recruitment_key(org_name: str, year: int | None, name: str) -> str:
-    norm = lambda s: re.sub(r"[^a-z0-9]", "", (s or "").lower())  # noqa: E731
-    return f"{norm(org_name)}-{year or 0}-{norm(name)[:30]}"
+    return recruitment_key(org_name, year, name)

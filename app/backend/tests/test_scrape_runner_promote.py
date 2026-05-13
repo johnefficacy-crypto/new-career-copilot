@@ -1,7 +1,7 @@
 import pytest
 
 from app.core.errors import DatabaseError, PromotionError
-from app.scraping.runner import promote_to_recruitments, run_scraping_pass
+from app.scraping.runner import promote_run, promote_to_recruitments, run_scraping_pass
 from app.scraping.schemas import ExtractedRecruitment
 
 class E:
@@ -55,6 +55,9 @@ class RunnerQuery:
     def order(self, *args, **kwargs):
         return self
 
+    def limit(self, *args, **kwargs):
+        return self
+
     def insert(self, payload):
         self.payload = payload
         return self
@@ -83,7 +86,7 @@ class RunnerQuery:
                 rows = [r for r in rows if r.get("id") in self.filters["id"]]
             return E(rows)
         if self.name == "recruitments":
-            return E([])
+            return E(list(self.db.get("recruitments", [])))
         if self.name == "scrape_queue":
             if self.payload:
                 row = {**self.payload, "id": "queue-1"}
@@ -261,3 +264,157 @@ def test_promote_raises_when_age_criteria_insert_fails():
     data = ExtractedRecruitment(title="SSC CGL", organization_name="SSC", org_type="central", year=2026, notification_date="2026-01-01", apply_start_date="2026-01-02", apply_end_date="2026-01-03", official_notification_url="https://x", source_pdf_url=None, posts=[{"post_name":"A","min_age":18}])
     with pytest.raises(DatabaseError):
         promote_to_recruitments(data, sb)
+
+
+# ── PR 1: top-level data_quality_score / evidence / duplicate target ────────
+
+
+def test_scrape_queue_writes_top_level_data_quality_score():
+    sb = RunnerSB()
+    run_scraping_pass(sb, source_ids=["src-1"], mock=True)
+    rows = sb.db["scrape_queue"]
+    assert rows
+    for row in rows:
+        assert isinstance(row.get("data_quality_score"), (int, float))
+        # _meta no longer carries data_quality_score (top-level is authoritative)
+        assert "data_quality_score" not in (row["extracted_data"].get("_meta") or {})
+
+
+def test_direct_source_path_inserts_evidence_document(monkeypatch):
+    sb = RunnerSB()
+    # Replace the aggregator source with a direct (non-aggregator) source.
+    sb.db["source_registry"] = [{
+        "id": "src-2",
+        "source_name": "UPSC Direct",
+        "source_type": "official",
+        "source_url": "https://upsc.gov.in/notices",
+        "is_active": True,
+        "requires_official_confirmation": False,
+    }]
+    out = run_scraping_pass(sb, source_ids=["src-2"], mock=True)
+    assert out["items_found"] == 1
+    assert len(sb.db["notification_documents"]) == 1
+    assert sb.db["scrape_queue"][0]["notification_document_id"] == "doc-1"
+    assert sb.db["scrape_queue"][0]["official_source_resolved"] is True
+
+
+def test_duplicate_target_writes_recruitment_id_not_queue_id():
+    sb = RunnerSB()
+    # Seed an existing recruitment that will match the mock extractor output.
+    # mock_extract sets title = "Free Job Alert Recruitment <year>"; the runner
+    # builds the similarity key from organization, year, and title.
+    from datetime import date
+    today = date.today()
+    sb.db["recruitments"] = [{
+        "id": "rec-existing-1",
+        "name": f"Free Job Alert Recruitment {today.year}",
+        "year": today.year,
+        "organizations": {"name": "Free Job Alert"},
+        "official_notification_url": None,
+        "official_apply_url": None,
+    }]
+    run_scraping_pass(sb, source_ids=["src-1"], mock=True)
+    rows = sb.db["scrape_queue"]
+    assert rows
+    # All three mock detail urls share the same sim_key → all duplicates.
+    for row in rows:
+        assert row["status"] == "duplicate"
+        assert row["duplicate_recruitment_id"] == "rec-existing-1"
+        # duplicate_of is the queue→queue pointer; nothing in queue when run started.
+        assert row["duplicate_of"] is None
+
+
+def test_promote_run_blocks_when_official_source_unresolved(monkeypatch):
+    sb = RunnerSB()
+    # Seed a pending queue row whose official source is not resolved.
+    sb.db["scrape_queue"] = [{
+        "id": "queue-A",
+        "scrape_run_id": "run-1",
+        "source_id": "src-1",
+        "status": "pending",
+        "official_source_resolved": False,
+        "extracted_data": {
+            "title": "Test", "organization_name": "Test Org", "org_type": "Other",
+            "year": 2026, "official_notification_url": "https://x",
+        },
+    }]
+    # Patch the table call to return our pre-seeded rows and accept queries.
+    class _Q:
+        def __init__(self, name, db):
+            self.name = name; self.db = db; self.filters = {}; self.payload = None
+        def select(self, *a, **k): return self
+        def eq(self, k, v): self.filters[k] = v; return self
+        def in_(self, k, v): return self
+        def order(self, *a, **k): return self
+        def limit(self, *a, **k): return self
+        def update(self, p): self.payload = p; return self
+        def execute(self):
+            if self.name == "scrape_queue":
+                rows = list(self.db.get("scrape_queue", []))
+                if "scrape_run_id" in self.filters:
+                    rows = [r for r in rows if r["scrape_run_id"] == self.filters["scrape_run_id"]]
+                if "status" in self.filters:
+                    rows = [r for r in rows if r["status"] == self.filters["status"]]
+                return E(rows)
+            if self.name == "extracted_field_evidence":
+                return E([])
+            return E([])
+    class _SB:
+        def __init__(self, db): self.db = db
+        def table(self, name): return _Q(name, self.db)
+
+    out = promote_run("run-1", _SB(sb.db))
+    assert out["promoted"] == 0
+    assert out["skipped"] == 1
+    assert out["errors"][0]["reason"] == "unverified_official_source"
+
+
+def test_promote_run_blocks_when_high_risk_fields_unverified():
+    db = {
+        "scrape_queue": [{
+            "id": "queue-B",
+            "scrape_run_id": "run-1",
+            "source_id": "src-1",
+            "status": "pending",
+            "official_source_resolved": True,
+            "extracted_data": {
+                "title": "Test", "organization_name": "Test Org", "org_type": "Other",
+                "year": 2026, "official_notification_url": "https://x",
+            },
+        }],
+        # Only 2 of the 5 high-risk fields verified.
+        "extracted_field_evidence": [
+            {"field_name": "apply_end_date", "reviewer_status": "verified"},
+            {"field_name": "organization_name", "reviewer_status": "verified"},
+        ],
+    }
+    class _Q:
+        def __init__(self, name, db):
+            self.name = name; self.db = db; self.filters = {}; self.payload = None
+        def select(self, *a, **k): return self
+        def eq(self, k, v): self.filters[k] = v; return self
+        def in_(self, k, v): return self
+        def order(self, *a, **k): return self
+        def limit(self, *a, **k): return self
+        def update(self, p): self.payload = p; return self
+        def execute(self):
+            if self.name == "scrape_queue":
+                rows = list(self.db.get("scrape_queue", []))
+                if "scrape_run_id" in self.filters:
+                    rows = [r for r in rows if r["scrape_run_id"] == self.filters["scrape_run_id"]]
+                if "status" in self.filters:
+                    rows = [r for r in rows if r["status"] == self.filters["status"]]
+                return E(rows)
+            if self.name == "extracted_field_evidence":
+                return E(self.db.get("extracted_field_evidence", []))
+            return E([])
+    class _SB:
+        def __init__(self, db): self.db = db
+        def table(self, name): return _Q(name, self.db)
+
+    out = promote_run("run-1", _SB(db))
+    assert out["promoted"] == 0
+    assert out["skipped"] == 1
+    err = out["errors"][0]
+    assert err["reason"] == "high_risk_fields_unverified"
+    assert set(err["unverified_fields"]) == {"official_notification_url", "official_apply_url", "total_vacancies"}

@@ -244,8 +244,11 @@ def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
         def table(self,t):
             if t=='extracted_field_evidence':
                 class FQ:
+                    def __init__(self, *a, **k): pass
                     def select(self,*a,**k): return self
                     def eq(self,*a,**k): return self
+                    def order(self,*a,**k): return self
+                    def limit(self,*a,**k): return self
                     def execute(self):
                         return R([
                             {'field_name':'apply_end_date','reviewer_status':'verified'},
@@ -276,8 +279,11 @@ def test_promote_failure_keeps_queue_item_pending(monkeypatch):
         def table(self,t):
             if t=='extracted_field_evidence':
                 class FQ:
+                    def __init__(self, *a, **k): pass
                     def select(self,*a,**k): return self
                     def eq(self,*a,**k): return self
+                    def order(self,*a,**k): return self
+                    def limit(self,*a,**k): return self
                     def execute(self):
                         return R([
                             {'field_name':'apply_end_date','reviewer_status':'verified'},

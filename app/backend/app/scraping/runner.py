@@ -27,14 +27,14 @@ from supabase import Client
 
 from .extractor import (
     PROMPT_VERSION,
-    build_recruitment_key,
     compute_similarity_key,
     extract_recruitment_data,
     fetch_page_html,
     fetch_page_text,
 )
-from .dedup import fuzzy_duplicate
+from .dedup import find_duplicate
 from .normalizer import normalize_recruitment
+from .promotion_gate import evaluate_promotion_gate
 from .sources import normalize_source_registry
 from .aggregator import (
     aggregator_max_items,
@@ -179,40 +179,30 @@ def run_scraping_pass(
     # ── 3. Build dedup index from existing recruitments + open queue ─────
     existing_recs = execute_or_default("recruitments.read_for_dedupe",
         lambda: supabase.table("recruitments")
-        .select("id, name, year, organizations(name)")
+        .select("id, name, year, organizations(name), official_notification_url, official_apply_url")
         .execute()
         .data,
         default=[],
     ) or []
 
-    existing_keys: set[str] = set()
-    existing_id_by_key: dict[str, str] = {}
-    for r in existing_recs:
-        org = r.get("organizations")
-        if isinstance(org, list):
-            org = org[0] if org else None
-        org_name = (org or {}).get("name") or ""
-        key = build_recruitment_key(org_name, r.get("year"), r.get("name") or "")
-        existing_keys.add(key)
-        existing_id_by_key[key] = r["id"]
-
     open_queue = execute_or_default("scrape_queue.read_open_for_dedupe",
         lambda: supabase.table("scrape_queue")
-        .select("extracted_data, status")
+        .select("id, extracted_data, status")
         .not_.in_("status", ["rejected", "duplicate"])
         .execute()
         .data,
         default=[],
     ) or []
 
-    queued_keys: set[str] = set()
+    queued_id_by_key: dict[str, str] = {}
     for item in open_queue:
         d = item.get("extracted_data")
         if isinstance(d, dict) and isinstance(d.get("organization_name"), str):
             try:
-                queued_keys.add(compute_similarity_key(ExtractedRecruitment(**d)))
+                key = compute_similarity_key(ExtractedRecruitment(**d))
             except Exception:
-                pass
+                continue
+            queued_id_by_key.setdefault(key, item.get("id"))
 
     # ── 4. Process each source ───────────────────────────────────────────
     total_found = 0
@@ -233,18 +223,21 @@ def run_scraping_pass(
         total_found += 1
 
         sim_key = compute_similarity_key(data)
-        fuzzy_dup = any(fuzzy_duplicate(data.title, (r.get("name") or "")) for r in existing_recs)
-        is_dup = sim_key in existing_keys or sim_key in queued_keys or fuzzy_dup
-        duplicate_of = existing_id_by_key.get(sim_key)
-        duplicate_reason = "similarity_key" if (sim_key in existing_keys or sim_key in queued_keys) else ("fuzzy_match" if fuzzy_dup else None)
+        decision = find_duplicate(
+            data.model_dump(),
+            sim_key=sim_key,
+            existing_recruitments=existing_recs,
+            queued=queued_id_by_key,
+        )
         normalized = normalize_recruitment(data)
         extracted_payload = to_json_safe(data)
         extracted_payload["_meta"] = {
             "prompt_version": PROMPT_VERSION,
-            "data_quality_score": normalized.data_quality_score,
             "warnings": normalized.warnings,
             "normalized_fields": normalized.normalized_fields,
-            "duplicate_reason": duplicate_reason,
+            "duplicate_reason": decision.reason,
+            "duplicate_score": decision.score,
+            "duplicate_matched_fields": decision.matched_fields,
             "source_registry_id": src.get("id"),
             "source_type": src.get("source_type"),
         }
@@ -269,10 +262,13 @@ def run_scraping_pass(
             "source_id": src.get("id"),
             "extracted_data": extracted_payload,
             "confidence_score": confidence,
+            "data_quality_score": normalized.data_quality_score,
             "scrape_run_id": run_id,
-            "duplicate_of": duplicate_of,
+            "duplicate_of": decision.duplicate_queue_id,
+            "duplicate_recruitment_id": decision.duplicate_recruitment_id,
             "scraped_at": utc_now_iso(),
-            "status": "duplicate" if is_dup else "pending",
+            # Never auto-approve — see runner.ts safety hardening note.
+            "status": "duplicate" if decision.is_duplicate else "pending",
             "official_source_resolved": not bool(src.get("requires_official_confirmation")),
             "evidence_required": bool(src.get("requires_official_confirmation")),
             "extraction_status": "ok",
@@ -280,15 +276,23 @@ def run_scraping_pass(
             "extraction_provider": extraction_provider,
             "extraction_prompt_version": PROMPT_VERSION,
         }
-        logger.info("scrape.queue_insert run_id=%s source_id=%s source_name=%s target_url=%s extraction_status=%s confidence_score=%.2f data_quality_score=%.2f duplicate_status=%s",
-                    run_id, src.get("id"), source_name, item_url, "ok", confidence, normalized.data_quality_score, queue_payload["status"])
-        execute_or_raise("scrape_queue.insert", lambda payload=queue_payload: supabase.table("scrape_queue").insert(payload).execute())
+        logger.info(
+            "scrape.queue_insert run_id=%s source_id=%s source_name=%s target_url=%s extraction_status=%s confidence_score=%.2f data_quality_score=%.2f duplicate_status=%s duplicate_reason=%s",
+            run_id, src.get("id"), source_name, item_url, "ok",
+            confidence, normalized.data_quality_score, queue_payload["status"], decision.reason,
+        )
+        inserted = execute_or_raise(
+            "scrape_queue.insert",
+            lambda payload=queue_payload: supabase.table("scrape_queue").insert(payload).execute(),
+        ).data or []
+        inserted_id = inserted[0].get("id") if inserted else None
 
-        if is_dup:
+        if decision.is_duplicate:
             total_dup += 1
         else:
             total_new += 1
-            queued_keys.add(sim_key)
+            if inserted_id:
+                queued_id_by_key.setdefault(sim_key, inserted_id)
         return True
 
     for src in sources:
@@ -338,81 +342,15 @@ def run_scraping_pass(
                 if total_found == found_before:
                     _bump_source_failure(supabase, src)
                     continue
-                execute_or_default(
-                    "source_registry.mark_success",
-                    lambda src=src: supabase.table("source_registry")
-                    .update(
-                        {
-                            "last_scraped_at": utc_now_iso(),
-                            "last_success_at": utc_now_iso(),
-                            "consecutive_fails": 0,
-                            "last_error": None,
-                        }
-                    )
-                    .eq("id", src["id"])
-                    .execute(),
-                    None,
-                )
-                continue
-            raw = fetch_page_text(target_url) if not mock else f"MOCK PAGE TEXT FOR {target_url}"
-            if not raw:
-                error_log.append({"source": source.name, "error": "Empty response", "at": utc_now_iso()})
-                _bump_source_failure(supabase, src)
-                continue
-            extraction = extract_recruitment_data(raw, target_url, source.name, mock=mock)
-            if not extraction:
-                error_log.append({"source": source.name, "error": "Extraction returned null", "at": utc_now_iso()})
-                _bump_source_failure(supabase, src)
-                continue
-
-            data: ExtractedRecruitment = extraction["data"]
-            confidence = float(extraction.get("confidence") or 0.5)
-            extraction_provider = extraction.get("provider") or ("mock" if extraction.get("is_mock") else "anthropic")
-            total_found += 1
-
-            sim_key = compute_similarity_key(data)
-            fuzzy_dup = any(fuzzy_duplicate(data.title, (r.get("name") or "")) for r in existing_recs)
-            is_dup = sim_key in existing_keys or sim_key in queued_keys or fuzzy_dup
-            duplicate_of = existing_id_by_key.get(sim_key)
-            duplicate_reason = "similarity_key" if (sim_key in existing_keys or sim_key in queued_keys) else ("fuzzy_match" if fuzzy_dup else None)
-            normalized = normalize_recruitment(data)
-            extracted_payload = to_json_safe(data)
-            extracted_payload["_meta"] = {
-                "prompt_version": PROMPT_VERSION,
-                "data_quality_score": normalized.data_quality_score,
-                "warnings": normalized.warnings,
-                "normalized_fields": normalized.normalized_fields,
-                "duplicate_reason": duplicate_reason,
-                "source_registry_id": src.get("id"),
-                "source_type": src.get("source_type"),
-            }
-
-            queue_payload = {
-                "source_url": target_url,
-                "source_name": source.name,
-                "source_id": source.id or None,
-                "extracted_data": extracted_payload,
-                "confidence_score": confidence,
-                "scrape_run_id": run_id,
-                "duplicate_of": duplicate_of,
-                "scraped_at": utc_now_iso(),
-                # Never auto-approve — see runner.ts safety hardening note.
-                "status": "duplicate" if is_dup else "pending",
-                "official_source_resolved": not bool(src.get("requires_official_confirmation")),
-                "evidence_required": bool(src.get("requires_official_confirmation")),
-                "extraction_status": "ok",
-                "extraction_provider": extraction_provider,
-                "extraction_prompt_version": PROMPT_VERSION,
-            }
-            logger.info("scrape.queue_insert run_id=%s source_id=%s source_name=%s target_url=%s extraction_status=%s confidence_score=%.2f data_quality_score=%.2f duplicate_status=%s",
-                        run_id, source.id, source.name, target_url, "ok", confidence, normalized.data_quality_score, queue_payload["status"])
-            execute_or_raise("scrape_queue.insert", lambda payload=queue_payload: supabase.table("scrape_queue").insert(payload).execute())
-
-            if is_dup:
-                total_dup += 1
             else:
-                total_new += 1
-                queued_keys.add(sim_key)
+                raw = fetch_page_text(target_url) if not mock else f"MOCK PAGE TEXT FOR {target_url}"
+                if not raw:
+                    error_log.append({"source": source.name, "error": "Empty response", "at": utc_now_iso()})
+                    _bump_source_failure(supabase, src)
+                    continue
+                if not queue_extraction(src, source.name, target_url, raw):
+                    _bump_source_failure(supabase, src)
+                    continue
 
             execute_or_default(
                 "source_registry.mark_success",
@@ -711,22 +649,44 @@ def promote_run(
     """
     queued = (
         supabase.table("scrape_queue")
-        .select("id, source_id, extracted_data, status")
+        .select(
+            "id, source_id, extracted_data, status, official_source_resolved, "
+            "official_source_host, extraction_status, notification_document_id, "
+            "evidence_required"
+        )
         .eq("scrape_run_id", run_id)
         .eq("status", "pending")
         .execute()).data or []
 
     promoted = 0
     failed = 0
+    skipped = 0
     rec_ids: list[str] = []
-    errors: list[dict[str, str]] = []
+    errors: list[dict[str, Any]] = []
 
     for item in queued:
+        queue_id = item["id"]
         d = item.get("extracted_data")
         if not isinstance(d, dict):
             failed += 1
-            errors.append({"queue_id": item["id"], "error": "extracted_data not a dict"})
+            errors.append({"queue_id": queue_id, "error": "extracted_data not a dict"})
             continue
+
+        gate = evaluate_promotion_gate(supabase, item)
+        if not gate.ok:
+            skipped += 1
+            errors.append({
+                "queue_id": queue_id,
+                "error": "gate_blocked",
+                "reason": gate.reason,
+                "unverified_fields": gate.unverified_fields,
+            })
+            logger.info(
+                "[promote_run] queue_id=%s gate_blocked reason=%s unverified=%s",
+                queue_id, gate.reason, gate.unverified_fields,
+            )
+            continue
+
         try:
             extracted = ExtractedRecruitment(**d)
             rec_id = promote_to_recruitments(extracted, supabase, source_id=item.get("source_id"))
@@ -734,17 +694,24 @@ def promote_run(
             update = {
                 "status": "approved",
                 "reviewed_at": utc_now_iso(),
+                "promoted_recruitment_id": rec_id,
             }
             if reviewer_id:
                 update["reviewer_id"] = reviewer_id
             execute_or_raise(
                 "scrape_queue.promote_status_update",
-                lambda: supabase.table("scrape_queue").update(update).eq("id", item["id"]).execute(),
+                lambda update=update, qid=queue_id: supabase.table("scrape_queue").update(update).eq("id", qid).execute(),
             )
             promoted += 1
         except Exception as exc:  # noqa: BLE001
             failed += 1
-            errors.append({"queue_id": item["id"], "error": str(exc)})
-            logger.warning("[promote_run] queue_id=%s failed: %s", item["id"], exc)
+            errors.append({"queue_id": queue_id, "error": str(exc)})
+            logger.warning("[promote_run] queue_id=%s failed: %s", queue_id, exc)
 
-    return {"promoted": promoted, "failed": failed, "recruitment_ids": rec_ids, "errors": errors}
+    return {
+        "promoted": promoted,
+        "failed": failed,
+        "skipped": skipped,
+        "recruitment_ids": rec_ids,
+        "errors": errors,
+    }
