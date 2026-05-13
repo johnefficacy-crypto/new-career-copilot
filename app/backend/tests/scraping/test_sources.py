@@ -165,3 +165,32 @@ def test_whitespace_url_is_treated_as_missing():
     )
     assert src.notification_url is None
     assert src.primary_fetch_url() is None
+
+
+def test_sitemap_adapter_picks_adapter_config_url():
+    src = normalize_source_registry({
+        "id": "s1",
+        "source_name": "Sitemap source",
+        "adapter_type": "sitemap",
+        "adapter_config": {"sitemap_url": "https://x.gov.in/recruitment-sitemap.xml"},
+    })
+    assert src.primary_fetch_url() == "https://x.gov.in/recruitment-sitemap.xml"
+
+
+def test_sitemap_adapter_falls_back_to_crawl_url_plus_sitemap():
+    src = normalize_source_registry({
+        "id": "s2",
+        "source_name": "Default sitemap",
+        "adapter_type": "sitemap",
+        "crawl_url": "https://x.gov.in",
+    })
+    assert src.primary_fetch_url() == "https://x.gov.in/sitemap.xml"
+
+
+def test_sitemap_adapter_returns_none_when_no_url_or_base():
+    src = normalize_source_registry({
+        "id": "s3",
+        "source_name": "Misconfigured sitemap",
+        "adapter_type": "sitemap",
+    })
+    assert src.primary_fetch_url() is None

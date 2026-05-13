@@ -60,6 +60,16 @@ class ScrapeSource:
             return self.api_url or None
         if adapter == "pdf":
             return self.pdf_bulletin_url or None
+        if adapter == "sitemap":
+            # Sitemap URL lives in adapter_config so we don't need a
+            # dedicated typed column for what's effectively a per-source
+            # config knob. Falls back to crawl_url + ``/sitemap.xml`` as
+            # a convention so simple cases don't need explicit config.
+            sitemap_url = self.adapter_config.get("sitemap_url") if isinstance(self.adapter_config, dict) else None
+            if sitemap_url:
+                return str(sitemap_url)
+            base = (self.crawl_url or self.official_url or "").rstrip("/")
+            return f"{base}/sitemap.xml" if base else None
 
         # HTML / aggregator path. Aggregators advertise their listing page
         # under ``crawl_url`` (legacy ``source_url``); the discovery layer
