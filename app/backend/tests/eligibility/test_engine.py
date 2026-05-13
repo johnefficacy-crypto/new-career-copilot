@@ -8,8 +8,10 @@ from app.eligibility.engine import check_eligibility
 from app.eligibility.schemas import (
     AgeCriteria,
     AttemptLimit,
+    CertificationCriteria,
     EducationCriteria,
     PostCriteria,
+    UserCertification,
     UserEducation,
     UserExamAttempts,
     UserExamCredential,
@@ -613,3 +615,162 @@ def test_attempt_limit_default_scope_is_exam_family():
     # pre-migration engine.
     lim = AttemptLimit(category=None, max_attempts=3)
     assert lim.attempt_scope == "exam_family"
+
+
+# ── P2 #4 certification issuer enforcement ─────────────────────────────────
+
+
+def _cert_post(*, mandatory: bool = True, name: str = "PMP", issuer: str | None = None,
+               aliases=None):
+    return PostCriteria(
+        post_id="p-1",
+        recruitment_id="r-1",
+        certification_criteria=[
+            CertificationCriteria(
+                mandatory=mandatory,
+                name=name,
+                issuer=issuer,
+                aliases=aliases or [],
+            )
+        ],
+    )
+
+
+def _user_cert(name: str, issuer: str | None = None):
+    return UserCertification(certification_name=name, issuing_body=issuer)
+
+
+def test_certification_no_issuer_required_matches_on_name_alone():
+    # Back-compat: when criterion doesn't specify an issuer, the user's
+    # issuing_body is irrelevant — name match is enough.
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _cert_post(name="PMP", issuer=None),
+        user_certifications=[_user_cert("PMP", issuer="Some Random Body")],
+    )
+    cert = next(c for c in result.checks if c.rule == "certification")
+    assert cert.passed is True
+
+
+def test_certification_issuer_required_passes_when_user_issuer_matches():
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _cert_post(name="PMP", issuer="PMI"),
+        user_certifications=[_user_cert("PMP", issuer="PMI")],
+    )
+    cert = next(c for c in result.checks if c.rule == "certification")
+    assert cert.passed is True
+    assert "PMI" in cert.detail
+
+
+def test_certification_issuer_required_fails_when_user_issuer_mismatches():
+    # The bug being fixed: previously this passed because only the name
+    # was checked. Now must fail.
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _cert_post(name="PMP", issuer="PMI"),
+        user_certifications=[_user_cert("PMP", issuer="Unknown Body")],
+    )
+    cert = next(c for c in result.checks if c.rule == "certification")
+    assert cert.passed is False
+    assert "must be issued by PMI" in cert.detail
+
+
+def test_certification_issuer_required_fails_when_user_issuer_missing():
+    # User cert has no issuing_body. Required issuer cannot be satisfied.
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _cert_post(name="PMP", issuer="PMI"),
+        user_certifications=[_user_cert("PMP", issuer=None)],
+    )
+    cert = next(c for c in result.checks if c.rule == "certification")
+    assert cert.passed is False
+
+
+def test_certification_missing_name_match_takes_precedence_over_issuer_in_detail():
+    # When the user simply doesn't hold a cert with the required name, the
+    # failure detail says "missing" — not "wrong issuer".
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _cert_post(name="PMP", issuer="PMI"),
+        user_certifications=[_user_cert("Six Sigma", issuer="ASQ")],
+    )
+    cert = next(c for c in result.checks if c.rule == "certification")
+    assert cert.passed is False
+    assert "missing" in cert.detail.lower()
+
+
+def test_certification_alias_matches_with_correct_issuer():
+    # Aliases participate in the name-match step; the issuer gate applies
+    # to the aliased match.
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _cert_post(name="PMP", issuer="PMI", aliases=["project management professional"]),
+        user_certifications=[_user_cert("Project Management Professional", issuer="PMI")],
+    )
+    cert = next(c for c in result.checks if c.rule == "certification")
+    assert cert.passed is True
+
+
+def test_certification_issuer_match_is_case_insensitive():
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _cert_post(name="PMP", issuer="PMI"),
+        user_certifications=[_user_cert("pmp", issuer="pmi")],
+    )
+    cert = next(c for c in result.checks if c.rule == "certification")
+    assert cert.passed is True
+
+
+def test_certification_optional_always_passes_even_with_wrong_issuer():
+    # Optional certs are never gated. Issuer mismatch on an optional
+    # criterion still produces a passing check.
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _cert_post(mandatory=False, name="PMP", issuer="PMI"),
+        user_certifications=[_user_cert("PMP", issuer="Unknown")],
+    )
+    cert = next(c for c in result.checks if c.rule == "certification_optional")
+    assert cert.passed is True
+
+
+def test_certification_picks_correct_issuer_when_user_holds_multiple_same_name():
+    # User has two PMPs, one from PMI and one from a fake body. Criterion
+    # requires PMI. The PMI one must satisfy the gate.
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _cert_post(name="PMP", issuer="PMI"),
+        user_certifications=[
+            _user_cert("PMP", issuer="Unknown"),
+            _user_cert("PMP", issuer="PMI"),
+        ],
+    )
+    cert = next(c for c in result.checks if c.rule == "certification")
+    assert cert.passed is True
