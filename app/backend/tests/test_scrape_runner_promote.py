@@ -1528,3 +1528,31 @@ def test_runner_api_writes_back_caching_headers_on_200(monkeypatch):
         u.get("last_listing_modified") == "Wed, 02 Feb 2026 00:00:00 GMT"
         for u in updates
     )
+
+
+def test_runner_pdf_skips_on_304_and_marks_success(monkeypatch):
+    from app.scraping import runner as runner_mod
+    from app.scraping.fetcher import FetchResult
+
+    sb = RunnerSB()
+    sb.db["source_registry"] = [{
+        "id": "src-pdf",
+        "source_name": "PDF Bulletin",
+        "adapter_type": "pdf",
+        "pdf_bulletin_url": "https://example.gov.in/bulletin.pdf",
+        "is_active": True,
+        "last_listing_etag": 'W/"pdf-prev"',
+    }]
+
+    def _fake_fetch_pdf(url, *, if_none_match=None, if_modified_since=None, timeout=30.0):
+        assert if_none_match == 'W/"pdf-prev"'
+        return FetchResult(ok=False, url=url, status_code=304, error="not_modified")
+
+    monkeypatch.setattr("app.scraping.fetcher.fetch_pdf", _fake_fetch_pdf)
+    monkeypatch.setattr(runner_mod, "fetch_page_html", lambda url: None)
+
+    out = run_scraping_pass(sb, source_ids=["src-pdf"], mock=False)
+    assert out["items_found"] == 0
+    assert all(e.get("error") != "empty_pdf" for e in out.get("errors", []))
+    updates = sb.db.get("source_registry_updates", [])
+    assert any(u.get("consecutive_fails") == 0 for u in updates)

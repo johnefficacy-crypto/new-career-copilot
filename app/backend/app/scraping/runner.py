@@ -442,7 +442,29 @@ def _run_pdf_pass(
     if mock:
         raw_text = f"MOCK PDF BULLETIN BODY FOR {target_url}"
     else:
-        result = fetch_pdf(target_url)
+        prior_etag = src.get("last_listing_etag")
+        prior_modified = src.get("last_listing_modified")
+        result = fetch_pdf(
+            target_url,
+            if_none_match=prior_etag,
+            if_modified_since=prior_modified,
+        )
+        if not result.ok and result.error == "not_modified":
+            logger.info(
+                "pdf.bulletin_unchanged source_id=%s url=%s",
+                src.get("id"), target_url,
+            )
+            return True
+        if result.ok and (result.etag or result.last_modified):
+            execute_or_default(
+                "source_registry.update_listing_headers",
+                lambda src=src, etag=result.etag, mod=result.last_modified:
+                    supabase.table("source_registry").update({
+                        "last_listing_etag": etag,
+                        "last_listing_modified": mod,
+                    }).eq("id", src["id"]).execute(),
+                None,
+            )
         if not result.ok or not result.text:
             error_log.append({
                 "source": source.name,

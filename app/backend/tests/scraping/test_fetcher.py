@@ -445,3 +445,35 @@ def test_fetch_api_returns_not_modified_on_304(monkeypatch):
     assert result.error == "not_modified"
     assert entries == []
     assert captured["If-None-Match"] == 'W/"def"'
+
+
+# ── Conditional fetch for PDF bulletins ─────────────────────────────────────
+
+
+def test_fetch_pdf_returns_not_modified_on_304(monkeypatch):
+    from app.scraping.fetcher import fetch_pdf
+
+    captured: dict = {}
+
+    class _Resp:
+        status_code = 304
+        content = b""
+        text = ""
+        url = "https://example.gov.in/bulletin.pdf"
+        headers = {"etag": 'W/"pdf-1"'}
+        def raise_for_status(self):
+            raise AssertionError("304 must not raise_for_status")
+
+    def _get(url, headers, timeout, follow_redirects):
+        captured.update(headers)
+        return _Resp()
+
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", _get)
+    result = fetch_pdf(
+        "https://example.gov.in/bulletin.pdf",
+        if_none_match='W/"pdf-1"',
+    )
+    assert result.ok is False
+    assert result.status_code == 304
+    assert result.error == "not_modified"
+    assert captured["If-None-Match"] == 'W/"pdf-1"'
