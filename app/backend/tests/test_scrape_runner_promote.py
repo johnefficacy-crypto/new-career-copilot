@@ -128,6 +128,28 @@ class RunnerQuery:
                 rows.append(row)
                 return E([row])
             return E(list(self.db.get("listing_observations", [])))
+        if self.name == "recruitment_candidates":
+            if self.payload:
+                rows = self.db.setdefault("recruitment_candidates", [])
+                if "id" in self.filters:
+                    for row in rows:
+                        if row.get("id") == self.filters["id"]:
+                            row.update(self.payload)
+                            return E([row])
+                row = {**self.payload, "id": f"rc-{len(rows) + 1}"}
+                rows.append(row)
+                return E([row])
+            rows = list(self.db.get("recruitment_candidates", []))
+            if "canonical_key" in self.filters:
+                rows = [r for r in rows if r.get("canonical_key") == self.filters["canonical_key"]]
+            return E(rows)
+        if self.name == "candidate_observations":
+            if self.payload:
+                rows = self.db.setdefault("candidate_observations", [])
+                row = {**self.payload, "id": f"co-{len(rows) + 1}"}
+                rows.append(row)
+                return E([row])
+            return E(list(self.db.get("candidate_observations", [])))
         return E([])
 
 
@@ -795,3 +817,94 @@ def test_aggregator_path_marks_needs_official_source_when_resolver_fails(monkeyp
     assert row["source_url"].endswith("/ssc-cgl-2026-recruitment/")
     listings = sb.db.get("aggregator_listings", [])
     assert listings and listings[-1]["status"] == "needs_official_source"
+
+
+# ── P1: vacancy persistence + candidate merge ───────────────────────────────
+
+
+def test_promote_writes_category_vacancies():
+    sb = SB()
+    data = ExtractedRecruitment(
+        title="T", organization_name="O", org_type="Other", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="https://x",
+        posts=[{
+            "post_name": "Inspector",
+            "vacancies": 100,
+            "category_vacancies": {"UR": 50, "OBC": 27, "SC": 15, "ST": 8},
+        }],
+    )
+    promote_to_recruitments(data, sb)
+    rows = sb.db.get("vacancy_reservations", [])
+    assert len(rows) == 4
+    by_cat = {r["vertical_category"]: r["vacancy_count"] for r in rows}
+    assert by_cat == {"UR": 50, "OBC": 27, "SC": 15, "ST": 8}
+
+
+def test_promote_falls_back_to_post_vacancies_when_no_category_breakdown():
+    sb = SB()
+    data = ExtractedRecruitment(
+        title="T", organization_name="O", org_type="Other", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="https://x",
+        posts=[{"post_name": "X", "vacancies": 42}],
+    )
+    promote_to_recruitments(data, sb)
+    rows = sb.db.get("vacancy_reservations", [])
+    assert len(rows) == 1
+    assert rows[0]["vertical_category"] is None
+    assert rows[0]["vacancy_count"] == 42
+
+
+def test_promote_writes_no_vacancy_rows_when_post_has_no_count():
+    sb = SB()
+    data = ExtractedRecruitment(
+        title="T", organization_name="O", org_type="Other", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="https://x",
+        posts=[{"post_name": "X"}],
+    )
+    promote_to_recruitments(data, sb)
+    assert sb.db.get("vacancy_reservations", []) == []
+
+
+def test_runner_writes_recruitment_candidates_and_observations():
+    sb = RunnerSB()
+    run_scraping_pass(sb, source_ids=["src-1"], mock=True)
+    candidates = sb.db.get("recruitment_candidates", [])
+    observations = sb.db.get("candidate_observations", [])
+    # Mock aggregator returns 3 detail URLs sharing the same sim_key →
+    # one candidate row, three observations.
+    assert len(candidates) == 1
+    assert candidates[0]["status"] == "aggregator_confirmed"
+    assert candidates[0]["organization_hint"] == "Free Job Alert"
+    assert len(observations) == 3
+    # Each observation links to a queue row and the candidate.
+    for obs in observations:
+        assert obs["candidate_id"] == candidates[0]["id"]
+        assert obs["source_id"] == "src-1"
+
+
+def test_runner_candidate_status_marks_official_when_resolver_succeeds(monkeypatch):
+    sb = RunnerSB()
+    listing_html = '<a href="/ssc-cgl-2026-recruitment/">SSC CGL 2026</a>'
+    detail_html = '<a href="https://ssc.nic.in/recruitment/2026/cgl.pdf">Official</a>'
+    official_html = "<html>Official body</html>"
+
+    def _fake_html(url):
+        if url.endswith("/government-jobs/"):
+            return listing_html
+        if "ssc-cgl-2026-recruitment" in url:
+            return detail_html
+        if "ssc.nic.in" in url:
+            return official_html
+        return None
+
+    monkeypatch.setattr("app.scraping.runner.fetch_page_html", _fake_html)
+    monkeypatch.setattr("app.scraping.runner.fetch_page_text", lambda url: None)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    run_scraping_pass(sb, source_ids=["src-1"], mock=False, limit=5)
+    candidates = sb.db.get("recruitment_candidates", [])
+    assert candidates
+    assert candidates[-1]["status"] == "official_notification_found"
