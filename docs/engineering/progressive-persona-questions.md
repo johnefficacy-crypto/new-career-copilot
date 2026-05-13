@@ -123,11 +123,21 @@ recompute.
   "Answer one small question to improve your next plan." We do **not**
   show persona labels.
 
-## Future PR3 connection
+## Consumed by Study OS Mission Control (PR3)
 
-PR3 introduces `/api/study/mission-control`. That endpoint reads the
-latest persona snapshot (already shaped by PR2 answers via the
-classifier + study policy) and returns a today-view that respects:
+PR3's `GET /api/study/mission-control` calls
+`app.persona_questions.selector.select_next_question` to pick the
+single tiny question shown on `/app/today`. When no tasks are
+scheduled, the deterministic next-best-action rule promotes the
+selected question to `action_type: "progressive_question"`. The
+question card itself is still rendered through PR2's
+`PersonaQuestionCard` — mission-control simply exposes the same
+question alongside the rest of the day's shape so the action panel can
+reference it.
+
+The persona snapshot (now shaped by PR2 answers via the classifier +
+`derive_study_policy(dimensions, answers)`) is what mission-control
+reads to populate `today's policy`:
 
 - `preferred_task_size` (`short_focus_blocks` → small)
 - `max_tasks_per_day` cap (`weekly_targets_only` → ≤3)
@@ -135,7 +145,8 @@ classifier + study policy) and returns a today-view that respects:
 - `constraints.weekend_catchup_enabled` (job/family blockers)
 - `constraints.require_mock_review_before_next_mock` (PR1 + mock_behavior)
 
-PR2 deliberately stops before changing any Study OS scheduling.
+See `docs/engineering/study-os-mission-control-v1.md` for the full
+contract.
 
 ## Non-goals (must not appear in PR2)
 
