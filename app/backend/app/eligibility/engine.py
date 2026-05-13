@@ -73,17 +73,37 @@ _OBC_VARIANTS: set[str] = {
 }
 
 
+_CATEGORY_BUCKETS: dict[str, str] = {
+    **{token: "obc" for token in _OBC_VARIANTS},
+    "sc": "sc",
+    "pwd_sc_st": "sc",
+    "st": "st",
+    "ews": "ews",
+    "general": "general",
+}
+
+
+def _canonical_category(raw: str | None) -> str | None:
+    """Map a known category token to its canonical bucket, or ``None`` if unrecognised.
+
+    Use this when matching canonical criteria against a user — an unknown
+    spelling must NOT silently collapse to ``"general"``, otherwise a
+    category-specific rule with an unexpected token (typo, new state variant,
+    bad scraper value) would wrongly apply to general candidates.
+    """
+    if raw is None:
+        return None
+    cat = raw.lower().strip()
+    if not cat:
+        return None
+    return _CATEGORY_BUCKETS.get(cat)
+
+
 def _normalize_category(raw: str | None) -> str:
-    cat = (raw or "general").lower().strip()
-    if cat in _OBC_VARIANTS:
-        return "obc"
-    if cat in ("sc", "pwd_sc_st"):
-        return "sc"
-    if cat == "st":
-        return "st"
-    if cat == "ews":
-        return "ews"
-    return "general"
+    # Collapse to "general" for relaxation-side defaults: an unrecognised
+    # user category should get the most conservative (no extra) relaxation,
+    # not a free pass. Matching code should use _canonical_category instead.
+    return _canonical_category(raw) or "general"
 
 
 def _category_relaxation_years(profile: UserProfile) -> int:
@@ -180,6 +200,10 @@ def check_eligibility(
 ) -> EligibilityCheckResult:
     checks: list[EligibilityCheck] = []
     is_conditional = False
+    # Rule names whose failing check represents missing/unverifiable input
+    # rather than a hard disqualification. These must be excluded from the
+    # `non_edu_failures` aggregation so the result surfaces as conditional.
+    unverifiable_rules: set[str] = set()
     user_certs: list[UserCertification] = user_certifications or []
 
     # ── 1. Age ──────────────────────────────────────────────────────────────
@@ -197,6 +221,7 @@ def check_eligibility(
 
         if cutoff_invalid:
             is_conditional = True
+            unverifiable_rules.add("age")
             checks.append(
                 EligibilityCheck(
                     rule="age",
@@ -209,6 +234,7 @@ def check_eligibility(
             )
         elif cutoff is None:
             is_conditional = True
+            unverifiable_rules.add("age")
             checks.append(
                 EligibilityCheck(
                     rule="age",
@@ -220,6 +246,8 @@ def check_eligibility(
                 )
             )
         elif not dob_str:
+            is_conditional = True
+            unverifiable_rules.add("age")
             checks.append(
                 EligibilityCheck(
                     rule="age",
@@ -231,6 +259,8 @@ def check_eligibility(
             try:
                 dob = _parse_iso_date(dob_str)
             except Exception:
+                is_conditional = True
+                unverifiable_rules.add("age")
                 checks.append(
                     EligibilityCheck(rule="age", passed=False, detail="Invalid date of birth.")
                 )
@@ -281,6 +311,7 @@ def check_eligibility(
 
                 if age_unverifiable_note is not None:
                     is_conditional = True
+                    unverifiable_rules.add("age")
                     checks.append(
                         EligibilityCheck(
                             rule="age",
@@ -536,18 +567,22 @@ def check_eligibility(
 
     # ── 3. Attempt limit ────────────────────────────────────────────────────
     if criteria.attempt_limits:
-        user_category = _normalize_category(profile.category)
+        user_bucket = _canonical_category(profile.category)
+        user_category = user_bucket or "general"
         record = next(
             (a for a in exam_attempts if a.recruitment_id == criteria.recruitment_id), None
         )
         attempts_used = record.attempts_used if record else 0
 
+        # Only match a category-specific limit when BOTH sides canonicalise to
+        # the same known bucket. An unrecognised limit category must not
+        # silently collapse to "general" and apply to general candidates.
         applicable = next(
             (
                 limit
                 for limit in criteria.attempt_limits
-                if limit.category is not None
-                and _normalize_category(limit.category) == user_category
+                if user_bucket is not None
+                and _canonical_category(limit.category) == user_bucket
             ),
             None,
         ) or next((limit for limit in criteria.attempt_limits if limit.category is None), None)
@@ -602,6 +637,7 @@ def check_eligibility(
     # ── 5. Nationality ──────────────────────────────────────────────────────
     if profile.nationality is None or not profile.nationality.strip():
         is_conditional = True
+        unverifiable_rules.add("nationality")
         checks.append(
             EligibilityCheck(
                 rule="nationality",
@@ -653,8 +689,15 @@ def check_eligibility(
     # ── Aggregate ───────────────────────────────────────────────────────────
     failed_checks = [c for c in checks if not c.passed]
     is_eligible = len(failed_checks) == 0
+    # Conditional eligibility means: the candidate is not currently eligible,
+    # but no rule has actually disqualified them — every failure is either
+    # education/exam/language (recoverable on completion) or an unverifiable
+    # input gap (recoverable on data correction). A hard rule failure (age
+    # too high, wrong domicile, etc.) must NOT surface as conditional.
     non_edu_failures = [
-        c for c in failed_checks if c.rule not in ("education", "exam_credential", "language")
+        c for c in failed_checks
+        if c.rule not in ("education", "exam_credential", "language")
+        and c.rule not in unverifiable_rules
     ]
     final_conditional = is_conditional and not non_edu_failures and not is_eligible
 
