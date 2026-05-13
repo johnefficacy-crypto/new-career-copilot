@@ -412,6 +412,152 @@ def _run_rss_pass(
 # ─── PDF adapter pass ─────────────────────────────────────────────────────
 
 
+# ─── Sitemap adapter pass ────────────────────────────────────────────────
+
+
+def _run_sitemap_pass(
+    supabase: Client,
+    *,
+    src: dict[str, Any],
+    source: Any,
+    run_id: str,
+    target_url: str,
+    run_limit: int,
+    queue_extraction: Any,
+    error_log: list[dict[str, Any]],
+    mock: bool,
+) -> bool:
+    """Fetch a sitemap.xml and queue each ``<url>`` entry as a candidate
+    detail. Mirrors the RSS / API path: lifecycle classification skips
+    non-recruitment URLs, the resolver runs against each entry's HTML,
+    queue_extraction is called with the resolver-confirmed URL when
+    available.
+
+    Sitemaps don't carry titles, so the lifecycle classifier only sees
+    the URL. That's enough to skip obvious admit-card / result paths
+    while still queuing recruitment-shaped paths.
+    """
+    from .aggregator import classify_aggregator_link
+    from .fetcher import fetch_sitemap
+
+    if mock:
+        entries = [
+            type("E", (), {
+                "loc": f"{target_url.rstrip('/')}/mock-sitemap-{i}/",
+                "lastmod": None,
+            })()
+            for i in range(1, 4)
+        ]
+    else:
+        prior_etag = src.get("last_listing_etag")
+        prior_modified = src.get("last_listing_modified")
+        result, entries = fetch_sitemap(
+            target_url,
+            if_none_match=prior_etag,
+            if_modified_since=prior_modified,
+        )
+        if not result.ok and result.error == "not_modified":
+            logger.info(
+                "sitemap.unchanged source_id=%s url=%s",
+                src.get("id"), target_url,
+            )
+            return True
+        if result.ok and (result.etag or result.last_modified):
+            execute_or_default(
+                "source_registry.update_listing_headers",
+                lambda src=src, etag=result.etag, mod=result.last_modified:
+                    supabase.table("source_registry").update({
+                        "last_listing_etag": etag,
+                        "last_listing_modified": mod,
+                    }).eq("id", src["id"]).execute(),
+                None,
+            )
+        if not result.ok or not entries:
+            error_log.append({
+                "source": source.name,
+                "url": target_url,
+                "error": result.error or "empty_sitemap",
+                "at": utc_now_iso(),
+            })
+            return False
+
+    queued_any = False
+    entries = entries[:run_limit]
+    for entry in entries:
+        link = (entry.loc or "").strip()
+        if not link:
+            continue
+        # Sitemap entries have no label. Pass an empty title so
+        # classify_aggregator_link relies on URL hints only.
+        event_type = classify_aggregator_link("", link)
+        if event_type != "new_recruitment":
+            logger.info(
+                "sitemap.lifecycle_skipped source_id=%s url=%s event=%s",
+                src.get("id"), link, event_type,
+            )
+            _record_lifecycle_event(
+                supabase,
+                source_id=src.get("id"),
+                listing_id=None,
+                event_type=event_type,
+                url=link,
+                label="",
+            )
+            continue
+
+        listing_id = _upsert_aggregator_listing(
+            supabase,
+            source_id=src.get("id"),
+            scrape_run_id=run_id,
+            detail_url=link,
+            label="",
+            event_type=event_type,
+        )
+        _record_listing_observation(
+            supabase,
+            listing_id=listing_id,
+            source_id=src.get("id"),
+            scrape_run_id=run_id,
+            observed_url=link,
+            observed_label="",
+            content_hash=None,
+        )
+
+        resolver_result = None
+        item_url = link
+        if mock:
+            raw_text = f"MOCK SITEMAP DETAIL FOR {link}"
+        else:
+            detail_html = fetch_page_html(link)
+            if not detail_html:
+                error_log.append({"source": source.name, "url": link, "error": "Empty detail response", "at": utc_now_iso()})
+                continue
+            raw_text = strip_html(detail_html)
+            resolver_result = resolve_with_registry(detail_html, link, source)
+            if resolver_result:
+                official_html = fetch_page_html(resolver_result.official_url)
+                if official_html:
+                    item_url = resolver_result.official_url
+                    raw_text = strip_html(official_html)
+                    _mark_listing_status(
+                        supabase, listing_id,
+                        "official_source_found",
+                        official_source_url=resolver_result.official_url,
+                    )
+                else:
+                    resolver_result = None
+                    _mark_listing_status(supabase, listing_id, "needs_official_source")
+            else:
+                _mark_listing_status(supabase, listing_id, "needs_official_source")
+
+        if queue_extraction(
+            src, source.name, item_url, raw_text,
+            listing_id=listing_id, resolver_result=resolver_result,
+        ):
+            queued_any = True
+    return queued_any
+
+
 def _run_pdf_pass(
     supabase: Client,
     *,
@@ -1264,6 +1410,52 @@ def run_scraping_pass(
                             supabase, src,
                             error_class="empty_api_response",
                             error_message="api adapter returned no entries",
+                            attempted_url=target_url,
+                        )
+                        continue
+                    execute_or_default(
+                        "source_registry.mark_success",
+                        lambda src=src: supabase.table("source_registry").update({
+                            "last_scraped_at": utc_now_iso(),
+                            "last_success_at": utc_now_iso(),
+                            "consecutive_fails": 0,
+                            "last_error": None,
+                            "last_error_class": None,
+                            "last_error_message": None,
+                            "last_error_at": None,
+                            "last_error_http_status": None,
+                            "last_error_url": None,
+                        }).eq("id", src["id"]).execute(),
+                        None,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    error_class, error_message = _classify_exception(exc)
+                    error_log.append({"source": source.name, "error": error_class, "error_message": error_message, "at": utc_now_iso()})
+                    _bump_source_failure(
+                        supabase, src,
+                        error_class=error_class,
+                        error_message=error_message,
+                        attempted_url=target_url,
+                    )
+                continue
+
+            if source.adapter_type and source.adapter_type.lower() == "sitemap":
+                try:
+                    if not _run_sitemap_pass(
+                        supabase,
+                        src=src,
+                        source=source,
+                        run_id=run_id,
+                        target_url=target_url,
+                        run_limit=run_limit,
+                        queue_extraction=queue_extraction,
+                        error_log=error_log,
+                        mock=mock,
+                    ):
+                        _bump_source_failure(
+                            supabase, src,
+                            error_class="empty_sitemap",
+                            error_message="sitemap adapter returned no entries",
                             attempted_url=target_url,
                         )
                         continue

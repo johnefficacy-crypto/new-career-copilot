@@ -1608,3 +1608,17 @@ def test_runner_releases_lock_after_successful_pass():
     # And the per-source claim itself was stamped at some point.
     claim_updates = [u for u in updates if isinstance(u.get("currently_scraping_at"), str) and u.get("currently_scraping_at")]
     assert claim_updates, "expected a claim update"
+
+
+def test_runner_sitemap_adapter_queues_entries_in_mock_mode():
+    sb = RunnerSB()
+    sb.db["source_registry"] = [{
+        "id": "src-sm",
+        "source_name": "Sitemap source",
+        "adapter_type": "sitemap",
+        "adapter_config": {"sitemap_url": "https://example.gov.in/sitemap.xml"},
+        "is_active": True,
+    }]
+    out = run_scraping_pass(sb, source_ids=["src-sm"], mock=True)
+    assert out["items_found"] == 3
+    assert all(r["source_id"] == "src-sm" for r in sb.db.get("scrape_queue", []))

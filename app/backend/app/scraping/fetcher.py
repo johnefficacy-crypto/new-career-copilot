@@ -678,3 +678,120 @@ def fetch_pdf(
         text=text,
         raw_bytes=raw_bytes,
     )
+
+
+# ─── Sitemap adapter ────────────────────────────────────────────────────────
+
+
+@dataclass
+class SitemapEntry:
+    loc: str
+    lastmod: str | None = None
+
+
+def parse_sitemap(xml_text: str | None) -> list[SitemapEntry]:
+    """Parse a sitemap.xml (urlset) or sitemapindex into entries.
+
+    For ``sitemapindex`` documents we recurse one level: the runner is
+    expected to fetch the inner sitemap separately, so we just surface
+    the index entries' ``loc`` for now (lastmod preserved when present).
+    Malformed XML returns ``[]``.
+    """
+    if not xml_text:
+        return []
+    try:
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(xml_text)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] sitemap parse failed: %s", exc)
+        return []
+
+    def _localname(tag: str) -> str:
+        return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+    def _text_of(node, tag: str) -> str:
+        for child in node:
+            if _localname(child.tag) == tag:
+                return (child.text or "").strip()
+        return ""
+
+    entries: list[SitemapEntry] = []
+    for child in root.iter():
+        local = _localname(child.tag)
+        if local not in {"url", "sitemap"}:
+            continue
+        loc = _text_of(child, "loc")
+        if not loc:
+            continue
+        lastmod = _text_of(child, "lastmod") or None
+        entries.append(SitemapEntry(loc=loc, lastmod=lastmod))
+    return entries
+
+
+def fetch_sitemap(
+    url: str,
+    *,
+    timeout: float = 15.0,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
+) -> tuple[FetchResult, list[SitemapEntry]]:
+    """Fetch a sitemap.xml and return both the FetchResult and parsed
+    entries. Same conditional-fetch / 304 contract as ``fetch_rss`` /
+    ``fetch_api``.
+    """
+    if not url:
+        return FetchResult(ok=False, url="", error="empty_url"), []
+
+    headers = dict(_DEFAULT_HEADERS)
+    headers["Accept"] = "application/xml, text/xml, */*;q=0.9"
+    if if_none_match:
+        headers["If-None-Match"] = if_none_match
+    if if_modified_since:
+        headers["If-Modified-Since"] = if_modified_since
+
+    try:
+        resp = httpx.get(url, headers=headers, timeout=timeout, follow_redirects=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] sitemap request failed url=%s error=%s", url, exc)
+        return FetchResult(ok=False, url=url, error=str(exc)), []
+
+    if resp.status_code == 304:
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=304,
+            final_url=str(resp.url),
+            etag=resp.headers.get("etag") or if_none_match,
+            last_modified=resp.headers.get("last-modified") or if_modified_since,
+            error="not_modified",
+        ), []
+
+    try:
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] sitemap http error url=%s status=%s error=%s", url, resp.status_code, exc)
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=resp.status_code,
+            final_url=str(resp.url),
+            error=f"http_{resp.status_code}",
+        ), []
+
+    raw_bytes = resp.content
+    content_hash = hashlib.sha256(raw_bytes).hexdigest() if raw_bytes else None
+    xml_text = resp.text or ""
+    result = FetchResult(
+        ok=True,
+        url=url,
+        status_code=resp.status_code,
+        final_url=str(resp.url),
+        content_type=resp.headers.get("content-type"),
+        etag=resp.headers.get("etag"),
+        last_modified=resp.headers.get("last-modified"),
+        content_hash=content_hash,
+        text=xml_text,
+        raw_bytes=raw_bytes,
+    )
+    entries = parse_sitemap(xml_text)
+    return result, entries
