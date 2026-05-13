@@ -698,15 +698,76 @@ def check_eligibility(
 
     # ── 5. Certification criteria ──────────────────────────────────────────
     if criteria.certification_criteria:
-        user_names = {((c.get("certification_name") if isinstance(c, dict) else getattr(c, "certification_name", None)) or "").strip().lower() for c in user_certs}
+        # Carry full (name, issuer) pairs from the user side so we can gate
+        # on issuer when canonical criteria declares one. The previous
+        # implementation collapsed user certs to a names-only set, so a
+        # criterion like {"name": "PMP", "issuer": "PMI"} would pass even
+        # when the user's PMP was from an unrelated body.
+        user_pairs: list[tuple[str, str]] = []
+        for c in user_certs:
+            if isinstance(c, dict):
+                name = (c.get("certification_name") or "").strip().lower()
+                issuer = (c.get("issuing_body") or "").strip().lower()
+            else:
+                name = (getattr(c, "certification_name", None) or "").strip().lower()
+                issuer = (getattr(c, "issuing_body", None) or "").strip().lower()
+            if name:
+                user_pairs.append((name, issuer))
+
         for cc in criteria.certification_criteria:
             target = (cc.name or "").strip().lower()
             aliases = {(a or "").strip().lower() for a in (cc.aliases or [])}
-            matched = bool(target and target in user_names) or bool(aliases.intersection(user_names))
-            if cc.mandatory:
-                checks.append(EligibilityCheck(rule="certification", passed=matched, detail=(f"Required certification matched: {cc.name}." if matched else f"Missing required certification: {cc.name or 'unspecified'}.")))
+            required_issuer = (cc.issuer or "").strip().lower()
+
+            name_match_pairs = [
+                (uname, uissuer)
+                for (uname, uissuer) in user_pairs
+                if (target and uname == target) or uname in aliases
+            ]
+
+            if required_issuer:
+                # Both name AND issuer must match. Empty/missing user
+                # issuing_body never satisfies a required issuer.
+                if not name_match_pairs:
+                    matched = False
+                    detail = (
+                        f"Missing required certification: "
+                        f"{cc.name or 'unspecified'} (issued by {cc.issuer})."
+                    )
+                elif any(uissuer == required_issuer for (_, uissuer) in name_match_pairs):
+                    matched = True
+                    detail = (
+                        f"Required certification matched: "
+                        f"{cc.name} issued by {cc.issuer}."
+                    )
+                else:
+                    matched = False
+                    detail = (
+                        f"Certification {cc.name!r} present but must be "
+                        f"issued by {cc.issuer}."
+                    )
             else:
-                checks.append(EligibilityCheck(rule="certification_optional", passed=True, detail=f"Optional certification: {cc.name or 'unspecified'}."))
+                matched = bool(name_match_pairs)
+                detail = (
+                    f"Required certification matched: {cc.name}."
+                    if matched
+                    else f"Missing required certification: {cc.name or 'unspecified'}."
+                )
+
+            if cc.mandatory:
+                checks.append(
+                    EligibilityCheck(
+                        rule="certification", passed=matched, detail=detail
+                    )
+                )
+            else:
+                checks.append(
+                    EligibilityCheck(
+                        rule="certification_optional",
+                        passed=True,
+                        detail=f"Optional certification: {cc.name or 'unspecified'}.",
+                    )
+                )
 
     # ── 5. Nationality ──────────────────────────────────────────────────────
     if profile.nationality is None or not profile.nationality.strip():
