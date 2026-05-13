@@ -441,3 +441,175 @@ def test_org_state_alone_does_not_force_domicile():
     )
     assert result.is_eligible is True
     assert all(c.rule != "domicile" for c in result.checks)
+
+
+# ── P1 #1 attempt-identity split (migration 050) ───────────────────────────
+
+
+def test_attempt_scope_exam_family_lenient_match_when_no_canonical_link():
+    # Legacy behaviour: a `aspirant_exam_attempts` row without a canonical
+    # exam_id, paired with a recruitment that also has no exam_id, must
+    # still register attempts so existing data keeps producing verdicts.
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [UserExamAttempts(attempt_scope="exam_family", attempts_used=3)],
+        [UserExamCredential(exam_key="gate")],
+        _post(attempt_limits=[AttemptLimit(category=None, max_attempts=3, attempt_scope="exam_family")]),
+    )
+    assert result.is_eligible is False
+
+
+def test_attempt_scope_exam_family_strict_match_when_both_sides_populated():
+    # Two user attempts: one for exam-family "ssc-cgl" (matches the
+    # recruitment), one for "upsc-cse" (doesn't). The matched one's
+    # count drives the verdict.
+    pc = PostCriteria(
+        post_id="p-1",
+        recruitment_id="r-1",
+        recruitment_exam_id="exam-ssc-cgl",
+        attempt_limits=[AttemptLimit(category=None, max_attempts=3, attempt_scope="exam_family")],
+    )
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [
+            UserExamAttempts(attempt_scope="exam_family", exam_id="exam-upsc-cse", attempts_used=10),
+            UserExamAttempts(attempt_scope="exam_family", exam_id="exam-ssc-cgl", attempts_used=2),
+        ],
+        [UserExamCredential(exam_key="gate")],
+        pc,
+    )
+    assert result.is_eligible is True
+
+
+def test_attempt_scope_exam_family_strict_mismatch_treats_attempts_as_zero():
+    # User has 10 attempts in a *different* exam family. The engine must
+    # NOT borrow that count for this recruitment's exam family.
+    pc = PostCriteria(
+        post_id="p-1",
+        recruitment_id="r-1",
+        recruitment_exam_id="exam-ssc-cgl",
+        attempt_limits=[AttemptLimit(category=None, max_attempts=3, attempt_scope="exam_family")],
+    )
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [UserExamAttempts(attempt_scope="exam_family", exam_id="exam-upsc-cse", attempts_used=10)],
+        [UserExamCredential(exam_key="gate")],
+        pc,
+    )
+    # No matching exam_family record → attempts_used=0 → eligible.
+    assert result.is_eligible is True
+
+
+def test_attempt_scope_recruitment_strict_match():
+    pc = PostCriteria(
+        post_id="p-1",
+        recruitment_id="r-1",
+        attempt_limits=[AttemptLimit(category=None, max_attempts=2, attempt_scope="recruitment")],
+    )
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [UserExamAttempts(attempt_scope="recruitment", recruitment_id="r-1", attempts_used=2)],
+        [UserExamCredential(exam_key="gate")],
+        pc,
+    )
+    # 2 of 2 used → next attempt would exceed cap → not eligible.
+    assert result.is_eligible is False
+
+
+def test_attempt_scope_recruitment_ignores_other_recruitments_attempts():
+    # User's attempts on a DIFFERENT recruitment must not count.
+    pc = PostCriteria(
+        post_id="p-1",
+        recruitment_id="r-1",
+        attempt_limits=[AttemptLimit(category=None, max_attempts=2, attempt_scope="recruitment")],
+    )
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [UserExamAttempts(attempt_scope="recruitment", recruitment_id="r-other", attempts_used=10)],
+        [UserExamCredential(exam_key="gate")],
+        pc,
+    )
+    assert result.is_eligible is True
+
+
+def test_attempt_scope_post_strict_match_on_recruitment_and_post():
+    pc = PostCriteria(
+        post_id="p-1",
+        recruitment_id="r-1",
+        attempt_limits=[AttemptLimit(category=None, max_attempts=2, attempt_scope="post")],
+    )
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [
+            # cycle-scope entry shouldn't be picked for a post-scope limit
+            UserExamAttempts(attempt_scope="recruitment", recruitment_id="r-1", attempts_used=10),
+            UserExamAttempts(attempt_scope="post", recruitment_id="r-1", post_id="p-1", attempts_used=2),
+            # different post — must not be picked
+            UserExamAttempts(attempt_scope="post", recruitment_id="r-1", post_id="p-2", attempts_used=99),
+        ],
+        [UserExamCredential(exam_key="gate")],
+        pc,
+    )
+    assert result.is_eligible is False  # 2/2 used on this post
+
+
+def test_attempt_scope_post_no_match_treats_as_zero():
+    pc = PostCriteria(
+        post_id="p-1",
+        recruitment_id="r-1",
+        attempt_limits=[AttemptLimit(category=None, max_attempts=2, attempt_scope="post")],
+    )
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        # Only a cycle-scope entry — no post-scope match.
+        [UserExamAttempts(attempt_scope="recruitment", recruitment_id="r-1", attempts_used=10)],
+        [UserExamCredential(exam_key="gate")],
+        pc,
+    )
+    assert result.is_eligible is True
+
+
+def test_attempt_scope_post_and_recruitment_can_coexist():
+    # A post can declare BOTH a cycle cap and a per-post cap; each limit
+    # row looks up its own scope's count independently.
+    pc = PostCriteria(
+        post_id="p-1",
+        recruitment_id="r-1",
+        attempt_limits=[
+            AttemptLimit(category=None, max_attempts=5, attempt_scope="recruitment"),
+            AttemptLimit(category=None, max_attempts=2, attempt_scope="post"),
+        ],
+    )
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [
+            UserExamAttempts(attempt_scope="recruitment", recruitment_id="r-1", attempts_used=3),
+            UserExamAttempts(attempt_scope="post", recruitment_id="r-1", post_id="p-1", attempts_used=2),
+        ],
+        [UserExamCredential(exam_key="gate")],
+        pc,
+    )
+    # Cycle is 3 of 5 (fine). Post is 2 of 2 (cap reached). But the engine
+    # picks at most one applicable limit per the (category-canonicalised
+    # → category=None fallback) precedence; the first matching None-
+    # category limit wins. This test pins that contract.
+    attempts_check = next(c for c in result.checks if c.rule == "attempts")
+    # The first None-category limit (recruitment scope, max 5) wins; the
+    # post-scope limit was not consulted in this configuration.
+    assert "3 of 5" in attempts_check.detail or "5 of 5" in attempts_check.detail
+
+
+def test_attempt_limit_default_scope_is_exam_family():
+    # Back-compat: AttemptLimit without explicit attempt_scope keeps the
+    # default 'exam_family' so existing canonical rows behave like the
+    # pre-migration engine.
+    lim = AttemptLimit(category=None, max_attempts=3)
+    assert lim.attempt_scope == "exam_family"

@@ -11,6 +11,7 @@ import NextActionCallout from "../../features/admin/workflow/NextActionCallout";
 import useAdminNextActions from "../../features/admin/workflow/useAdminNextActions";
 import OfficialSourceResolver from "../../features/admin/workflow/OfficialSourceResolver";
 import DuplicateMergePreview from "../../features/admin/workflow/DuplicateMergePreview";
+import SelectionContextBanner from "../../features/admin/workflow/SelectionContextBanner";
 import { scoreToPct } from "../../features/admin/workflow/scoreUtils";
 
 // "Select Source" rather than "Source Setup" — create/edit/verify still live
@@ -113,6 +114,12 @@ export default function OperationsConsole() {
   }), [selectedSource, latestRun, selectedQueueItem, selectedRecruitment, validateResult]);
 
   const checklistItems = useAdminNextActions(progressState);
+  const nextAction = useMemo(
+    () => checklistItems.find((i) => i.status === "blocked")
+       || checklistItems.find((i) => i.status === "todo")
+       || null,
+    [checklistItems],
+  );
 
   const onStepClick = useCallback((stepId) => {
     const map = {
@@ -295,6 +302,15 @@ export default function OperationsConsole() {
 
       <AdminProgressBar state={progressState} onStepClick={onStepClick} />
 
+      <SelectionContextBanner
+        source={selectedSource}
+        queueItem={selectedQueueItem}
+        recruitment={selectedRecruitment}
+        onClearSource={() => updateParams({ source_id: null })}
+        onClearQueue={() => updateParams({ queue_id: null })}
+        onClearRecruitment={() => updateParams({ recruitment_id: null })}
+      />
+
       <NextActionCallout
         message={firstActionableMessage(checklistItems)}
         tone={anyBlocked(checklistItems) ? "warn" : "info"}
@@ -357,6 +373,8 @@ export default function OperationsConsole() {
             recruitment={tab === "publish" ? selectedRecruitment : null}
             validateResult={validateResult}
             sources={sources}
+            nextAction={nextAction}
+            onJumpToTarget={onJumpToChecklistTarget}
             onQueueFieldAction={queueFieldAction}
             onPromote={promote}
             onMergeIntoExisting={openMergePreview}

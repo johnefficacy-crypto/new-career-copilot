@@ -380,3 +380,68 @@ def test_fetch_pdf_propagates_http_status_error(monkeypatch):
     assert result.ok is False
     assert result.status_code == 404
     assert result.error == "http_404"
+
+
+# ── Conditional fetch for RSS / JSON-API ────────────────────────────────────
+
+
+def test_fetch_rss_returns_not_modified_on_304(monkeypatch):
+    from app.scraping.fetcher import fetch_rss
+
+    captured: dict = {}
+
+    class _Resp:
+        status_code = 304
+        content = b""
+        text = ""
+        url = "https://example.gov.in/feed.xml"
+        headers = {"etag": 'W/"abc"'}
+        def raise_for_status(self):
+            raise AssertionError("304 path must not raise_for_status")
+
+    def _get(url, headers, timeout, follow_redirects):
+        captured.update(headers)
+        return _Resp()
+
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", _get)
+    result, entries = fetch_rss(
+        "https://example.gov.in/feed.xml",
+        if_none_match='W/"abc"',
+        if_modified_since="Wed, 01 Jan 2026 00:00:00 GMT",
+    )
+    assert result.ok is False
+    assert result.status_code == 304
+    assert result.error == "not_modified"
+    assert entries == []
+    assert captured["If-None-Match"] == 'W/"abc"'
+    assert captured["If-Modified-Since"] == "Wed, 01 Jan 2026 00:00:00 GMT"
+
+
+def test_fetch_api_returns_not_modified_on_304(monkeypatch):
+    from app.scraping.fetcher import fetch_api
+
+    captured: dict = {}
+
+    class _Resp:
+        status_code = 304
+        content = b""
+        text = ""
+        url = "https://example.gov.in/api"
+        headers = {"etag": 'W/"def"'}
+        def raise_for_status(self):
+            raise AssertionError("304 path must not raise_for_status")
+
+    def _get(url, headers, timeout, follow_redirects):
+        captured.update(headers)
+        return _Resp()
+
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", _get)
+    result, entries = fetch_api(
+        "https://example.gov.in/api",
+        if_none_match='W/"def"',
+    )
+    assert result.ok is False
+    assert result.status_code == 304
+    assert result.error == "not_modified"
+    assert entries == []
+    assert captured["If-None-Match"] == 'W/"def"'

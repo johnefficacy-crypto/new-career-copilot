@@ -126,13 +126,13 @@ def _load_active_posts_with_criteria(supabase: Client) -> list[dict[str, Any]]:
                 recruitment_id,
                 language_requirements,
                 requires_domicile,
-                recruitments!inner ( status, publish_status, organizations ( state ) ),
+                recruitments!inner ( status, publish_status, exam_id, organizations ( state ) ),
                 age_criteria ( min_age, max_age, cutoff_date ),
                 age_relaxation_rules ( reservation_category, condition_key, additional_years, max_age_cap, cumulative, source_note ),
                 education_criteria ( min_qualification_level, min_percentage, allowed_disciplines, allow_higher_qualification, accepted_equivalent_qualifications, raw_requirement_text ),
                 post_disability_requirements ( disability_code, physical_requirement_code, suitable, source_note ),
                 certification_criteria ( mandatory, certifications ( name, issuer ) ),
-                attempt_limits ( category, max_attempts )
+                attempt_limits ( category, max_attempts, attempt_scope )
                 """
     try:
         return (
@@ -151,7 +151,7 @@ def _load_active_posts_with_criteria(supabase: Client) -> list[dict[str, Any]]:
 
     posts = (
         supabase.table("posts")
-        .select("id, recruitment_id, language_requirements, requires_domicile, recruitments!inner ( status, publish_status, organizations ( state ) )")
+        .select("id, recruitment_id, language_requirements, requires_domicile, recruitments!inner ( status, publish_status, exam_id, organizations ( state ) )")
         .in_("recruitments.status", ["open", "upcoming"])
         .in_("recruitments.publish_status", ["verified", "published"])
         .execute()
@@ -167,7 +167,7 @@ def _load_active_posts_with_criteria(supabase: Client) -> list[dict[str, Any]]:
         ("age_relaxation_rules", "post_id, reservation_category, condition_key, additional_years, max_age_cap, cumulative, source_note"),
         ("education_criteria", "post_id, min_qualification_level, min_percentage, allowed_disciplines, allow_higher_qualification, accepted_equivalent_qualifications, raw_requirement_text"),
         ("post_disability_requirements", "post_id, disability_code, physical_requirement_code, suitable, source_note"),
-        ("attempt_limits", "post_id, category, max_attempts"),
+        ("attempt_limits", "post_id, category, max_attempts, attempt_scope"),
     ):
         try:
             rows = supabase.table(table).select(select_cols).in_("post_id", post_ids).execute().data or []
@@ -255,15 +255,41 @@ def run_eligibility_for_user(
     profile = UserProfile(**profile_payload)
 
     education = [UserEducation(**row) for row in (mapped.get("education") or [])]
-    attempt_rows = mapped.get("attempts") or []
-    exam_attempts = []
-    for row in attempt_rows:
-        mapped = {
-            "recruitment_id": row.get("recruitment_id") or row.get("exam_id"),
-            "attempts_used": row.get("attempts_used") or 0,
-        }
-        if mapped["recruitment_id"]:
-            exam_attempts.append(UserExamAttempts(**mapped))
+
+    # Attempts come from two tables now (migration 050):
+    #   * aspirant_exam_attempts — exam-family scope (career-wide, e.g.
+    #     SSC-CGL). The mapper already reads this. exam_ref_id is the
+    #     canonical FK to public.exams; legacy exam_id is the fallback.
+    #   * aspirant_recruitment_attempts — recruitment/post scope. New
+    #     table; runner queries it directly.
+    exam_attempts: list[UserExamAttempts] = []
+    for row in mapped.get("attempts") or []:
+        exam_attempts.append(
+            UserExamAttempts(
+                attempt_scope="exam_family",
+                exam_id=row.get("exam_ref_id") or row.get("exam_id") or None,
+                attempts_used=row.get("attempts_used") or 0,
+            )
+        )
+    # Recruitment- and post-scoped counts.
+    for row in safe_select(
+        supabase,
+        "aspirant_recruitment_attempts",
+        "recruitment_id, post_id, attempts_used",
+        user_id=user_id,
+    ):
+        rec_id = row.get("recruitment_id")
+        if not rec_id:
+            continue
+        post_id = row.get("post_id")
+        exam_attempts.append(
+            UserExamAttempts(
+                attempt_scope="post" if post_id else "recruitment",
+                recruitment_id=rec_id,
+                post_id=post_id,
+                attempts_used=row.get("attempts_used") or 0,
+            )
+        )
     exam_credentials = [
         UserExamCredential(**row)
         for row in safe_select(
@@ -309,6 +335,10 @@ def run_eligibility_for_user(
             PostCriteria(
                 post_id=row["id"],
                 recruitment_id=row["recruitment_id"],
+                # recruitments.exam_id (migration 050) is the back-link the
+                # engine uses to route exam-family-scoped attempt caps.
+                # Nullable for recruitments that haven't been linked yet.
+                recruitment_exam_id=(recruitment or {}).get("exam_id"),
                 age_criteria=AgeCriteria(**ac) if ac else None,
                 education_criteria=EducationCriteria(**ec) if ec else None,
                 attempt_limits=[AttemptLimit(**a) for a in attempts],
