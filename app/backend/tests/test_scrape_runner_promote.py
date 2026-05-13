@@ -1083,3 +1083,17 @@ def test_runner_skips_unchanged_detail_via_304(monkeypatch):
     assert any(r["source_url"] == fresh_url for r in queue_rows)
     listings = sb.db.get("aggregator_listings", [])
     assert any(l["listing_url"] == cached_url for l in listings)
+
+
+def test_runner_api_adapter_queues_entries_in_mock_mode():
+    sb = RunnerSB()
+    sb.db["source_registry"] = [{
+        "id": "src-api",
+        "source_name": "WP API",
+        "adapter_type": "api",
+        "api_url": "https://example.gov.in/wp-json/wp/v2/posts",
+        "is_active": True,
+    }]
+    out = run_scraping_pass(sb, source_ids=["src-api"], mock=True)
+    assert out["items_found"] == 3
+    assert all(r["source_id"] == "src-api" for r in sb.db.get("scrape_queue", []))
