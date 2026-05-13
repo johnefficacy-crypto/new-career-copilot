@@ -109,6 +109,7 @@ class PostCriteria(_Base):
     education_criteria: EducationCriteria | None = None
     attempt_limits: list[AttemptLimit] = []
     org_state: str | None = None
+    requires_domicile: bool = False
     required_exam_keys: list[str] = []
     certification_criteria: list[CertificationCriteria] = []
     language_requirements: list[str] = []
