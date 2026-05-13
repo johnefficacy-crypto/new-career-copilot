@@ -9,7 +9,7 @@ export default function useAdminNextActions(state) {
 
 export function buildChecklist(state) {
   const items = [];
-  const { source, latestRun, queueItem, recruitment, validateResult } = state;
+  const { source, queueItem, recruitment, validateResult } = state;
   const progress = computeProgress(state);
 
   // ── Before scraping ────────────────────────────────────────────────
