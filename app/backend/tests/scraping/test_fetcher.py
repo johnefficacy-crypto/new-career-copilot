@@ -523,3 +523,37 @@ def test_parse_sitemap_empty_or_malformed():
     assert parse_sitemap("") == []
     assert parse_sitemap(None) == []
     assert parse_sitemap("<urlset><not-valid") == []
+
+
+# ── PDF splitter ────────────────────────────────────────────────────────────
+
+
+from app.scraping.fetcher import split_pdf_text
+
+
+def test_split_pdf_text_no_regex_returns_single_chunk():
+    assert split_pdf_text("body", regex=None) == ["body"]
+    assert split_pdf_text("body", regex="") == ["body"]
+
+
+def test_split_pdf_text_empty_input_returns_empty_list():
+    assert split_pdf_text("", regex=r"^\d+\.") == []
+
+
+def test_split_pdf_text_splits_on_match_and_keeps_match_in_chunk():
+    body = "Notification No. 12/2026\nDetails...\nNotification No. 13/2026\nMore details..."
+    chunks = split_pdf_text(body, regex=r"^Notification No\.")
+    assert len(chunks) == 2
+    assert chunks[0].startswith("Notification No. 12/2026")
+    assert chunks[1].startswith("Notification No. 13/2026")
+
+
+def test_split_pdf_text_invalid_regex_returns_single_chunk():
+    # ``[`` is an unterminated character class.
+    chunks = split_pdf_text("any body text", regex="[")
+    assert chunks == ["any body text"]
+
+
+def test_split_pdf_text_no_matches_returns_single_chunk():
+    chunks = split_pdf_text("plain text without any boundary marker", regex=r"^\d+\.")
+    assert chunks == ["plain text without any boundary marker"]

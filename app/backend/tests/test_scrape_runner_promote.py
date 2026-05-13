@@ -1671,3 +1671,86 @@ def test_runner_rss_skips_detail_page_on_304(monkeypatch):
     # Listing observation was still recorded so admin sees the source is alive.
     listings = sb.db.get("aggregator_listings", [])
     assert any(l["listing_url"] == cached_link for l in listings)
+
+
+# ── PDF splitter integration ────────────────────────────────────────────────
+
+
+def test_runner_pdf_split_per_page_creates_one_queue_row_per_page(monkeypatch):
+    from app.scraping import runner as runner_mod
+    from app.scraping.fetcher import FetchResult
+
+    sb = RunnerSB()
+    sb.db["source_registry"] = [{
+        "id": "src-pdf-multi",
+        "source_name": "PSC monthly bulletin",
+        "adapter_type": "pdf",
+        "pdf_bulletin_url": "https://example.gov.in/monthly.pdf",
+        "is_active": True,
+        "adapter_config": {"split_per_page": True},
+    }]
+
+    def _fake_fetch_pdf(url, *, if_none_match=None, if_modified_since=None, timeout=30.0):
+        return FetchResult(ok=True, url=url, status_code=200, text="full body", raw_bytes=b"%PDF-1.7")
+
+    monkeypatch.setattr("app.scraping.fetcher.fetch_pdf", _fake_fetch_pdf)
+    monkeypatch.setattr("app.scraping.fetcher.parse_pdf_pages", lambda raw: ["page one notice", "page two notice", "page three notice"])
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    out = run_scraping_pass(sb, source_ids=["src-pdf-multi"], mock=False)
+    assert out["items_found"] == 3
+    queue_urls = [r["source_url"] for r in sb.db.get("scrape_queue", [])]
+    assert all(u.startswith("https://example.gov.in/monthly.pdf#chunk-") for u in queue_urls)
+
+
+def test_runner_pdf_split_regex_chunks_text(monkeypatch):
+    from app.scraping import runner as runner_mod
+    from app.scraping.fetcher import FetchResult
+
+    sb = RunnerSB()
+    sb.db["source_registry"] = [{
+        "id": "src-pdf-regex",
+        "source_name": "Numbered bulletin",
+        "adapter_type": "pdf",
+        "pdf_bulletin_url": "https://example.gov.in/bulletin.pdf",
+        "is_active": True,
+        "adapter_config": {"split_regex": r"^Notification No\."},
+    }]
+
+    body = "Notification No. 12/2026\nFirst notice body\nNotification No. 13/2026\nSecond notice body"
+
+    def _fake_fetch_pdf(url, *, if_none_match=None, if_modified_since=None, timeout=30.0):
+        return FetchResult(ok=True, url=url, status_code=200, text=body, raw_bytes=b"%PDF-1.7")
+
+    monkeypatch.setattr("app.scraping.fetcher.fetch_pdf", _fake_fetch_pdf)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    out = run_scraping_pass(sb, source_ids=["src-pdf-regex"], mock=False)
+    assert out["items_found"] == 2
+
+
+def test_runner_pdf_no_split_keeps_single_queue_row(monkeypatch):
+    """When neither split_per_page nor split_regex is set, behaviour
+    matches the pre-splitter contract: one PDF = one queue row using
+    the bulletin URL verbatim."""
+    from app.scraping import runner as runner_mod
+    from app.scraping.fetcher import FetchResult
+
+    sb = RunnerSB()
+    sb.db["source_registry"] = [{
+        "id": "src-pdf-single",
+        "source_name": "Single notice PDF",
+        "adapter_type": "pdf",
+        "pdf_bulletin_url": "https://example.gov.in/notice.pdf",
+        "is_active": True,
+    }]
+
+    def _fake_fetch_pdf(url, *, if_none_match=None, if_modified_since=None, timeout=30.0):
+        return FetchResult(ok=True, url=url, status_code=200, text="full body", raw_bytes=b"%PDF-1.7")
+
+    monkeypatch.setattr("app.scraping.fetcher.fetch_pdf", _fake_fetch_pdf)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    out = run_scraping_pass(sb, source_ids=["src-pdf-single"], mock=False)
+    assert out["items_found"] == 1
+    assert sb.db["scrape_queue"][0]["source_url"] == "https://example.gov.in/notice.pdf"
