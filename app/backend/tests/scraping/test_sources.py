@@ -1,3 +1,7 @@
+import warnings
+
+import pytest
+
 from app.scraping.sources import ScrapeSource, normalize_legacy_source, normalize_source_registry
 
 
@@ -5,16 +9,28 @@ from app.scraping.sources import ScrapeSource, normalize_legacy_source, normaliz
 
 
 def test_normalize_legacy_source_target_url_joins_path():
-    src = normalize_legacy_source(
-        {"id": "1", "name": "SSC", "base_url": "https://a", "notification_path": "/b"}
-    )
+    # Legacy adapter emits a DeprecationWarning; suppress for this exercise.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        src = normalize_legacy_source(
+            {"id": "1", "name": "SSC", "base_url": "https://a", "notification_path": "/b"}
+        )
     assert src.target_url == "https://a/b"
     assert src.primary_fetch_url() == "https://a/b"
 
 
 def test_normalize_legacy_source_with_only_base_url():
-    src = normalize_legacy_source({"id": "1", "name": "X", "base_url": "https://x"})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        src = normalize_legacy_source({"id": "1", "name": "X", "base_url": "https://x"})
     assert src.primary_fetch_url() == "https://x"
+
+
+def test_normalize_legacy_source_emits_deprecation_warning():
+    """Runtime callers should not use this adapter; the warning makes
+    accidental imports visible in CI / admin logs."""
+    with pytest.warns(DeprecationWarning, match="normalize_legacy_source is deprecated"):
+        normalize_legacy_source({"id": "1", "name": "X", "base_url": "https://x"})
 
 
 # ── source_registry → typed ScrapeSource ────────────────────────────────────

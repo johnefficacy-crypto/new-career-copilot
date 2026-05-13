@@ -541,3 +541,157 @@ def test_promote_run_blocks_when_high_risk_fields_unverified():
     err = out["errors"][0]
     assert err["reason"] == "high_risk_fields_unverified"
     assert set(err["unverified_fields"]) == {"official_notification_url", "official_apply_url", "total_vacancies"}
+
+
+# ── PR 4: source health failure detail + critical-read hardening ────────────
+
+
+def test_runner_records_typed_failure_detail_on_empty_fetch(monkeypatch):
+    sb = RunnerSB()
+    # Force the direct-source fetch to return empty so we hit the
+    # empty_response failure path.
+    sb.db["source_registry"] = [{
+        "id": "src-direct",
+        "source_name": "UPSC Direct",
+        "source_type": "official",
+        "notification_url": "https://upsc.gov.in/notices",
+        "is_active": True,
+        "requires_official_confirmation": False,
+    }]
+    monkeypatch.setattr("app.scraping.runner.fetch_page_text", lambda url: None)
+    monkeypatch.setattr("app.scraping.runner.fetch_page_html", lambda url: None)
+    out = run_scraping_pass(sb, source_ids=["src-direct"], mock=False)
+    assert out["status"] == "failed"
+    updates = sb.db.get("source_registry_updates", [])
+    assert updates, "expected source_registry to be updated"
+    last = updates[-1]
+    assert last["last_error_class"] == "empty_response"
+    assert last["last_error_message"]
+    assert last["last_error_url"] == "https://upsc.gov.in/notices"
+    assert last["last_scraped_at"]
+    assert last["last_error_at"]
+
+
+def test_runner_marks_run_failed_when_source_read_raises(monkeypatch):
+    sb = RunnerSB()
+
+    class _BoomQ:
+        def __init__(self, name, db, calls):
+            self.name = name
+            self.db = db
+            self.calls = calls
+            self.payload = None
+            self.filters: dict = {}
+        @property
+        def not_(self): return self
+        def select(self, *a, **k): return self
+        def eq(self, k, v): self.filters[k] = v; return self
+        def in_(self, k, v): return self
+        def order(self, *a, **k): return self
+        def limit(self, *a, **k): return self
+        def insert(self, p): self.payload = p; return self
+        def update(self, p): self.payload = p; return self
+        def execute(self):
+            if self.name == "scrape_runs":
+                if self.payload and "started_at" in self.payload:
+                    row = {**self.payload, "id": "run-1"}
+                    self.db.setdefault("scrape_runs", []).append(row)
+                    return E([row])
+                self.db.setdefault("scrape_runs_updates", []).append(self.payload)
+                return E([self.payload])
+            if self.name == "source_registry":
+                raise RuntimeError("supabase: connection refused")
+            return E([])
+
+    class _BoomSB:
+        def __init__(self):
+            self.db = {}
+            self.calls = []
+        def table(self, name): return _BoomQ(name, self.db, self.calls)
+
+    sb2 = _BoomSB()
+    import pytest
+    with pytest.raises(Exception):
+        run_scraping_pass(sb2, source_ids=["src-1"], mock=True)
+    updates = sb2.db.get("scrape_runs_updates", [])
+    assert updates
+    finalize = updates[-1]
+    assert finalize["status"] == "failed"
+    assert finalize["error_log"][0]["error"] == "source_registry_read_failed"
+    # execute_or_raise wraps the underlying exception in DatabaseError.
+    assert finalize["error_log"][0]["error_class"] == "DatabaseError"
+
+
+def test_runner_marks_run_failed_when_recruitments_dedupe_read_raises():
+    class _DedupQ:
+        def __init__(self, name, db):
+            self.name = name
+            self.db = db
+            self.payload = None
+            self.filters: dict = {}
+        @property
+        def not_(self): return self
+        def select(self, *a, **k): return self
+        def eq(self, k, v): self.filters[k] = v; return self
+        def in_(self, k, v): return self
+        def order(self, *a, **k): return self
+        def limit(self, *a, **k): return self
+        def insert(self, p): self.payload = p; return self
+        def update(self, p): self.payload = p; return self
+        def execute(self):
+            if self.name == "scrape_runs":
+                if self.payload and "started_at" in self.payload:
+                    row = {**self.payload, "id": "run-1"}
+                    self.db.setdefault("scrape_runs", []).append(row)
+                    return E([row])
+                self.db.setdefault("scrape_runs_updates", []).append(self.payload)
+                return E([self.payload])
+            if self.name == "source_registry":
+                rows = list(self.db.get("source_registry", []))
+                if "id" in self.filters:
+                    rows = [r for r in rows if r.get("id") in self.filters["id"]]
+                return E(rows)
+            if self.name == "recruitments":
+                raise RuntimeError("read timeout")
+            return E([])
+
+    class _SB:
+        def __init__(self):
+            self.db = {"source_registry": [{"id": "src-1", "source_name": "X", "source_type": "aggregator", "is_active": True, "source_url": "https://x"}]}
+        def table(self, name): return _DedupQ(name, self.db)
+
+    sb = _SB()
+    import pytest
+    with pytest.raises(Exception):
+        run_scraping_pass(sb, source_ids=["src-1"], mock=True)
+    updates = sb.db.get("scrape_runs_updates", [])
+    finalize = updates[-1]
+    assert finalize["status"] == "failed"
+    assert finalize["error_log"][0]["error"] == "recruitments_dedupe_read_failed"
+
+
+def test_runner_mark_success_clears_typed_error_fields():
+    sb = RunnerSB()
+    sb.db["source_registry"] = [{
+        "id": "src-prev-failed",
+        "source_name": "Free Job Alert",
+        "source_type": "aggregator",
+        "source_url": "https://www.freejobalert.com/government-jobs/",
+        "is_active": True,
+        # Pre-existing failure state on the row:
+        "consecutive_fails": 3,
+        "last_error": "old: HTTP 503",
+        "last_error_class": "http_503",
+        "last_error_message": "previous failure",
+        "last_error_at": "2026-05-01T00:00:00+00:00",
+        "last_error_http_status": 503,
+        "last_error_url": "https://x",
+    }]
+    run_scraping_pass(sb, source_ids=["src-prev-failed"], mock=True)
+    updates = sb.db.get("source_registry_updates", [])
+    success = next(u for u in updates if u.get("consecutive_fails") == 0)
+    for field in (
+        "last_error", "last_error_class", "last_error_message",
+        "last_error_at", "last_error_http_status", "last_error_url",
+    ):
+        assert success[field] is None, f"expected {field} cleared on success"

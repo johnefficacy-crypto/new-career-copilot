@@ -165,7 +165,11 @@ def run_scraping_pass(
         raise RuntimeError("run_scraping_pass: failed to create scrape_runs row")
     run_id: str = inserted[0]["id"]
 
-    # ── 2. Load active sources from the legacy table ─────────────────────
+    # ── 2. Load active sources from source_registry ──────────────────────
+    # Source registry and dedupe index reads are CRITICAL: silent empties
+    # would make a Supabase outage look like "no sources" or "no
+    # duplicates", which would then promote duplicate-able items as new.
+    # On any failure here we finalize the run as failed and re-raise.
     src_q = (
         supabase.table("source_registry")
         .select("*")
@@ -174,25 +178,43 @@ def run_scraping_pass(
     )
     if source_ids:
         src_q = src_q.in_("id", source_ids)
-    sources: list[dict[str, Any]] = execute_or_default("source_registry.active.read", lambda: src_q.execute().data, []) or []
+    try:
+        sources: list[dict[str, Any]] = (
+            execute_or_raise("source_registry.active.read", lambda: src_q.execute()).data or []
+        )
+    except Exception as exc:
+        _finalize_run_failed(supabase, run_id, "source_registry_read_failed", exc)
+        raise
 
     # ── 3. Build dedup index from existing recruitments + open queue ─────
-    existing_recs = execute_or_default("recruitments.read_for_dedupe",
-        lambda: supabase.table("recruitments")
-        .select("id, name, year, organizations(name), official_notification_url, official_apply_url")
-        .execute()
-        .data,
-        default=[],
-    ) or []
+    try:
+        existing_recs = (
+            execute_or_raise(
+                "recruitments.read_for_dedupe",
+                lambda: supabase.table("recruitments")
+                .select("id, name, year, organizations(name), official_notification_url, official_apply_url")
+                .execute(),
+            ).data
+            or []
+        )
+    except Exception as exc:
+        _finalize_run_failed(supabase, run_id, "recruitments_dedupe_read_failed", exc)
+        raise
 
-    open_queue = execute_or_default("scrape_queue.read_open_for_dedupe",
-        lambda: supabase.table("scrape_queue")
-        .select("id, extracted_data, status")
-        .not_.in_("status", ["rejected", "duplicate"])
-        .execute()
-        .data,
-        default=[],
-    ) or []
+    try:
+        open_queue = (
+            execute_or_raise(
+                "scrape_queue.read_open_for_dedupe",
+                lambda: supabase.table("scrape_queue")
+                .select("id, extracted_data, status")
+                .not_.in_("status", ["rejected", "duplicate"])
+                .execute(),
+            ).data
+            or []
+        )
+    except Exception as exc:
+        _finalize_run_failed(supabase, run_id, "scrape_queue_dedupe_read_failed", exc)
+        raise
 
     queued_id_by_key: dict[str, str] = {}
     for item in open_queue:
@@ -310,7 +332,11 @@ def run_scraping_pass(
                 "adapter_type": source.adapter_type,
                 "at": utc_now_iso(),
             })
-            _bump_source_failure(supabase, src)
+            _bump_source_failure(
+                supabase, src,
+                error_class="source_config_invalid",
+                error_message=f"no_fetch_url for adapter_type={source.adapter_type or 'html'}",
+            )
             continue
         if source.adapter_type and source.adapter_type.lower() in {"rss", "api", "pdf"}:
             logger.info(
@@ -324,7 +350,12 @@ def run_scraping_pass(
                 "adapter_type": source.adapter_type,
                 "at": utc_now_iso(),
             })
-            _bump_source_failure(supabase, src)
+            _bump_source_failure(
+                supabase, src,
+                error_class="adapter_not_implemented",
+                error_message=f"adapter_type={source.adapter_type} not yet supported",
+                attempted_url=target_url,
+            )
             continue
         try:
             if is_aggregator_source(src):
@@ -336,7 +367,12 @@ def run_scraping_pass(
                     listing_html = fetch_page_html(target_url)
                     if not listing_html:
                         error_log.append({"source": source.name, "url": target_url, "error": "Empty listing response", "at": utc_now_iso()})
-                        _bump_source_failure(supabase, src)
+                        _bump_source_failure(
+                            supabase, src,
+                            error_class="empty_listing_response",
+                            error_message="aggregator listing fetch returned no HTML",
+                            attempted_url=target_url,
+                        )
                         continue
                     discovery = discover_aggregator_detail_urls(
                         listing_html,
@@ -360,7 +396,12 @@ def run_scraping_pass(
                     )
                 if not detail_urls:
                     error_log.append({"source": source.name, "url": target_url, "error": "No detail links discovered", "at": utc_now_iso()})
-                    _bump_source_failure(supabase, src)
+                    _bump_source_failure(
+                        supabase, src,
+                        error_class="no_detail_links",
+                        error_message="aggregator listing had no recruitment detail links",
+                        attempted_url=target_url,
+                    )
                     continue
                 found_before = total_found
                 for detail_url in detail_urls:
@@ -370,16 +411,31 @@ def run_scraping_pass(
                         continue
                     queue_extraction(src, source.name, detail_url, raw)
                 if total_found == found_before:
-                    _bump_source_failure(supabase, src)
+                    _bump_source_failure(
+                        supabase, src,
+                        error_class="no_items_extracted",
+                        error_message="every aggregator detail fetch returned empty or unextractable",
+                        attempted_url=target_url,
+                    )
                     continue
             else:
                 raw = fetch_page_text(target_url) if not mock else f"MOCK PAGE TEXT FOR {target_url}"
                 if not raw:
                     error_log.append({"source": source.name, "error": "Empty response", "at": utc_now_iso()})
-                    _bump_source_failure(supabase, src)
+                    _bump_source_failure(
+                        supabase, src,
+                        error_class="empty_response",
+                        error_message="direct source fetch returned no body",
+                        attempted_url=target_url,
+                    )
                     continue
                 if not queue_extraction(src, source.name, target_url, raw):
-                    _bump_source_failure(supabase, src)
+                    _bump_source_failure(
+                        supabase, src,
+                        error_class="extraction_failed",
+                        error_message="extractor returned null for fetched body",
+                        attempted_url=target_url,
+                    )
                     continue
 
             execute_or_default(
@@ -391,6 +447,11 @@ def run_scraping_pass(
                         "last_success_at": utc_now_iso(),
                         "consecutive_fails": 0,
                         "last_error": None,
+                        "last_error_class": None,
+                        "last_error_message": None,
+                        "last_error_at": None,
+                        "last_error_http_status": None,
+                        "last_error_url": None,
                     }
                 )
                 .eq("id", src["id"])
@@ -399,8 +460,19 @@ def run_scraping_pass(
             )
 
         except Exception as exc:  # noqa: BLE001
-            error_log.append({"source": source.name, "error": str(exc), "at": utc_now_iso()})
-            _bump_source_failure(supabase, src)
+            error_class, error_message = _classify_exception(exc)
+            error_log.append({
+                "source": source.name,
+                "error": error_class,
+                "error_message": error_message,
+                "at": utc_now_iso(),
+            })
+            _bump_source_failure(
+                supabase, src,
+                error_class=error_class,
+                error_message=error_message,
+                attempted_url=target_url,
+            )
 
     # ── 5. Finalise the run row ──────────────────────────────────────────
     if sources and len(error_log) == len(sources):
@@ -439,18 +511,86 @@ def run_scraping_pass(
     }
 
 
-def _bump_source_failure(supabase: Client, src: dict[str, Any]) -> None:
+def _bump_source_failure(
+    supabase: Client,
+    src: dict[str, Any],
+    *,
+    error_class: str = "scrape_failed",
+    error_message: str | None = None,
+    http_status: int | None = None,
+    attempted_url: str | None = None,
+) -> None:
+    """Record a structured source-health failure.
+
+    Migration 037 added ``last_error_class``, ``last_error_message``,
+    ``last_error_at``, ``last_error_http_status``, and ``last_error_url``
+    so admins can see *why* a source is degrading instead of just that
+    it is. ``last_error`` keeps a short human-readable summary for
+    back-compat with existing dashboards. ``last_scraped_at`` is updated
+    on failure too — previously the column only moved on success, so a
+    source that had been failing for hours still looked "recent".
+    """
+    now = utc_now_iso()
+    summary = error_class
+    if error_message:
+        summary = f"{error_class}: {error_message[:200]}"
+    update: dict[str, Any] = {
+        "consecutive_fails": (src.get("consecutive_fails") or 0) + 1,
+        "last_error": summary,
+        "last_error_class": error_class,
+        "last_error_message": error_message,
+        "last_error_at": now,
+        "last_error_http_status": http_status,
+        "last_error_url": attempted_url,
+        "last_scraped_at": now,
+    }
     execute_or_default(
         "source_registry.bump_failure",
         lambda: supabase.table("source_registry")
-        .update(
-            {
-                "consecutive_fails": (src.get("consecutive_fails") or 0) + 1,
-                "last_error": "scrape_failed",
-            }
-        )
+        .update(update)
         .eq("id", src["id"])
         .execute(),
+        None,
+    )
+
+
+def _classify_exception(exc: BaseException) -> tuple[str, str]:
+    """Return a ``(error_class, error_message)`` pair from an exception."""
+    cls = type(exc).__name__
+    msg = str(exc) or cls
+    return cls, msg
+
+
+def _finalize_run_failed(
+    supabase: Client,
+    run_id: str,
+    reason: str,
+    exc: BaseException,
+) -> None:
+    """Mark the scrape_runs row as failed before re-raising a critical read error.
+
+    Without this, a Supabase outage during source/dedupe reads would leave
+    the run row stuck in ``status='running'`` forever and the original
+    error would never make it into ``error_log``.
+    """
+    error_class, error_message = _classify_exception(exc)
+    logger.error(
+        "scrape.run.critical_read_failed run_id=%s reason=%s error_class=%s error=%s",
+        run_id, reason, error_class, error_message,
+    )
+    payload = {
+        "finished_at": utc_now_iso(),
+        "status": "failed",
+        "error_log": [{
+            "error": reason,
+            "error_class": error_class,
+            "error_message": error_message,
+            "at": utc_now_iso(),
+        }],
+    }
+    execute_or_default(
+        "scrape_runs.finalize_failed",
+        lambda: supabase.table("scrape_runs").update(payload).eq("id", run_id).execute(),
         None,
     )
 
