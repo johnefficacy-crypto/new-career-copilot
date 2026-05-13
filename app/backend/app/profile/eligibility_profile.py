@@ -54,6 +54,10 @@ class EducationRow(_Base):
     graduation_year: int | None = None
     percentage: float | None = None
     cgpa: float | None = None
+    # Maximum value on the candidate's CGPA scale (migration 051). Nullable;
+    # the engine falls back to 10.0 when not set, preserving today's
+    # behaviour for rows that pre-date this column.
+    cgpa_basis: float | None = None
     is_completed: bool = False
 
     @field_validator("percentage")
@@ -70,8 +74,17 @@ class EducationRow(_Base):
     def _cgpa(cls, v):
         if v is None:
             return v
-        if not (0 <= float(v) <= 10):
-            raise ValueError("cgpa out of range")
+        if float(v) < 0:
+            raise ValueError("cgpa must be non-negative")
+        return float(v)
+
+    @field_validator("cgpa_basis")
+    @classmethod
+    def _cgpa_basis(cls, v):
+        if v is None:
+            return None
+        if float(v) <= 0:
+            raise ValueError("cgpa_basis must be positive")
         return float(v)
 
 

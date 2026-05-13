@@ -86,6 +86,11 @@ class UserEducation(_Base):
     stream: str | None = None
     percentage: float | None = None
     cgpa: float | None = None
+    # Maximum value on the candidate's CGPA/GPA scale. Nullable: when not
+    # set, the engine assumes a 10-point scale (the legacy default). Lets
+    # candidates on 4.0 GPA or other-scale transcripts have their CGPA
+    # converted to percentage correctly via (cgpa / cgpa_basis) * 100.
+    cgpa_basis: float | None = None
     is_completed: bool = False
 
     @field_validator("percentage")
@@ -99,12 +104,31 @@ class UserEducation(_Base):
 
     @field_validator("cgpa")
     @classmethod
-    def _cgpa_in_range(cls, v: float | None) -> float | None:
+    def _cgpa_non_negative(cls, v: float | None) -> float | None:
         if v is None:
             return None
-        if not (0.0 <= float(v) <= 10.0):
-            raise ValueError("cgpa must be between 0 and 10")
+        if float(v) < 0:
+            raise ValueError("cgpa must be non-negative")
         return float(v)
+
+    @field_validator("cgpa_basis")
+    @classmethod
+    def _cgpa_basis_positive(cls, v: float | None) -> float | None:
+        if v is None:
+            return None
+        if float(v) <= 0:
+            raise ValueError("cgpa_basis must be positive")
+        return float(v)
+
+    @model_validator(mode="after")
+    def _cgpa_within_basis(self) -> "UserEducation":
+        if self.cgpa is not None:
+            basis = self.cgpa_basis if self.cgpa_basis is not None else 10.0
+            if self.cgpa > basis:
+                raise ValueError(
+                    f"cgpa ({self.cgpa}) cannot exceed cgpa_basis ({basis})"
+                )
+        return self
 
 
 class UserExamCredential(_Base):
