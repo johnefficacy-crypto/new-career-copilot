@@ -134,6 +134,7 @@ REQUIRED_COLUMNS = {
         "pay_level",
         "job_type",
         "language_requirements",
+        "requires_domicile",
     },
     "age_criteria": {
         "id",

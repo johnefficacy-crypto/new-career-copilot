@@ -125,6 +125,7 @@ def _load_active_posts_with_criteria(supabase: Client) -> list[dict[str, Any]]:
                 id,
                 recruitment_id,
                 language_requirements,
+                requires_domicile,
                 recruitments!inner ( status, publish_status, organizations ( state ) ),
                 age_criteria ( min_age, max_age, cutoff_date ),
                 age_relaxation_rules ( reservation_category, condition_key, additional_years, max_age_cap, cumulative, source_note ),
@@ -150,7 +151,7 @@ def _load_active_posts_with_criteria(supabase: Client) -> list[dict[str, Any]]:
 
     posts = (
         supabase.table("posts")
-        .select("id, recruitment_id, language_requirements, recruitments!inner ( status, publish_status, organizations ( state ) )")
+        .select("id, recruitment_id, language_requirements, requires_domicile, recruitments!inner ( status, publish_status, organizations ( state ) )")
         .in_("recruitments.status", ["open", "upcoming"])
         .in_("recruitments.publish_status", ["verified", "published"])
         .execute()
@@ -316,6 +317,9 @@ def run_eligibility_for_user(
                 certification_criteria=cert_criteria,
                 language_requirements=row.get("language_requirements") or [],
                 org_state=(org or {}).get("state") if org else None,
+                # bool() guards against None from older posts that pre-date
+                # migration 042 — those rows return null until backfilled.
+                requires_domicile=bool(row.get("requires_domicile")),
             )
         )
 

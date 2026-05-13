@@ -588,7 +588,44 @@ def test_promote_run_blocks_when_high_risk_fields_unverified():
     assert out["skipped"] == 1
     err = out["errors"][0]
     assert err["reason"] == "high_risk_fields_unverified"
-    assert set(err["unverified_fields"]) == {"official_notification_url", "official_apply_url", "total_vacancies"}
+    # `requires_domicile` was added to HIGH_RISK_FIELDS by migration 042 so
+    # the canonical domicile rule cannot land without explicit admin review.
+    assert set(err["unverified_fields"]) == {
+        "official_notification_url",
+        "official_apply_url",
+        "total_vacancies",
+        "requires_domicile",
+    }
+
+
+def test_promote_writes_requires_domicile_into_posts_when_extractor_set_it():
+    sb = SB()
+    data = ExtractedRecruitment(
+        title="T", organization_name="O", org_type="state", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="https://x",
+        posts=[{
+            "post_name": "State Inspector",
+            "min_age": 18, "max_age": 32,
+            "requires_domicile": True,
+        }],
+    )
+    promote_to_recruitments(data, sb)
+    assert sb.db["posts"][0]["requires_domicile"] is True
+
+
+def test_promote_defaults_requires_domicile_false_when_extractor_silent():
+    sb = SB()
+    data = ExtractedRecruitment(
+        title="T", organization_name="O", org_type="central", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="https://x",
+        posts=[{"post_name": "All-India Officer", "min_age": 18, "max_age": 32}],
+    )
+    promote_to_recruitments(data, sb)
+    # org_state metadata alone must not flip the legal domicile rule; the
+    # column defaults to False unless the extractor saw an explicit claim.
+    assert sb.db["posts"][0]["requires_domicile"] is False
 
 
 # ── PR 4: source health failure detail + critical-read hardening ────────────

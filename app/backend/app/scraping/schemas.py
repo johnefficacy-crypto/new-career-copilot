@@ -66,6 +66,14 @@ class ExtractedPost(BaseModel):
     job_location: str | None = None
     source_evidence: dict[str, Any] | None = None
 
+    # True iff the notification states candidates must be a domicile of the
+    # recruiting state (or equivalent — e.g. "only Maharashtra domiciles
+    # may apply"). null means the extractor saw no explicit statement; the
+    # runner treats null and false the same way (no domicile enforcement).
+    # High-risk field — must be admin-verified via the promotion gate before
+    # canonical write. See `app.scraping.promotion_gate.HIGH_RISK_FIELDS`.
+    requires_domicile: bool | None = None
+
 
 class RawExtractedRecruitment(BaseModel):
     """Permissive queue/admin-review shape.

@@ -141,6 +141,7 @@ def extract_recruitment_data(
         f'    "skill_tests": [{{"type": "string", "wpm": number or null, "duration_minutes": number or null}}] or null,\n'
         f'    "certificates": ["string"] or null (e.g. ["caste", "domicile", "pwbd", "ex_serviceman"]),\n'
         f'    "job_location": "string or null",\n'
+        f'    "requires_domicile": boolean or null (true ONLY if the notification text explicitly says candidates must be a domicile of the recruiting state; null if the text is silent on domicile),\n'
         f'    "source_evidence": {{"page": number or null, "section": "string or null", "char_offset": number or null}} or null\n'
         f'  }}],\n'
         f'  "confidence": 0.0-1.0\n'
