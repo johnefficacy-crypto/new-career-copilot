@@ -338,7 +338,7 @@ def run_scraping_pass(
                         error_log.append({"source": source.name, "url": target_url, "error": "Empty listing response", "at": utc_now_iso()})
                         _bump_source_failure(supabase, src)
                         continue
-                    detail_urls = discover_aggregator_detail_urls(
+                    discovery = discover_aggregator_detail_urls(
                         listing_html,
                         target_url,
                         max_items=source_limit,
@@ -346,15 +346,17 @@ def run_scraping_pass(
                         exclude_patterns=adapter_config.get("exclude_patterns") or None,
                         allowed_domains=adapter_config.get("allowed_domains") or None,
                     )
-                    discovery_stats = getattr(discover_aggregator_detail_urls, "last_stats", {})
+                    detail_urls = discovery.urls
+                    discovery_stats = discovery.stats
                     logger.info(
-                        "aggregator.discovery source_id=%s source_name=%s discovered=%s filtered_include=%s filtered_exclude=%s filtered_domain=%s",
+                        "aggregator.discovery source_id=%s source_name=%s discovered=%s filtered_include=%s filtered_exclude=%s filtered_domain=%s lifecycle_skipped=%s",
                         src.get("id"),
                         source.name,
                         discovery_stats.get("discovered", len(detail_urls)),
                         discovery_stats.get("include", 0),
                         discovery_stats.get("exclude", 0),
                         discovery_stats.get("domain", 0),
+                        discovery_stats.get("lifecycle_skipped", 0),
                     )
                 if not detail_urls:
                     error_log.append({"source": source.name, "url": target_url, "error": "No detail links discovered", "at": utc_now_iso()})
@@ -675,32 +677,38 @@ def promote_to_recruitments(
             created.append(("posts", post_id))
 
             if post.min_age or post.max_age:
+                # Indian notices often specify a separate "age as on" date;
+                # fall back to apply_end_date only when the extractor didn't
+                # find one.
+                cutoff = post.age_cutoff_date or data.apply_end_date
                 age_rows = execute_or_raise(
                     "age_criteria.insert",
-                    lambda post=post, post_id=post_id: supabase.table("age_criteria").insert(
+                    lambda post=post, post_id=post_id, cutoff=cutoff: supabase.table("age_criteria").insert(
                         {
                             "post_id": post_id,
                             "min_age": post.min_age,
                             "max_age": post.max_age,
-                            "cutoff_date": data.apply_end_date,
+                            "cutoff_date": cutoff,
                         }
                     ).execute(),
                 ).data or []
                 if age_rows:
                     created.append(("age_criteria", age_rows[0]["id"]))
 
-            if post.education_required:
+            if post.education_required or post.raw_requirement_text:
+                edu_payload: dict[str, Any] = {
+                    "post_id": post_id,
+                    "min_qualification_level": _map_education_level(post.education_required),
+                    "allowed_disciplines": (
+                        {"primary": post.disciplines} if post.disciplines else None
+                    ),
+                }
+                raw_text = post.raw_requirement_text or post.education_required
+                if raw_text:
+                    edu_payload["raw_requirement_text"] = raw_text
                 edu_rows = execute_or_raise(
                     "education_criteria.insert",
-                    lambda post=post, post_id=post_id: supabase.table("education_criteria").insert(
-                        {
-                            "post_id": post_id,
-                            "min_qualification_level": _map_education_level(post.education_required),
-                            "allowed_disciplines": (
-                                {"primary": post.disciplines} if post.disciplines else None
-                            ),
-                        }
-                    ).execute(),
+                    lambda payload=edu_payload: supabase.table("education_criteria").insert(payload).execute(),
                 ).data or []
                 if edu_rows:
                     created.append(("education_criteria", edu_rows[0]["id"]))
