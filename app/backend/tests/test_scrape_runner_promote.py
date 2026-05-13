@@ -476,7 +476,12 @@ def test_runner_skips_source_with_no_fetch_url():
     assert any(e.get("error") == "source_config_invalid" for e in out["errors"])
 
 
-def test_runner_skips_rss_adapter_as_not_implemented():
+def test_runner_rss_adapter_queues_entries_in_mock_mode():
+    """RSS adapter is now implemented (was: adapter_not_implemented).
+
+    Mock mode synthesises three entries; each gets queued like a regular
+    aggregator detail row.
+    """
     sb = RunnerSB()
     sb.db["source_registry"] = [{
         "id": "src-rss",
@@ -486,8 +491,22 @@ def test_runner_skips_rss_adapter_as_not_implemented():
         "is_active": True,
     }]
     out = run_scraping_pass(sb, source_ids=["src-rss"], mock=True)
+    assert out["items_found"] == 3
+    assert all(r["source_id"] == "src-rss" for r in sb.db.get("scrape_queue", []))
+
+
+def test_runner_skips_pdf_adapter_as_not_implemented():
+    sb = RunnerSB()
+    sb.db["source_registry"] = [{
+        "id": "src-pdf",
+        "source_name": "PDF bulletin",
+        "adapter_type": "pdf",
+        "pdf_bulletin_url": "https://example.gov.in/bulletin.pdf",
+        "is_active": True,
+    }]
+    out = run_scraping_pass(sb, source_ids=["src-pdf"], mock=True)
     assert out["items_found"] == 0
-    assert any(e.get("error") == "adapter_not_implemented" and e.get("adapter_type") == "rss" for e in out["errors"])
+    assert any(e.get("error") == "adapter_not_implemented" and e.get("adapter_type") == "pdf" for e in out["errors"])
 
 
 def test_promotion_rolls_back_recruitment_when_post_fails():

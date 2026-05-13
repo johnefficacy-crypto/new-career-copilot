@@ -156,3 +156,66 @@ def test_fetch_without_conditional_headers_does_not_set_them(monkeypatch):
     fetch("https://x", adapter_type="html")
     assert "If-None-Match" not in captured
     assert "If-Modified-Since" not in captured
+
+
+# ── PR P1 follow-up: RSS adapter ────────────────────────────────────────────
+
+
+from app.scraping.fetcher import RssEntry, parse_rss_feed
+
+
+_RSS_2_SAMPLE = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>SSC Recruitment</title>
+    <item>
+      <title>SSC CGL 2026 Recruitment</title>
+      <link>https://ssc.nic.in/cgl-2026</link>
+      <description>Combined Graduate Level Examination 2026</description>
+      <pubDate>Mon, 01 Jan 2026 00:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>SSC CGL 2026 Admit Card</title>
+      <link>https://ssc.nic.in/cgl-2026/admit-card</link>
+      <description>Admit cards now available</description>
+    </item>
+  </channel>
+</rss>
+"""
+
+_ATOM_SAMPLE = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>UPSC Notices</title>
+  <entry>
+    <title>UPSC CSE 2026</title>
+    <link href="https://upsc.gov.in/cse-2026" rel="alternate"/>
+    <summary>Civil Services Examination 2026 notification</summary>
+    <updated>2026-01-15T00:00:00Z</updated>
+  </entry>
+</feed>
+"""
+
+
+def test_parse_rss_2_returns_each_item():
+    entries = parse_rss_feed(_RSS_2_SAMPLE)
+    assert len(entries) == 2
+    assert entries[0].title == "SSC CGL 2026 Recruitment"
+    assert entries[0].link == "https://ssc.nic.in/cgl-2026"
+    assert entries[0].summary.startswith("Combined Graduate")
+    assert entries[0].published == "Mon, 01 Jan 2026 00:00:00 GMT"
+
+
+def test_parse_atom_returns_entries_with_href_link():
+    entries = parse_rss_feed(_ATOM_SAMPLE)
+    assert len(entries) == 1
+    assert entries[0].link == "https://upsc.gov.in/cse-2026"
+    assert entries[0].published == "2026-01-15T00:00:00Z"
+
+
+def test_parse_rss_empty_input():
+    assert parse_rss_feed("") == []
+    assert parse_rss_feed(None) == []
+
+
+def test_parse_rss_malformed_xml_returns_empty():
+    assert parse_rss_feed("<rss><not-valid") == []
