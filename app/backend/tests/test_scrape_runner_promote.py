@@ -150,6 +150,13 @@ class RunnerQuery:
                 rows.append(row)
                 return E([row])
             return E(list(self.db.get("candidate_observations", [])))
+        if self.name == "recruitment_events":
+            if self.payload:
+                rows = self.db.setdefault("recruitment_events", [])
+                row = {**self.payload, "id": f"re-{len(rows) + 1}"}
+                rows.append(row)
+                return E([row])
+            return E(list(self.db.get("recruitment_events", [])))
         return E([])
 
 
@@ -1097,3 +1104,70 @@ def test_runner_api_adapter_queues_entries_in_mock_mode():
     out = run_scraping_pass(sb, source_ids=["src-api"], mock=True)
     assert out["items_found"] == 3
     assert all(r["source_id"] == "src-api" for r in sb.db.get("scrape_queue", []))
+
+
+# ── Lifecycle event persistence (migration 042 + runner write) ──────────────
+
+
+def test_runner_persists_aggregator_lifecycle_events(monkeypatch):
+    """Discovery now retains admit_card / result / corrigendum links;
+    runner writes one recruitment_events row per such link."""
+    from app.scraping import runner as runner_mod
+    from app.scraping.aggregator import DiscoveredLink, DiscoveryResult
+
+    sb = RunnerSB()
+    detail_url = "https://www.freejobalert.com/ssc-cgl-2026-recruitment/"
+
+    def _discover(_html, _base_url, **_kw):
+        return DiscoveryResult(
+            urls=[detail_url],
+            links=[DiscoveredLink(url=detail_url, label="SSC CGL Recruitment", event_type="new_recruitment")],
+            lifecycle_links=[
+                DiscoveredLink(url="https://x/admit-card", label="Admit", event_type="admit_card"),
+                DiscoveredLink(url="https://x/result", label="Result", event_type="result"),
+            ],
+            stats={"discovered": 1, "domain": 0, "include": 0, "exclude": 0, "lifecycle_skipped": 2},
+        )
+    monkeypatch.setattr(runner_mod, "discover_aggregator_detail_urls", _discover)
+    monkeypatch.setattr(runner_mod, "fetch_page_html", lambda url: "<html><a href='/r'>r</a></html>")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    run_scraping_pass(sb, source_ids=["src-1"], mock=False, limit=5)
+    events = sb.db.get("recruitment_events", [])
+    types = sorted(e["event_type"] for e in events)
+    assert types == ["admit_card", "result"]
+    # Every event is unattached (no canonical recruitment yet) and carries provenance.
+    for e in events:
+        assert e["recruitment_id"] is None
+        assert e["source_id"] == "src-1"
+        assert e["payload"]["discovered_url"]
+
+
+def test_runner_rss_lifecycle_event_persisted_in_live_mode(monkeypatch):
+    """RSS-pass skipping an admit-card entry persists a recruitment_events row."""
+    from app.scraping import runner as runner_mod
+    from app.scraping.fetcher import RssEntry, FetchResult
+
+    sb = RunnerSB()
+    sb.db["source_registry"] = [{
+        "id": "src-rss",
+        "source_name": "Test RSS",
+        "adapter_type": "rss",
+        "rss_url": "https://example.gov.in/feed.xml",
+        "is_active": True,
+    }]
+
+    def _fake_fetch_rss(url, **_kw):
+        result = FetchResult(ok=True, url=url, status_code=200, text="<rss/>", raw_bytes=b"<rss/>")
+        entries = [
+            RssEntry(title="UPSC CSE 2026 admit card", link="https://upsc.gov.in/cse-2026-admit", summary=""),
+        ]
+        return result, entries
+
+    monkeypatch.setattr(runner_mod, "fetch_page_html", lambda url: None)
+    monkeypatch.setattr("app.scraping.fetcher.fetch_rss", _fake_fetch_rss)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    run_scraping_pass(sb, source_ids=["src-rss"], mock=False, limit=5)
+    events = sb.db.get("recruitment_events", [])
+    assert any(e["event_type"] == "admit_card" for e in events)

@@ -130,6 +130,11 @@ class DiscoveryResult:
     """
     urls: list[str] = field(default_factory=list)
     links: list[DiscoveredLink] = field(default_factory=list)
+    # Lifecycle events (admit_card / result / corrigendum / ...) that the
+    # caller filtered out of ``links``. Surfacing them here lets the
+    # runner persist them into ``recruitment_events`` instead of just
+    # dropping them on the floor.
+    lifecycle_links: list[DiscoveredLink] = field(default_factory=list)
     stats: dict[str, int] = field(default_factory=lambda: {
         "discovered": 0, "domain": 0, "include": 0, "exclude": 0, "lifecycle_skipped": 0,
     })
@@ -187,6 +192,11 @@ def discover_aggregator_detail_urls(
         event_type = classify_aggregator_link(label, absolute)
         if skip_lifecycle_events and event_type != "new_recruitment":
             result.stats["lifecycle_skipped"] += 1
+            # Retain the link so the runner can persist a
+            # ``recruitment_events`` row instead of losing the signal.
+            result.lifecycle_links.append(
+                DiscoveredLink(url=absolute, label=label, event_type=event_type)
+            )
             continue
 
         if include:
