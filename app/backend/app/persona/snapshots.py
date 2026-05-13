@@ -46,7 +46,8 @@ def _now_iso() -> str:
 def build_snapshot_payload(user_id: str, signals: dict[str, Any]) -> dict[str, Any]:
     """Pure helper: build the snapshot row payload from a signals dict."""
     persona = classify_persona(signals)
-    study_policy = derive_study_policy(persona["dimensions"])
+    answers = signals.get("persona_question_answers") if isinstance(signals, dict) else None
+    study_policy = derive_study_policy(persona["dimensions"], answers)
     return {
         "user_id": user_id,
         "persona_version": PERSONA_VERSION,

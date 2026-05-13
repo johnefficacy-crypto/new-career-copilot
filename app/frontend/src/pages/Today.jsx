@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { CheckCircle2, Circle, /* Clock, */ Target, Zap } from "lucide-react";
 import { api } from "../lib/api";
+import PersonaQuestionCard from "../features/persona-questions/PersonaQuestionCard";
 
 export default function Today() {
   const [plan, setPlan] = useState({ tasks: [], plan: null, date: "" });
@@ -61,6 +62,8 @@ export default function Today() {
           <p className="text-sm text-muted-foreground mt-1">Close Polity Ch. 4 revision before 9pm. It's been carried forward twice.</p>
         </div>
       </div>
+
+      <PersonaQuestionCard />
     </div>
   );
 }
