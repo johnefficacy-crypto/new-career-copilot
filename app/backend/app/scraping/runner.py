@@ -1171,471 +1171,485 @@ def run_scraping_pass(
 
     for src in sources:
         source = normalize_source_registry(src)
-        target_url = source.primary_fetch_url()
-        if not target_url:
-            logger.warning(
-                "scrape.source_config_invalid source_id=%s source_name=%s adapter_type=%s reason=no_fetch_url",
-                src.get("id"), source.name, source.adapter_type,
-            )
+        # Per-source concurrency claim. A worker that can't take the
+        # lock skips the source for this run; the holding worker will
+        # process it. Stale claims (older than 15 min) are taken over.
+        if not _try_claim_source(supabase, src):
             error_log.append({
                 "source": source.name,
-                "error": "source_config_invalid",
-                "reason": "no_fetch_url",
-                "adapter_type": source.adapter_type,
+                "error": "concurrent_lock_held",
                 "at": utc_now_iso(),
             })
-            _bump_source_failure(
-                supabase, src,
-                error_class="source_config_invalid",
-                error_message=f"no_fetch_url for adapter_type={source.adapter_type or 'html'}",
-            )
-            continue
-        if source.adapter_type and source.adapter_type.lower() == "rss":
-            try:
-                if not _run_rss_pass(
-                    supabase,
-                    src=src,
-                    source=source,
-                    run_id=run_id,
-                    target_url=target_url,
-                    run_limit=run_limit,
-                    queue_extraction=queue_extraction,
-                    error_log=error_log,
-                    mock=mock,
-                ):
-                    _bump_source_failure(
-                        supabase, src,
-                        error_class="empty_feed",
-                        error_message="rss adapter returned no entries",
-                        attempted_url=target_url,
-                    )
-                    continue
-                execute_or_default(
-                    "source_registry.mark_success",
-                    lambda src=src: supabase.table("source_registry").update({
-                        "last_scraped_at": utc_now_iso(),
-                        "last_success_at": utc_now_iso(),
-                        "consecutive_fails": 0,
-                        "last_error": None,
-                        "last_error_class": None,
-                        "last_error_message": None,
-                        "last_error_at": None,
-                        "last_error_http_status": None,
-                        "last_error_url": None,
-                    }).eq("id", src["id"]).execute(),
-                    None,
-                )
-            except Exception as exc:  # noqa: BLE001
-                error_class, error_message = _classify_exception(exc)
-                error_log.append({"source": source.name, "error": error_class, "error_message": error_message, "at": utc_now_iso()})
-                _bump_source_failure(
-                    supabase, src,
-                    error_class=error_class,
-                    error_message=error_message,
-                    attempted_url=target_url,
-                )
-            continue
-
-        if source.adapter_type and source.adapter_type.lower() == "api":
-            try:
-                if not _run_api_pass(
-                    supabase,
-                    src=src,
-                    source=source,
-                    run_id=run_id,
-                    target_url=target_url,
-                    run_limit=run_limit,
-                    queue_extraction=queue_extraction,
-                    error_log=error_log,
-                    mock=mock,
-                ):
-                    _bump_source_failure(
-                        supabase, src,
-                        error_class="empty_api_response",
-                        error_message="api adapter returned no entries",
-                        attempted_url=target_url,
-                    )
-                    continue
-                execute_or_default(
-                    "source_registry.mark_success",
-                    lambda src=src: supabase.table("source_registry").update({
-                        "last_scraped_at": utc_now_iso(),
-                        "last_success_at": utc_now_iso(),
-                        "consecutive_fails": 0,
-                        "last_error": None,
-                        "last_error_class": None,
-                        "last_error_message": None,
-                        "last_error_at": None,
-                        "last_error_http_status": None,
-                        "last_error_url": None,
-                    }).eq("id", src["id"]).execute(),
-                    None,
-                )
-            except Exception as exc:  # noqa: BLE001
-                error_class, error_message = _classify_exception(exc)
-                error_log.append({"source": source.name, "error": error_class, "error_message": error_message, "at": utc_now_iso()})
-                _bump_source_failure(
-                    supabase, src,
-                    error_class=error_class,
-                    error_message=error_message,
-                    attempted_url=target_url,
-                )
-            continue
-
-        if source.adapter_type and source.adapter_type.lower() == "pdf":
-            try:
-                if not _run_pdf_pass(
-                    supabase,
-                    src=src,
-                    source=source,
-                    run_id=run_id,
-                    target_url=target_url,
-                    queue_extraction=queue_extraction,
-                    error_log=error_log,
-                    mock=mock,
-                ):
-                    _bump_source_failure(
-                        supabase, src,
-                        error_class="empty_pdf",
-                        error_message="pdf adapter returned no extractable text",
-                        attempted_url=target_url,
-                    )
-                    continue
-                execute_or_default(
-                    "source_registry.mark_success",
-                    lambda src=src: supabase.table("source_registry").update({
-                        "last_scraped_at": utc_now_iso(),
-                        "last_success_at": utc_now_iso(),
-                        "consecutive_fails": 0,
-                        "last_error": None,
-                        "last_error_class": None,
-                        "last_error_message": None,
-                        "last_error_at": None,
-                        "last_error_http_status": None,
-                        "last_error_url": None,
-                    }).eq("id", src["id"]).execute(),
-                    None,
-                )
-            except Exception as exc:  # noqa: BLE001
-                error_class, error_message = _classify_exception(exc)
-                error_log.append({"source": source.name, "error": error_class, "error_message": error_message, "at": utc_now_iso()})
-                _bump_source_failure(
-                    supabase, src,
-                    error_class=error_class,
-                    error_message=error_message,
-                    attempted_url=target_url,
-                )
             continue
         try:
-            if is_aggregator_source(src):
-                source_limit = min(run_limit, aggregator_max_items(src))
-                adapter_config = src.get("adapter_config") if isinstance(src.get("adapter_config"), dict) else {}
-                if mock:
-                    detail_urls = mock_aggregator_detail_urls(source, count=min(3, source_limit))
-                else:
-                    # Conditional listing fetch: when we have caching
-                    # headers on file from a prior pass, send them and
-                    # short-circuit on 304. Discovery (and the rest of
-                    # the aggregator path) skips entirely for unchanged
-                    # listings. Migration 044 added the storage columns.
-                    prior_etag = src.get("last_listing_etag")
-                    prior_modified = src.get("last_listing_modified")
-                    if prior_etag or prior_modified:
-                        listing_result = fetch(
-                            target_url,
-                            adapter_type="html",
-                            if_none_match=prior_etag,
-                            if_modified_since=prior_modified,
+            target_url = source.primary_fetch_url()
+            if not target_url:
+                logger.warning(
+                    "scrape.source_config_invalid source_id=%s source_name=%s adapter_type=%s reason=no_fetch_url",
+                    src.get("id"), source.name, source.adapter_type,
+                )
+                error_log.append({
+                    "source": source.name,
+                    "error": "source_config_invalid",
+                    "reason": "no_fetch_url",
+                    "adapter_type": source.adapter_type,
+                    "at": utc_now_iso(),
+                })
+                _bump_source_failure(
+                    supabase, src,
+                    error_class="source_config_invalid",
+                    error_message=f"no_fetch_url for adapter_type={source.adapter_type or 'html'}",
+                )
+                continue
+            if source.adapter_type and source.adapter_type.lower() == "rss":
+                try:
+                    if not _run_rss_pass(
+                        supabase,
+                        src=src,
+                        source=source,
+                        run_id=run_id,
+                        target_url=target_url,
+                        run_limit=run_limit,
+                        queue_extraction=queue_extraction,
+                        error_log=error_log,
+                        mock=mock,
+                    ):
+                        _bump_source_failure(
+                            supabase, src,
+                            error_class="empty_feed",
+                            error_message="rss adapter returned no entries",
+                            attempted_url=target_url,
                         )
-                        if not listing_result.ok and listing_result.error == "not_modified":
-                            logger.info(
-                                "scrape.listing_unchanged source_id=%s source_name=%s url=%s",
-                                src.get("id"), source.name, target_url,
+                        continue
+                    execute_or_default(
+                        "source_registry.mark_success",
+                        lambda src=src: supabase.table("source_registry").update({
+                            "last_scraped_at": utc_now_iso(),
+                            "last_success_at": utc_now_iso(),
+                            "consecutive_fails": 0,
+                            "last_error": None,
+                            "last_error_class": None,
+                            "last_error_message": None,
+                            "last_error_at": None,
+                            "last_error_http_status": None,
+                            "last_error_url": None,
+                        }).eq("id", src["id"]).execute(),
+                        None,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    error_class, error_message = _classify_exception(exc)
+                    error_log.append({"source": source.name, "error": error_class, "error_message": error_message, "at": utc_now_iso()})
+                    _bump_source_failure(
+                        supabase, src,
+                        error_class=error_class,
+                        error_message=error_message,
+                        attempted_url=target_url,
+                    )
+                continue
+
+            if source.adapter_type and source.adapter_type.lower() == "api":
+                try:
+                    if not _run_api_pass(
+                        supabase,
+                        src=src,
+                        source=source,
+                        run_id=run_id,
+                        target_url=target_url,
+                        run_limit=run_limit,
+                        queue_extraction=queue_extraction,
+                        error_log=error_log,
+                        mock=mock,
+                    ):
+                        _bump_source_failure(
+                            supabase, src,
+                            error_class="empty_api_response",
+                            error_message="api adapter returned no entries",
+                            attempted_url=target_url,
+                        )
+                        continue
+                    execute_or_default(
+                        "source_registry.mark_success",
+                        lambda src=src: supabase.table("source_registry").update({
+                            "last_scraped_at": utc_now_iso(),
+                            "last_success_at": utc_now_iso(),
+                            "consecutive_fails": 0,
+                            "last_error": None,
+                            "last_error_class": None,
+                            "last_error_message": None,
+                            "last_error_at": None,
+                            "last_error_http_status": None,
+                            "last_error_url": None,
+                        }).eq("id", src["id"]).execute(),
+                        None,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    error_class, error_message = _classify_exception(exc)
+                    error_log.append({"source": source.name, "error": error_class, "error_message": error_message, "at": utc_now_iso()})
+                    _bump_source_failure(
+                        supabase, src,
+                        error_class=error_class,
+                        error_message=error_message,
+                        attempted_url=target_url,
+                    )
+                continue
+
+            if source.adapter_type and source.adapter_type.lower() == "pdf":
+                try:
+                    if not _run_pdf_pass(
+                        supabase,
+                        src=src,
+                        source=source,
+                        run_id=run_id,
+                        target_url=target_url,
+                        queue_extraction=queue_extraction,
+                        error_log=error_log,
+                        mock=mock,
+                    ):
+                        _bump_source_failure(
+                            supabase, src,
+                            error_class="empty_pdf",
+                            error_message="pdf adapter returned no extractable text",
+                            attempted_url=target_url,
+                        )
+                        continue
+                    execute_or_default(
+                        "source_registry.mark_success",
+                        lambda src=src: supabase.table("source_registry").update({
+                            "last_scraped_at": utc_now_iso(),
+                            "last_success_at": utc_now_iso(),
+                            "consecutive_fails": 0,
+                            "last_error": None,
+                            "last_error_class": None,
+                            "last_error_message": None,
+                            "last_error_at": None,
+                            "last_error_http_status": None,
+                            "last_error_url": None,
+                        }).eq("id", src["id"]).execute(),
+                        None,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    error_class, error_message = _classify_exception(exc)
+                    error_log.append({"source": source.name, "error": error_class, "error_message": error_message, "at": utc_now_iso()})
+                    _bump_source_failure(
+                        supabase, src,
+                        error_class=error_class,
+                        error_message=error_message,
+                        attempted_url=target_url,
+                    )
+                continue
+            try:
+                if is_aggregator_source(src):
+                    source_limit = min(run_limit, aggregator_max_items(src))
+                    adapter_config = src.get("adapter_config") if isinstance(src.get("adapter_config"), dict) else {}
+                    if mock:
+                        detail_urls = mock_aggregator_detail_urls(source, count=min(3, source_limit))
+                    else:
+                        # Conditional listing fetch: when we have caching
+                        # headers on file from a prior pass, send them and
+                        # short-circuit on 304. Discovery (and the rest of
+                        # the aggregator path) skips entirely for unchanged
+                        # listings. Migration 044 added the storage columns.
+                        prior_etag = src.get("last_listing_etag")
+                        prior_modified = src.get("last_listing_modified")
+                        if prior_etag or prior_modified:
+                            listing_result = fetch(
+                                target_url,
+                                adapter_type="html",
+                                if_none_match=prior_etag,
+                                if_modified_since=prior_modified,
                             )
+                            if not listing_result.ok and listing_result.error == "not_modified":
+                                logger.info(
+                                    "scrape.listing_unchanged source_id=%s source_name=%s url=%s",
+                                    src.get("id"), source.name, target_url,
+                                )
+                                execute_or_default(
+                                    "source_registry.mark_success_unchanged",
+                                    lambda src=src: supabase.table("source_registry").update({
+                                        "last_scraped_at": utc_now_iso(),
+                                        "last_success_at": utc_now_iso(),
+                                        "consecutive_fails": 0,
+                                        "last_error": None,
+                                        "last_error_class": None,
+                                        "last_error_message": None,
+                                        "last_error_at": None,
+                                        "last_error_http_status": None,
+                                        "last_error_url": None,
+                                    }).eq("id", src["id"]).execute(),
+                                    None,
+                                )
+                                continue
+                            if not listing_result.ok or not listing_result.text:
+                                error_log.append({"source": source.name, "url": target_url, "error": listing_result.error or "empty_listing_response", "at": utc_now_iso()})
+                                _bump_source_failure(
+                                    supabase, src,
+                                    error_class=listing_result.error or "empty_listing_response",
+                                    error_message="aggregator listing fetch returned no HTML",
+                                    http_status=listing_result.status_code,
+                                    attempted_url=target_url,
+                                )
+                                continue
+                            # Reconstruct HTML from raw_bytes for downstream
+                            # discovery (which walks anchors). FetchResult.text
+                            # is already stripped.
+                            try:
+                                listing_html = (listing_result.raw_bytes or b"").decode("utf-8", errors="replace") or listing_result.text
+                            except Exception:
+                                listing_html = listing_result.text
+                            # Remember the new caching headers for the next pass.
                             execute_or_default(
-                                "source_registry.mark_success_unchanged",
-                                lambda src=src: supabase.table("source_registry").update({
-                                    "last_scraped_at": utc_now_iso(),
-                                    "last_success_at": utc_now_iso(),
-                                    "consecutive_fails": 0,
-                                    "last_error": None,
-                                    "last_error_class": None,
-                                    "last_error_message": None,
-                                    "last_error_at": None,
-                                    "last_error_http_status": None,
-                                    "last_error_url": None,
-                                }).eq("id", src["id"]).execute(),
+                                "source_registry.update_listing_headers",
+                                lambda src=src, etag=listing_result.etag, mod=listing_result.last_modified:
+                                    supabase.table("source_registry").update({
+                                        "last_listing_etag": etag,
+                                        "last_listing_modified": mod,
+                                    }).eq("id", src["id"]).execute(),
                                 None,
                             )
-                            continue
-                        if not listing_result.ok or not listing_result.text:
-                            error_log.append({"source": source.name, "url": target_url, "error": listing_result.error or "empty_listing_response", "at": utc_now_iso()})
-                            _bump_source_failure(
-                                supabase, src,
-                                error_class=listing_result.error or "empty_listing_response",
-                                error_message="aggregator listing fetch returned no HTML",
-                                http_status=listing_result.status_code,
-                                attempted_url=target_url,
-                            )
-                            continue
-                        # Reconstruct HTML from raw_bytes for downstream
-                        # discovery (which walks anchors). FetchResult.text
-                        # is already stripped.
-                        try:
-                            listing_html = (listing_result.raw_bytes or b"").decode("utf-8", errors="replace") or listing_result.text
-                        except Exception:
-                            listing_html = listing_result.text
-                        # Remember the new caching headers for the next pass.
-                        execute_or_default(
-                            "source_registry.update_listing_headers",
-                            lambda src=src, etag=listing_result.etag, mod=listing_result.last_modified:
-                                supabase.table("source_registry").update({
-                                    "last_listing_etag": etag,
-                                    "last_listing_modified": mod,
-                                }).eq("id", src["id"]).execute(),
-                            None,
+                        else:
+                            listing_html = fetch_page_html(target_url)
+                            if not listing_html:
+                                error_log.append({"source": source.name, "url": target_url, "error": "Empty listing response", "at": utc_now_iso()})
+                                _bump_source_failure(
+                                    supabase, src,
+                                    error_class="empty_listing_response",
+                                    error_message="aggregator listing fetch returned no HTML",
+                                    attempted_url=target_url,
+                                )
+                                continue
+                        discovery = discover_aggregator_detail_urls(
+                            listing_html,
+                            target_url,
+                            max_items=source_limit,
+                            include_patterns=adapter_config.get("include_patterns") or None,
+                            exclude_patterns=adapter_config.get("exclude_patterns") or None,
+                            allowed_domains=adapter_config.get("allowed_domains") or None,
                         )
-                    else:
-                        listing_html = fetch_page_html(target_url)
-                        if not listing_html:
-                            error_log.append({"source": source.name, "url": target_url, "error": "Empty listing response", "at": utc_now_iso()})
-                            _bump_source_failure(
-                                supabase, src,
-                                error_class="empty_listing_response",
-                                error_message="aggregator listing fetch returned no HTML",
-                                attempted_url=target_url,
+                        detail_urls = discovery.urls
+                        discovery_stats = discovery.stats
+                        logger.info(
+                            "aggregator.discovery source_id=%s source_name=%s discovered=%s filtered_include=%s filtered_exclude=%s filtered_domain=%s lifecycle_skipped=%s",
+                            src.get("id"),
+                            source.name,
+                            discovery_stats.get("discovered", len(detail_urls)),
+                            discovery_stats.get("include", 0),
+                            discovery_stats.get("exclude", 0),
+                            discovery_stats.get("domain", 0),
+                            discovery_stats.get("lifecycle_skipped", 0),
+                        )
+                        # Persist non-recruitment links (admit_card / result /
+                        # corrigendum / ...) as recruitment_events. Events
+                        # land unattached (recruitment_id NULL) when no
+                        # canonical row exists yet — admin reconciles later.
+                        for evt_link in discovery.lifecycle_links:
+                            _record_lifecycle_event(
+                                supabase,
+                                source_id=src.get("id"),
+                                listing_id=None,
+                                event_type=evt_link.event_type,
+                                url=evt_link.url,
+                                label=evt_link.label,
                             )
-                            continue
-                    discovery = discover_aggregator_detail_urls(
-                        listing_html,
-                        target_url,
-                        max_items=source_limit,
-                        include_patterns=adapter_config.get("include_patterns") or None,
-                        exclude_patterns=adapter_config.get("exclude_patterns") or None,
-                        allowed_domains=adapter_config.get("allowed_domains") or None,
-                    )
-                    detail_urls = discovery.urls
-                    discovery_stats = discovery.stats
-                    logger.info(
-                        "aggregator.discovery source_id=%s source_name=%s discovered=%s filtered_include=%s filtered_exclude=%s filtered_domain=%s lifecycle_skipped=%s",
-                        src.get("id"),
-                        source.name,
-                        discovery_stats.get("discovered", len(detail_urls)),
-                        discovery_stats.get("include", 0),
-                        discovery_stats.get("exclude", 0),
-                        discovery_stats.get("domain", 0),
-                        discovery_stats.get("lifecycle_skipped", 0),
-                    )
-                    # Persist non-recruitment links (admit_card / result /
-                    # corrigendum / ...) as recruitment_events. Events
-                    # land unattached (recruitment_id NULL) when no
-                    # canonical row exists yet — admin reconciles later.
-                    for evt_link in discovery.lifecycle_links:
-                        _record_lifecycle_event(
+                    if not detail_urls:
+                        error_log.append({"source": source.name, "url": target_url, "error": "No detail links discovered", "at": utc_now_iso()})
+                        _bump_source_failure(
+                            supabase, src,
+                            error_class="no_detail_links",
+                            error_message="aggregator listing had no recruitment detail links",
+                            attempted_url=target_url,
+                        )
+                        continue
+                    found_before = total_found
+                    # Build a uniform list of (url, label, event_type) tuples
+                    # regardless of mock vs live so the rest of the loop stays
+                    # branch-free.
+                    if mock:
+                        detail_entries: list[tuple[str, str, str]] = [
+                            (u, "", "new_recruitment") for u in detail_urls
+                        ]
+                    else:
+                        detail_entries = [
+                            (link.url, link.label, link.event_type) for link in discovery.links
+                        ]
+
+                    for detail_url, label, event_type in detail_entries:
+                        if mock:
+                            detail_html = None
+                            raw_text = f"MOCK DETAIL PAGE TEXT FOR {detail_url}"
+                        else:
+                            # Change detection: only use the conditional
+                            # ``fetch()`` path when we already have ETag /
+                            # Last-Modified on file for this URL. Without
+                            # prior headers we fall back to the legacy
+                            # ``fetch_page_html()`` so existing call sites
+                            # and test monkeypatches keep working.
+                            prior = _lookup_prior_document_headers(supabase, detail_url)
+                            if prior.get("etag") or prior.get("last_modified"):
+                                result = fetch(
+                                    detail_url,
+                                    adapter_type="html",
+                                    if_none_match=prior.get("etag"),
+                                    if_modified_since=prior.get("last_modified"),
+                                )
+                                if not result.ok and result.error == "not_modified":
+                                    logger.info(
+                                        "scrape.detail_unchanged source_id=%s detail_url=%s",
+                                        src.get("id"), detail_url,
+                                    )
+                                    listing_id_unchanged = _upsert_aggregator_listing(
+                                        supabase,
+                                        source_id=src.get("id"),
+                                        scrape_run_id=run_id,
+                                        detail_url=detail_url,
+                                        label=label,
+                                        event_type=event_type,
+                                    )
+                                    _record_listing_observation(
+                                        supabase,
+                                        listing_id=listing_id_unchanged,
+                                        source_id=src.get("id"),
+                                        scrape_run_id=run_id,
+                                        observed_url=detail_url,
+                                        observed_label=label,
+                                        content_hash=None,
+                                    )
+                                    continue
+                                if not result.ok or not result.text:
+                                    error_log.append({"source": source.name, "url": detail_url, "error": result.error or "Empty response", "at": utc_now_iso()})
+                                    continue
+                                raw_text = result.text
+                                try:
+                                    detail_html = (result.raw_bytes or b"").decode("utf-8", errors="replace")
+                                except Exception:
+                                    detail_html = result.text
+                            else:
+                                detail_html = fetch_page_html(detail_url)
+                                if not detail_html:
+                                    error_log.append({"source": source.name, "url": detail_url, "error": "Empty response", "at": utc_now_iso()})
+                                    continue
+                                raw_text = strip_html(detail_html)
+
+                        listing_id = _upsert_aggregator_listing(
                             supabase,
                             source_id=src.get("id"),
-                            listing_id=None,
-                            event_type=evt_link.event_type,
-                            url=evt_link.url,
-                            label=evt_link.label,
+                            scrape_run_id=run_id,
+                            detail_url=detail_url,
+                            label=label,
+                            event_type=event_type,
                         )
-                if not detail_urls:
-                    error_log.append({"source": source.name, "url": target_url, "error": "No detail links discovered", "at": utc_now_iso()})
-                    _bump_source_failure(
-                        supabase, src,
-                        error_class="no_detail_links",
-                        error_message="aggregator listing had no recruitment detail links",
-                        attempted_url=target_url,
-                    )
-                    continue
-                found_before = total_found
-                # Build a uniform list of (url, label, event_type) tuples
-                # regardless of mock vs live so the rest of the loop stays
-                # branch-free.
-                if mock:
-                    detail_entries: list[tuple[str, str, str]] = [
-                        (u, "", "new_recruitment") for u in detail_urls
-                    ]
-                else:
-                    detail_entries = [
-                        (link.url, link.label, link.event_type) for link in discovery.links
-                    ]
+                        _record_listing_observation(
+                            supabase,
+                            listing_id=listing_id,
+                            source_id=src.get("id"),
+                            scrape_run_id=run_id,
+                            observed_url=detail_url,
+                            observed_label=label,
+                            content_hash=None,
+                        )
 
-                for detail_url, label, event_type in detail_entries:
-                    if mock:
-                        detail_html = None
-                        raw_text = f"MOCK DETAIL PAGE TEXT FOR {detail_url}"
-                    else:
-                        # Change detection: only use the conditional
-                        # ``fetch()`` path when we already have ETag /
-                        # Last-Modified on file for this URL. Without
-                        # prior headers we fall back to the legacy
-                        # ``fetch_page_html()`` so existing call sites
-                        # and test monkeypatches keep working.
-                        prior = _lookup_prior_document_headers(supabase, detail_url)
-                        if prior.get("etag") or prior.get("last_modified"):
-                            result = fetch(
-                                detail_url,
-                                adapter_type="html",
-                                if_none_match=prior.get("etag"),
-                                if_modified_since=prior.get("last_modified"),
-                            )
-                            if not result.ok and result.error == "not_modified":
-                                logger.info(
-                                    "scrape.detail_unchanged source_id=%s detail_url=%s",
-                                    src.get("id"), detail_url,
-                                )
-                                listing_id_unchanged = _upsert_aggregator_listing(
-                                    supabase,
-                                    source_id=src.get("id"),
-                                    scrape_run_id=run_id,
-                                    detail_url=detail_url,
-                                    label=label,
-                                    event_type=event_type,
-                                )
-                                _record_listing_observation(
-                                    supabase,
-                                    listing_id=listing_id_unchanged,
-                                    source_id=src.get("id"),
-                                    scrape_run_id=run_id,
-                                    observed_url=detail_url,
-                                    observed_label=label,
-                                    content_hash=None,
-                                )
-                                continue
-                            if not result.ok or not result.text:
-                                error_log.append({"source": source.name, "url": detail_url, "error": result.error or "Empty response", "at": utc_now_iso()})
-                                continue
-                            raw_text = result.text
-                            try:
-                                detail_html = (result.raw_bytes or b"").decode("utf-8", errors="replace")
-                            except Exception:
-                                detail_html = result.text
-                        else:
-                            detail_html = fetch_page_html(detail_url)
-                            if not detail_html:
-                                error_log.append({"source": source.name, "url": detail_url, "error": "Empty response", "at": utc_now_iso()})
-                                continue
-                            raw_text = strip_html(detail_html)
-
-                    listing_id = _upsert_aggregator_listing(
-                        supabase,
-                        source_id=src.get("id"),
-                        scrape_run_id=run_id,
-                        detail_url=detail_url,
-                        label=label,
-                        event_type=event_type,
-                    )
-                    _record_listing_observation(
-                        supabase,
-                        listing_id=listing_id,
-                        source_id=src.get("id"),
-                        scrape_run_id=run_id,
-                        observed_url=detail_url,
-                        observed_label=label,
-                        content_hash=None,
-                    )
-
-                    # Try to upgrade the aggregator detail page to an
-                    # official source. When the resolver finds a real
-                    # ``.gov.in`` / registry-host anchor we fetch *that*
-                    # and pass its body to the extractor; aggregator
-                    # paraphrasing never becomes canonical truth.
-                    resolver_result: ResolverResult | None = None
-                    item_url = detail_url
-                    raw_for_extraction = raw_text
-                    if not mock and detail_html:
-                        resolver_result = resolve_with_registry(detail_html, detail_url, source)
-                        if resolver_result:
-                            official_html = fetch_page_html(resolver_result.official_url)
-                            if official_html:
-                                item_url = resolver_result.official_url
-                                raw_for_extraction = strip_html(official_html)
-                                _mark_listing_status(
-                                    supabase, listing_id,
-                                    "official_source_found",
-                                    official_source_url=resolver_result.official_url,
-                                )
+                        # Try to upgrade the aggregator detail page to an
+                        # official source. When the resolver finds a real
+                        # ``.gov.in`` / registry-host anchor we fetch *that*
+                        # and pass its body to the extractor; aggregator
+                        # paraphrasing never becomes canonical truth.
+                        resolver_result: ResolverResult | None = None
+                        item_url = detail_url
+                        raw_for_extraction = raw_text
+                        if not mock and detail_html:
+                            resolver_result = resolve_with_registry(detail_html, detail_url, source)
+                            if resolver_result:
+                                official_html = fetch_page_html(resolver_result.official_url)
+                                if official_html:
+                                    item_url = resolver_result.official_url
+                                    raw_for_extraction = strip_html(official_html)
+                                    _mark_listing_status(
+                                        supabase, listing_id,
+                                        "official_source_found",
+                                        official_source_url=resolver_result.official_url,
+                                    )
+                                else:
+                                    # Resolver pointed at an unreachable URL;
+                                    # fall back to the aggregator body but
+                                    # record that we tried.
+                                    resolver_result = None
+                                    _mark_listing_status(supabase, listing_id, "needs_official_source")
                             else:
-                                # Resolver pointed at an unreachable URL;
-                                # fall back to the aggregator body but
-                                # record that we tried.
-                                resolver_result = None
                                 _mark_listing_status(supabase, listing_id, "needs_official_source")
-                        else:
-                            _mark_listing_status(supabase, listing_id, "needs_official_source")
 
-                    queue_extraction(
-                        src,
-                        source.name,
-                        item_url,
-                        raw_for_extraction,
-                        listing_id=listing_id,
-                        resolver_result=resolver_result,
-                    )
-                if total_found == found_before:
-                    _bump_source_failure(
-                        supabase, src,
-                        error_class="no_items_extracted",
-                        error_message="every aggregator detail fetch returned empty or unextractable",
-                        attempted_url=target_url,
-                    )
-                    continue
-            else:
-                raw = fetch_page_text(target_url) if not mock else f"MOCK PAGE TEXT FOR {target_url}"
-                if not raw:
-                    error_log.append({"source": source.name, "error": "Empty response", "at": utc_now_iso()})
-                    _bump_source_failure(
-                        supabase, src,
-                        error_class="empty_response",
-                        error_message="direct source fetch returned no body",
-                        attempted_url=target_url,
-                    )
-                    continue
-                if not queue_extraction(src, source.name, target_url, raw):
-                    _bump_source_failure(
-                        supabase, src,
-                        error_class="extraction_failed",
-                        error_message="extractor returned null for fetched body",
-                        attempted_url=target_url,
-                    )
-                    continue
+                        queue_extraction(
+                            src,
+                            source.name,
+                            item_url,
+                            raw_for_extraction,
+                            listing_id=listing_id,
+                            resolver_result=resolver_result,
+                        )
+                    if total_found == found_before:
+                        _bump_source_failure(
+                            supabase, src,
+                            error_class="no_items_extracted",
+                            error_message="every aggregator detail fetch returned empty or unextractable",
+                            attempted_url=target_url,
+                        )
+                        continue
+                else:
+                    raw = fetch_page_text(target_url) if not mock else f"MOCK PAGE TEXT FOR {target_url}"
+                    if not raw:
+                        error_log.append({"source": source.name, "error": "Empty response", "at": utc_now_iso()})
+                        _bump_source_failure(
+                            supabase, src,
+                            error_class="empty_response",
+                            error_message="direct source fetch returned no body",
+                            attempted_url=target_url,
+                        )
+                        continue
+                    if not queue_extraction(src, source.name, target_url, raw):
+                        _bump_source_failure(
+                            supabase, src,
+                            error_class="extraction_failed",
+                            error_message="extractor returned null for fetched body",
+                            attempted_url=target_url,
+                        )
+                        continue
 
-            execute_or_default(
-                "source_registry.mark_success",
-                lambda src=src: supabase.table("source_registry")
-                .update(
-                    {
-                        "last_scraped_at": utc_now_iso(),
-                        "last_success_at": utc_now_iso(),
-                        "consecutive_fails": 0,
-                        "last_error": None,
-                        "last_error_class": None,
-                        "last_error_message": None,
-                        "last_error_at": None,
-                        "last_error_http_status": None,
-                        "last_error_url": None,
-                    }
+                execute_or_default(
+                    "source_registry.mark_success",
+                    lambda src=src: supabase.table("source_registry")
+                    .update(
+                        {
+                            "last_scraped_at": utc_now_iso(),
+                            "last_success_at": utc_now_iso(),
+                            "consecutive_fails": 0,
+                            "last_error": None,
+                            "last_error_class": None,
+                            "last_error_message": None,
+                            "last_error_at": None,
+                            "last_error_http_status": None,
+                            "last_error_url": None,
+                        }
+                    )
+                    .eq("id", src["id"])
+                    .execute(),
+                    None,
                 )
-                .eq("id", src["id"])
-                .execute(),
-                None,
-            )
 
-        except Exception as exc:  # noqa: BLE001
-            error_class, error_message = _classify_exception(exc)
-            error_log.append({
-                "source": source.name,
-                "error": error_class,
-                "error_message": error_message,
-                "at": utc_now_iso(),
-            })
-            _bump_source_failure(
-                supabase, src,
-                error_class=error_class,
-                error_message=error_message,
-                attempted_url=target_url,
-            )
+            except Exception as exc:  # noqa: BLE001
+                error_class, error_message = _classify_exception(exc)
+                error_log.append({
+                    "source": source.name,
+                    "error": error_class,
+                    "error_message": error_message,
+                    "at": utc_now_iso(),
+                })
+                _bump_source_failure(
+                    supabase, src,
+                    error_class=error_class,
+                    error_message=error_message,
+                    attempted_url=target_url,
+                )
+
+        finally:
+            _release_source_claim(supabase, src)
 
     # ── 5. Finalise the run row ──────────────────────────────────────────
     if sources and len(error_log) == len(sources):
@@ -1672,6 +1686,70 @@ def run_scraping_pass(
         "items_duplicate": total_dup,
         "errors": error_log,
     }
+
+
+# ─── Per-source concurrency lock ──────────────────────────────────────────
+
+
+# Stale-claim threshold. A claim older than this is treated as crashed
+# and can be re-claimed by a fresh worker. 15 minutes covers the
+# slowest realistic single-source pass (PDF bulletin + extraction).
+_CLAIM_STALE_AFTER_SECONDS = 15 * 60
+
+
+def _try_claim_source(supabase: Client, src: dict[str, Any]) -> bool:
+    """Take an in-flight lock on ``source_registry.currently_scraping_at``.
+
+    Returns ``True`` when the worker won the claim. Returns ``False``
+    when another worker holds a fresh claim — caller skips this source
+    for the run. A claim older than ``_CLAIM_STALE_AFTER_SECONDS`` is
+    treated as crashed and gets overwritten.
+
+    Lock-infrastructure failures return ``True`` rather than blocking
+    the pass — losing scrape coverage is worse than the small race
+    window on cache columns.
+    """
+    src_id = src.get("id")
+    if not src_id:
+        return False
+    try:
+        from datetime import datetime, timedelta, timezone
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=_CLAIM_STALE_AFTER_SECONDS)).isoformat()
+        rows = (
+            supabase.table("source_registry")
+            .select("id, currently_scraping_at")
+            .eq("id", src_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if not rows:
+            return False
+        held_at = rows[0].get("currently_scraping_at")
+        if held_at and held_at > cutoff:
+            logger.info("scrape.source_locked source_id=%s held_since=%s", src_id, held_at)
+            return False
+        supabase.table("source_registry").update(
+            {"currently_scraping_at": utc_now_iso()}
+        ).eq("id", src_id).execute()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("source claim failed source_id=%s error=%s -- proceeding without lock", src_id, exc)
+        return True
+
+
+def _release_source_claim(supabase: Client, src: dict[str, Any]) -> None:
+    """Clear ``currently_scraping_at``. Called from a finally block."""
+    src_id = src.get("id")
+    if not src_id:
+        return
+    try:
+        supabase.table("source_registry").update(
+            {"currently_scraping_at": None}
+        ).eq("id", src_id).execute()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("source claim release failed source_id=%s error=%s", src_id, exc)
 
 
 def _bump_source_failure(
