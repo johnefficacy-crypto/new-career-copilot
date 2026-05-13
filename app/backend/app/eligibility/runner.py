@@ -27,7 +27,7 @@ from supabase import AsyncClient, Client
 from app.core.error_utils import log_warning_with_context
 from app.core.errors import DatabaseError
 from app.db.utils import require_select, safe_select
-from .engine import check_eligibility_batch
+from .engine import RULES_VERSION, check_eligibility_batch
 from app.profile.eligibility_mapper import build_user_eligibility_profile
 from .schemas import (
     AgeCriteria,
@@ -74,6 +74,30 @@ def _profile_hash(mapped_profile: dict[str, Any]) -> str:
         "credentials": sorted(mapped_profile.get("credentials") or [], key=lambda r: _stable_json(r)),
     }
     return hashlib.sha256(_stable_json(payload).encode("utf-8")).hexdigest()
+
+
+def _deep_sort_lists(value: Any) -> Any:
+    """Recursively sort list elements by their stable JSON so hashing is
+    insensitive to row order. Dict keys are sorted at serialise time by
+    `_stable_json`'s ``sort_keys=True``.
+    """
+    if isinstance(value, list):
+        return sorted((_deep_sort_lists(v) for v in value), key=_stable_json)
+    if isinstance(value, dict):
+        return {k: _deep_sort_lists(v) for k, v in value.items()}
+    return value
+
+
+def _criteria_hash(pc: PostCriteria) -> str:
+    """Hash the rule inputs that define a post's eligibility verdict.
+
+    The post identity (`post_id`, `recruitment_id`) is excluded — those are
+    the lookup key for the cache row, not part of the rule definition. Any
+    edit to age/education/attempts/disability/cert/language/domicile criteria
+    will change the hash and invalidate stale cached results for every user.
+    """
+    payload = pc.model_dump(exclude={"post_id", "recruitment_id"})
+    return hashlib.sha256(_stable_json(_deep_sort_lists(payload)).encode("utf-8")).hexdigest()
 
 
 def _looks_like_missing_embed(exc: Exception) -> bool:
@@ -320,17 +344,27 @@ def run_eligibility_for_user(
     # ── 5. Run batch engine ────────────────────────────────────────────────
     existing_rows = (
         supabase.table("eligibility_results")
-        .select("post_id, recruitment_id, profile_hash, computed_at")
+        .select("post_id, recruitment_id, profile_hash, criteria_hash, rules_version, computed_at")
         .eq("user_id", user_id)
         .execute()
         .data
         or []
     )
     existing_by_post = {row.get("post_id"): row for row in existing_rows if row.get("post_id")}
+    # Pre-compute per-post criteria hashes so the skip check and the upsert
+    # write below agree exactly. The skip cache is a 3-way match: profile,
+    # criteria, and engine rules version must all be identical to the row we
+    # wrote last time. Any mismatch — including legacy NULL columns from
+    # rows written before this migration — forces a recompute.
+    criteria_hash_by_post = {pc.post_id: _criteria_hash(pc) for pc in post_criteria_list}
     skip_ids = {
         pc.post_id
         for pc in post_criteria_list
-        if (existing_by_post.get(pc.post_id) or {}).get("profile_hash") == profile_hash
+        if (
+            (existing_by_post.get(pc.post_id) or {}).get("profile_hash") == profile_hash
+            and (existing_by_post.get(pc.post_id) or {}).get("criteria_hash") == criteria_hash_by_post[pc.post_id]
+            and (existing_by_post.get(pc.post_id) or {}).get("rules_version") == RULES_VERSION
+        )
     }
     to_compute = [pc for pc in post_criteria_list if pc.post_id not in skip_ids]
     results = check_eligibility_batch(
@@ -354,6 +388,8 @@ def run_eligibility_for_user(
             "fail_reasons": r.result.fail_reasons,
             "computed_at": now,
             "profile_hash": profile_hash,
+            "criteria_hash": criteria_hash_by_post[r.post_id],
+            "rules_version": RULES_VERSION,
         }
         for r in results
     ]

@@ -148,6 +148,8 @@ REQUIRED_COLUMNS = {
         "recruitment_id",
         "post_id",
         "profile_hash",
+        "criteria_hash",
+        "rules_version",
         "is_eligible",
         "is_conditional",
         "fail_reasons",
