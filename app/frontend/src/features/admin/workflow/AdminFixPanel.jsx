@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { AlertTriangle, ExternalLink } from "lucide-react";
+import { AlertTriangle, ArrowRight, Compass, ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
 import FieldReviewGroup from "./FieldReviewGroup";
 import PostEligibilityReviewGroup from "./PostEligibilityReviewGroup";
@@ -18,6 +18,7 @@ export default function AdminFixPanel({
   recruitment,
   validateResult,
   sources = [],
+  nextAction = null,
   onQueueFieldAction,
   onPromote,
   onMergeIntoExisting,
@@ -26,14 +27,11 @@ export default function AdminFixPanel({
   onVerify,
   onPublish,
   onOpenOfficialSourceResolver,
+  onJumpToTarget,
   busy,
 }) {
   if (!queueItem && !recruitment) {
-    return (
-      <section className="soft-card rounded-2xl p-6 text-sm text-muted-foreground" data-testid="admin-fix-panel-empty">
-        Select a queue item or a recruitment to view blockers and fix them in place.
-      </section>
-    );
+    return <NextActionEmpty nextAction={nextAction} onJump={onJumpToTarget} />;
   }
 
   return (
@@ -260,6 +258,52 @@ function RecruitmentFixSection({ recruitment, validateResult, sources = [], onVa
         >
           Publish
         </button>
+      </div>
+    </section>
+  );
+}
+
+// Replaces the bare "Select a queue item or a recruitment..." empty state.
+// Reads the first actionable checklist item (first blocked, then first todo)
+// and renders it as a CTA so the right column always has something useful.
+function NextActionEmpty({ nextAction, onJump }) {
+  const status = nextAction?.status || "todo";
+  const tone = status === "blocked"
+    ? "border-amber-300 bg-amber-50 text-amber-900"
+    : status === "done"
+      ? "border-sage-300 bg-sage-50 text-sage-900"
+      : "border-clay-300 bg-clay-50 text-foreground";
+  const label = nextAction?.label || "Pick a workflow target on the left";
+  const reason = nextAction?.reason;
+  const hint = nextAction?.hint;
+  const ctaLabel = nextAction?.target ? "Jump to action" : "Select something to fix";
+  return (
+    <section className="soft-card rounded-2xl p-6" data-testid="admin-fix-panel-empty">
+      <div className="flex items-start gap-3">
+        <div className="rounded-full bg-dusk-700/10 p-2 shrink-0">
+          <Compass className="h-5 w-5 text-dusk-700" aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Next safe action</div>
+          <h3 className="font-heading text-lg mt-0.5">{label}</h3>
+          {reason ? <p className="mt-1 text-sm text-muted-foreground" data-testid="empty-next-reason">{reason}</p> : null}
+          {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
+          <div className={`mt-3 inline-flex items-center gap-2 rounded-full border px-2 py-1 text-[11px] ${tone}`} data-testid="empty-next-status">
+            <span className="font-semibold uppercase tracking-widest">{status}</span>
+          </div>
+          <div className="mt-4">
+            <button
+              type="button"
+              className="btn btn-primary h-9 text-xs"
+              onClick={() => onJump?.(nextAction?.target, nextAction)}
+              disabled={!nextAction?.target}
+              data-testid="empty-next-cta"
+            >
+              {ctaLabel}
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
       </div>
     </section>
   );
