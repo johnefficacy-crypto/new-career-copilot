@@ -1967,6 +1967,10 @@ def _promote_to_recruitments_compensation(
                 "job_type": "direct",
                 "recruitment_unit_id": unit_id,
                 "language_requirements": post.language_requirements or [],
+                # Reaches here only after the promotion gate verified the
+                # extracted value; default false is the safe choice when the
+                # extractor saw no domicile statement.
+                "requires_domicile": bool(post.requires_domicile),
             }
             post_rows = execute_or_raise("posts.insert", lambda: supabase.table("posts").insert(post_payload).execute()).data or []
             if not post_rows:

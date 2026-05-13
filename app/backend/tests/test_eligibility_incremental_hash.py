@@ -487,6 +487,40 @@ def test_needs_review_recruitments_excluded_from_recompute(monkeypatch):
     assert captured["count"] == 0
 
 
+def test_runner_populates_requires_domicile_from_post_row(monkeypatch):
+    # Canonical `posts.requires_domicile` (migration 042) must reach
+    # PostCriteria so the engine's domicile gate fires for posts the admin
+    # marked as domicile-only.
+    sb = FallbackSB()
+    sb.db["posts"][0]["requires_domicile"] = True
+    captured = {"requires_domicile": None}
+
+    def _batch(_profile, _ed, _at, _cr, post_criteria, **_kwargs):
+        captured["requires_domicile"] = post_criteria[0].requires_domicile
+        return []
+
+    monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
+    runner.run_eligibility_for_user("u1", sb)
+    assert captured["requires_domicile"] is True
+
+
+def test_runner_defaults_requires_domicile_false_when_column_absent(monkeypatch):
+    # Older posts that pre-date migration 042 may return NULL. The bool()
+    # coercion in the runner guards against passing None into PostCriteria,
+    # which would crash the pydantic bool type.
+    sb = FallbackSB()
+    sb.db["posts"][0].pop("requires_domicile", None)  # column absent
+    captured = {"requires_domicile": None}
+
+    def _batch(_profile, _ed, _at, _cr, post_criteria, **_kwargs):
+        captured["requires_domicile"] = post_criteria[0].requires_domicile
+        return []
+
+    monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
+    runner.run_eligibility_for_user("u1", sb)
+    assert captured["requires_domicile"] is False
+
+
 def test_verified_and_published_open_or_upcoming_recruitments_included(monkeypatch):
     for publish_status, status in (("verified", "open"), ("published", "upcoming")):
         sb = FallbackSB(publish_status=publish_status, status=status)

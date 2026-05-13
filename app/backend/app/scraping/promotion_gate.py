@@ -18,6 +18,11 @@ HIGH_RISK_FIELDS: frozenset[str] = frozenset({
     "official_apply_url",
     "organization_name",
     "total_vacancies",
+    # Domicile is a legal eligibility rule — false positives turn the
+    # whole post into a false negative for all-India candidates, false
+    # negatives let domicile-only postings publish without enforcement.
+    # Admin must verify the extractor's claim before promotion.
+    "requires_domicile",
 })
 
 
