@@ -168,33 +168,91 @@ export function computeProgress(state = {}) {
   return out;
 }
 
+// Sub-steps grouped into four phases. The full 12-step row used to wrap
+// onto 3 rows on a laptop and was hard to scan; the phase header gives an
+// at-a-glance status, the dots fill in the detail without taking width.
+const PHASES = [
+  { id: "discovery", label: "Discovery", stepIds: ["source_ready", "dry_scrape", "live_scrape"] },
+  { id: "review", label: "Review", stepIds: ["queue_review", "field_fixes", "official_source_resolved"] },
+  { id: "promote", label: "Promote", stepIds: ["promoted_draft", "draft_blockers_fixed"] },
+  { id: "publish", label: "Publish & Monitor", stepIds: ["validated", "verified", "published", "eligibility_monitored"] },
+];
+
+function rollupPhaseStatus(phaseSteps, progress) {
+  // Phase status priority: blocked > active > pending > complete-all.
+  let anyActive = false;
+  let anyPending = false;
+  let allComplete = true;
+  for (const id of phaseSteps) {
+    const s = (progress[id] || { status: "pending" }).status;
+    if (s === "blocked") return "blocked";
+    if (s === "active") anyActive = true;
+    if (s === "pending") anyPending = true;
+    if (s !== "complete") allComplete = false;
+  }
+  if (allComplete) return "complete";
+  if (anyActive) return "active";
+  if (anyPending) return "pending";
+  return "pending";
+}
+
+function toneFor(status) {
+  if (status === "complete") return "border-sage-300 bg-sage-100 text-sage-900";
+  if (status === "active") return "border-clay-300 bg-clay-50 text-foreground";
+  if (status === "blocked") return "border-amber-300 bg-amber-50 text-amber-900";
+  return "border-border bg-white/60 text-muted-foreground";
+}
+
+function iconFor(status) {
+  if (status === "complete") return Check;
+  if (status === "blocked") return AlertTriangle;
+  return Circle;
+}
+
+const STEP_LABEL_BY_ID = Object.fromEntries(STEPS.map((s) => [s.id, s.label]));
+
 export default function AdminProgressBar({ state = {}, onStepClick }) {
   const progress = computeProgress(state);
   return (
     <nav className="soft-card rounded-2xl p-3" aria-label="Scraper-to-publish progress" data-testid="admin-progress-bar">
-      <ol className="flex flex-wrap items-center gap-2 text-xs">
-        {STEPS.map((step, index) => {
-          const node = progress[step.id] || { status: "pending" };
-          const Icon = node.status === "complete" ? Check : node.status === "blocked" ? AlertTriangle : Circle;
-          const tone =
-            node.status === "complete" ? "border-sage-300 bg-sage-100 text-sage-900"
-            : node.status === "active" ? "border-clay-300 bg-clay-50 text-foreground"
-            : node.status === "blocked" ? "border-amber-300 bg-amber-50 text-amber-900"
-            : "border-border bg-white/60 text-muted-foreground";
+      <ol className="flex flex-wrap gap-2 text-xs">
+        {PHASES.map((phase, phaseIndex) => {
+          const phaseStatus = rollupPhaseStatus(phase.stepIds, progress);
+          const PhaseIcon = iconFor(phaseStatus);
+          const phaseTone = toneFor(phaseStatus);
+          const completedCount = phase.stepIds.filter((id) => (progress[id]?.status) === "complete").length;
           return (
-            <li key={step.id}>
-              <button
-                type="button"
-                onClick={() => onStepClick?.(step.id)}
-                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 ${tone}`}
-                title={node.reason || step.label}
-                data-testid={`progress-step-${step.id}`}
-                data-status={node.status}
-              >
-                <span className="font-mono text-[10px]">{index + 1}</span>
-                <Icon className="h-3.5 w-3.5" />
-                <span className="font-medium">{step.label}</span>
-              </button>
+            <li key={phase.id} className="flex-1 min-w-[180px]" data-testid={`progress-phase-${phase.id}`} data-status={phaseStatus}>
+              <div className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2 ${phaseTone}`}>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-mono text-[10px] opacity-75">{phaseIndex + 1}</span>
+                  <PhaseIcon className="h-3.5 w-3.5 shrink-0" />
+                  <span className="font-semibold truncate">{phase.label}</span>
+                </div>
+                <span className="text-[10px] font-mono opacity-75 shrink-0">{completedCount}/{phase.stepIds.length}</span>
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {phase.stepIds.map((id) => {
+                  const node = progress[id] || { status: "pending" };
+                  const StepIcon = iconFor(node.status);
+                  const stepTone = toneFor(node.status);
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => onStepClick?.(id)}
+                      title={node.reason ? `${STEP_LABEL_BY_ID[id]} — ${node.reason}` : STEP_LABEL_BY_ID[id]}
+                      aria-label={`${STEP_LABEL_BY_ID[id]} — ${node.status}`}
+                      data-testid={`progress-step-${id}`}
+                      data-status={node.status}
+                      className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] ${stepTone}`}
+                    >
+                      <StepIcon className="h-3 w-3" />
+                      <span className="hidden xl:inline">{STEP_LABEL_BY_ID[id]}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </li>
           );
         })}
@@ -203,4 +261,4 @@ export default function AdminProgressBar({ state = {}, onStepClick }) {
   );
 }
 
-export { STEPS as ADMIN_PROGRESS_STEPS };
+export { STEPS as ADMIN_PROGRESS_STEPS, PHASES as ADMIN_PROGRESS_PHASES };
