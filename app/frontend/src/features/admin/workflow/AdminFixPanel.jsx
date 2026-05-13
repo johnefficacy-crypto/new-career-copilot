@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import FieldReviewGroup from "./FieldReviewGroup";
 import PostEligibilityReviewGroup from "./PostEligibilityReviewGroup";
 import BlockerList from "./BlockerList";
+import RecruitmentCriteriaPanel from "../recruitments/RecruitmentCriteriaPanel";
 import { HIGH_RISK_QUEUE_FIELDS, RECOMMENDED_REVIEW_FIELDS } from "./adminWorkflowContract";
 
 // AdminFixPanel concentrates blocker display + fix controls for both the
@@ -198,6 +199,12 @@ function RecruitmentFixSection({ recruitment, validateResult, onValidate, onVeri
       <div className="mt-3">
         <BlockerList blockers={blockers} />
       </div>
+
+      {(blockers.includes("posts_missing") || blockers.includes("eligibility_rules_missing")) ? (
+        <div className="mt-4" data-testid="recruitment-criteria-section">
+          <RecruitmentCriteriaPanel recruitmentId={recruitment.id} onChanged={() => onValidate?.(recruitment)} />
+        </div>
+      ) : null}
 
       <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-3">
         <button type="button" className="btn btn-ghost h-9 text-xs" disabled={busy} onClick={async () => {
