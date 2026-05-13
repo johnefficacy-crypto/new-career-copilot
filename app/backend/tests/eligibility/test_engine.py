@@ -891,3 +891,135 @@ def test_percentage_wins_over_cgpa_when_both_present():
     edu_check = next(c for c in result.checks if c.rule == "education")
     assert edu_check.passed is True
     assert "95.0%" in edu_check.detail
+
+
+# ── P2 #2 discipline alias registry ─────────────────────────────────────────
+
+
+def _edu_with_stream(stream: str, degree: str = "B.Tech"):
+    return [
+        UserEducation(
+            level="graduate",
+            degree=degree,
+            stream=stream,
+            percentage=80.0,
+            cgpa=None,
+            is_completed=True,
+        )
+    ]
+
+
+def _post_with_disciplines(allowed):
+    return _post(
+        education_criteria=EducationCriteria(
+            min_qualification_level="graduate",
+            min_percentage=60.0,
+            allowed_disciplines={"primary": allowed},
+        )
+    )
+
+
+def test_discipline_alias_user_full_name_matches_criterion_slug():
+    # Criterion: "cse". User stream: "Computer Science and Engineering".
+    # Legacy substring `"cse" in "computer science and engineering"` is
+    # False; the alias registry now canonicalises both sides and matches.
+    result = check_eligibility(
+        _profile(),
+        _edu_with_stream("Computer Science and Engineering"),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post_with_disciplines(["cse"]),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    assert edu.passed is True
+
+
+def test_discipline_alias_cs_does_not_match_physics():
+    # The famous false positive: legacy `d in user_stream` made "cs"
+    # a substring of "physics" — physics students would pass CS-only
+    # posts. The registry rejects this.
+    result = check_eligibility(
+        _profile(),
+        _edu_with_stream("Physics"),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post_with_disciplines(["cs"]),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    assert edu.passed is False
+    assert "not in the allowed disciplines" in edu.detail
+
+
+def test_discipline_alias_me_does_not_match_medicine():
+    result = check_eligibility(
+        _profile(),
+        _edu_with_stream("Medicine", degree="MBBS"),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post_with_disciplines(["me"]),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    assert edu.passed is False
+
+
+def test_discipline_alias_ece_matches_electronics_and_communication():
+    result = check_eligibility(
+        _profile(),
+        _edu_with_stream("Electronics and Communication"),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post_with_disciplines(["ece"]),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    assert edu.passed is True
+
+
+def test_discipline_word_boundary_fallback_for_unknown_terms():
+    # Both sides are unknown to the registry, so the engine falls back
+    # to the whole-word match. "Aquatic Crafts" tokens are {"aquatic",
+    # "crafts"}, criterion "aquatic crafts" tokens are the same — match.
+    result = check_eligibility(
+        _profile(),
+        _edu_with_stream("Aquatic Crafts"),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post_with_disciplines(["aquatic crafts"]),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    assert edu.passed is True
+
+
+def test_discipline_word_boundary_fallback_rejects_partial_word():
+    # User: "Sanskritology" (unknown). Criterion: "sans" (no longer a
+    # silent substring match → no whole-word containment).
+    result = check_eligibility(
+        _profile(),
+        _edu_with_stream("Sanskritology"),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post_with_disciplines(["sans"]),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    assert edu.passed is False
+
+
+def test_discipline_match_combined_user_degree_stream():
+    # User has stream null but degree is descriptive enough.
+    edu = [
+        UserEducation(
+            level="postgraduate",
+            degree="MBA in Finance",
+            stream=None,
+            percentage=80.0,
+            is_completed=True,
+        )
+    ]
+    result = check_eligibility(
+        _profile(),
+        edu,
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post_with_disciplines(["mba"]),
+    )
+    edu_check = next(c for c in result.checks if c.rule == "education")
+    assert edu_check.passed is True
