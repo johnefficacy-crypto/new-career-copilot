@@ -53,13 +53,20 @@ def fetch(
     *,
     adapter_type: str | None = None,
     timeout: float = 15.0,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
 ) -> FetchResult:
     """Fetch ``url`` and return a structured result.
 
-    ``adapter_type`` routes to the right parser when supported. The
-    current PR scaffolds the non-HTML adapters; they return ``ok=False``
-    with ``error="adapter_not_implemented"`` so the runner can log them
-    without falling through to HTML extraction.
+    ``adapter_type`` routes to the right parser when supported.
+    Non-HTML adapters still scaffold to ``adapter_not_implemented``.
+
+    Conditional fetch: pass ``if_none_match`` (an ETag value) and/or
+    ``if_modified_since`` (an HTTP-date string) to send the standard
+    ``If-None-Match`` / ``If-Modified-Since`` request headers. When the
+    server returns ``304 Not Modified`` the result is ``ok=False`` with
+    ``error="not_modified"`` and ``status_code=304`` — the runner uses
+    that to skip extraction for unchanged pages.
     """
     if not url:
         return FetchResult(ok=False, url="", error="empty_url")
@@ -68,15 +75,46 @@ def fetch(
     if adapter in {"rss", "api", "pdf"}:
         return FetchResult(ok=False, url=url, error="adapter_not_implemented")
 
-    return _fetch_html(url, timeout=timeout)
+    return _fetch_html(
+        url,
+        timeout=timeout,
+        if_none_match=if_none_match,
+        if_modified_since=if_modified_since,
+    )
 
 
-def _fetch_html(url: str, *, timeout: float) -> FetchResult:
+def _fetch_html(
+    url: str,
+    *,
+    timeout: float,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
+) -> FetchResult:
+    headers = dict(_DEFAULT_HEADERS)
+    if if_none_match:
+        headers["If-None-Match"] = if_none_match
+    if if_modified_since:
+        headers["If-Modified-Since"] = if_modified_since
+
     try:
-        resp = httpx.get(url, headers=_DEFAULT_HEADERS, timeout=timeout, follow_redirects=True)
+        resp = httpx.get(url, headers=headers, timeout=timeout, follow_redirects=True)
     except Exception as exc:  # noqa: BLE001
         logger.warning("[fetcher] request failed url=%s error=%s", url, exc)
         return FetchResult(ok=False, url=url, error=str(exc))
+
+    # 304 Not Modified short-circuit: the server confirms our cached
+    # copy is still current. Skip body parsing and let the runner reuse
+    # the existing notification_documents row.
+    if resp.status_code == 304:
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=304,
+            final_url=str(resp.url),
+            etag=resp.headers.get("etag") or if_none_match,
+            last_modified=resp.headers.get("last-modified") or if_modified_since,
+            error="not_modified",
+        )
 
     try:
         resp.raise_for_status()

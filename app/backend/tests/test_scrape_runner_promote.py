@@ -908,3 +908,159 @@ def test_runner_candidate_status_marks_official_when_resolver_succeeds(monkeypat
     candidates = sb.db.get("recruitment_candidates", [])
     assert candidates
     assert candidates[-1]["status"] == "official_notification_found"
+
+
+# ── P2: promotion RPC + change-detection ────────────────────────────────────
+
+
+class RPCResponse:
+    def __init__(self, data): self.data = data
+
+
+class _SBWithRpc:
+    """Mocks supabase.rpc('promote_recruitment', ...) and the subset of
+    .table() calls promote_to_recruitments touches for status updates.
+    """
+    def __init__(self, *, rpc_behaviour):
+        self.rpc_behaviour = rpc_behaviour
+        self.rpc_calls: list[tuple[str, dict]] = []
+        self.compensation_path_used = False
+        self.db: dict[str, list[dict]] = {}
+
+    def rpc(self, name, params):
+        self.rpc_calls.append((name, params))
+        outer = self
+
+        class _RpcExecutor:
+            def execute(self_inner):
+                return outer.rpc_behaviour(name, params)
+
+        return _RpcExecutor()
+
+    def table(self, name):
+        outer = self
+
+        class _Q:
+            def __init__(self):
+                self.name = name
+                self.filters: dict = {}
+                self.payload = None
+            def select(self, *a, **k): return self
+            def eq(self, k, v): self.filters[k] = v; return self
+            def limit(self, *a, **k): return self
+            def insert(self, p): self.payload = p; outer.compensation_path_used = True; return self
+            def update(self, p): self.payload = p; return self
+            def execute(self):
+                if self.payload is None:
+                    if self.name == "organizations":
+                        return E([])
+                    if self.name == "recruitments":
+                        return E([])
+                    return E([])
+                rows = outer.db.setdefault(self.name, [])
+                row = {**self.payload, "id": f"{self.name}-{len(rows)+1}"}
+                rows.append(row)
+                return E([row])
+        return _Q()
+
+
+def test_promote_uses_rpc_when_available():
+    def _rpc(name, params):
+        assert name == "promote_recruitment"
+        assert params["payload"]["slug"] == "ssc-cgl-2026"
+        return RPCResponse("rec-rpc-1")
+
+    sb = _SBWithRpc(rpc_behaviour=_rpc)
+    data = ExtractedRecruitment(
+        title="SSC CGL", organization_name="SSC", org_type="SSC", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="https://ssc.nic.in/cgl",
+        posts=[{"post_name": "A"}],
+    )
+    rec_id = promote_to_recruitments(data, sb, source_id="src-1")
+    assert rec_id == "rec-rpc-1"
+    assert sb.compensation_path_used is False
+    assert sb.rpc_calls and sb.rpc_calls[0][0] == "promote_recruitment"
+
+
+def test_promote_falls_back_to_compensation_when_rpc_missing():
+    def _rpc(name, params):
+        raise RuntimeError("function public.promote_recruitment does not exist")
+
+    sb = _SBWithRpc(rpc_behaviour=_rpc)
+    data = ExtractedRecruitment(
+        title="T", organization_name="O", org_type="Other", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="https://x",
+        posts=[{"post_name": "A"}],
+    )
+    rec_id = promote_to_recruitments(data, sb, source_id="src-1")
+    # Compensation path ran (it inserts organizations + recruitments + posts).
+    assert sb.compensation_path_used is True
+    assert isinstance(rec_id, str) and rec_id
+
+
+def test_promote_rpc_duplicate_slug_raises_typed_error():
+    from app.scraping.runner import DuplicatePromotionError
+
+    def _rpc(name, params):
+        raise RuntimeError(
+            "23P01: promote_recruitment: duplicate slug ssc-cgl-2026 (existing=00000000-0000-0000-0000-000000000001)"
+        )
+
+    sb = _SBWithRpc(rpc_behaviour=_rpc)
+    data = ExtractedRecruitment(
+        title="SSC CGL", organization_name="SSC", org_type="SSC", year=2026,
+        apply_end_date="2026-12-31",
+        official_notification_url="https://x",
+        posts=[{"post_name": "A"}],
+    )
+    with pytest.raises(DuplicatePromotionError) as exc_info:
+        promote_to_recruitments(data, sb, source_id="src-1")
+    err = exc_info.value
+    assert err.slug == "ssc-cgl-2026"
+    assert err.existing_recruitment_id == "00000000-0000-0000-0000-000000000001"
+
+
+def test_runner_skips_unchanged_detail_via_304(monkeypatch):
+    """If notification_documents has an etag for the detail URL and the
+    server returns 304, the runner skips extraction for that URL."""
+    from app.scraping import runner as runner_mod
+    from app.scraping.aggregator import DiscoveredLink, DiscoveryResult
+    from app.scraping.fetcher import FetchResult
+
+    sb = RunnerSB()
+    cached_url = "https://www.freejobalert.com/recruitment-cached/"
+    fresh_url = "https://www.freejobalert.com/recruitment-fresh/"
+
+    def _discover(_html_text, _base_url, **_kwargs):
+        return DiscoveryResult(
+            urls=[cached_url, fresh_url],
+            links=[
+                DiscoveredLink(url=cached_url, label="Cached", event_type="new_recruitment"),
+                DiscoveredLink(url=fresh_url, label="Fresh", event_type="new_recruitment"),
+            ],
+            stats={"discovered": 2, "domain": 0, "include": 0, "exclude": 0, "lifecycle_skipped": 0},
+        )
+    monkeypatch.setattr(runner_mod, "discover_aggregator_detail_urls", _discover)
+    monkeypatch.setattr(
+        runner_mod,
+        "_lookup_prior_document_headers",
+        lambda _sb, url: ({"etag": 'W/"prev"', "last_modified": None} if url == cached_url else {"etag": None, "last_modified": None}),
+    )
+
+    def _fake_fetch(url, *, adapter_type=None, if_none_match=None, if_modified_since=None, timeout=15.0):
+        if url == cached_url and if_none_match == 'W/"prev"':
+            return FetchResult(ok=False, url=url, status_code=304, error="not_modified")
+        return FetchResult(ok=True, url=url, status_code=200, text=f"body for {url}", raw_bytes=b"<html></html>")
+
+    monkeypatch.setattr(runner_mod, "fetch", _fake_fetch)
+    monkeypatch.setattr(runner_mod, "fetch_page_html", lambda url: "<html><a href='/r'>r</a></html>")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    run_scraping_pass(sb, source_ids=["src-1"], mock=False, limit=3)
+    queue_rows = sb.db.get("scrape_queue", [])
+    assert all(r["source_url"] != cached_url for r in queue_rows)
+    assert any(r["source_url"] == fresh_url for r in queue_rows)
+    listings = sb.db.get("aggregator_listings", [])
+    assert any(l["listing_url"] == cached_url for l in listings)

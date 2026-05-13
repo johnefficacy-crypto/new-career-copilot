@@ -97,3 +97,62 @@ def test_legacy_fetch_page_text_returns_none_on_error(monkeypatch):
     monkeypatch.setattr("app.scraping.fetcher.httpx.get", _boom)
     assert fetch_page_text("https://x") is None
     assert fetch_page_html("https://x") is None
+
+
+# ── PR P2: conditional fetch / change detection ─────────────────────────────
+
+
+def test_fetch_returns_not_modified_on_304(monkeypatch):
+    class _Resp:
+        status_code = 304
+        text = ""
+        content = b""
+        url = "https://x"
+        headers = {"etag": 'W/"abc"', "last-modified": "Wed, 01 Jan 2026 00:00:00 GMT"}
+
+        def raise_for_status(self):  # would raise, but 304 path skips this
+            raise AssertionError("raise_for_status should not be called on 304")
+
+    captured: dict = {}
+
+    def _get(url, headers, timeout, follow_redirects):
+        captured.update(headers)
+        return _Resp()
+
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", _get)
+
+    result = fetch(
+        "https://x",
+        adapter_type="html",
+        if_none_match='W/"abc"',
+        if_modified_since="Wed, 01 Jan 2026 00:00:00 GMT",
+    )
+    assert result.ok is False
+    assert result.status_code == 304
+    assert result.error == "not_modified"
+    # Conditional headers were actually sent.
+    assert captured.get("If-None-Match") == 'W/"abc"'
+    assert captured.get("If-Modified-Since") == "Wed, 01 Jan 2026 00:00:00 GMT"
+
+
+def test_fetch_without_conditional_headers_does_not_set_them(monkeypatch):
+    class _Resp:
+        status_code = 200
+        text = "<html></html>"
+        content = b"<html></html>"
+        url = "https://x"
+        headers = {}
+
+        def raise_for_status(self):
+            pass
+
+    captured: dict = {}
+
+    def _get(url, headers, timeout, follow_redirects):
+        captured.update(headers)
+        return _Resp()
+
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", _get)
+    fetch("https://x", adapter_type="html")
+    assert "If-None-Match" not in captured
+    assert "If-Modified-Since" not in captured
