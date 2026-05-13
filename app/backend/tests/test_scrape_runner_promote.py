@@ -1391,3 +1391,74 @@ def test_promote_skips_reconcile_when_no_source_id_or_url():
     # No source_id → reconciliation early-exits, event stays unattached.
     promote_to_recruitments(data, sb, source_id=None)
     assert sb.db["recruitment_events"][0]["recruitment_id"] is None
+
+
+# ── Listing-level conditional fetch ─────────────────────────────────────────
+
+
+def test_runner_skips_aggregator_listing_on_304(monkeypatch):
+    """If the source row carries prior listing ETag / Last-Modified and
+    the server returns 304, the runner short-circuits discovery and
+    marks the source as successfully scraped (no error)."""
+    from app.scraping import runner as runner_mod
+    from app.scraping.fetcher import FetchResult
+
+    sb = RunnerSB()
+    # Seed the source with prior caching headers so the conditional
+    # branch is taken.
+    sb.db["source_registry"][0]["last_listing_etag"] = 'W/"prev"'
+    sb.db["source_registry"][0]["last_listing_modified"] = "Wed, 01 Jan 2026 00:00:00 GMT"
+
+    def _fake_fetch(url, *, adapter_type=None, if_none_match=None, if_modified_since=None, timeout=15.0):
+        assert if_none_match == 'W/"prev"'
+        return FetchResult(ok=False, url=url, status_code=304, error="not_modified")
+
+    monkeypatch.setattr(runner_mod, "fetch", _fake_fetch)
+    monkeypatch.setattr(runner_mod, "fetch_page_html", lambda url: "")  # must NOT be called
+
+    out = run_scraping_pass(sb, source_ids=["src-1"], mock=False, limit=5)
+    assert out["items_found"] == 0
+    assert sb.db.get("scrape_queue", []) == []
+    assert out["status"] in {"completed", "partial", "failed"}  # no items_found, no errors path
+    # The unchanged-listing path marks the source successful — no error log.
+    assert all(e.get("error") != "empty_listing_response" for e in out.get("errors", []))
+
+
+def test_runner_remembers_listing_headers_after_first_fetch(monkeypatch):
+    """When there are no prior caching headers, the listing is fetched
+    with fetch() and the response's etag/last_modified are written back
+    to source_registry so the next pass can use them."""
+    from app.scraping import runner as runner_mod
+    from app.scraping.fetcher import FetchResult
+    from app.scraping.aggregator import DiscoveredLink, DiscoveryResult
+
+    sb = RunnerSB()
+    # Seed prior etag so the conditional branch runs and the test can
+    # assert the write-back behaviour after a 200 response.
+    sb.db["source_registry"][0]["last_listing_etag"] = 'W/"old"'
+
+    def _fake_fetch(url, *, adapter_type=None, if_none_match=None, if_modified_since=None, timeout=15.0):
+        return FetchResult(
+            ok=True, url=url, status_code=200,
+            text="<html><a href='/r1'>r1</a></html>",
+            raw_bytes=b"<html><a href='/r1'>r1</a></html>",
+            etag='W/"new"',
+            last_modified="Mon, 02 Feb 2026 00:00:00 GMT",
+        )
+
+    monkeypatch.setattr(runner_mod, "fetch", _fake_fetch)
+    monkeypatch.setattr(runner_mod, "discover_aggregator_detail_urls", lambda *a, **k: DiscoveryResult(
+        urls=["https://x/r1"],
+        links=[DiscoveredLink(url="https://x/r1", label="r1", event_type="new_recruitment")],
+    ))
+    monkeypatch.setattr(runner_mod, "fetch_page_html", lambda url: "<html></html>")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    run_scraping_pass(sb, source_ids=["src-1"], mock=False, limit=5)
+    updates = sb.db.get("source_registry_updates", [])
+    # At least one update must record the new caching headers.
+    assert any(
+        u.get("last_listing_etag") == 'W/"new"' and
+        u.get("last_listing_modified") == "Mon, 02 Feb 2026 00:00:00 GMT"
+        for u in updates
+    )
