@@ -427,6 +427,270 @@ def update_recruitment(recruitment_id: str, body: dict, admin: dict = Depends(re
     sb.table("recruitments").update(payload).eq("id",recruitment_id).execute(); _audit(sb,admin,"recruitment.update","recruitment",recruitment_id,before_payload=old,after_payload=payload)
     return {"ok":True}
 
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Canonical criteria editor
+#  Resolves posts_missing and eligibility_rules_missing blockers without
+#  needing direct DB access. validate-publish remains source of truth for
+#  publish readiness; nothing here changes publish_status.
+# ════════════════════════════════════════════════════════════════════════════
+
+_QUALIFICATION_LEVELS = {"10th", "12th", "diploma", "graduate", "postgraduate", "phd"}
+
+
+def _ensure_recruitment_exists(sb, recruitment_id: str) -> dict:
+    rows = sb.table("recruitments").select("id, publish_status").eq("id", recruitment_id).limit(1).execute().data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Recruitment not found")
+    return rows[0]
+
+
+def _maybe_demote_published(sb, recruitment_id: str, recruitment: dict) -> None:
+    """Critical-field edits to a published recruitment force it back to
+    needs_review so admins re-validate before re-publishing."""
+    if recruitment.get("publish_status") == "published":
+        sb.table("recruitments").update({"publish_status": "needs_review"}).eq("id", recruitment_id).execute()
+
+
+@router.get("/admin/recruitments/{recruitment_id}/criteria")
+def get_recruitment_criteria(recruitment_id: str, _admin: dict = Depends(require_permission("recruitments.manage"))):
+    sb = get_supabase_admin()
+    _ensure_recruitment_exists(sb, recruitment_id)
+    posts = sb.table("posts").select("id, post_name, group_type, pay_level, job_type, recruitment_unit_id, language_requirements").eq("recruitment_id", recruitment_id).execute().data or []
+    post_ids = [p["id"] for p in posts]
+    age_rows = []
+    edu_rows = []
+    if post_ids:
+        age_rows = sb.table("age_criteria").select("id, post_id, min_age, max_age, cutoff_date").in_("post_id", post_ids).execute().data or []
+        edu_rows = sb.table("education_criteria").select("id, post_id, min_qualification_level, allowed_disciplines, raw_requirement_text").in_("post_id", post_ids).execute().data or []
+    by_post = {p["id"]: {**p, "age_criteria": [], "education_criteria": []} for p in posts}
+    for a in age_rows:
+        if a.get("post_id") in by_post:
+            by_post[a["post_id"]]["age_criteria"].append(a)
+    for e in edu_rows:
+        if e.get("post_id") in by_post:
+            by_post[e["post_id"]]["education_criteria"].append(e)
+    return {"recruitment_id": recruitment_id, "posts": list(by_post.values())}
+
+
+def _validate_post_body(body: dict) -> dict:
+    payload = {}
+    if "post_name" in body:
+        name = (body.get("post_name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="post_name required")
+        payload["post_name"] = name
+    for key in ("group_type", "pay_level", "job_type"):
+        if key in body and body.get(key) is not None:
+            payload[key] = str(body[key])
+    if "language_requirements" in body and body.get("language_requirements") is not None:
+        if not isinstance(body["language_requirements"], list):
+            raise HTTPException(status_code=400, detail="language_requirements must be a list")
+        payload["language_requirements"] = body["language_requirements"]
+    if "recruitment_unit_id" in body:
+        payload["recruitment_unit_id"] = body["recruitment_unit_id"]
+    return payload
+
+
+@router.post("/admin/recruitments/{recruitment_id}/posts")
+def create_recruitment_post(recruitment_id: str, body: dict, admin: dict = Depends(require_permission("recruitments.manage"))):
+    sb = get_supabase_admin()
+    rec = _ensure_recruitment_exists(sb, recruitment_id)
+    payload = _validate_post_body(body or {})
+    if "post_name" not in payload:
+        raise HTTPException(status_code=400, detail="post_name required")
+    payload["recruitment_id"] = recruitment_id
+    payload.setdefault("job_type", "direct")
+    inserted = sb.table("posts").insert(payload).execute().data or []
+    if not inserted:
+        raise HTTPException(status_code=500, detail="Failed to create post")
+    _maybe_demote_published(sb, recruitment_id, rec)
+    _audit(sb, admin, "recruitment.post.create", "recruitment", recruitment_id, after_payload=inserted[0])
+    return {"ok": True, "post": inserted[0]}
+
+
+@router.put("/admin/recruitments/{recruitment_id}/posts/{post_id}")
+def update_recruitment_post(recruitment_id: str, post_id: str, body: dict, admin: dict = Depends(require_permission("recruitments.manage"))):
+    sb = get_supabase_admin()
+    rec = _ensure_recruitment_exists(sb, recruitment_id)
+    old = sb.table("posts").select("*").eq("id", post_id).eq("recruitment_id", recruitment_id).limit(1).execute().data or []
+    if not old:
+        raise HTTPException(status_code=404, detail="Post not found")
+    payload = _validate_post_body(body or {})
+    if not payload:
+        return {"ok": True, "unchanged": True}
+    sb.table("posts").update(payload).eq("id", post_id).execute()
+    _maybe_demote_published(sb, recruitment_id, rec)
+    _audit(sb, admin, "recruitment.post.update", "recruitment", recruitment_id, before_payload=old[0], after_payload=payload)
+    return {"ok": True}
+
+
+def _validate_age_body(body: dict) -> dict:
+    payload = {}
+    for key in ("min_age", "max_age"):
+        if key in body and body.get(key) is not None:
+            try:
+                payload[key] = int(body[key])
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"{key} must be an integer")
+    if "cutoff_date" in body and body.get("cutoff_date"):
+        payload["cutoff_date"] = body["cutoff_date"]
+    if "min_age" in payload and "max_age" in payload and payload["min_age"] > payload["max_age"]:
+        raise HTTPException(status_code=400, detail="min_age cannot exceed max_age")
+    return payload
+
+
+@router.post("/admin/recruitments/{recruitment_id}/posts/{post_id}/age-criteria")
+def create_age_criteria(recruitment_id: str, post_id: str, body: dict, admin: dict = Depends(require_permission("recruitments.manage"))):
+    sb = get_supabase_admin()
+    rec = _ensure_recruitment_exists(sb, recruitment_id)
+    post = sb.table("posts").select("id").eq("id", post_id).eq("recruitment_id", recruitment_id).limit(1).execute().data or []
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    payload = _validate_age_body(body or {})
+    payload["post_id"] = post_id
+    inserted = sb.table("age_criteria").insert(payload).execute().data or []
+    _maybe_demote_published(sb, recruitment_id, rec)
+    _audit(sb, admin, "recruitment.age_criteria.create", "recruitment", recruitment_id, after_payload=inserted[0] if inserted else payload)
+    return {"ok": True, "age_criteria": inserted[0] if inserted else None}
+
+
+@router.put("/admin/recruitments/{recruitment_id}/posts/{post_id}/age-criteria/{criteria_id}")
+def update_age_criteria(recruitment_id: str, post_id: str, criteria_id: str, body: dict, admin: dict = Depends(require_permission("recruitments.manage"))):
+    sb = get_supabase_admin()
+    rec = _ensure_recruitment_exists(sb, recruitment_id)
+    old = sb.table("age_criteria").select("*").eq("id", criteria_id).eq("post_id", post_id).limit(1).execute().data or []
+    if not old:
+        raise HTTPException(status_code=404, detail="Age criteria not found")
+    payload = _validate_age_body(body or {})
+    if not payload:
+        return {"ok": True, "unchanged": True}
+    sb.table("age_criteria").update(payload).eq("id", criteria_id).execute()
+    _maybe_demote_published(sb, recruitment_id, rec)
+    _audit(sb, admin, "recruitment.age_criteria.update", "recruitment", recruitment_id, before_payload=old[0], after_payload=payload)
+    return {"ok": True}
+
+
+def _validate_education_body(body: dict) -> dict:
+    payload = {}
+    if "min_qualification_level" in body and body.get("min_qualification_level"):
+        level = str(body["min_qualification_level"]).lower().strip()
+        if level not in _QUALIFICATION_LEVELS:
+            raise HTTPException(status_code=400, detail=f"min_qualification_level must be one of {sorted(_QUALIFICATION_LEVELS)}")
+        payload["min_qualification_level"] = level
+    if "allowed_disciplines" in body and body.get("allowed_disciplines") is not None:
+        # Free-form JSON; the schema stores it as jsonb. We accept either
+        # the legacy {primary: [...]} shape or a flat list.
+        val = body["allowed_disciplines"]
+        if isinstance(val, list):
+            payload["allowed_disciplines"] = {"primary": val}
+        elif isinstance(val, dict):
+            payload["allowed_disciplines"] = val
+        else:
+            raise HTTPException(status_code=400, detail="allowed_disciplines must be a list or object")
+    if "raw_requirement_text" in body and body.get("raw_requirement_text") is not None:
+        payload["raw_requirement_text"] = str(body["raw_requirement_text"])
+    return payload
+
+
+@router.post("/admin/recruitments/{recruitment_id}/posts/{post_id}/education-criteria")
+def create_education_criteria(recruitment_id: str, post_id: str, body: dict, admin: dict = Depends(require_permission("recruitments.manage"))):
+    sb = get_supabase_admin()
+    rec = _ensure_recruitment_exists(sb, recruitment_id)
+    post = sb.table("posts").select("id").eq("id", post_id).eq("recruitment_id", recruitment_id).limit(1).execute().data or []
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    payload = _validate_education_body(body or {})
+    if "min_qualification_level" not in payload:
+        raise HTTPException(status_code=400, detail="min_qualification_level required")
+    payload["post_id"] = post_id
+    inserted = sb.table("education_criteria").insert(payload).execute().data or []
+    _maybe_demote_published(sb, recruitment_id, rec)
+    _audit(sb, admin, "recruitment.education_criteria.create", "recruitment", recruitment_id, after_payload=inserted[0] if inserted else payload)
+    return {"ok": True, "education_criteria": inserted[0] if inserted else None}
+
+
+@router.put("/admin/recruitments/{recruitment_id}/posts/{post_id}/education-criteria/{criteria_id}")
+def update_education_criteria(recruitment_id: str, post_id: str, criteria_id: str, body: dict, admin: dict = Depends(require_permission("recruitments.manage"))):
+    sb = get_supabase_admin()
+    rec = _ensure_recruitment_exists(sb, recruitment_id)
+    old = sb.table("education_criteria").select("*").eq("id", criteria_id).eq("post_id", post_id).limit(1).execute().data or []
+    if not old:
+        raise HTTPException(status_code=404, detail="Education criteria not found")
+    payload = _validate_education_body(body or {})
+    if not payload:
+        return {"ok": True, "unchanged": True}
+    sb.table("education_criteria").update(payload).eq("id", criteria_id).execute()
+    _maybe_demote_published(sb, recruitment_id, rec)
+    _audit(sb, admin, "recruitment.education_criteria.update", "recruitment", recruitment_id, before_payload=old[0], after_payload=payload)
+    return {"ok": True}
+
+
+@router.get("/admin/eligibility-ops")
+def eligibility_ops(_admin: dict = Depends(require_permission("scraper.manage"))):
+    """Downstream eligibility recompute monitoring.
+
+    Distinct from /admin/eligibility-queue, which is upstream promotion
+    of scraped candidates. This endpoint surfaces signals admins need
+    after publish: recompute backlog, failures, stale results, and
+    published recruitments that have not yet been recomputed for users.
+    """
+    sb = get_supabase_admin()
+
+    def _count(table: str, filters):
+        try:
+            q = sb.table(table).select("id", count="exact")
+            for col, val in filters.items():
+                q = q.eq(col, val)
+            return q.execute().count or 0
+        except Exception:
+            return 0
+
+    pending = _count("eligibility_recompute_queue", {"status": "pending"})
+    failed = _count("eligibility_recompute_queue", {"status": "failed"})
+
+    stale = 0
+    try:
+        stale_rows = (
+            sb.table("eligibility_results")
+            .select("id", count="exact")
+            .eq("is_stale", True)
+            .execute()
+        )
+        stale = stale_rows.count or 0
+    except Exception:
+        stale = 0
+
+    published_awaiting = 0
+    try:
+        pub_ids = [
+            r.get("id") for r in (
+                sb.table("recruitments").select("id").eq("publish_status", "published").limit(500).execute().data or []
+            )
+            if r.get("id")
+        ]
+        if pub_ids:
+            queued = (
+                sb.table("eligibility_recompute_queue")
+                .select("recruitment_id", count="exact")
+                .in_("recruitment_id", pub_ids)
+                .eq("status", "pending")
+                .execute()
+                .count
+                or 0
+            )
+            published_awaiting = queued
+    except Exception:
+        published_awaiting = 0
+
+    return {
+        "pending_recomputes": pending,
+        "failed_recomputes": failed,
+        "stale_results": stale,
+        "published_awaiting": published_awaiting,
+    }
+
+
 @router.put("/admin/organizations/{organization_id}")
 def update_organization(organization_id: str, body: dict, admin: dict = Depends(require_permission("organizations.manage"))):
     sb=get_supabase_admin(); old=(sb.table("organizations").select("*").eq("id",organization_id).limit(1).execute().data or [None])[0]

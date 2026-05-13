@@ -1,25 +1,39 @@
 import React, { useEffect, useState } from "react";
 import { Link, Outlet } from "react-router-dom";
-import { Bell, Bot, Compass, CreditCard, Database, ExternalLink, FileSearch, GaugeCircle, LayoutGrid, LogOut, Menu, MessagesSquare, PanelLeftClose, PanelLeftOpen, Radar, ScrollText, ShieldCheck, ShoppingBag, Users2 } from "lucide-react";
+import { Bell, Bot, Compass, CreditCard, Database, ExternalLink, FileSearch, GaugeCircle, LayoutGrid, ListChecks, LogOut, Menu, MessagesSquare, PanelLeftClose, PanelLeftOpen, Radar, ScrollText, ShieldCheck, ShoppingBag, Users2 } from "lucide-react";
 import { useAuth } from "../../lib/authContext";
 import AppSidebar from "../../shared/layouts/AppSidebar";
 import TopBar from "../../shared/layouts/TopBar";
 
-const NAV = [
-  { to: "/admin", label: "Overview", icon: LayoutGrid, end: true, testId: "admin-nav-overview" },
-  { to: "/admin/sources", label: "Sources Trust", icon: Database, testId: "admin-nav-source-registry", description: "Manage trusted official and discovery-only sources." },
-  { to: "/admin/scraper", label: "Scraper / Queue Review", icon: Radar, testId: "admin-nav-scraper-monitor", description: "Run discovery and review extracted candidates." },
-  { to: "/admin/recruitments", label: "Recruitments / Publish Gate", icon: FileSearch, testId: "admin-nav-recruitments", description: "Validate, verify, and publish canonical recruitments." },
-  { to: "/admin/organizations", label: "Organizations", icon: Users2, testId: "admin-nav-organizations", description: "Verify organization provenance for linked recruitments." },
-  { to: "/admin/eligibility-queue", label: "Eligibility Ops", icon: GaugeCircle, testId: "admin-nav-eligibility-queue", description: "Monitor deterministic eligibility recompute and results." },
+const OPERATIONS_NAV = [
+  { to: "/admin/operations", label: "Operations Console", icon: LayoutGrid, testId: "admin-nav-operations", description: "Run the full scraper-to-publish pipeline without losing context.", end: true },
+  { to: "/admin/sources", label: "Source Registry", icon: Database, testId: "admin-nav-source-registry", description: "Manage trusted official and discovery-only sources." },
+  { to: "/admin/scraper", label: "Scrape Runs / Queue Review", icon: Radar, testId: "admin-nav-scraper-monitor", description: "Run discovery and review extracted candidates." },
+  { to: "/admin/recruitments", label: "Recruitment Drafts / Publish Gate", icon: FileSearch, testId: "admin-nav-recruitments", description: "Validate, verify, and publish canonical recruitments." },
+  { to: "/admin/eligibility-queue", label: "Promotion Queue", icon: ListChecks, testId: "admin-nav-promotion-queue", description: "Scraped candidates awaiting promotion review." },
+  { to: "/admin/eligibility-ops", label: "Eligibility Ops", icon: GaugeCircle, testId: "admin-nav-eligibility-ops", description: "Eligibility recompute, stale results, and alerts." },
   { to: "/admin/notifications", label: "Notifications", icon: Bell, testId: "admin-nav-notifications" },
-  { to: "/admin/audit", label: "Audit", icon: ScrollText, testId: "admin-nav-audit-log" },
+];
+
+const GOVERNANCE_NAV = [
+  { to: "/admin", label: "Overview", icon: LayoutGrid, end: true, testId: "admin-nav-overview" },
+  { to: "/admin/organizations", label: "Organizations", icon: Users2, testId: "admin-nav-organizations", description: "Verify organization provenance for linked recruitments." },
+  { to: "/admin/audit", label: "Audit Trail", icon: ScrollText, testId: "admin-nav-audit-log" },
+  { to: "/admin/rbac", label: "RBAC & Users", icon: ShieldCheck, testId: "admin-nav-rbac-&-users" },
+  { to: "/admin/ai-policy", label: "AI Policy", icon: Bot, testId: "admin-nav-ai-policy" },
+];
+
+const BUSINESS_NAV = [
   { to: "/admin/marketplace", label: "Marketplace", icon: ShoppingBag, testId: "admin-nav-marketplace" },
-  { to: "/admin/plans", label: "Pricing & plans", icon: CreditCard, testId: "admin-nav-pricing-&-plans" },
-  { to: "/admin/rbac", label: "RBAC & users", icon: ShieldCheck, testId: "admin-nav-rbac-&-users" },
-  { to: "/admin/mentors", label: "Mentor verification", icon: Users2, testId: "admin-nav-mentor-verification" },
-  { to: "/admin/community", label: "Community moderation", icon: MessagesSquare, testId: "admin-nav-community-moderation" },
-  { to: "/admin/ai-policy", label: "AI policy", icon: Bot, testId: "admin-nav-ai-policy" },
+  { to: "/admin/plans", label: "Pricing & Plans", icon: CreditCard, testId: "admin-nav-pricing-&-plans" },
+  { to: "/admin/mentors", label: "Mentors", icon: Users2, testId: "admin-nav-mentor-verification" },
+  { to: "/admin/community", label: "Community", icon: MessagesSquare, testId: "admin-nav-community-moderation" },
+];
+
+const SECTIONS = [
+  { label: "Operations", items: OPERATIONS_NAV },
+  { label: "Governance", items: GOVERNANCE_NAV },
+  { label: "Business", items: BUSINESS_NAV },
 ];
 
 function AdminSidebar({ collapsed = false, onClose }) {
@@ -29,7 +43,7 @@ function AdminSidebar({ collapsed = false, onClose }) {
       brandIcon={Compass}
       brandTitle="Governance"
       brandSubtitle="Admin console"
-      sections={[{ label: "", items: NAV }]}
+      sections={SECTIONS}
       tone="admin"
       onClose={onClose}
       footer={{

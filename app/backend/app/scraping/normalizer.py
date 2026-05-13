@@ -137,8 +137,11 @@ def normalize_recruitment(extracted: ExtractedRecruitment) -> NormalizedRecruitm
         "org_type": extracted.org_type,
         "has_posts": bool(extracted.posts),
     }
+    # Clamp to [0.0, 1.0]. The post-readiness bonus could otherwise push
+    # the score above 1.0, which the admin UI rendered as "120%".
+    clamped = max(0.0, min(1.0, score))
     return NormalizedRecruitment(
         normalized_fields=normalized,
-        data_quality_score=max(0.0, round(score, 2)),
+        data_quality_score=round(clamped, 2),
         warnings=warnings,
     )
