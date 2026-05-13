@@ -514,8 +514,12 @@ async def run_eligibility_for_user_async(
 # ─── Read helpers (used by /api/eligibility/results/me[/all]) ────────────────
 
 
+# The `checks` JSONB column is persisted on every recompute (see #129) — it
+# carries the full rule-by-rule verdict including `is_unverifiable` per
+# rule. Surfacing it here unlocks admin/audit UI without changing endpoint
+# code: the API handlers just return whatever these helpers produce.
 _RESULT_SELECT = (
-    "post_id, recruitment_id, is_eligible, is_conditional, fail_reasons, computed_at, "
+    "post_id, recruitment_id, is_eligible, is_conditional, fail_reasons, checks, computed_at, "
     "posts ( "
     "post_name, group_type, pay_level, "
     "salary_details ( pay_level, basic_pay_min, basic_pay_max, in_hand_estimate ), "
@@ -526,7 +530,7 @@ _RESULT_SELECT = (
 )
 
 _RESULT_SELECT_ALL = (
-    "post_id, recruitment_id, is_eligible, is_conditional, fail_reasons, computed_at, "
+    "post_id, recruitment_id, is_eligible, is_conditional, fail_reasons, checks, computed_at, "
     "posts ( "
     "post_name, group_type, pay_level, "
     "recruitments ( name, year, apply_end_date, status, organizations ( name, type ) ) )"
