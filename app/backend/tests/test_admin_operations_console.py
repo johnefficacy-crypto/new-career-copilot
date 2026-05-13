@@ -299,3 +299,166 @@ def test_validate_education_body_normalises_discipline_list():
 def test_validate_post_body_requires_post_name_when_present_but_blank():
     with pytest.raises(HTTPException):
         admin_trust._validate_post_body({"post_name": "   "})
+
+
+# ── duplicate_candidates payload shape (Operations Console wiring) ──────────
+
+
+def test_duplicate_candidates_returns_recruitment_id_not_id():
+    """OperationsConsole.openMergePreview reads recruitment_id; if the
+    backend ever ships an `id` field instead the merge-into call will hit
+    `/.../merge-into/undefined` and 404. Lock the shape."""
+    from app.scraping import intelligence
+
+    existing = [{
+        "id": "rec-existing",
+        "name": "Inspector 2026",
+        "year": 2026,
+        "organizations": {"name": "SSC"},
+        "official_notification_url": "https://gov.in/n",
+    }]
+    extracted = {
+        "title": "Inspector 2026",
+        "organization_name": "SSC",
+        "year": 2026,
+        "official_notification_url": "https://gov.in/n",
+    }
+    out = intelligence.duplicate_candidates(extracted, existing)
+    assert out, "expected a duplicate match for identical recruitment"
+    candidate = out[0]
+    assert "recruitment_id" in candidate
+    assert candidate["recruitment_id"] == "rec-existing"
+    # Backward-compat: must not silently rename to `id` again.
+    assert "id" not in candidate
+
+
+# ── /api/admin/eligibility-ops fallback when tables are missing ─────────────
+
+
+class _ExplodingQ:
+    """Queue table that raises on every read; used to simulate missing
+    eligibility_recompute_queue / eligibility_results tables."""
+
+    def __init__(self, table, ok_tables=()):
+        self.table = table
+        self.ok = table in ok_tables
+
+    def select(self, *a, **k):
+        return self
+
+    def eq(self, *a, **k):
+        return self
+
+    def in_(self, *a, **k):
+        return self
+
+    def limit(self, *a, **k):
+        return self
+
+    def execute(self):
+        if not self.ok:
+            raise RuntimeError(f"table {self.table} unavailable")
+        return _R([], count=0)
+
+
+def test_eligibility_ops_returns_zeros_when_tables_missing(monkeypatch):
+    class _ExplodingSB:
+        def table(self, name):
+            # Only recruitments survives; the rest 500 to mirror the case
+            # where eligibility_recompute_queue / eligibility_results have
+            # not been migrated on a fresh deployment.
+            return _ExplodingQ(name, ok_tables=("recruitments",))
+
+    monkeypatch.setattr(admin_trust, "get_supabase_admin", lambda: _ExplodingSB())
+    result = admin_trust.eligibility_ops(_admin=_admin())
+    assert result == {
+        "pending_recomputes": 0,
+        "failed_recomputes": 0,
+        "stale_results": 0,
+        "published_awaiting": 0,
+    }
+
+
+# ── admin_recruitments shape: editable fields exposed to the console ────────
+
+
+def test_admin_recruitments_exposes_inline_editor_fields(monkeypatch):
+    """Inline RecruitmentBlockerFixForm reads organization_id, source_id,
+    apply_start_date, apply_end_date, total_vacancies, review_notes. The
+    admin_recruitments list must include them so the form can pre-fill
+    without an extra GET /api/admin/recruitments/{id}."""
+    state = {
+        "recruitments_list": [{
+            "id": "rec-1",
+            "name": "Inspector 2026",
+            "publish_status": "needs_review",
+            "status": "open",
+            "organization_id": "org-1",
+            "source_id": "src-1",
+            "official_notification_url": "https://gov.in/n",
+            "official_apply_url": "https://gov.in/apply",
+            "source_pdf_url": None,
+            "apply_start_date": "2026-01-01",
+            "apply_end_date": "2026-02-01",
+            "notification_date": "2025-12-15",
+            "total_vacancies": 100,
+            "published_by": None,
+            "published_at": None,
+            "review_notes": "verified by admin",
+            "organizations": {"name": "SSC", "is_verified": True},
+        }],
+    }
+
+    class _RecQ:
+        def __init__(self, table):
+            self.table = table
+
+        def select(self, *a, **k):
+            return self
+
+        def order(self, *a, **k):
+            return self
+
+        def limit(self, *a, **k):
+            return self
+
+        def eq(self, *a, **k):
+            return self
+
+        def in_(self, *a, **k):
+            return self
+
+        def execute(self):
+            if self.table == "recruitments":
+                return _R(state["recruitments_list"])
+            return _R([])
+
+    class _RecSB:
+        def table(self, name):
+            return _RecQ(name)
+
+    monkeypatch.setattr(admin_trust, "get_supabase_admin", lambda: _RecSB())
+    # validate_recruitment_publish_readiness uses the same supabase; let it
+    # short-circuit by returning the same row shape it expects.
+    monkeypatch.setattr(
+        admin_trust,
+        "validate_recruitment_publish_readiness",
+        lambda rec_id, admin: {"blocking_issues": [], "warnings": []},
+    )
+    result = admin_trust.admin_recruitments(_admin=_admin())
+    assert result["items"], "expected one recruitment row"
+    row = result["items"][0]
+    for field in (
+        "organization_id",
+        "source_id",
+        "apply_start_date",
+        "apply_end_date",
+        "notification_date",
+        "total_vacancies",
+        "review_notes",
+        "source_pdf_url",
+    ):
+        assert field in row, f"missing inline-editor field {field}"
+    assert row["organization_id"] == "org-1"
+    assert row["apply_end_date"] == "2026-02-01"
+    assert row["total_vacancies"] == 100
