@@ -135,6 +135,49 @@ def _ensure_notification_document(
         return None
 
 
+# ─── Lifecycle event persistence ──────────────────────────────────────────
+
+
+def _record_lifecycle_event(
+    supabase: Client,
+    *,
+    source_id: str | None,
+    listing_id: str | None,
+    event_type: str,
+    url: str,
+    label: str,
+) -> None:
+    """Insert a ``recruitment_events`` row for a discovered lifecycle link.
+
+    ``recruitment_id`` is left null — migration 042 relaxed the FK so we
+    can persist events for recruitments we haven't canonicalised yet.
+    The ``payload`` carries enough provenance for admin to reconcile the
+    event with a canonical row later. Best-effort: a missing or older
+    table just logs a warning.
+    """
+    if not source_id or not event_type or not url:
+        return
+    payload = {
+        "discovered_url": url,
+        "discovered_label": label or None,
+    }
+    try:
+        supabase.table("recruitment_events").insert(
+            {
+                "recruitment_id": None,
+                "event_type": event_type,
+                "source_id": source_id,
+                "aggregator_listing_id": listing_id,
+                "payload": payload,
+            }
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "recruitment_events insert failed event_type=%s url=%s error=%s",
+            event_type, url, exc,
+        )
+
+
 # ─── RSS adapter pass ─────────────────────────────────────────────────────
 
 
@@ -198,6 +241,14 @@ def _run_rss_pass(
             logger.info(
                 "rss.lifecycle_skipped source_id=%s url=%s event=%s",
                 src.get("id"), link, event_type,
+            )
+            _record_lifecycle_event(
+                supabase,
+                source_id=src.get("id"),
+                listing_id=None,
+                event_type=event_type,
+                url=link,
+                label=title,
             )
             continue
 
@@ -317,6 +368,14 @@ def _run_api_pass(
             logger.info(
                 "api.lifecycle_skipped source_id=%s url=%s event=%s",
                 src.get("id"), link, event_type,
+            )
+            _record_lifecycle_event(
+                supabase,
+                source_id=src.get("id"),
+                listing_id=None,
+                event_type=event_type,
+                url=link,
+                label=title,
             )
             continue
 
@@ -1065,6 +1124,19 @@ def run_scraping_pass(
                         discovery_stats.get("domain", 0),
                         discovery_stats.get("lifecycle_skipped", 0),
                     )
+                    # Persist non-recruitment links (admit_card / result /
+                    # corrigendum / ...) as recruitment_events. Events
+                    # land unattached (recruitment_id NULL) when no
+                    # canonical row exists yet — admin reconciles later.
+                    for evt_link in discovery.lifecycle_links:
+                        _record_lifecycle_event(
+                            supabase,
+                            source_id=src.get("id"),
+                            listing_id=None,
+                            event_type=evt_link.event_type,
+                            url=evt_link.url,
+                            label=evt_link.label,
+                        )
                 if not detail_urls:
                     error_log.append({"source": source.name, "url": target_url, "error": "No detail links discovered", "at": utc_now_iso()})
                     _bump_source_failure(

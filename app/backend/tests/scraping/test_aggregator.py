@@ -105,3 +105,21 @@ def test_classify_aggregator_link_lifecycle_buckets():
 def test_classify_aggregator_link_defaults_to_new_recruitment():
     assert classify_aggregator_link("SSC CGL Recruitment 2026", "https://x/cgl") == "new_recruitment"
     assert classify_aggregator_link(None, None) == "new_recruitment"
+
+
+# ── Lifecycle links retained on DiscoveryResult ─────────────────────────────
+
+
+def test_discovery_keeps_lifecycle_links_in_lifecycle_links_list():
+    html = """
+      <a href="/ssc-cgl-2026-recruitment/">SSC CGL Recruitment</a>
+      <a href="/ssc-cgl-2026-admit-card/">SSC CGL Admit Card</a>
+      <a href="/upsc-2026-corrigendum/">UPSC 2026 Corrigendum</a>
+    """
+    result = discover_aggregator_detail_urls(html, "https://www.freejobalert.com/")
+    # urls still contains only the new_recruitment link
+    assert result.urls == ["https://www.freejobalert.com/ssc-cgl-2026-recruitment/"]
+    # lifecycle_links has the rest, each tagged with its event_type
+    types = sorted(l.event_type for l in result.lifecycle_links)
+    assert types == ["admit_card", "corrigendum"]
+    assert all(l.url.startswith("https://www.freejobalert.com/") for l in result.lifecycle_links)
