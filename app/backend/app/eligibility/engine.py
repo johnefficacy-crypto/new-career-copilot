@@ -200,6 +200,66 @@ def _notice_age_relaxation(profile: UserProfile, criteria: PostCriteria) -> tupl
 # ─── Core engine ─────────────────────────────────────────────────────────────
 
 
+def _attempts_used_for_limit(
+    limit: AttemptLimit,
+    criteria: PostCriteria,
+    exam_attempts: list[UserExamAttempts],
+) -> int:
+    """Look up the right ``attempts_used`` count for a given limit row.
+
+    Routing by `limit.attempt_scope`:
+      * ``"post"``: strict match on
+        ``(attempt_scope, recruitment_id, post_id)``.
+      * ``"recruitment"``: strict match on
+        ``(attempt_scope, recruitment_id)``.
+      * ``"exam_family"``: strict match on
+        ``(attempt_scope, exam_id == recruitment_exam_id)`` when both
+        sides carry an ``exam_id``; otherwise lenient — the first
+        exam-family record wins. The lenient fallback preserves the
+        pre-migration behaviour where ``aspirant_exam_attempts`` had no
+        canonical exam reference.
+    """
+    scope = limit.attempt_scope
+    if scope == "post":
+        match = next(
+            (
+                a for a in exam_attempts
+                if a.attempt_scope == "post"
+                and a.recruitment_id == criteria.recruitment_id
+                and a.post_id == criteria.post_id
+            ),
+            None,
+        )
+    elif scope == "recruitment":
+        match = next(
+            (
+                a for a in exam_attempts
+                if a.attempt_scope == "recruitment"
+                and a.recruitment_id == criteria.recruitment_id
+            ),
+            None,
+        )
+    else:  # exam_family
+        rec_exam_id = criteria.recruitment_exam_id
+        match = next(
+            (
+                a for a in exam_attempts
+                if a.attempt_scope == "exam_family"
+                and (
+                    # strict: both sides populated and equal
+                    (rec_exam_id is not None
+                     and a.exam_id is not None
+                     and a.exam_id == rec_exam_id)
+                    # lenient: either side missing → first record wins
+                    or rec_exam_id is None
+                    or a.exam_id is None
+                )
+            ),
+            None,
+        )
+    return match.attempts_used if match is not None else 0
+
+
 def check_eligibility(
     profile: UserProfile,
     education: list[UserEducation],
@@ -584,10 +644,6 @@ def check_eligibility(
     if criteria.attempt_limits:
         user_bucket = _canonical_category(profile.category)
         user_category = user_bucket or "general"
-        record = next(
-            (a for a in exam_attempts if a.recruitment_id == criteria.recruitment_id), None
-        )
-        attempts_used = record.attempts_used if record else 0
 
         # Only match a category-specific limit when BOTH sides canonicalise to
         # the same known bucket. An unrecognised limit category must not
@@ -603,6 +659,9 @@ def check_eligibility(
         ) or next((limit for limit in criteria.attempt_limits if limit.category is None), None)
 
         if applicable is not None and applicable.max_attempts is not None:
+            attempts_used = _attempts_used_for_limit(
+                applicable, criteria, exam_attempts
+            )
             max_attempts = applicable.max_attempts
             passed = attempts_used < max_attempts
             checks.append(

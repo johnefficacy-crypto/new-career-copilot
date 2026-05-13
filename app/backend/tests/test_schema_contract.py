@@ -53,6 +53,9 @@ REQUIRED_COLUMNS = {
         "published_by",
         "published_at",
         "review_notes",
+        # Migration 050: back-link to public.exams for exam-family attempt
+        # matching.
+        "exam_id",
     },
     "organizations": {
         "id",

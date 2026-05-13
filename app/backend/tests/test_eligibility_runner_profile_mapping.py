@@ -287,3 +287,136 @@ def test_runner_service_years_missing_when_neither_source_set(monkeypatch):
     # rather than silently apply a 3yr fallback.
     assert profile.ex_serviceman is True
     assert profile.service_years is None
+
+
+# ── P1 #1 attempt-identity split: runner reads both attempt tables ─────────
+
+
+def _sb_with_attempts(*, exam_family_rows: list, recruitment_rows: list, recruitment_exam_id: str | None = None):
+    """SB stub seeded with both attempt tables AND a `recruitments.exam_id`."""
+    class _SB:
+        def __init__(self):
+            self.queried_tables: list[str] = []
+            self.db = {
+                "profiles": [{
+                    "id": "u1",
+                    "date_of_birth": "2000-01-01",
+                    "nationality": "Indian",
+                    "category": "general",
+                    "domicile_state": "MH",
+                }],
+                "aspirant_location": [{"user_id": "u1", "state": "MH"}],
+                "aspirant_reservations": [{"user_id": "u1", "category": "general"}],
+                "aspirant_education": [
+                    {"user_id": "u1", "level": "graduate", "percentage": 75, "is_completed": True}
+                ],
+                "aspirant_certifications": [],
+                "aspirant_experience": [],
+                "aspirant_preferences": [],
+                "aspirant_exam_attempts": exam_family_rows,
+                "aspirant_recruitment_attempts": recruitment_rows,
+                "aspirant_exam_credentials": [],
+                "tracked_recruitments": [],
+                "posts": [
+                    {
+                        "id": "p1",
+                        "recruitment_id": "r1",
+                        "age_criteria": [],
+                        "education_criteria": [],
+                        "attempt_limits": [],
+                        "certification_criteria": [],
+                        "recruitments": {
+                            "status": "open",
+                            "publish_status": "verified",
+                            "exam_id": recruitment_exam_id,
+                            "organizations": {"state": "MH"},
+                        },
+                    }
+                ],
+                "eligibility_results": [],
+                "notification_alerts": [],
+                "recruitments": [],
+            }
+
+        def table(self, n):
+            self.queried_tables.append(n)
+            return Q(n, self.db)
+
+    return _SB()
+
+
+def _capture_attempts_and_criteria(sb, monkeypatch):
+    captured: dict = {}
+
+    def _batch(_profile, _education, attempts, _credentials, post_criteria, **_kwargs):
+        captured["attempts"] = attempts
+        captured["post_criteria"] = post_criteria
+        return []
+
+    monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
+    runner.run_eligibility_for_user("u1", sb)
+    return captured
+
+
+def test_runner_constructs_exam_family_attempts_from_aspirant_exam_attempts(monkeypatch):
+    sb = _sb_with_attempts(
+        exam_family_rows=[
+            {"user_id": "u1", "exam_id": "ssc-cgl", "exam_ref_id": "exam-uuid-ssc-cgl", "attempts_used": 4},
+        ],
+        recruitment_rows=[],
+    )
+    captured = _capture_attempts_and_criteria(sb, monkeypatch)
+    family_attempts = [a for a in captured["attempts"] if a.attempt_scope == "exam_family"]
+    assert len(family_attempts) == 1
+    # Canonical exam_ref_id wins over the legacy free-form exam_id.
+    assert family_attempts[0].exam_id == "exam-uuid-ssc-cgl"
+    assert family_attempts[0].attempts_used == 4
+
+
+def test_runner_constructs_recruitment_attempts_from_new_table(monkeypatch):
+    sb = _sb_with_attempts(
+        exam_family_rows=[],
+        recruitment_rows=[
+            {"user_id": "u1", "recruitment_id": "r1", "post_id": None, "attempts_used": 2},
+        ],
+    )
+    captured = _capture_attempts_and_criteria(sb, monkeypatch)
+    rec_attempts = [a for a in captured["attempts"] if a.attempt_scope == "recruitment"]
+    assert len(rec_attempts) == 1
+    assert rec_attempts[0].recruitment_id == "r1"
+    assert rec_attempts[0].post_id is None
+    assert rec_attempts[0].attempts_used == 2
+
+
+def test_runner_constructs_post_attempts_when_post_id_present(monkeypatch):
+    sb = _sb_with_attempts(
+        exam_family_rows=[],
+        recruitment_rows=[
+            {"user_id": "u1", "recruitment_id": "r1", "post_id": "p1", "attempts_used": 1},
+        ],
+    )
+    captured = _capture_attempts_and_criteria(sb, monkeypatch)
+    post_attempts = [a for a in captured["attempts"] if a.attempt_scope == "post"]
+    assert len(post_attempts) == 1
+    assert post_attempts[0].post_id == "p1"
+    assert post_attempts[0].recruitment_id == "r1"
+
+
+def test_runner_surfaces_recruitment_exam_id_on_post_criteria(monkeypatch):
+    sb = _sb_with_attempts(
+        exam_family_rows=[],
+        recruitment_rows=[],
+        recruitment_exam_id="exam-uuid-ssc-cgl",
+    )
+    captured = _capture_attempts_and_criteria(sb, monkeypatch)
+    assert captured["post_criteria"][0].recruitment_exam_id == "exam-uuid-ssc-cgl"
+
+
+def test_runner_recruitment_exam_id_defaults_to_none_for_unlinked_recruitments(monkeypatch):
+    sb = _sb_with_attempts(
+        exam_family_rows=[],
+        recruitment_rows=[],
+        recruitment_exam_id=None,
+    )
+    captured = _capture_attempts_and_criteria(sb, monkeypatch)
+    assert captured["post_criteria"][0].recruitment_exam_id is None
