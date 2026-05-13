@@ -192,16 +192,40 @@ def run_eligibility_for_user(
         }
     profile_rows = require_select(supabase, "profiles", "*", id=user_id)
     profile_payload = profile_rows[0] if profile_rows else {"id": user_id}
+    reservations_view = mapped.get("reservations") or {}
+    # The engine needs `pwbd_status` to be a truthy non-"none" value for the
+    # PwBD relaxation paths. The mapper's Reservations is the reconciled view
+    # across `profiles` and `aspirant_reservations`; derive the engine-shaped
+    # pwbd_status from it so a user who set is_pwd in aspirant_reservations
+    # but never touched legacy `profiles.pwbd_status` still gets relaxation.
+    if reservations_view.get("is_pwd"):
+        pwbd_status = (
+            reservations_view.get("pwd_type")
+            or reservations_view.get("disability_code")
+            or profile_payload.get("pwbd_status")
+            or "yes"
+        )
+    else:
+        pwbd_status = profile_payload.get("pwbd_status")
     profile_payload = {
         **profile_payload,
-        "category": profile_payload.get("category") or mapped.get("reservations", {}).get("category"),
+        "category": profile_payload.get("category") or reservations_view.get("category"),
         "domicile_state": profile_payload.get("domicile_state") or mapped.get("location", {}).get("state"),
         "date_of_birth": profile_payload.get("date_of_birth") or mapped.get("identity", {}).get("dob"),
         "nationality": profile_payload.get("nationality") or mapped.get("identity", {}).get("nationality"),
-        "disability_code": mapped.get("reservations", {}).get("disability_code"),
+        "pwbd_status": pwbd_status,
+        "ex_serviceman": bool(
+            reservations_view.get("is_ex_serviceman") or profile_payload.get("ex_serviceman")
+        ),
+        "service_years": (
+            reservations_view.get("service_years")
+            if reservations_view.get("service_years") is not None
+            else profile_payload.get("service_years")
+        ),
+        "disability_code": reservations_view.get("disability_code"),
         "languages_known": mapped.get("preferences", {}).get("languages_known") or [],
-        "family_income_annual": mapped.get("reservations", {}).get("family_income_annual"),
-        "ews_certificate_available": mapped.get("reservations", {}).get("ews_certificate_available"),
+        "family_income_annual": reservations_view.get("family_income_annual"),
+        "ews_certificate_available": reservations_view.get("ews_certificate_available"),
     }
     profile = UserProfile(**profile_payload)
 

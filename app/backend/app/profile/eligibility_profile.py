@@ -24,6 +24,7 @@ class Reservations(_Base):
     pwd_type: str | None = None
     disability_code: str | None = None
     is_ex_serviceman: bool = False
+    service_years: int | None = None
     govt_employee: bool = False
     family_income_annual: float | None = None
     ews_assets: dict = Field(default_factory=dict)
@@ -33,6 +34,17 @@ class Reservations(_Base):
     @classmethod
     def _norm_cat(cls, v):
         return (str(v).strip().lower() or None) if v is not None else None
+
+    @field_validator("service_years", mode="before")
+    @classmethod
+    def _norm_service_years(cls, v):
+        if v is None or v == "":
+            return None
+        try:
+            iv = int(v)
+        except (TypeError, ValueError):
+            return None
+        return iv if iv >= 0 else None
 
 
 class EducationRow(_Base):
