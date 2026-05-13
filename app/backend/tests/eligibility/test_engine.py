@@ -1023,3 +1023,140 @@ def test_discipline_match_combined_user_degree_stream():
     )
     edu_check = next(c for c in result.checks if c.rule == "education")
     assert edu_check.passed is True
+
+
+# ── P2 #1 education taxonomy ────────────────────────────────────────────────
+
+
+def _edu_with_level(level: str, percentage: float = 80.0):
+    return [
+        UserEducation(
+            level=level,
+            degree="degree",
+            stream="CSE",
+            percentage=percentage,
+            cgpa=None,
+            is_completed=True,
+        )
+    ]
+
+
+def test_education_alias_matric_satisfies_10th():
+    # Legacy engine returned rank 0 for "matric" — every 10th-or-above
+    # requirement failed. Taxonomy now resolves it.
+    result = check_eligibility(
+        _profile(),
+        _edu_with_level("Matric"),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post(education_criteria=EducationCriteria(
+            min_qualification_level="10th",
+            min_percentage=60.0,
+            allowed_disciplines=None,
+        )),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    assert edu.passed is True
+
+
+def test_education_alias_btech_satisfies_graduate():
+    result = check_eligibility(
+        _profile(),
+        _edu_with_level("B.Tech"),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post(education_criteria=EducationCriteria(
+            min_qualification_level="graduate",
+            min_percentage=60.0,
+            allowed_disciplines=None,
+        )),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    assert edu.passed is True
+
+
+def test_education_alias_mba_satisfies_postgraduate():
+    result = check_eligibility(
+        _profile(),
+        _edu_with_level("MBA"),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post(education_criteria=EducationCriteria(
+            min_qualification_level="postgraduate",
+            min_percentage=60.0,
+            allowed_disciplines=None,
+        )),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    assert edu.passed is True
+
+
+def test_education_class_10_satisfies_secondary_requirement():
+    # Reverse: criterion uses an alias too.
+    result = check_eligibility(
+        _profile(),
+        _edu_with_level("12th"),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post(education_criteria=EducationCriteria(
+            min_qualification_level="Senior Secondary",
+            min_percentage=60.0,
+            allowed_disciplines=None,
+        )),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    assert edu.passed is True
+
+
+def test_education_unknown_user_level_against_known_requirement_fails():
+    # Rank-0 user level cannot satisfy a graduate requirement.
+    result = check_eligibility(
+        _profile(),
+        _edu_with_level("AlienCert"),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post(education_criteria=EducationCriteria(
+            min_qualification_level="graduate",
+            min_percentage=60.0,
+            allowed_disciplines=None,
+        )),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    assert edu.passed is False
+
+
+def test_education_postgraduate_satisfies_graduate_when_higher_allowed():
+    # Default `allow_higher_qualification=True`. Real MTech holder
+    # should satisfy a "graduate" minimum bar.
+    result = check_eligibility(
+        _profile(),
+        _edu_with_level("M.Tech"),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post(education_criteria=EducationCriteria(
+            min_qualification_level="graduate",
+            min_percentage=60.0,
+            allowed_disciplines=None,
+        )),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    assert edu.passed is True
+
+
+def test_education_strict_level_match_when_higher_disallowed():
+    # `allow_higher_qualification=False` keeps strict equality.
+    result = check_eligibility(
+        _profile(),
+        _edu_with_level("M.Tech"),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post(education_criteria=EducationCriteria(
+            min_qualification_level="graduate",
+            min_percentage=60.0,
+            allowed_disciplines=None,
+            allow_higher_qualification=False,
+        )),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    # M.Tech rank (18) != graduate rank (16) → strict mismatch.
+    assert edu.passed is False

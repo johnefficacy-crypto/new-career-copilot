@@ -109,6 +109,7 @@ REQUIRED_COLUMNS = {
         "added_by",
         "insecure_tls",
         "updated_at",
+        "currently_scraping_at",
     },
     "scrape_runs": {
         "id",

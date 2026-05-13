@@ -25,6 +25,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .discipline_aliases import disciplines_intersect, word_boundary_match
+from .education_taxonomy import level_rank
 from .schemas import (
     BatchEligibilityResult,
     EligibilityCheck,
@@ -48,19 +49,15 @@ from .schemas import (
 RULES_VERSION = "2026.05"
 
 # ─── Education level ordering ────────────────────────────────────────────────
-
-_EDU_LEVEL_ORDER: dict[str, int] = {
-    "10th": 1,
-    "12th": 2,
-    "diploma": 3,
-    "graduate": 4,
-    "postgraduate": 5,
-    "phd": 6,
-}
+#
+# The taxonomy module owns alias normalisation (e.g. "B.Tech" / "Bachelor's"
+# / "BSc" all resolve to the canonical "graduate" slug) and ranks. The
+# engine keeps a thin alias `_edu_level_rank` so the existing call sites
+# read the same way.
 
 
-def _edu_level_rank(level: str) -> int:
-    return _EDU_LEVEL_ORDER.get((level or "").lower(), 0)
+def _edu_level_rank(level: str | None) -> int:
+    return level_rank(level)
 
 
 # ─── Category normalisation (state OBC variants → "obc", PwBD compounds) ─────
