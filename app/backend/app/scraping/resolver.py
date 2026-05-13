@@ -134,3 +134,84 @@ def resolve_official_source(
         reason="gov_anchor",
         matched_anchor_text=label or None,
     )
+
+
+# ─── Resolver registry ──────────────────────────────────────────────────────
+#
+# Generic gov-anchor heuristic gets us a long way, but some aggregator
+# layouts hide the official URL in a Wordpress-style "Apply Online"
+# button rendered as a non-anchor element, or in a sidebar widget whose
+# href is the official site's homepage. Per-source resolvers slot into
+# this registry. The runner walks them in order and stops at the first
+# match. The generic heuristic stays as the final fallback.
+
+ResolverCallable = "Callable[[str | None, str, ScrapeSource], ResolverResult | None]"
+
+
+from typing import Callable  # noqa: E402  (kept near the registry it serves)
+
+
+def _wordpress_apply_online_resolver(
+    detail_html: str | None,
+    detail_url: str,
+    source: ScrapeSource,
+) -> ResolverResult | None:
+    """WordPress-style aggregators (Free Job Alert, Sarkari Result clones)
+    almost always wrap the official application link in an anchor whose
+    visible text is some variant of "Apply Online" / "Official Notice" /
+    "Notification PDF". We look for those labels first; if they point at
+    a government host we return immediately.
+    """
+    if not detail_html:
+        return None
+    label_hints = (
+        "apply online",
+        "apply here",
+        "official notice",
+        "official notification",
+        "notification pdf",
+        "download notification",
+        "official website",
+    )
+    for absolute, label in _iter_anchors(detail_html, detail_url):
+        label_lower = label.lower()
+        if not any(hint in label_lower for hint in label_hints):
+            continue
+        host = _host(absolute)
+        if not host:
+            continue
+        if _looks_official(host):
+            return ResolverResult(
+                official_url=absolute,
+                host=host,
+                reason="wordpress_apply_button",
+                matched_anchor_text=label or None,
+            )
+    return None
+
+
+# Insert source-specific resolvers above the generic fallback. Order is
+# significant: more specific patterns first.
+RESOLVER_REGISTRY: list[Callable[[str | None, str, ScrapeSource], ResolverResult | None]] = [
+    _wordpress_apply_online_resolver,
+    resolve_official_source,
+]
+
+
+def resolve_with_registry(
+    detail_html: str | None,
+    detail_url: str,
+    source: ScrapeSource,
+    *,
+    registry: list[Callable[[str | None, str, ScrapeSource], ResolverResult | None]] | None = None,
+) -> ResolverResult | None:
+    """Walk the resolver chain and return the first match.
+
+    Tests can pass a custom ``registry`` to assert ordering / fallback.
+    """
+    chain = registry if registry is not None else RESOLVER_REGISTRY
+    for fn in chain:
+        result = fn(detail_html, detail_url, source)
+        if result is not None:
+            return result
+    return None

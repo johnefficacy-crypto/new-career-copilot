@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -32,11 +33,11 @@ from .extractor import (
     fetch_page_html,
     fetch_page_text,
 )
-from .fetcher import strip_html
+from .fetcher import FetchResult, fetch, strip_html
 from .dedup import find_duplicate
 from .normalizer import normalize_recruitment
 from .promotion_gate import evaluate_promotion_gate
-from .resolver import ResolverResult, resolve_official_source
+from .resolver import ResolverResult, resolve_with_registry
 from .sources import normalize_source_registry
 from .aggregator import (
     aggregator_max_items,
@@ -132,6 +133,48 @@ def _ensure_notification_document(
             exc,
         )
         return None
+
+
+# ─── Change-detection helper ──────────────────────────────────────────────
+
+
+def _lookup_prior_document_headers(
+    supabase: Client,
+    source_url: str,
+) -> dict[str, str | None]:
+    """Return the most recent ``etag`` / ``last_modified`` we have on
+    record for ``source_url``.
+
+    Used by the runner to send conditional fetch headers so unchanged
+    pages return 304 and skip extraction. Returns an empty-ish dict
+    when nothing is on file or the lookup fails — callers must tolerate
+    missing values (the fetcher just skips the conditional header).
+    """
+    if not source_url:
+        return {"etag": None, "last_modified": None}
+    try:
+        rows = (
+            supabase.table("notification_documents")
+            .select("etag, last_modified")
+            .eq("source_url", source_url)
+            .order("fetched_at", desc=True)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if not rows:
+            return {"etag": None, "last_modified": None}
+        return {
+            "etag": rows[0].get("etag"),
+            "last_modified": rows[0].get("last_modified"),
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "notification_documents lookup for change-detection failed url=%s error=%s",
+            source_url, exc,
+        )
+        return {"etag": None, "last_modified": None}
 
 
 # ─── Aggregator candidate layer helpers ────────────────────────────────────
@@ -719,11 +762,57 @@ def run_scraping_pass(
                         detail_html = None
                         raw_text = f"MOCK DETAIL PAGE TEXT FOR {detail_url}"
                     else:
-                        detail_html = fetch_page_html(detail_url)
-                        if not detail_html:
-                            error_log.append({"source": source.name, "url": detail_url, "error": "Empty response", "at": utc_now_iso()})
-                            continue
-                        raw_text = strip_html(detail_html)
+                        # Change detection: only use the conditional
+                        # ``fetch()`` path when we already have ETag /
+                        # Last-Modified on file for this URL. Without
+                        # prior headers we fall back to the legacy
+                        # ``fetch_page_html()`` so existing call sites
+                        # and test monkeypatches keep working.
+                        prior = _lookup_prior_document_headers(supabase, detail_url)
+                        if prior.get("etag") or prior.get("last_modified"):
+                            result = fetch(
+                                detail_url,
+                                adapter_type="html",
+                                if_none_match=prior.get("etag"),
+                                if_modified_since=prior.get("last_modified"),
+                            )
+                            if not result.ok and result.error == "not_modified":
+                                logger.info(
+                                    "scrape.detail_unchanged source_id=%s detail_url=%s",
+                                    src.get("id"), detail_url,
+                                )
+                                listing_id_unchanged = _upsert_aggregator_listing(
+                                    supabase,
+                                    source_id=src.get("id"),
+                                    scrape_run_id=run_id,
+                                    detail_url=detail_url,
+                                    label=label,
+                                    event_type=event_type,
+                                )
+                                _record_listing_observation(
+                                    supabase,
+                                    listing_id=listing_id_unchanged,
+                                    source_id=src.get("id"),
+                                    scrape_run_id=run_id,
+                                    observed_url=detail_url,
+                                    observed_label=label,
+                                    content_hash=None,
+                                )
+                                continue
+                            if not result.ok or not result.text:
+                                error_log.append({"source": source.name, "url": detail_url, "error": result.error or "Empty response", "at": utc_now_iso()})
+                                continue
+                            raw_text = result.text
+                            try:
+                                detail_html = (result.raw_bytes or b"").decode("utf-8", errors="replace")
+                            except Exception:
+                                detail_html = result.text
+                        else:
+                            detail_html = fetch_page_html(detail_url)
+                            if not detail_html:
+                                error_log.append({"source": source.name, "url": detail_url, "error": "Empty response", "at": utc_now_iso()})
+                                continue
+                            raw_text = strip_html(detail_html)
 
                     listing_id = _upsert_aggregator_listing(
                         supabase,
@@ -752,7 +841,7 @@ def run_scraping_pass(
                     item_url = detail_url
                     raw_for_extraction = raw_text
                     if not mock and detail_html:
-                        resolver_result = resolve_official_source(detail_html, detail_url, source)
+                        resolver_result = resolve_with_registry(detail_html, detail_url, source)
                         if resolver_result:
                             official_html = fetch_page_html(resolver_result.official_url)
                             if official_html:
@@ -1129,25 +1218,156 @@ def _compensate_promotion(
             )
 
 
+def _build_promotion_rpc_payload(
+    data: ExtractedRecruitment,
+    *,
+    source_id: str | None,
+    slug: str,
+) -> dict[str, Any]:
+    """Pack an :class:`ExtractedRecruitment` into the JSON shape that
+    migration 040's ``promote_recruitment`` RPC accepts.
+
+    The RPC is dumb on purpose: every field is taken verbatim. The
+    Python side does the qualification-level mapping (so the regex
+    keyword table stays in one place) and the ``derived_status``
+    computation (so we don't duplicate timezone math in SQL).
+    """
+    posts: list[dict[str, Any]] = []
+    for post in data.posts or []:
+        posts.append({
+            "post_name": post.post_name,
+            "group_type": post.group_type,
+            "pay_level": post.pay_level,
+            "vacancies": post.vacancies,
+            "category_vacancies": post.category_vacancies,
+            "min_age": post.min_age,
+            "max_age": post.max_age,
+            "age_cutoff_date": post.age_cutoff_date,
+            "education_required": post.education_required,
+            "raw_requirement_text": post.raw_requirement_text,
+            "disciplines": post.disciplines,
+            "education_level": _map_education_level(post.education_required),
+            "unit_code": post.unit_code,
+            "unit_name": post.unit_name,
+            "unit_location_state": post.unit_location_state,
+            "unit_location_city": post.unit_location_city,
+            "language_requirements": post.language_requirements or [],
+        })
+    return {
+        "slug": slug,
+        "title": data.title,
+        "organization_name": data.organization_name,
+        "org_type": data.org_type,
+        "year": data.year,
+        "notification_date": data.notification_date,
+        "apply_start_date": data.apply_start_date,
+        "apply_end_date": data.apply_end_date,
+        "derived_status": _derive_status(data.apply_start_date, data.apply_end_date),
+        "total_vacancies": data.total_vacancies,
+        "official_notification_url": data.official_notification_url,
+        "official_apply_url": data.official_apply_url,
+        "source_pdf_url": data.source_pdf_url,
+        "source_id": source_id,
+        "posts": posts,
+    }
+
+
+def _is_rpc_missing_error(exc: BaseException) -> bool:
+    """Best-effort check for "function promote_recruitment does not exist".
+
+    Older deploys without migration 040 raise PGRST 404 / 42883. We
+    don't want to misclassify other errors as "RPC missing" or we'd
+    silently mask real failures, so the check is intentionally narrow:
+    the message must mention the function name or a known missing-RPC
+    SQLSTATE / PostgREST code.
+    """
+    msg = str(exc).lower()
+    if "promote_recruitment" in msg and ("does not exist" in msg or "not found" in msg):
+        return True
+    if "pgrst202" in msg or "42883" in msg:
+        # PGRST202: function not in schema cache. 42883: undefined_function.
+        return True
+    return False
+
+
+def _is_duplicate_slug_rpc_error(exc: BaseException) -> tuple[bool, str | None]:
+    """The RPC raises SQLSTATE 23P01 on duplicate slug. Recover the
+    existing recruitment id from the message when possible so the
+    caller can build a ``DuplicatePromotionError`` that points at it.
+    """
+    msg = str(exc)
+    if "23P01" not in msg and "duplicate slug" not in msg.lower():
+        return False, None
+    match = re.search(r"existing=([0-9a-f-]{36})", msg)
+    return True, (match.group(1) if match else None)
+
+
 def promote_to_recruitments(
     data: ExtractedRecruitment,
     supabase: Client,
     *,
     source_id: str | None = None,
 ) -> str:
-    """Write a queue item into the canonical schema. Raises on any insert failure.
+    """Promote a queue item into the canonical schema atomically.
 
-    Returns the new ``recruitments.id``. The caller should update the
-    queue row's ``status='approved'`` only after this returns successfully
-    (mirrors the May 2026 hardening: never mark approved on partial failure).
+    Primary path: the ``promote_recruitment`` Postgres function added by
+    migration 040. Every insert (organizations find-or-create,
+    recruitments, recruitment_units, posts, vacancy_reservations,
+    age_criteria, education_criteria) runs inside a single Postgres
+    transaction — partial failure can't leave orphans.
 
-    Atomicity: the inserts span several tables and can't share one
-    Postgres transaction without an RPC. If any insert after the
-    ``recruitments`` row fails, we compensate by deleting every row this
-    call created (in reverse FK order) before re-raising. The
-    organization row is intentionally left in place — it may be reused
-    by other recruitments and is safe to keep.
+    Fallback path (kept verbatim): if the RPC is unavailable (older
+    deploy, schema cache miss, etc.) we drop back to the Python+
+    compensation pattern introduced in PR #121. Behaviour stays a
+    strict subset of the RPC path.
     """
+    slug = compute_promotion_slug(data)
+    rpc_payload = _build_promotion_rpc_payload(data, source_id=source_id, slug=slug)
+    try:
+        rpc_response = supabase.rpc("promote_recruitment", {"payload": rpc_payload}).execute()
+        rec_id = rpc_response.data
+        # Some clients return ``[uuid]`` or ``[{column: uuid}]``. Normalise.
+        if isinstance(rec_id, list) and rec_id:
+            head = rec_id[0]
+            rec_id = head["recruitment_id"] if isinstance(head, dict) and "recruitment_id" in head else head
+        if isinstance(rec_id, str) and rec_id:
+            return rec_id
+    except DuplicatePromotionError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        is_dup, existing_id = _is_duplicate_slug_rpc_error(exc)
+        if is_dup:
+            raise DuplicatePromotionError(
+                existing_recruitment_id=existing_id or "",
+                slug=slug,
+            ) from exc
+        if _is_rpc_missing_error(exc):
+            logger.warning(
+                "promote_recruitment RPC unavailable; using compensation-path fallback: %s",
+                exc,
+            )
+        else:
+            logger.warning(
+                "promote_recruitment RPC failed; falling back to compensation path: %s",
+                exc,
+            )
+
+    return _promote_to_recruitments_compensation(data, supabase, source_id=source_id, slug=slug)
+
+
+def _promote_to_recruitments_compensation(
+    data: ExtractedRecruitment,
+    supabase: Client,
+    *,
+    source_id: str | None = None,
+    slug: str | None = None,
+) -> str:
+    """Compensation-pattern promotion path. Used as the fallback when
+    the ``promote_recruitment`` RPC is unavailable or fails for a
+    non-duplicate reason. Same FK-aware rollback as PRs #121 / #127.
+    """
+    if slug is None:
+        slug = compute_promotion_slug(data)
     # ── Organisation find/create ──
     org_id = _find_or_create_organization(
         supabase,

@@ -66,3 +66,55 @@ def test_resolver_recognises_ac_in_for_educational_bodies():
     r = resolve_official_source(html, "https://agg.example/post/", _src())
     assert r is not None
     assert r.host == "iitb.ac.in"
+
+
+# ── PR P2: resolver registry + WordPress-style resolver ─────────────────────
+
+
+from app.scraping.resolver import (
+    RESOLVER_REGISTRY,
+    _wordpress_apply_online_resolver,
+    resolve_with_registry,
+)
+
+
+def test_wordpress_apply_online_picks_official_anchor_by_label():
+    html = """
+      <a href="https://random.example/sponsor">Sponsor</a>
+      <a href="https://ssc.nic.in/apply/2026">Apply Online</a>
+    """
+    r = _wordpress_apply_online_resolver(html, "https://agg.example/post/", _src())
+    assert r is not None
+    assert r.reason == "wordpress_apply_button"
+    assert r.host == "ssc.nic.in"
+
+
+def test_wordpress_apply_online_ignores_non_gov_apply_link():
+    html = '<a href="https://coaching.example/buy-course">Apply Online</a>'
+    assert _wordpress_apply_online_resolver(html, "https://agg.example/", _src()) is None
+
+
+def test_resolve_with_registry_uses_first_match():
+    html = """
+      <a href="https://ssc.nic.in/apply/2026">Apply Online</a>
+      <a href="https://upsc.gov.in/older-notice.pdf">UPSC notice</a>
+    """
+    # WordPress resolver fires first (matches Apply Online label) and
+    # wins even though the generic gov-anchor resolver would have picked
+    # the deeper UPSC URL.
+    r = resolve_with_registry(html, "https://agg.example/post/", _src())
+    assert r is not None
+    assert r.reason == "wordpress_apply_button"
+
+
+def test_resolve_with_registry_falls_back_to_generic_resolver():
+    html = '<a href="https://ssc.nic.in/recruitment/2026/cgl.pdf">PDF</a>'
+    r = resolve_with_registry(html, "https://agg.example/post/", _src())
+    assert r is not None
+    assert r.reason == "gov_anchor"
+
+
+def test_registry_includes_generic_resolver_as_fallback():
+    # The order matters: source-specific resolvers must come first; the
+    # generic resolver is the last entry.
+    assert RESOLVER_REGISTRY[-1].__name__ == "resolve_official_source"
