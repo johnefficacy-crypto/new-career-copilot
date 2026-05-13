@@ -5,6 +5,8 @@ import AdminShell from "../pages/admin/AdminShell";
 import AdminOverview from "../pages/admin/Overview";
 import AdminRecruitments from "../pages/admin/Recruitments";
 import AdminEligibility from "../pages/admin/EligibilityQueue";
+import AdminOperationsConsole from "../pages/admin/OperationsConsole";
+import AdminEligibilityOps from "../pages/admin/EligibilityOps";
 import AdminSources from "../pages/admin/Sources";
 import AdminOrganizations from "../pages/admin/Organizations";
 import AdminScraper from "../pages/admin/Scraper";
@@ -20,8 +22,11 @@ import AdminAIPolicy from "../pages/admin/AIPolicy";
 export const adminRouteElements = (
   <Route element={<ProtectedRoute role={["admin", "super_admin"]}><AdminShell /></ProtectedRoute>}>
     <Route path="/admin" element={<AdminOverview />} />
+    <Route path="/admin/operations" element={<AdminOperationsConsole />} />
     <Route path="/admin/recruitments" element={<AdminRecruitments />} />
     <Route path="/admin/eligibility-queue" element={<AdminEligibility />} />
+    <Route path="/admin/promotion-queue" element={<AdminEligibility />} />
+    <Route path="/admin/eligibility-ops" element={<AdminEligibilityOps />} />
     <Route path="/admin/sources" element={<AdminSources />} />
     <Route path="/admin/organizations" element={<AdminOrganizations />} />
     <Route path="/admin/scraper" element={<AdminScraper />} />
