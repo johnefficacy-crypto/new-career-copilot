@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { AlertTriangle, ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
 import FieldReviewGroup from "./FieldReviewGroup";
+import PostEligibilityReviewGroup from "./PostEligibilityReviewGroup";
 import BlockerList from "./BlockerList";
 import { HIGH_RISK_QUEUE_FIELDS, RECOMMENDED_REVIEW_FIELDS } from "./adminWorkflowContract";
 
@@ -114,6 +115,18 @@ function QueueFixSection({ item, onFieldAction, onPromote, onMergeIntoExisting, 
           recommendedFields={RECOMMENDED_REVIEW_FIELDS}
           onFieldAction={(field, action, correctedValue) => onQueueFieldActionSafe(onFieldAction, item.id, field, action, correctedValue)}
         />
+      </div>
+
+      <div className="mt-4">
+        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Post-level eligibility review</div>
+        <p className="text-xs text-muted-foreground mt-1">Eligibility matching relies on per-post age, education, and vacancy fields. Correcting these uses dotted paths (posts.0.min_age) so the backend patches the nested array instead of creating a flat key.</p>
+        <div className="mt-3">
+          <PostEligibilityReviewGroup
+            posts={(item.raw_extracted_item || item.normalized_item || {}).posts}
+            evidence={item.field_evidence_status || {}}
+            onFieldAction={(path, action, correctedValue) => onQueueFieldActionSafe(onFieldAction, item.id, path, action, correctedValue)}
+          />
+        </div>
       </div>
 
       {dups.length ? (

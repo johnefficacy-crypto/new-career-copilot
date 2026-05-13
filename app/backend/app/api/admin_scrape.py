@@ -107,6 +107,81 @@ def _validate_queue_id(queue_id: str) -> None:
     if len(qid) < 2:
         raise HTTPException(status_code=422, detail="Invalid queue_id format")
 
+
+_NESTED_PATH_KEY = __import__("re").compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _parse_field_path(field_name: str) -> list[str | int]:
+    """Parse a dotted field path like ``posts.0.min_age`` into segments.
+
+    Each segment is either a safe key (``[A-Za-z_][A-Za-z0-9_]*``) or a
+    non-negative integer for list indexing. Anything else raises 422 so
+    we never let arbitrary strings drive a deep mutation. Returns a list
+    of segments; a single-segment path is the legacy flat-key behaviour.
+    """
+    if not field_name or len(field_name) > 200:
+        raise HTTPException(status_code=422, detail="Invalid field name")
+    parts = field_name.split(".")
+    out: list[str | int] = []
+    for part in parts:
+        if part == "":
+            raise HTTPException(status_code=422, detail="Invalid field path")
+        if part.isdigit():
+            out.append(int(part))
+        elif _NESTED_PATH_KEY.match(part):
+            out.append(part)
+        else:
+            raise HTTPException(status_code=422, detail="Invalid field path segment")
+    return out
+
+
+def _nested_get(data, path: list[str | int]):
+    cur = data
+    for seg in path:
+        if isinstance(seg, int):
+            if not isinstance(cur, list) or seg < 0 or seg >= len(cur):
+                return None
+            cur = cur[seg]
+        else:
+            if not isinstance(cur, dict):
+                return None
+            cur = cur.get(seg)
+    return cur
+
+
+def _nested_set(data, path: list[str | int], value) -> None:
+    """Set a value at a nested path, creating intermediate dicts as needed.
+
+    Refuses to grow lists or create list indexes that don't already
+    exist — the queue extractor controls list shape, the admin only
+    edits values inside it.
+    """
+    if not path:
+        return
+    cur = data
+    for seg in path[:-1]:
+        if isinstance(seg, int):
+            if not isinstance(cur, list) or seg < 0 or seg >= len(cur):
+                raise HTTPException(status_code=422, detail="Field path index out of range")
+            cur = cur[seg]
+        else:
+            if not isinstance(cur, dict):
+                raise HTTPException(status_code=422, detail="Field path expected dict")
+            nxt = cur.get(seg)
+            if nxt is None:
+                nxt = {}
+                cur[seg] = nxt
+            cur = nxt
+    last = path[-1]
+    if isinstance(last, int):
+        if not isinstance(cur, list) or last < 0 or last >= len(cur):
+            raise HTTPException(status_code=422, detail="Field path index out of range")
+        cur[last] = value
+    else:
+        if not isinstance(cur, dict):
+            raise HTTPException(status_code=422, detail="Field path expected dict")
+        cur[last] = value
+
 def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, admin: dict, notes: str | None=None, corrected_value=None):
     existing = (supabase.table("extracted_field_evidence").select("id, document_id").eq("scrape_queue_id", queue_id).eq("field_name", field_name).order("reviewed_at", desc=True, nullsfirst=False).order("created_at", desc=True).limit(1).execute().data or [])
     doc_id = (existing[0] or {}).get("document_id") if existing else None
@@ -153,12 +228,12 @@ def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, 
                 doc_id = nd_rows[0]["id"]
                 supabase.table("scrape_queue").update({"notification_document_id": doc_id}).eq("id", queue_id).execute()
         extracted_data = qrow.get("extracted_data") if qrow else {}
-        extracted_value = corrected_value if corrected_value is not None else ((extracted_data or {}).get(field_name) if isinstance(extracted_data, dict) else None)
+        extracted_value = corrected_value if corrected_value is not None else _nested_get(extracted_data, _parse_field_path(field_name))
     else:
         qrows = (supabase.table("scrape_queue").select("id, extracted_data, notification_document_id").eq("id", queue_id).limit(1).execute().data or [])
         qrow = (qrows[0] or {}) if qrows else {}
         extracted_data = qrow.get("extracted_data") if qrow else {}
-        extracted_value = corrected_value if corrected_value is not None else ((extracted_data or {}).get(field_name) if isinstance(extracted_data, dict) else None)
+        extracted_value = corrected_value if corrected_value is not None else _nested_get(extracted_data, _parse_field_path(field_name))
     payload={"scrape_queue_id": queue_id, "field_name": field_name, "document_id": doc_id, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat(), "entity_type":"other","extraction_method":"manual","extracted_value":extracted_value}
     if corrected_value is not None:
         payload["corrected_value"]=corrected_value
@@ -202,8 +277,22 @@ def build_effective_extracted_data(supabase, queue_id: str) -> dict:
         or []
     )
     for row in evidence:
-        if row.get("reviewer_status") == "corrected" and row.get("corrected_value") is not None:
-            data[row.get("field_name")] = row.get("corrected_value")
+        if row.get("reviewer_status") != "corrected" or row.get("corrected_value") is None:
+            continue
+        field_name = row.get("field_name") or ""
+        try:
+            path = _parse_field_path(field_name)
+        except HTTPException:
+            # Skip rows with malformed field names — never crash the
+            # promote/merge flow because of bad history.
+            continue
+        if len(path) == 1:
+            data[path[0]] = row.get("corrected_value")
+        else:
+            try:
+                _nested_set(data, path, row.get("corrected_value"))
+            except HTTPException:
+                continue
     return data
 
 
@@ -220,7 +309,11 @@ def patch_scrape_queue_extracted_field(supabase, queue_id: str, field_name: str,
     if not rows:
         raise HTTPException(status_code=404, detail="Queue item not found")
     data = dict(rows[0].get("extracted_data") or {})
-    data[field_name] = value
+    path = _parse_field_path(field_name)
+    if len(path) == 1:
+        data[path[0]] = value
+    else:
+        _nested_set(data, path, value)
     supabase.table("scrape_queue").update({"extracted_data": data}).eq("id", queue_id).execute()
     return data
 
