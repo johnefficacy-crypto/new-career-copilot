@@ -102,6 +102,32 @@ class RunnerQuery:
             if "content_hash" in self.filters:
                 rows = [r for r in rows if r.get("content_hash") == self.filters["content_hash"]]
             return E(rows)
+        if self.name == "aggregator_listings":
+            if self.payload:
+                rows = self.db.setdefault("aggregator_listings", [])
+                # update path (no insert payload contains source_id/listing_hash but
+                # eq filters carry an existing id) — try update first.
+                if "id" in self.filters:
+                    for row in rows:
+                        if row.get("id") == self.filters["id"]:
+                            row.update(self.payload)
+                            return E([row])
+                row = {**self.payload, "id": f"al-{len(rows) + 1}"}
+                rows.append(row)
+                return E([row])
+            rows = list(self.db.get("aggregator_listings", []))
+            if "source_id" in self.filters:
+                rows = [r for r in rows if r.get("source_id") == self.filters["source_id"]]
+            if "listing_hash" in self.filters:
+                rows = [r for r in rows if r.get("listing_hash") == self.filters["listing_hash"]]
+            return E(rows)
+        if self.name == "listing_observations":
+            if self.payload:
+                rows = self.db.setdefault("listing_observations", [])
+                row = {**self.payload, "id": f"lo-{len(rows) + 1}"}
+                rows.append(row)
+                return E([row])
+            return E(list(self.db.get("listing_observations", [])))
         return E([])
 
 
@@ -695,3 +721,77 @@ def test_runner_mark_success_clears_typed_error_fields():
         "last_error_at", "last_error_http_status", "last_error_url",
     ):
         assert success[field] is None, f"expected {field} cleared on success"
+
+
+# ── P0: aggregator candidate layer + official-source resolver ───────────────
+
+
+def test_aggregator_path_records_listing_and_observation_in_mock_mode():
+    sb = RunnerSB()
+    run_scraping_pass(sb, source_ids=["src-1"], mock=True)
+    listings = sb.db.get("aggregator_listings", [])
+    observations = sb.db.get("listing_observations", [])
+    assert len(listings) == 3
+    assert all(l["status"] == "discovered" for l in listings)
+    assert len(observations) == 3
+
+
+def test_aggregator_path_resolves_official_source_on_real_fetch(monkeypatch):
+    sb = RunnerSB()
+
+    listing_html = '<a href="/ssc-cgl-2026-recruitment/">SSC CGL 2026 Recruitment</a>'
+    detail_html = (
+        '<a href="https://ssc.nic.in/recruitment/2026/cgl.pdf">Official notification</a>'
+    )
+    official_html = "<html>Official body of the notice</html>"
+
+    def _fake_html(url):
+        if url.endswith("/government-jobs/"):
+            return listing_html
+        if "ssc-cgl-2026-recruitment" in url:
+            return detail_html
+        if "ssc.nic.in" in url:
+            return official_html
+        return None
+
+    monkeypatch.setattr("app.scraping.runner.fetch_page_html", _fake_html)
+    monkeypatch.setattr("app.scraping.runner.fetch_page_text", lambda url: None)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    out = run_scraping_pass(sb, source_ids=["src-1"], mock=False, limit=5)
+    assert out["items_found"] == 1
+    row = sb.db["scrape_queue"][0]
+    assert row["source_url"] == "https://ssc.nic.in/recruitment/2026/cgl.pdf"
+    assert row["official_source_resolved"] is True
+    assert row["official_source_host"] == "ssc.nic.in"
+    assert row["evidence_required"] is False
+    listings = sb.db.get("aggregator_listings", [])
+    assert listings and listings[-1]["status"] == "official_source_found"
+    assert listings[-1]["official_source_url"] == "https://ssc.nic.in/recruitment/2026/cgl.pdf"
+
+
+def test_aggregator_path_marks_needs_official_source_when_resolver_fails(monkeypatch):
+    sb = RunnerSB()
+
+    listing_html = '<a href="/ssc-cgl-2026-recruitment/">SSC CGL 2026</a>'
+    # Detail page links to a coaching ad only — no gov anchor.
+    detail_html = '<a href="https://coaching.example/buy">Buy course</a>'
+
+    def _fake_html(url):
+        if url.endswith("/government-jobs/"):
+            return listing_html
+        if "ssc-cgl-2026-recruitment" in url:
+            return detail_html
+        return None
+
+    monkeypatch.setattr("app.scraping.runner.fetch_page_html", _fake_html)
+    monkeypatch.setattr("app.scraping.runner.fetch_page_text", lambda url: None)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    out = run_scraping_pass(sb, source_ids=["src-1"], mock=False, limit=5)
+    assert out["items_found"] == 1
+    row = sb.db["scrape_queue"][0]
+    assert row["official_source_resolved"] is False
+    assert row["source_url"].endswith("/ssc-cgl-2026-recruitment/")
+    listings = sb.db.get("aggregator_listings", [])
+    assert listings and listings[-1]["status"] == "needs_official_source"
