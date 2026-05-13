@@ -774,3 +774,120 @@ def test_certification_picks_correct_issuer_when_user_holds_multiple_same_name()
     )
     cert = next(c for c in result.checks if c.rule == "certification")
     assert cert.passed is True
+
+
+# ── P2 #3 CGPA → percentage conversion basis ───────────────────────────────
+
+
+def _edu_with_cgpa(cgpa: float, cgpa_basis: float | None = None):
+    return [
+        UserEducation(
+            level="graduate",
+            degree="B.Tech",
+            stream="CSE",
+            percentage=None,
+            cgpa=cgpa,
+            cgpa_basis=cgpa_basis,
+            is_completed=True,
+        )
+    ]
+
+
+def test_cgpa_default_basis_10_assumed_for_legacy_rows():
+    # Back-compat: a row without cgpa_basis converts as today
+    # (cgpa * 10). 7.0 CGPA → 70%.
+    result = check_eligibility(
+        _profile(),
+        _edu_with_cgpa(cgpa=7.0, cgpa_basis=None),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post(),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    assert edu.passed is True
+    assert "70.0%" in edu.detail
+
+
+def test_cgpa_with_explicit_10_basis_matches_default():
+    result = check_eligibility(
+        _profile(),
+        _edu_with_cgpa(cgpa=7.0, cgpa_basis=10.0),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post(),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    assert edu.passed is True
+
+
+def test_cgpa_on_4_point_scale_converts_correctly():
+    # 3.5/4.0 GPA → 87.5%. The legacy `cgpa * 10` would have given 35%,
+    # failing the 60% bar. The new conversion accepts it.
+    result = check_eligibility(
+        _profile(),
+        _edu_with_cgpa(cgpa=3.5, cgpa_basis=4.0),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post(),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    assert edu.passed is True
+    assert "87.5%" in edu.detail
+
+
+def test_cgpa_on_7_point_scale_with_low_value_fails_60_pct_bar():
+    # 4.0/7.0 → ~57.1%. Should fail a 60% cutoff.
+    result = check_eligibility(
+        _profile(),
+        _edu_with_cgpa(cgpa=4.0, cgpa_basis=7.0),
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post(),
+    )
+    edu = next(c for c in result.checks if c.rule == "education")
+    assert edu.passed is False
+
+
+def test_cgpa_basis_validator_rejects_zero_or_negative():
+    import pytest as _pytest
+
+    with _pytest.raises(Exception):
+        UserEducation(level="graduate", cgpa=3.5, cgpa_basis=0)
+    with _pytest.raises(Exception):
+        UserEducation(level="graduate", cgpa=3.5, cgpa_basis=-4)
+
+
+def test_cgpa_validator_rejects_value_above_basis():
+    import pytest as _pytest
+
+    # 5.0 GPA on a 4.0 scale is impossible.
+    with _pytest.raises(Exception):
+        UserEducation(level="graduate", cgpa=5.0, cgpa_basis=4.0)
+
+
+def test_cgpa_validator_rejects_above_default_10_when_no_basis():
+    import pytest as _pytest
+
+    # No basis given → default 10. 11.0 fails.
+    with _pytest.raises(Exception):
+        UserEducation(level="graduate", cgpa=11.0)
+
+
+def test_percentage_wins_over_cgpa_when_both_present():
+    # Sanity check: existing precedence preserved.
+    edu = [
+        UserEducation(
+            level="graduate", degree="B.Tech", stream="CSE",
+            percentage=95.0, cgpa=3.5, cgpa_basis=4.0, is_completed=True,
+        )
+    ]
+    result = check_eligibility(
+        _profile(),
+        edu,
+        [UserExamAttempts(recruitment_id="r-1", attempts_used=1)],
+        [UserExamCredential(exam_key="gate")],
+        _post(),
+    )
+    edu_check = next(c for c in result.checks if c.rule == "education")
+    assert edu_check.passed is True
+    assert "95.0%" in edu_check.detail

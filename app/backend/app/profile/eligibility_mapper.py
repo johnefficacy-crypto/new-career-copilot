@@ -45,7 +45,7 @@ def build_user_eligibility_profile(supabase, user_id: str) -> EligibilityProfile
     loc = (require_select(supabase, "aspirant_location", "state,district,is_rural,domicile_certificate", user_id=user_id) or [{}])[0]
     res = (require_select(supabase, "aspirant_reservations", "category,sub_category,is_pwd,pwd_type,disability_code,is_ex_serviceman,family_income_annual,ews_assets,ews_certificate_available", user_id=user_id) or [{}])[0]
     profile_pwbd = _meaningful_pwbd_value(p.get("pwbd_status"))
-    edu = require_select(supabase, "aspirant_education", "level,degree,stream,graduation_year,percentage,cgpa,is_completed", user_id=user_id)
+    edu = require_select(supabase, "aspirant_education", "level,degree,stream,graduation_year,percentage,cgpa,cgpa_basis,is_completed", user_id=user_id)
     certs = safe_select(supabase, "aspirant_certifications", "certification_name,issuing_body,year_completed,is_active", user_id=user_id)
     exp = safe_select(supabase, "aspirant_experience", "sector,role,organization,start_date,end_date,years_experience", user_id=user_id)
     prefs = (safe_select(supabase, "aspirant_preferences", "target_exams,preferred_states,preferred_sectors,willing_to_relocate,study_mode,study_hours_per_day,languages_known,preferred_language", user_id=user_id) or [{}])[0]
