@@ -36,6 +36,16 @@ from .schemas import (
     UserProfile,
 )
 
+# Bump whenever rule semantics change so cached eligibility_results rows are
+# treated as stale and recomputed on the next runner pass. Persisted to
+# `eligibility_results.rules_version` by the runner; compared on read for the
+# skip-cache decision.
+# History:
+#   "2026.05" — first versioned cut: exact-age, strict cutoff, explicit
+#               domicile flag, normalized OBC attempt matching, unverifiable
+#               propagation, unknown-category guard.
+RULES_VERSION = "2026.05"
+
 # ─── Education level ordering ────────────────────────────────────────────────
 
 _EDU_LEVEL_ORDER: dict[str, int] = {

@@ -98,18 +98,201 @@ def test_first_recompute_stores_profile_hash(monkeypatch):
     assert out["skipped"] == 0
 
 
+def _seed_existing_row(sb, *, profile_hash, criteria_hash, rules_version):
+    sb.db["eligibility_results"].append(
+        {
+            "user_id": "u1",
+            "post_id": "p1",
+            "profile_hash": profile_hash,
+            "criteria_hash": criteria_hash,
+            "rules_version": rules_version,
+            "computed_at": "2026-01-01T00:00:00Z",
+        }
+    )
+
+
+def _current_hashes(sb):
+    from app.eligibility.schemas import PostCriteria
+
+    h = runner._profile_hash(runner.build_user_eligibility_profile(sb, "u1").model_dump())
+    # Mirrors how the runner constructs PostCriteria for the SB mock's p1 row
+    # (all criteria arrays empty, org_state from the embedded organizations).
+    pc = PostCriteria(post_id="p1", recruitment_id="r1", org_state="MH")
+    return h, runner._criteria_hash(pc)
+
+
 def test_second_recompute_skips_when_hash_unchanged(monkeypatch):
-    sb=SB()
-    calls={"n":0}
-    def _batch(*a, **k): calls["n"] += 1; return []
+    sb = SB()
+    calls = {"n": 0}
+
+    def _batch(*a, **k):
+        calls["n"] += 1
+        return []
+
     monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
     runner.run_eligibility_for_user("u1", sb)
-    # seed a matching cached row with hash from current profile
-    h = runner._profile_hash(runner.build_user_eligibility_profile(sb, "u1").model_dump())
-    sb.db["eligibility_results"].append({"user_id":"u1","post_id":"p1","profile_hash":h,"computed_at":"2026-01-01T00:00:00Z"})
+    profile_h, criteria_h = _current_hashes(sb)
+    _seed_existing_row(
+        sb,
+        profile_hash=profile_h,
+        criteria_hash=criteria_h,
+        rules_version=runner.RULES_VERSION,
+    )
     out = runner.run_eligibility_for_user("u1", sb)
     assert out["skipped"] == 1
     assert calls["n"] == 2
+
+
+def test_recompute_invalidates_when_criteria_hash_changes(monkeypatch):
+    # Same profile, but admin edited canonical criteria. Cached row's
+    # criteria_hash no longer matches the freshly-computed hash → recompute.
+    sb = SB()
+    calls = {"n": 0}
+
+    def _batch(*a, **k):
+        calls["n"] += 1
+        return []
+
+    monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
+    runner.run_eligibility_for_user("u1", sb)
+    profile_h, _ = _current_hashes(sb)
+    _seed_existing_row(
+        sb,
+        profile_hash=profile_h,
+        criteria_hash="stale-criteria-hash-from-an-older-version-of-post-criteria",
+        rules_version=runner.RULES_VERSION,
+    )
+    out = runner.run_eligibility_for_user("u1", sb)
+    assert out["skipped"] == 0
+    assert calls["n"] == 2
+
+
+def test_recompute_invalidates_when_rules_version_changes(monkeypatch):
+    # Same profile and criteria, but the engine bumped RULES_VERSION since
+    # the row was written. Must recompute even though the inputs are
+    # identical: the rule semantics may have changed.
+    sb = SB()
+    calls = {"n": 0}
+
+    def _batch(*a, **k):
+        calls["n"] += 1
+        return []
+
+    monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
+    runner.run_eligibility_for_user("u1", sb)
+    profile_h, criteria_h = _current_hashes(sb)
+    _seed_existing_row(
+        sb,
+        profile_hash=profile_h,
+        criteria_hash=criteria_h,
+        rules_version="0000.01",  # older than runner.RULES_VERSION
+    )
+    out = runner.run_eligibility_for_user("u1", sb)
+    assert out["skipped"] == 0
+    assert calls["n"] == 2
+
+
+def test_recompute_invalidates_legacy_rows_without_cache_keys(monkeypatch):
+    # Pre-migration row carries profile_hash but NULL criteria_hash and
+    # NULL rules_version. Must NOT be treated as a cache hit on the first
+    # post-deploy pass.
+    sb = SB()
+    calls = {"n": 0}
+
+    def _batch(*a, **k):
+        calls["n"] += 1
+        return []
+
+    monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
+    runner.run_eligibility_for_user("u1", sb)
+    profile_h, _ = _current_hashes(sb)
+    _seed_existing_row(
+        sb,
+        profile_hash=profile_h,
+        criteria_hash=None,
+        rules_version=None,
+    )
+    out = runner.run_eligibility_for_user("u1", sb)
+    assert out["skipped"] == 0
+    assert calls["n"] == 2
+
+
+def test_recompute_writes_criteria_hash_and_rules_version(monkeypatch):
+    # The upsert must persist the new cache keys so the next pass can skip.
+    sb = SB()
+    from app.eligibility.schemas import BatchEligibilityResult, EligibilityCheckResult
+
+    def _batch(_profile, _ed, _at, _cr, post_criteria, **_k):
+        return [
+            BatchEligibilityResult(
+                post_id=pc.post_id,
+                recruitment_id=pc.recruitment_id,
+                result=EligibilityCheckResult(
+                    is_eligible=True, is_conditional=False, checks=[], fail_reasons=[]
+                ),
+            )
+            for pc in post_criteria
+        ]
+
+    monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
+    runner.run_eligibility_for_user("u1", sb)
+    rows = sb.db["eligibility_results"]
+    assert len(rows) == 1
+    written = rows[0]
+    assert written["rules_version"] == runner.RULES_VERSION
+    assert written["criteria_hash"] is not None
+    assert isinstance(written["criteria_hash"], str)
+    assert len(written["criteria_hash"]) == 64  # SHA-256 hex
+
+
+def test_criteria_hash_stable_under_list_reordering():
+    # Hash must be insensitive to the order of list-valued criteria (the DB
+    # has no inherent ordering for attempt_limits, age_relaxation_rules etc.)
+    from app.eligibility.schemas import AttemptLimit, PostCriteria
+
+    pc_a = PostCriteria(
+        post_id="p1",
+        recruitment_id="r1",
+        attempt_limits=[
+            AttemptLimit(category="general", max_attempts=6),
+            AttemptLimit(category="obc", max_attempts=9),
+        ],
+    )
+    pc_b = PostCriteria(
+        post_id="p1",
+        recruitment_id="r1",
+        attempt_limits=[
+            AttemptLimit(category="obc", max_attempts=9),
+            AttemptLimit(category="general", max_attempts=6),
+        ],
+    )
+    assert runner._criteria_hash(pc_a) == runner._criteria_hash(pc_b)
+
+
+def test_criteria_hash_changes_when_age_criterion_changes():
+    from app.eligibility.schemas import AgeCriteria, PostCriteria
+
+    pc_a = PostCriteria(
+        post_id="p1",
+        recruitment_id="r1",
+        age_criteria=AgeCriteria(min_age=18, max_age=32, cutoff_date="2026-01-01"),
+    )
+    pc_b = PostCriteria(
+        post_id="p1",
+        recruitment_id="r1",
+        age_criteria=AgeCriteria(min_age=18, max_age=35, cutoff_date="2026-01-01"),
+    )
+    assert runner._criteria_hash(pc_a) != runner._criteria_hash(pc_b)
+
+
+def test_criteria_hash_ignores_post_identity():
+    # The cache row keys on (user_id, post_id) already, so post_id/recruitment_id
+    # are not part of the rule-definition fingerprint.
+    from app.eligibility.schemas import PostCriteria
+
+    pc_a = PostCriteria(post_id="p1", recruitment_id="r1", org_state="MH")
+    pc_b = PostCriteria(post_id="p2", recruitment_id="r2", org_state="MH")
+    assert runner._criteria_hash(pc_a) == runner._criteria_hash(pc_b)
 
 
 def test_recompute_does_not_read_legacy_user_exam_attempts(monkeypatch):
