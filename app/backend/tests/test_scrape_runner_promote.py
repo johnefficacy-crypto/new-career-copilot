@@ -502,7 +502,12 @@ def test_runner_rss_adapter_queues_entries_in_mock_mode():
     assert all(r["source_id"] == "src-rss" for r in sb.db.get("scrape_queue", []))
 
 
-def test_runner_skips_pdf_adapter_as_not_implemented():
+def test_runner_pdf_adapter_queues_single_entry_in_mock_mode():
+    """PDF adapter is now implemented (was: adapter_not_implemented).
+
+    Mock mode synthesises a single recruitment from the PDF body; the
+    runner queues exactly one row tied to a fresh aggregator_listing.
+    """
     sb = RunnerSB()
     sb.db["source_registry"] = [{
         "id": "src-pdf",
@@ -512,8 +517,10 @@ def test_runner_skips_pdf_adapter_as_not_implemented():
         "is_active": True,
     }]
     out = run_scraping_pass(sb, source_ids=["src-pdf"], mock=True)
-    assert out["items_found"] == 0
-    assert any(e.get("error") == "adapter_not_implemented" and e.get("adapter_type") == "pdf" for e in out["errors"])
+    assert out["items_found"] == 1
+    assert sb.db["scrape_queue"][0]["source_id"] == "src-pdf"
+    listings = sb.db.get("aggregator_listings", [])
+    assert listings and listings[-1]["listing_url"] == "https://example.gov.in/bulletin.pdf"
 
 
 def test_promotion_rolls_back_recruitment_when_post_fails():
