@@ -13,9 +13,12 @@ than producing a surprising verdict downstream.
 from __future__ import annotations
 
 from datetime import date as _date
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+AttemptScope = Literal["exam_family", "recruitment", "post"]
 
 
 class _Base(BaseModel):
@@ -114,7 +117,32 @@ class UserCertification(_Base):
 
 
 class UserExamAttempts(_Base):
-    recruitment_id: str
+    """Scope-aware attempt count for one user.
+
+    The engine looks up the right row per ``AttemptLimit`` by matching
+    ``attempt_scope`` and the corresponding identifier(s):
+
+    * ``attempt_scope='exam_family'`` → match on ``exam_id`` against the
+      recruitment's exam-family id. Sourced from
+      ``aspirant_exam_attempts``.
+    * ``attempt_scope='recruitment'`` → match on ``recruitment_id``.
+      Sourced from ``aspirant_recruitment_attempts`` with
+      ``post_id is null``.
+    * ``attempt_scope='post'`` → match on ``recruitment_id``+``post_id``.
+      Sourced from ``aspirant_recruitment_attempts`` with
+      ``post_id is not null``.
+
+    Backwards compatibility: legacy callers that only set
+    ``recruitment_id`` still construct a valid model — they get
+    ``attempt_scope='exam_family'`` and the engine's exam-family lookup
+    falls back to the first available record when neither side has an
+    explicit ``exam_id``.
+    """
+
+    attempt_scope: AttemptScope = "exam_family"
+    exam_id: str | None = None
+    recruitment_id: str | None = None
+    post_id: str | None = None
     attempts_used: int = 0
 
     @field_validator("attempts_used")
@@ -206,6 +234,11 @@ class DisabilityRequirement(_Base):
 class AttemptLimit(_Base):
     category: str | None = None
     max_attempts: int | None = None
+    # Picks which ``UserExamAttempts`` record the engine should consult for
+    # this limit. See ``UserExamAttempts`` for the matching contract.
+    # Default ``'exam_family'`` matches the legacy semantics where every
+    # cap was implicitly exam-family-scoped.
+    attempt_scope: AttemptScope = "exam_family"
 
     @field_validator("max_attempts")
     @classmethod
@@ -227,6 +260,11 @@ class CertificationCriteria(_Base):
 class PostCriteria(_Base):
     post_id: str
     recruitment_id: str
+    # ``recruitments.exam_id`` (FK to ``exams.id``) — exam-family back-link
+    # added by migration 050. The engine compares this with
+    # ``UserExamAttempts.exam_id`` to route exam-family-scoped attempt
+    # caps. Nullable for recruitments that pre-date the back-link.
+    recruitment_exam_id: str | None = None
     age_criteria: AgeCriteria | None = None
     education_criteria: EducationCriteria | None = None
     attempt_limits: list[AttemptLimit] = Field(default_factory=list)

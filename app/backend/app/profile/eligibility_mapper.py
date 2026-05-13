@@ -49,7 +49,7 @@ def build_user_eligibility_profile(supabase, user_id: str) -> EligibilityProfile
     certs = safe_select(supabase, "aspirant_certifications", "certification_name,issuing_body,year_completed,is_active", user_id=user_id)
     exp = safe_select(supabase, "aspirant_experience", "sector,role,organization,start_date,end_date,years_experience", user_id=user_id)
     prefs = (safe_select(supabase, "aspirant_preferences", "target_exams,preferred_states,preferred_sectors,willing_to_relocate,study_mode,study_hours_per_day,languages_known,preferred_language", user_id=user_id) or [{}])[0]
-    attempts = safe_select(supabase, "aspirant_exam_attempts", "exam_id,attempts_used", user_id=user_id)
+    attempts = safe_select(supabase, "aspirant_exam_attempts", "exam_id,exam_ref_id,attempts_used", user_id=user_id)
     creds = safe_select(supabase, "aspirant_exam_credentials", "exam_key,score,percentile,rank_text,exam_year", user_id=user_id)
     identity = Identity(full_name=p.get("full_name"), dob=p.get("dob") or p.get("date_of_birth"), nationality=p.get("nationality"))
     if not identity.dob:
@@ -91,11 +91,21 @@ def build_user_eligibility_profile(supabase, user_id: str) -> EligibilityProfile
             logger.warning("eligibility_mapper skip experience row for user=%s: %s", user_id, exc)
     attempt_rows, attempt_seen = [], set()
     for row in attempts:
-        key = str(row.get("exam_id") or "").strip().lower()
+        # Prefer the canonical FK to `exams.id` (added by migration 030).
+        # Fall back to the legacy free-form `exam_id` text the UI wrote in
+        # earlier deploys. The runner already de-prioritises the legacy
+        # value when constructing the engine-shaped UserExamAttempts.
+        key = str(row.get("exam_ref_id") or row.get("exam_id") or "").strip().lower()
         if not key or key in attempt_seen:
             continue
         try:
-            attempt_rows.append(AttemptRow(exam_id=key, attempts_used=row.get("attempts_used") or 0))
+            attempt_rows.append(
+                AttemptRow(
+                    exam_id=key,
+                    exam_ref_id=str(row.get("exam_ref_id") or "").strip().lower() or None,
+                    attempts_used=row.get("attempts_used") or 0,
+                )
+            )
             attempt_seen.add(key)
         except ValidationError as exc:
             logger.warning("eligibility_mapper skip attempt row for user=%s: %s", user_id, exc)

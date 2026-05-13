@@ -105,7 +105,11 @@ class Preferences(_Base):
 
 
 class AttemptRow(_Base):
+    # Engine-side identity for an exam-family attempt count. Prefer the
+    # canonical FK to ``public.exams`` (``exam_ref_id``) when available;
+    # legacy ``exam_id`` is the free-form text the older UI wrote.
     exam_id: str
+    exam_ref_id: str | None = None
     attempts_used: int = 0
 
     @field_validator("attempts_used")
