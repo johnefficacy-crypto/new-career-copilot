@@ -1,4 +1,11 @@
 import React from "react";
+import { StatusBadge } from "../../../shared/ui";
+
+const READINESS_STATUS = {
+  ready: "ready",
+  partial: "partial",
+  not_ready: "missing",
+};
 
 export default function ExamListTable({ items, onSelect }) {
   const rows = Array.isArray(items) ? items : [];
@@ -17,10 +24,11 @@ export default function ExamListTable({ items, onSelect }) {
             <th className="text-left px-4 py-2">Slug</th>
             <th className="text-left px-4 py-2">Name</th>
             <th className="text-left px-4 py-2">Type</th>
-            <th className="text-right px-4 py-2">Coverage</th>
             <th className="text-right px-4 py-2">Syllabus ✓</th>
             <th className="text-right px-4 py-2">Syllabus ⏳</th>
-            <th className="text-left px-4 py-2">Active</th>
+            <th className="text-right px-4 py-2">Verified topics</th>
+            <th className="text-right px-4 py-2">High-yield</th>
+            <th className="text-left px-4 py-2">Readiness</th>
             <th className="text-right px-4 py-2">Actions</th>
           </tr>
         </thead>
@@ -30,17 +38,18 @@ export default function ExamListTable({ items, onSelect }) {
               <td className="px-4 py-2 font-mono text-xs">{e.slug}</td>
               <td className="px-4 py-2">{e.name}</td>
               <td className="px-4 py-2 text-xs text-muted-foreground">{e.exam_type}</td>
-              <td className="px-4 py-2 text-right tabular-nums">{e.coverage_active ?? 0}</td>
               <td className="px-4 py-2 text-right tabular-nums text-sage-700">{e.syllabus_verified ?? 0}</td>
               <td className="px-4 py-2 text-right tabular-nums text-dusk-700">{e.syllabus_pending ?? 0}</td>
+              <td className="px-4 py-2 text-right tabular-nums">
+                {e.verified_topic_count ?? 0}
+                <span className="text-muted-foreground"> / {e.coverage_total ?? 0}</span>
+              </td>
+              <td className="px-4 py-2 text-right tabular-nums">{e.high_yield_topic_count ?? 0}</td>
               <td className="px-4 py-2">
-                <span
-                  className={`pill text-[10px] uppercase tracking-wider ${
-                    e.is_active ? "text-sage-700" : "text-muted-foreground"
-                  }`}
-                >
-                  {e.is_active ? "Active" : "Inactive"}
-                </span>
+                <StatusBadge
+                  status={READINESS_STATUS[e.readiness_level] || "missing"}
+                  label={(e.readiness_level || "not_ready").replaceAll("_", " ")}
+                />
               </td>
               <td className="px-4 py-2 text-right">
                 <button

@@ -45,6 +45,22 @@ def _iso_hours_ago(hours: int) -> str:
     return (_now() - timedelta(hours=hours)).isoformat()
 
 
+def _as_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+# Snapshots older than this are "stale" — their evidence may no longer
+# reflect the aspirant's current behaviour and they should be recomputed.
+_STALE_SNAPSHOT_HOURS = 24 * 14
+# Score threshold above which a snapshot is flagged as a high-risk cohort.
+_HIGH_RISK_THRESHOLD = 0.6
+
+
 def _clamp(value: int, low: int, high: int) -> int:
     try:
         v = int(value)
@@ -163,11 +179,66 @@ def overview(_admin: dict = Depends(require_permission(ADMIN_PERM))) -> dict[str
         or []
     )
 
+    # Snapshot detail read — drives risk cohorts, staleness, dimension
+    # distribution, and policy-generation health. One extra read, capped
+    # like every other read in this overview.
+    snapshot_detail = _safe(
+        lambda: (
+            sb.table("aspirant_persona_snapshots")
+            .select("id, scores, dimensions, study_policy, computed_at")
+            .limit(10000)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    stale_cutoff = _iso_hours_ago(_STALE_SNAPSHOT_HOURS)
+    high_study_risk = 0
+    high_dropoff_risk = 0
+    stale_snapshots = 0
+    snapshots_with_policy = 0
+    dimension_distribution: dict[str, dict[str, int]] = {}
+    for row in snapshot_detail:
+        scores = row.get("scores")
+        if isinstance(scores, dict):
+            sr = _as_float(scores.get("study_risk"))
+            if sr is not None and sr >= _HIGH_RISK_THRESHOLD:
+                high_study_risk += 1
+            dr = _as_float(scores.get("dropoff_risk"))
+            if dr is not None and dr >= _HIGH_RISK_THRESHOLD:
+                high_dropoff_risk += 1
+        if (row.get("computed_at") or "") < stale_cutoff:
+            stale_snapshots += 1
+        if row.get("study_policy"):
+            snapshots_with_policy += 1
+        dims = row.get("dimensions")
+        if isinstance(dims, dict):
+            for dim_key, dim_val in dims.items():
+                if dim_val is None:
+                    continue
+                slot = dimension_distribution.setdefault(dim_key, {})
+                slot[str(dim_val)] = slot.get(str(dim_val), 0) + 1
+
+    # Keep only the top 3 values per dimension so the admin card stays compact.
+    top_distribution = {
+        dim: dict(sorted(values.items(), key=lambda kv: kv[1], reverse=True)[:3])
+        for dim, values in dimension_distribution.items()
+    }
+    if not snapshot_detail:
+        policy_generation_status = "no_data"
+    elif snapshots_with_policy == len(snapshot_detail):
+        policy_generation_status = "ok"
+    elif snapshots_with_policy > 0:
+        policy_generation_status = "partial"
+    else:
+        policy_generation_status = "missing"
+
     return {
         "snapshots": {
             "total": snapshots_total,
             "computed_24h": snapshots_24h,
             "latest_version": latest_version,
+            "stale": stale_snapshots,
         },
         "questions": {
             "active": active_questions,
@@ -182,6 +253,18 @@ def overview(_admin: dict = Depends(require_permission(ADMIN_PERM))) -> dict[str
         "signals": {
             "events_24h": events_24h,
             "unprocessed": unprocessed_events,
+        },
+        "risk": {
+            "high_study_risk": high_study_risk,
+            "high_dropoff_risk": high_dropoff_risk,
+            "threshold": _HIGH_RISK_THRESHOLD,
+        },
+        "dimensions": {
+            "distribution": top_distribution,
+        },
+        "policy": {
+            "generation_status": policy_generation_status,
+            "with_policy": snapshots_with_policy,
         },
         "generated_at": _now().isoformat(),
     }

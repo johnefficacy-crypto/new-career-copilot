@@ -41,6 +41,10 @@ export default function AdminExamIntelligence() {
   const [reviewError, setReviewError] = useState("");
   const [busyRowId, setBusyRowId] = useState(null);
 
+  const [coverage, setCoverage] = useState({ items: [], count: 0 });
+  const [coverageLoading, setCoverageLoading] = useState(false);
+  const [coverageStatus, setCoverageStatus] = useState("all");
+
   const loadOverview = useCallback(async () => {
     setOverviewError("");
     try {
@@ -84,11 +88,27 @@ export default function AdminExamIntelligence() {
     }
   }, [selectedExam, kind, statusFilter]);
 
+  const loadCoverage = useCallback(async () => {
+    setCoverageLoading(true);
+    try {
+      const params = new URLSearchParams({ status: coverageStatus, limit: "200" });
+      const d = await api.get(
+        `/api/admin/exam-intelligence/topic-coverage?${params.toString()}`,
+      );
+      setCoverage({ items: d?.items || [], count: d?.count || 0 });
+    } catch {
+      setCoverage({ items: [], count: 0 });
+    } finally {
+      setCoverageLoading(false);
+    }
+  }, [coverageStatus]);
+
   useEffect(() => {
     if (tab === "overview") loadOverview();
     if (tab === "exams") loadExams();
     if (tab === "review") loadItems();
-  }, [tab, loadOverview, loadExams, loadItems]);
+    if (tab === "coverage") loadCoverage();
+  }, [tab, loadOverview, loadExams, loadItems, loadCoverage]);
 
   function gotoReviewQueue(exam) {
     setSelectedExam(exam);
@@ -259,8 +279,32 @@ export default function AdminExamIntelligence() {
       ) : null}
 
       {tab === "coverage" ? (
-        <section data-testid="exam-intel-coverage">
-          <TopicCoveragePreview items={[]} />
+        <section className="space-y-3" data-testid="exam-intel-coverage">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="text-sm">
+              <span className="text-muted-foreground text-xs">Status</span>
+              <select
+                className="mt-1 block rounded-xl border border-clay-200 px-3 py-2 text-sm"
+                value={coverageStatus}
+                onChange={(e) => setCoverageStatus(e.target.value)}
+              >
+                {["all", "draft", "pending_review", "reviewed", "locked", "rejected"].map(
+                  (s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+            <button type="button" onClick={loadCoverage} className="btn btn-ghost">
+              {coverageLoading ? "Loading…" : "Refresh"}
+            </button>
+            <p className="text-xs text-muted-foreground self-center">
+              {coverage.count} row{coverage.count === 1 ? "" : "s"}
+            </p>
+          </div>
+          <TopicCoveragePreview items={coverage.items} />
         </section>
       ) : null}
 

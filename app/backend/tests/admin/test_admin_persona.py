@@ -189,6 +189,51 @@ def test_admin_with_persona_perm_can_access():
     assert r.status_code == 200
 
 
+def test_overview_includes_risk_distribution_and_policy_health():
+    sb = SBStub(_seed_full())
+    app = _build_app(sb, role="super_admin")
+    client = TestClient(app)
+    data = client.get("/api/admin/persona/overview").json()
+    # s1 has a non-empty study_policy, s2 has {} → partial generation health.
+    assert data["policy"]["generation_status"] == "partial"
+    assert data["policy"]["with_policy"] == 1
+    # Neither seeded snapshot carries study_risk/dropoff_risk scores.
+    assert data["risk"]["high_study_risk"] == 0
+    assert data["risk"]["high_dropoff_risk"] == 0
+    # s2 is ~10 days old → not stale under the 14-day cutoff.
+    assert data["snapshots"]["stale"] == 0
+    # Both snapshots carry preparation_stage=beginner.
+    dist = data["dimensions"]["distribution"]
+    assert dist["preparation_stage"]["beginner"] == 2
+    assert dist["time_constraint"]["low_availability"] == 1
+
+
+def test_overview_flags_high_risk_cohorts():
+    now = datetime.now(timezone.utc).isoformat()
+    sb = SBStub(
+        {
+            "aspirant_persona_snapshots": [
+                {
+                    "id": "s-risk",
+                    "user_id": "user-risk",
+                    "persona_version": "v1",
+                    "primary_persona": "deadline_repeater",
+                    "dimensions": {"motivation_state": "deadline_anxious"},
+                    "scores": {"study_risk": 0.72, "dropoff_risk": 0.81},
+                    "study_policy": {"preferred_task_size": "small"},
+                    "computed_at": now,
+                },
+            ],
+        }
+    )
+    app = _build_app(sb, role="super_admin")
+    client = TestClient(app)
+    data = client.get("/api/admin/persona/overview").json()
+    assert data["risk"]["high_study_risk"] == 1
+    assert data["risk"]["high_dropoff_risk"] == 1
+    assert data["policy"]["generation_status"] == "ok"
+
+
 def test_user_without_perm_blocked_on_every_endpoint():
     sb = SBStub(_seed_full())
     app = _build_app(sb, role="user")

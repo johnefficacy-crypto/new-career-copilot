@@ -39,8 +39,24 @@ def _seed():
              "created_at": "2026-04-29T00:00:00+00:00"},
         ],
         "exam_topic_coverage": [
-            {"exam_id": "e1", "topic_id": "t1", "is_active": True},
-            {"exam_id": "e1", "topic_id": "t2", "is_active": True},
+            {"id": "c1", "exam_id": "e1", "topic_id": "t1", "is_active": True,
+             "exam_phase_id": "ph1", "coverage_depth": "core", "expected_difficulty": "medium",
+             "exam_priority_score": 84, "is_high_yield": True, "confidence_score": 0.78,
+             "source_basis": "official_syllabus", "reviewer_status": "locked",
+             "reviewed_at": "2026-05-02T00:00:00+00:00", "metadata": {"evidence_count": 3},
+             "created_at": "2026-05-01T00:00:00+00:00"},
+            {"id": "c2", "exam_id": "e1", "topic_id": "t2", "is_active": True,
+             "exam_phase_id": "ph1", "coverage_depth": "normal", "expected_difficulty": "easy",
+             "exam_priority_score": 40, "is_high_yield": False, "confidence_score": 0.30,
+             "source_basis": "pyq_analysis", "reviewer_status": "draft",
+             "metadata": {}, "created_at": "2026-04-30T00:00:00+00:00"},
+        ],
+        "topics": [
+            {"id": "t1", "name": "Percentages", "slug": "percentages", "subject_id": "sub1"},
+            {"id": "t2", "name": "Ratios", "slug": "ratios", "subject_id": "sub1"},
+        ],
+        "subjects": [
+            {"id": "sub1", "name": "Quantitative Aptitude"},
         ],
         "pyq_papers": [{"id": "p1", "exam_id": "e1"}],
         "pyq_questions": [
@@ -50,7 +66,7 @@ def _seed():
         "pyq_question_topic_tags": [
             {"id": "tag1", "question_id": "q1", "topic_id": "t1",
              "tag_weight": 1.0, "tag_role": "primary", "tagging_source": "manual",
-             "confidence_score": 0.5, "reviewer_status": "pending",
+             "confidence_score": 0.30, "reviewer_status": "pending",
              "created_at": "2026-05-01T00:00:00+00:00"},
         ],
     }
@@ -108,6 +124,86 @@ def test_list_exams_includes_per_exam_counts():
     assert by_slug["ssc-cgl"]["coverage_active"] == 2
     assert by_slug["ibps-po"]["syllabus_verified"] == 0
     assert by_slug["ibps-po"]["syllabus_pending"] == 1
+
+
+def test_list_exams_includes_readiness_fields():
+    sb = SBStub(_seed())
+    client = TestClient(_build_app(sb))
+    r = client.get("/api/admin/exam-intelligence/exams")
+    assert r.status_code == 200
+    by_slug = {e["slug"]: e for e in r.json()["items"]}
+    ssc = by_slug["ssc-cgl"]
+    # c1 is locked → counts as a verified topic; c2 is draft → not.
+    assert ssc["verified_topic_count"] == 1
+    assert ssc["coverage_total"] == 2
+    assert ssc["high_yield_topic_count"] == 1
+    assert ssc["readiness_level"] == "ready"
+    assert ssc["pyq_coverage_status"] == "covered"
+    # ibps-po has a pending syllabus mention but no coverage at all.
+    ibps = by_slug["ibps-po"]
+    assert ibps["verified_topic_count"] == 0
+    assert ibps["readiness_level"] == "not_ready"
+    assert ibps["pyq_coverage_status"] == "none"
+
+
+# ─── Overview readiness extensions ────────────────────────────────────────
+def test_overview_includes_topic_coverage_and_readiness():
+    sb = SBStub(_seed())
+    client = TestClient(_build_app(sb))
+    body = client.get("/api/admin/exam-intelligence/overview").json()
+    cov = body["topic_coverage"]
+    assert cov["total"] == 2
+    assert cov["locked"] == 1
+    assert cov["draft"] == 1
+    assert cov["high_yield"] == 1
+    # tag1 confidence 0.30 < 0.5 → one low-confidence mapping.
+    assert body["low_confidence_mappings"] == 1
+    assert isinstance(body["stale_review_items"], int)
+    readiness = body["user_facing_readiness"]
+    assert readiness["level"] in {"ready", "partial", "not_ready"}
+    assert readiness["locked_topic_coverage"] == 1
+
+
+# ─── Topic coverage (read-only) ───────────────────────────────────────────
+def test_topic_coverage_returns_mapped_rows():
+    sb = SBStub(_seed())
+    client = TestClient(_build_app(sb))
+    r = client.get("/api/admin/exam-intelligence/topic-coverage?exam_id=e1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 2
+    by_id = {row["id"]: row for row in body["items"]}
+    c1 = by_id["c1"]
+    assert c1["topic"] == "Percentages"
+    assert c1["subject"] == "Quantitative Aptitude"
+    assert c1["exam"] == "SSC CGL"
+    assert c1["priority_score"] == 84
+    assert c1["high_yield"] is True
+    assert c1["status"] == "locked"
+    assert c1["evidence_count"] == 3
+
+
+def test_topic_coverage_status_filter():
+    sb = SBStub(_seed())
+    client = TestClient(_build_app(sb))
+    r = client.get("/api/admin/exam-intelligence/topic-coverage?status=locked")
+    assert r.status_code == 200
+    rows = r.json()["items"]
+    assert rows and all(row["status"] == "locked" for row in rows)
+
+
+def test_topic_coverage_invalid_status_rejected():
+    sb = SBStub(_seed())
+    client = TestClient(_build_app(sb))
+    r = client.get("/api/admin/exam-intelligence/topic-coverage?status=bogus")
+    assert r.status_code == 400
+
+
+def test_topic_coverage_blocked_for_non_admin():
+    sb = SBStub(_seed())
+    client = TestClient(_build_app(sb, role="user"))
+    r = client.get("/api/admin/exam-intelligence/topic-coverage")
+    assert r.status_code == 403
 
 
 # ─── Items list ───────────────────────────────────────────────────────────
