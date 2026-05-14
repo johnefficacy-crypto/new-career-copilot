@@ -1,14 +1,19 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { GraduationCap, ShieldAlert } from "lucide-react";
+import { GraduationCap } from "lucide-react";
 import { api } from "../../lib/api";
 import ExamIntelligenceOverviewCards from "../../features/admin/exam-intelligence/ExamIntelligenceOverviewCards";
 import ExamListTable from "../../features/admin/exam-intelligence/ExamListTable";
 import ReviewQueueTable from "../../features/admin/exam-intelligence/ReviewQueueTable";
+import TopicCoveragePreview from "../../features/admin/exam-intelligence/TopicCoveragePreview";
+import PlanImpactPreview from "../../features/admin/exam-intelligence/PlanImpactPreview";
+import { AdminSafetyBanner } from "../../shared/ui";
 
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "exams", label: "Exams" },
   { id: "review", label: "Review queue" },
+  { id: "coverage", label: "Topic Coverage" },
+  { id: "impact", label: "Plan Impact" },
 ];
 
 const KINDS = [
@@ -123,22 +128,16 @@ export default function AdminExamIntelligence() {
         </p>
       </header>
 
-      <div
-        className="soft-card rounded-2xl p-4 flex items-start gap-3"
-        data-testid="admin-exam-intel-safety"
+      <AdminSafetyBanner
+        title="Verified-only contract"
+        testId="admin-exam-intel-safety"
       >
-        <ShieldAlert className="h-5 w-5 text-dusk-600 mt-0.5" aria-hidden="true" />
-        <div className="text-sm">
-          <div className="font-semibold">Verified-only contract</div>
-          <p className="text-muted-foreground mt-1">
-            User-facing exam intelligence (Study OS today view) reads only rows
-            you've marked <span className="font-mono">verified</span>. Pending
-            and rejected rows never reach the aspirant. No AI is used to
-            generate or interpret these rows in PR5 — your judgement is the
-            source of truth.
-          </p>
-        </div>
-      </div>
+        User-facing exam intelligence (Study OS today view) reads only rows
+        you've marked <span className="font-mono">verified</span> or{" "}
+        <span className="font-mono">locked</span>. Pending and rejected rows
+        never reach the aspirant. No AI is used to generate, interpret, or
+        auto-verify these rows — your judgement is the source of truth.
+      </AdminSafetyBanner>
 
       <nav className="flex flex-wrap gap-2" aria-label="Exam intelligence tabs">
         {TABS.map((t) => (
@@ -256,6 +255,18 @@ export default function AdminExamIntelligence() {
               busyRowId={busyRowId}
             />
           ) : null}
+        </section>
+      ) : null}
+
+      {tab === "coverage" ? (
+        <section data-testid="exam-intel-coverage">
+          <TopicCoveragePreview items={[]} />
+        </section>
+      ) : null}
+
+      {tab === "impact" ? (
+        <section data-testid="exam-intel-impact">
+          <PlanImpactPreview />
         </section>
       ) : null}
     </div>

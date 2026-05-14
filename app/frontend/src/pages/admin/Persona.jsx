@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Compass, ShieldAlert } from "lucide-react";
+import { Compass } from "lucide-react";
 import { api } from "../../lib/api";
 import PersonaOverviewCards from "../../features/admin/persona/PersonaOverviewCards";
 import PersonaQuestionBankTable from "../../features/admin/persona/PersonaQuestionBankTable";
@@ -7,7 +7,8 @@ import PersonaQuestionEditor from "../../features/admin/persona/PersonaQuestionE
 import PersonaSnapshotTable from "../../features/admin/persona/PersonaSnapshotTable";
 import PersonaUserInspector from "../../features/admin/persona/PersonaUserInspector";
 import PersonaQueueTable from "../../features/admin/persona/PersonaQueueTable";
-import JsonPreview from "../../features/admin/persona/JsonPreview";
+import PersonaSignalEventsTable from "../../features/admin/persona/PersonaSignalEventsTable";
+import { AdminSafetyBanner } from "../../shared/ui";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -188,18 +189,15 @@ export default function AdminPersona() {
         </p>
       </header>
 
-      <div className="soft-card rounded-2xl p-4 flex items-start gap-3" data-testid="admin-persona-safety">
-        <ShieldAlert className="h-5 w-5 text-dusk-600 mt-0.5" aria-hidden="true" />
-        <div className="text-sm">
-          <div className="font-semibold">Internal personalization metadata</div>
-          <p className="text-muted-foreground mt-1">
-            Persona snapshots are internal personalization metadata. They must not
-            override deterministic eligibility results or official recruitment data,
-            and persona labels are never shown to users as identity copy.
-            This page is read-light: no AI, no exam intelligence, no profile edits.
-          </p>
-        </div>
-      </div>
+      <AdminSafetyBanner
+        title="Internal personalization metadata"
+        testId="admin-persona-safety"
+      >
+        Persona snapshots are internal personalization metadata. They must not
+        override deterministic eligibility results or official recruitment data,
+        and persona labels are never shown to users as identity copy.
+        This page is read-light: no AI, no exam intelligence, no profile edits.
+      </AdminSafetyBanner>
 
       <nav className="flex flex-wrap gap-2" aria-label="Persona tabs">
         {TABS.map((t) => (
@@ -367,24 +365,7 @@ export default function AdminPersona() {
               {eventsLoading ? "Loading…" : "Refresh"}
             </button>
           </div>
-          {!events.items.length ? (
-            <div className="soft-card rounded-2xl p-5 text-sm text-muted-foreground">
-              No events match the current filter.
-            </div>
-          ) : (
-            <ul className="space-y-2">
-              {events.items.map((ev) => (
-                <li key={ev.id} className="soft-card rounded-2xl p-3 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-xs">{ev.event_type}</span>
-                    <span className="text-[10px] text-muted-foreground">{ev.created_at}</span>
-                  </div>
-                  <div className="text-xs text-muted-foreground font-mono">user_id · {ev.user_id}</div>
-                  <JsonPreview label="payload" value={ev.payload} />
-                </li>
-              ))}
-            </ul>
-          )}
+          <PersonaSignalEventsTable items={events.items} />
         </section>
       ) : null}
     </div>
