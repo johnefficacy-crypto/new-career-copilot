@@ -18,6 +18,7 @@ import AdminRBAC from "../pages/admin/RBAC";
 import AdminMentorsPg from "../pages/admin/Mentors";
 import AdminCommunity from "../pages/admin/Community";
 import AdminAIPolicy from "../pages/admin/AIPolicy";
+import AdminPersona from "../pages/admin/Persona";
 
 export const adminRouteElements = (
   <Route element={<ProtectedRoute role={["admin", "super_admin"]}><AdminShell /></ProtectedRoute>}>
@@ -38,5 +39,6 @@ export const adminRouteElements = (
     <Route path="/admin/mentors" element={<AdminMentorsPg />} />
     <Route path="/admin/community" element={<AdminCommunity />} />
     <Route path="/admin/ai-policy" element={<AdminAIPolicy />} />
+    <Route path="/admin/persona" element={<AdminPersona />} />
   </Route>
 );

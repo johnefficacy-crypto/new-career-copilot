@@ -108,6 +108,7 @@ export const api = {
   get: (p) => apiFetch(p),
   post: (p, body) => apiFetch(p, { method: "POST", body: JSON.stringify(body || {}) }),
   put: (p, body) => apiFetch(p, { method: "PUT", body: JSON.stringify(body || {}) }),
+  patch: (p, body) => apiFetch(p, { method: "PATCH", body: JSON.stringify(body || {}) }),
   delete: (p) => apiFetch(p, { method: "DELETE" }),
   del: (p) => apiFetch(p, { method: "DELETE" }),
 };
