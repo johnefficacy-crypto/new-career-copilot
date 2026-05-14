@@ -1,8 +1,9 @@
 import React, { useState } from "react";
 import { Search, RefreshCw } from "lucide-react";
 import { api } from "../../../lib/api";
-import JsonPreview from "./JsonPreview";
+import { JsonPreview } from "../../../shared/ui";
 import PersonaStudyPolicyPreview from "./PersonaStudyPolicyPreview";
+import PersonaEvidenceDrawer from "./PersonaEvidenceDrawer";
 
 export default function PersonaUserInspector({ initialUserId = "" }) {
   const [userId, setUserId] = useState(initialUserId || "");
@@ -117,7 +118,10 @@ export default function PersonaUserInspector({ initialUserId = "" }) {
                 </div>
                 <JsonPreview label="Dimensions" value={latest.dimensions} />
                 <JsonPreview label="Scores" value={latest.scores} />
-                <PersonaStudyPolicyPreview policy={latest.study_policy} />
+                <PersonaEvidenceDrawer snapshot={latest} defaultOpen />
+                <div className="mt-3">
+                  <PersonaStudyPolicyPreview policy={latest.study_policy} />
+                </div>
                 <JsonPreview label="Raw study_policy JSON" value={latest.study_policy} />
               </div>
             ) : (
