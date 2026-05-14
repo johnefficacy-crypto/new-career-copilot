@@ -69,7 +69,9 @@ export default function StudyTaskCard({ task, onToggle }) {
             {[task.subject, task.topic].filter(Boolean).join(" · ")}
           </div>
         ) : null}
-        {task.reasoning ? <TaskReasoningPanel reasoning={task.reasoning} /> : null}
+        {task.id ? (
+          <TaskReasoningPanel taskId={task.id} fallbackReasoning={task.reasoning} />
+        ) : null}
       </div>
     </li>
   );
