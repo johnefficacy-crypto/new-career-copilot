@@ -46,7 +46,7 @@ export default function Focus() {
   }, [duration]);
 
   useEffect(() => {
-    if (!running) return;
+    if (!running) return undefined;
     tickRef.current = setInterval(() => {
       setRemaining((r) => {
         if (r <= 1) {
@@ -104,6 +104,7 @@ export default function Focus() {
     api.get("/api/study/focus/summary").then(setSummary).catch(() => {});
   }
 
+  const total = duration * 60;
   const mins = String(Math.floor(remaining / 60)).padStart(2, "0");
   const secs = String(remaining % 60).padStart(2, "0");
   const progress = duration > 0 ? (duration * 60 - remaining) / (duration * 60) : 0;
@@ -176,7 +177,6 @@ export default function Focus() {
                 ))}
               </div>
             </div>
-          </div>
 
           {/* Timer ring */}
           <div className="mt-7 flex flex-col items-center">

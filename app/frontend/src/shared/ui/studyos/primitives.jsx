@@ -157,14 +157,18 @@ export function MiniBar({ pct = 0, color = "#54794E", height = 6, width = 120 })
   );
 }
 
-// Page-level header — eyebrow + serif title + sub + optional right slot.
+// Prototype `Card` alias — same soft-card surface as StudyCard. A
+// `data-screen-label` attribute may be passed through via rest props.
+export const Card = StudyCard;
+
+// Page-level header — ported from the prototype `PageHeader`.
 export function PageHeader({ eyebrow, title, sub, right }) {
   return (
-    <header className="flex items-end justify-between gap-6 flex-wrap">
+    <header className="flex items-end justify-between gap-6 flex-wrap mb-6">
       <div>
         {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}
         {title ? (
-          <h1 className="font-heading text-[36px] leading-[1.05] mt-2">{title}</h1>
+          <h1 className="font-heading text-[36px] mt-2 leading-[1.05]">{title}</h1>
         ) : null}
         {sub ? <p className="text-[14px] text-clay-700 mt-2 max-w-[70ch]">{sub}</p> : null}
       </div>
@@ -173,18 +177,62 @@ export function PageHeader({ eyebrow, title, sub, right }) {
   );
 }
 
-// Right-anchored overlay drawer. Closes on backdrop click and Escape, and
-// focuses the panel on open so it is keyboard-dismissable.
-export function Drawer({ open, onClose, title, children, width = 480 }) {
-  React.useEffect(() => {
-    if (!open) return undefined;
-    function onKey(e) {
-      if (e.key === "Escape") onClose?.();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+// Inline pill tab strip — ported from the prototype `Tabs`.
+export function Tabs({ value, onChange, options = [] }) {
+  return (
+    <div className="flex flex-wrap gap-1 bg-[#F3EADB] p-1 rounded-full border border-[#E7DECB] w-fit">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          onClick={() => onChange && onChange(o.value)}
+          className={`px-3.5 py-1.5 rounded-full text-[12px] font-semibold transition ${
+            value === o.value
+              ? "bg-[#2E2218] text-[#F3EADB]"
+              : "text-clay-700 hover:bg-[#E7D6BA]"
+          }`}
+        >
+          {o.label}
+          {o.badge != null ? <span className="ml-1.5 num-mono opacity-70">{o.badge}</span> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
 
+// Dashed empty-state panel — ported from the prototype `EmptyState`.
+export function StudyEmptyState({ icon, title, body, cta }) {
+  return (
+    <div className="rounded-xl border border-dashed border-[#D6C9AC] bg-[#FBF8F2] p-8 text-center">
+      <div className="text-[28px] mb-2">{icon || "·"}</div>
+      {title ? <div className="font-heading text-[18px] text-clay-900">{title}</div> : null}
+      {body ? (
+        <div className="text-[12.5px] text-clay-700 mt-1.5 max-w-[40ch] mx-auto">{body}</div>
+      ) : null}
+      {cta ? <div className="mt-4">{cta}</div> : null}
+    </div>
+  );
+}
+
+const CONFIDENCE_TONE = (pct) => (pct >= 85 ? "sage" : pct >= 65 ? "amber" : "rose");
+
+// Confidence pill with optional evidence count — ported from the prototype.
+export function StudyConfidencePill({ value, evidence }) {
+  const pct = Math.round((Number(value) || 0) * 100);
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <Pill tone={CONFIDENCE_TONE(pct)}>Conf {pct}%</Pill>
+      {evidence != null ? (
+        <span className="num-mono text-[10.5px] text-clay-700">
+          {typeof evidence === "number" ? `${evidence} evid.` : evidence}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+// Right-anchored slide-over drawer — ported from the prototype `Drawer`.
+export function Drawer({ open, onClose, title, children, width = 480 }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-40 drawer-bg" onClick={onClose}>

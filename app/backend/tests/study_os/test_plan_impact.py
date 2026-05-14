@@ -122,6 +122,42 @@ def test_latest_decision_is_surfaced_on_recompute():
     assert out["latest_decision"]["decision"] == "stage"
 
 
+# ─── approve → lock rollout gate ──────────────────────────────────────────
+def test_approve_locks_the_coverage_row():
+    sb = SBStub(_seed())
+    row = record_plan_impact_decision(
+        sb, "cov-C", decision="approve", admin_id="admin-1"
+    )
+    assert row["coverage_locked"] is True
+    cov = next(c for c in sb.db["exam_topic_coverage"] if c["id"] == "cov-C")
+    assert cov["reviewer_status"] == "locked"
+    assert cov["reviewed_by"] == "admin-1"
+    assert cov["reviewed_at"]
+
+
+def test_hold_and_stage_leave_the_coverage_row_intact():
+    for decision in ("hold", "stage"):
+        sb = SBStub(_seed())
+        row = record_plan_impact_decision(
+            sb, "cov-C", decision=decision, admin_id="admin-1"
+        )
+        assert row["coverage_locked"] is False
+        cov = next(c for c in sb.db["exam_topic_coverage"] if c["id"] == "cov-C")
+        # untouched — still the reviewed candidate, never locked
+        assert cov["reviewer_status"] == "reviewed"
+        assert "reviewed_by" not in cov
+
+
+def test_approve_on_already_locked_row_is_a_noop_lock():
+    sb = SBStub(_seed())
+    row = record_plan_impact_decision(
+        sb, "cov-L1", decision="approve", admin_id="admin-1"
+    )
+    # the decision is still recorded, but the already-locked row is untouched
+    assert row["decision"] == "approve"
+    assert row["coverage_locked"] is False
+
+
 # ─── Admin API ────────────────────────────────────────────────────────────
 def _admin_app(sb: SBStub, role: str = "super_admin"):
     app = FastAPI()
@@ -161,8 +197,23 @@ def test_post_plan_impact_decision_endpoint():
         json={"decision": "stage", "notes": "Stage it."},
     )
     assert r.status_code == 200
-    assert r.json()["decision"] == "stage"
+    body = r.json()
+    assert body["decision"] == "stage"
+    assert body["coverage_locked"] is False
     assert len(sb.db["plan_impact_decisions"]) == 1
+
+
+def test_post_plan_impact_decision_approve_locks_via_endpoint():
+    sb = SBStub(_seed())
+    client = TestClient(_admin_app(sb))
+    r = client.post(
+        "/api/admin/exam-intelligence/plan-impact/cov-C/decision",
+        json={"decision": "approve"},
+    )
+    assert r.status_code == 200
+    assert r.json()["coverage_locked"] is True
+    cov = next(c for c in sb.db["exam_topic_coverage"] if c["id"] == "cov-C")
+    assert cov["reviewer_status"] == "locked"
 
 
 def test_post_plan_impact_decision_rejects_bad_value():
