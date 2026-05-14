@@ -35,6 +35,7 @@ from app.api.exam_intelligence import router as exam_intelligence_router
 from app.api.canonical import router as canonical_router
 from app.api.eligibility import router as eligibility_router
 from app.api.notifications import router as notifications_router
+from app.api.onboarding_unified import router as onboarding_unified_router
 from app.api.payments import router as payments_router
 from app.api.persona import router as persona_router
 from app.api.persona_questions import router as persona_questions_router
@@ -168,6 +169,7 @@ api.include_router(payments_router)  # razorpay + plans
 api.include_router(persona_router)  # internal aspirant persona v1
 api.include_router(persona_questions_router)  # PR2 progressive tiny questions
 api.include_router(study_os_router)  # PR3 Study OS Mission Control — before canonical so /study/mission-control wins
+api.include_router(onboarding_unified_router)  # unified guided onboarding — before placeholders
 api.include_router(canonical_router)  # canonical Supabase routes — must precede placeholders
 api.include_router(placeholders_router)
 app.include_router(api)
