@@ -47,6 +47,10 @@ def _looks_like_rpc_missing(exc: Exception) -> bool:
         "PGRST202" in text
         or "Could not find the function" in text
         or ("function" in text and "does not exist" in text)
+        # A client with no `.rpc` attribute at all (older SDK, or a test
+        # double) is — for our purposes — an RPC that isn't available, so
+        # fall back to the legacy Python enqueue path instead of hard-failing.
+        or (isinstance(exc, AttributeError) and "rpc" in text)
     )
 
 
