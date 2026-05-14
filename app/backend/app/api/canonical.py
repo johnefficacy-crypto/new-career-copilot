@@ -2024,6 +2024,17 @@ async def add_mock(body: MockEntry, user: dict = Depends(get_current_user)):
 
         _safe(lambda: recompute_topic_mastery(supabase, user["id"]))
 
+        # Mastery just changed — event-driven regen refreshes the plan so
+        # newly-revealed weak areas surface immediately. Best-effort: a
+        # mock submission still succeeds even if regeneration fails.
+        from app.study_os.regen import regenerate_on_signal
+
+        _safe(
+            lambda: regenerate_on_signal(
+                supabase, user["id"], event_type="mock_logged", reason="mock_logged"
+            )
+        )
+
     return mock
 
 

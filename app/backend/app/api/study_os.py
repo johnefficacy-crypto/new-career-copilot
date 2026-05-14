@@ -10,6 +10,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from app.core.auth import get_current_user
 from app.db.supabase_client import get_supabase_admin
@@ -17,6 +18,7 @@ from app.study_os.mission_control import (
     build_mission_control,
     build_task_reasoning_response,
 )
+from app.study_os.plan_preferences import get_plan_preferences, upsert_plan_preferences
 from app.study_os.planner import generate_plan
 
 logger = logging.getLogger("career_copilot.api.study_os")
@@ -140,6 +142,39 @@ async def mission_control(user: dict = Depends(get_current_user)) -> dict[str, A
                 "error": str(exc)[:200],
             },
         }
+
+
+class PlanPreferencesBody(BaseModel):
+    focus: str | None = Field(
+        default=None, pattern="^(balanced|weak_areas|exam_priority|high_yield)$"
+    )
+    max_tasks_per_day: int | None = Field(default=None, ge=1, le=8)
+    preferred_task_size: str | None = Field(
+        default=None, pattern="^(small|medium|large)$"
+    )
+    pinned_topic_ids: list[str] | None = None
+    muted_topic_ids: list[str] | None = None
+    auto_regenerate: bool | None = None
+
+
+@router.get("/plan/preferences")
+async def get_plan_prefs(user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    """Return the user's Study OS plan preferences (defaults if none saved)."""
+    return get_plan_preferences(get_supabase_admin(), user.get("id"))
+
+
+@router.put("/plan/preferences")
+async def put_plan_prefs(
+    body: PlanPreferencesBody, user: dict = Depends(get_current_user)
+) -> dict[str, Any]:
+    """Update the user's plan preferences — the weighting focus, plan-shape
+    overrides and pinned / muted topics that steer the deterministic planner.
+
+    Only the fields present in the request body are changed. Saving does not
+    itself regenerate the plan — call ``POST /plan/generate`` for that.
+    """
+    fields = body.model_dump(exclude_unset=True)
+    return upsert_plan_preferences(get_supabase_admin(), user.get("id"), **fields)
 
 
 @router.post("/plan/generate")
