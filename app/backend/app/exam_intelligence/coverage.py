@@ -174,3 +174,84 @@ def verified_pyq_topic_counts(supabase: Any, exam_id: str) -> dict[str, int]:
             continue
         counts[topic_id] = counts.get(topic_id, 0) + 1
     return counts
+
+
+def locked_topic_coverage(supabase: Any, exam_id: str) -> list[dict[str, Any]]:
+    """Return ``exam_topic_coverage`` rows whose ``reviewer_status='locked'``.
+
+    Verified-only contract: ONLY ``locked`` rows are planner-ready and may
+    surface to aspirants. ``draft`` / ``pending_review`` / ``reviewed`` /
+    ``rejected`` rows are excluded here on purpose.
+
+    Result row shape::
+
+        {
+            "topic": "Percentage",
+            "topic_id": "...",
+            "priority_score": float|None,
+            "confidence_score": float|None,
+            "high_yield": bool,
+            "status": "locked",
+        }
+
+    Sorted by ``priority_score`` descending so callers can take the top N.
+    """
+    if not exam_id:
+        return []
+
+    flat = _safe(
+        lambda: (
+            supabase.table("exam_topic_coverage")
+            .select(
+                "topic_id, exam_priority_score, is_high_yield, "
+                "confidence_score, reviewer_status"
+            )
+            .eq("exam_id", exam_id)
+            .eq("reviewer_status", "locked")
+            .limit(2000)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    if not flat:
+        return []
+
+    topic_ids = list({r.get("topic_id") for r in flat if r.get("topic_id")})
+    topic_rows = _safe(
+        lambda: (
+            supabase.table("topics")
+            .select("id, name, slug, is_active")
+            .in_("id", topic_ids)
+            .limit(2000)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    topics_by_id = {t["id"]: t for t in topic_rows if t.get("id")}
+
+    out: list[dict[str, Any]] = []
+    for r in flat:
+        topic = topics_by_id.get(r.get("topic_id")) or {}
+        if topic.get("is_active") is False:
+            continue
+        out.append(
+            {
+                "topic": topic.get("name") or topic.get("slug"),
+                "topic_id": r.get("topic_id"),
+                "priority_score": r.get("exam_priority_score"),
+                "confidence_score": r.get("confidence_score"),
+                "high_yield": bool(r.get("is_high_yield")),
+                "status": "locked",
+            }
+        )
+
+    def _score(row: dict[str, Any]) -> float:
+        try:
+            return float(row.get("priority_score") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    out.sort(key=_score, reverse=True)
+    return out

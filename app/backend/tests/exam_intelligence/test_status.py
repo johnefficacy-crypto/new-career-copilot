@@ -1,11 +1,41 @@
 """Tests for exam_intelligence status + summary helpers (PR5)."""
 from __future__ import annotations
 
+from app.exam_intelligence.coverage import locked_topic_coverage
 from app.exam_intelligence.status import (
     exam_intelligence_status,
     exam_intelligence_summary,
 )
 from tests.persona_questions._stub import SBStub
+
+
+def test_locked_topic_coverage_excludes_non_locked_rows():
+    sb = SBStub({
+        "exam_topic_coverage": [
+            {"id": "c1", "exam_id": "exam-1", "topic_id": "t1",
+             "exam_priority_score": 84, "is_high_yield": True,
+             "confidence_score": 0.78, "reviewer_status": "locked"},
+            {"id": "c2", "exam_id": "exam-1", "topic_id": "t2",
+             "exam_priority_score": 95, "is_high_yield": True,
+             "confidence_score": 0.9, "reviewer_status": "reviewed"},
+            {"id": "c3", "exam_id": "exam-1", "topic_id": "t3",
+             "exam_priority_score": 50, "is_high_yield": False,
+             "confidence_score": 0.4, "reviewer_status": "draft"},
+        ],
+        "topics": [
+            {"id": "t1", "name": "Percentage", "slug": "pct", "is_active": True},
+            {"id": "t2", "name": "Ratios", "slug": "ratios", "is_active": True},
+            {"id": "t3", "name": "Algebra", "slug": "alg", "is_active": True},
+        ],
+    })
+    rows = locked_topic_coverage(sb, "exam-1")
+    assert [r["topic"] for r in rows] == ["Percentage"]
+    assert rows[0]["status"] == "locked"
+    assert rows[0]["priority_score"] == 84
+
+
+def test_locked_topic_coverage_empty_when_no_exam():
+    assert locked_topic_coverage(SBStub({}), "") == []
 
 
 _EXAM = {

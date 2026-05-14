@@ -9,11 +9,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.auth import get_current_user
 from app.db.supabase_client import get_supabase_admin
-from app.study_os.mission_control import build_mission_control
+from app.study_os.mission_control import (
+    build_mission_control,
+    build_task_reasoning_response,
+)
 
 logger = logging.getLogger("career_copilot.api.study_os")
 
@@ -31,11 +34,38 @@ async def mission_control(user: dict = Depends(get_current_user)) -> dict[str, A
         # error must not break the Today page — return a minimal shape
         # the UI can still render.
         logger.exception("mission_control build failed for %s", user_id)
+        from datetime import datetime, timezone
+
         return {
-            "user_context": {"persona_version": "v1", "dimensions": {}, "scores": {}},
+            "date": datetime.now(timezone.utc).date().isoformat(),
+            "user_context": {
+                "persona_snapshot_id": None,
+                "persona_version": "v1",
+                "dimensions": {},
+                "scores": {},
+                "safe_user_explanation": [],
+            },
             "study_policy": {},
             "plan": None,
+            "exam_context": {
+                "exam_id": None,
+                "exam_family": None,
+                "exam": None,
+                "cycle": None,
+                "phase": None,
+                "days_remaining": None,
+                "verified_intelligence_status": "none",
+                "high_yield_topics": [],
+            },
+            "update_context": {
+                "official_updates": [],
+                "needs_verification": [],
+                "affects_plan": False,
+                "affects_deadline": False,
+                "affects_eligibility": False,
+            },
             "today_tasks": [],
+            "plan_reasoning": [],
             "metrics": {
                 "tasks_total": 0,
                 "tasks_completed": 0,
@@ -72,3 +102,25 @@ async def mission_control(user: dict = Depends(get_current_user)) -> dict[str, A
                 "error": str(exc)[:200],
             },
         }
+
+
+@router.get("/task-reasoning/{task_id}")
+async def task_reasoning(
+    task_id: str, user: dict = Depends(get_current_user)
+) -> dict[str, Any]:
+    """Why was this task scheduled? Splits reasoning into persona / exam /
+    progress / update channels plus one aspirant-safe summary line.
+
+    404 when the task does not exist or is not owned by the caller — task
+    ids cannot be probed across users.
+    """
+    user_id = user.get("id")
+    supabase = get_supabase_admin()
+    try:
+        result = build_task_reasoning_response(supabase, user_id, task_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("task_reasoning build failed for %s / %s", user_id, task_id)
+        raise HTTPException(status_code=500, detail="Task reasoning is temporarily unavailable.")
+    if result is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return result

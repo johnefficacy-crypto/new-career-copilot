@@ -13,5 +13,11 @@ PR3 does NOT:
 - call any AI.
 """
 
-from app.study_os.mission_control import build_mission_control  # noqa: F401
-from app.study_os.task_reasoning import build_task_reasoning  # noqa: F401
+from app.study_os.mission_control import (  # noqa: F401
+    build_mission_control,
+    build_task_reasoning_response,
+)
+from app.study_os.task_reasoning import (  # noqa: F401
+    build_task_reasoning,
+    build_task_reasoning_detail,
+)

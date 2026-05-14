@@ -15,13 +15,18 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
+from app.exam_intelligence.coverage import locked_topic_coverage
+from app.exam_intelligence.lookup import resolve_exam_by_id
 from app.exam_intelligence.status import exam_intelligence_status
 from app.persona.snapshots import (
     compute_persona_snapshot,
     get_latest_persona_snapshot,
 )
 from app.persona_questions.selector import select_next_question
-from app.study_os.task_reasoning import build_task_reasoning
+from app.study_os.task_reasoning import (
+    build_task_reasoning,
+    build_task_reasoning_detail,
+)
 
 logger = logging.getLogger("career_copilot.study_os.mission_control")
 
@@ -109,6 +114,259 @@ def _load_exam_intelligence(supabase: Any, user_id: str) -> dict[str, Any]:
             "verified_pyq_tags": 0,
             "verified_syllabus_mentions": 0,
         }
+
+
+# ─── Exam context (verified-only) ─────────────────────────────────────────
+def _days_remaining_for_exam(supabase: Any, exam_id: str) -> int | None:
+    """Days until the soonest upcoming cycle's ``exam_start`` for ``exam_id``.
+
+    Returns ``None`` when no future cycle date is available — the UI is
+    expected to handle partial metadata.
+    """
+    today = datetime.now(timezone.utc).date()
+    rows = _safe(
+        lambda: (
+            supabase.table("exam_cycles")
+            .select("exam_start")
+            .eq("exam_id", exam_id)
+            .gte("exam_start", today.isoformat())
+            .order("exam_start")
+            .limit(1)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    if not rows or not rows[0].get("exam_start"):
+        return None
+    try:
+        start = datetime.fromisoformat(str(rows[0]["exam_start"])).date()
+    except (ValueError, TypeError):
+        return None
+    return max(0, (start - today).days)
+
+
+def _load_exam_context(supabase: Any, exam_intel: dict[str, Any]) -> dict[str, Any]:
+    """Build the ``exam_context`` block.
+
+    ``high_yield_topics`` is populated ONLY from ``exam_topic_coverage``
+    rows whose ``reviewer_status='locked'`` — pending / reviewed / rejected
+    coverage never reaches the aspirant.
+    """
+    empty = {
+        "exam_id": None,
+        "exam_family": None,
+        "exam": (exam_intel or {}).get("exam_slug"),
+        "cycle": None,
+        "phase": None,
+        "days_remaining": None,
+        "verified_intelligence_status": "none",
+        "high_yield_topics": [],
+    }
+    if not exam_intel or not exam_intel.get("exam_id"):
+        return empty
+
+    exam_id = exam_intel["exam_id"]
+    locked = _safe(lambda: locked_topic_coverage(supabase, exam_id), default=[]) or []
+
+    family_name = None
+    exam_row = _safe(lambda: resolve_exam_by_id(supabase, exam_id), default=None)
+    if exam_row and exam_row.get("exam_family_id"):
+        fam_rows = _safe(
+            lambda: (
+                supabase.table("exam_families")
+                .select("name")
+                .eq("id", exam_row["exam_family_id"])
+                .limit(1)
+                .execute()
+                .data
+            ),
+            default=[],
+        ) or []
+        if fam_rows:
+            family_name = fam_rows[0].get("name")
+
+    available = bool(exam_intel.get("available"))
+    if locked:
+        status = "verified"
+    elif available:
+        status = "partial"
+    else:
+        status = "none"
+
+    high_yield_topics = [
+        {
+            "topic": t.get("topic"),
+            "priority_score": t.get("priority_score"),
+            "confidence_score": t.get("confidence_score"),
+            "status": t.get("status"),
+        }
+        for t in locked[:10]
+    ]
+    return {
+        "exam_id": exam_id,
+        "exam_family": family_name,
+        "exam": exam_intel.get("exam_name") or exam_intel.get("exam_slug"),
+        "cycle": None,
+        "phase": None,
+        "days_remaining": _days_remaining_for_exam(supabase, exam_id),
+        "verified_intelligence_status": status,
+        "high_yield_topics": high_yield_topics,
+    }
+
+
+# ─── Update context (discovery-only) ──────────────────────────────────────
+def _load_update_context(supabase: Any, user_id: str) -> dict[str, Any]:
+    """Return the ``update_context`` block.
+
+    No official-update intelligence source is wired into Study OS yet, so
+    this returns safe defaults. Trust rule: aggregator updates are
+    discovery-only and never auto-affect plan / deadline / eligibility.
+    """
+    return {
+        "official_updates": [],
+        "needs_verification": [],
+        "affects_plan": False,
+        "affects_deadline": False,
+        "affects_eligibility": False,
+    }
+
+
+# ─── Safe user-facing explanation ─────────────────────────────────────────
+def _safe_user_explanation(
+    snapshot: dict[str, Any],
+    metrics: dict[str, Any],
+    review: dict[str, Any],
+    study_policy: dict[str, Any],
+) -> list[str]:
+    """Plain-language explanations safe to show an aspirant.
+
+    Derived from progress signals + policy shape. Never contains a raw
+    persona dimension label — those stay internal.
+    """
+    out: list[str] = []
+    total = int(metrics.get("tasks_total") or 0)
+    rate = metrics.get("task_completion_rate")
+    backlog = int(review.get("backlog_count") or 0)
+    learning = (snapshot.get("dimensions") or {}).get("learning_behavior")
+    size = (study_policy or {}).get("preferred_task_size")
+
+    if total and rate is not None and rate < 0.5:
+        out.append(
+            "Today's plan is lighter because your recent task completion rate dropped."
+        )
+    if backlog >= 3:
+        out.append(
+            f"Revision and catch-up are prioritized because {backlog} tasks are in your backlog."
+        )
+    if learning == "high_mock_low_review":
+        out.append(
+            "Mock review is prioritized because your recent mocks haven't been reviewed yet."
+        )
+    if size == "small" and not out:
+        out.append("Tasks are kept short today to match your available study time.")
+    if not out:
+        out.append("Your plan reflects your recent study activity and current goals.")
+    return out
+
+
+# ─── Plan reasoning (tagged) ──────────────────────────────────────────────
+def _plan_reasoning(
+    snapshot: dict[str, Any],
+    exam_context: dict[str, Any],
+    metrics: dict[str, Any],
+    review: dict[str, Any],
+    study_policy: dict[str, Any],
+    update_context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Tagged reasoning behind today's plan.
+
+    Each entry carries a ``reason_type`` in
+    ``{persona, exam_intelligence, progress, update}`` so the UI can keep
+    the signal channels visually separated.
+    """
+    out: list[dict[str, Any]] = []
+
+    # persona
+    size = (study_policy or {}).get("preferred_task_size")
+    max_tasks = (study_policy or {}).get("max_tasks_per_day")
+    bits: list[str] = []
+    if max_tasks:
+        bits.append(f"up to {max_tasks} tasks/day")
+    if size:
+        bits.append(f"{size} blocks")
+    if bits:
+        out.append(
+            {
+                "reason_type": "persona",
+                "summary": "Task count and sizing (" + ", ".join(bits) + ") come from your current study policy.",
+            }
+        )
+    else:
+        out.append(
+            {
+                "reason_type": "persona",
+                "summary": "Task sizing follows your current study policy.",
+            }
+        )
+
+    # exam_intelligence
+    high_yield = exam_context.get("high_yield_topics") or []
+    if high_yield:
+        top = high_yield[0].get("topic")
+        exam = exam_context.get("exam")
+        suffix = f" for {exam}." if exam else "."
+        out.append(
+            {
+                "reason_type": "exam_intelligence",
+                "summary": f"{top} is prioritized as a verified priority topic{suffix}",
+            }
+        )
+    elif exam_context.get("verified_intelligence_status") == "partial":
+        out.append(
+            {
+                "reason_type": "exam_intelligence",
+                "summary": "Verified exam intelligence is still partial — topic prioritization is limited until more is locked.",
+            }
+        )
+
+    # progress
+    backlog = int(review.get("backlog_count") or 0)
+    mocks = int(review.get("mocks_taken") or 0)
+    total = int(metrics.get("tasks_total") or 0)
+    rate = metrics.get("task_completion_rate") or 0
+    if backlog >= 3:
+        out.append(
+            {
+                "reason_type": "progress",
+                "summary": f"Catch-up work is prioritized because {backlog} tasks are in your backlog.",
+            }
+        )
+    elif total and rate < 0.5:
+        out.append(
+            {
+                "reason_type": "progress",
+                "summary": "Today's task count is reduced because recent completion has been low.",
+            }
+        )
+    elif mocks == 0:
+        out.append(
+            {
+                "reason_type": "progress",
+                "summary": "No mocks logged this week — retrieval practice is favored over new theory.",
+            }
+        )
+
+    # update
+    if update_context.get("official_updates"):
+        out.append(
+            {
+                "reason_type": "update",
+                "summary": "A verified change to your exam affects this plan.",
+            }
+        )
+
+    return out
 
 
 # ─── Persona snapshot ──────────────────────────────────────────────────────
@@ -656,6 +914,17 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
     scores = _scores_block(snapshot)
     engine_trace = _engine_trace(snapshot, plan, exam_intel)
 
+    # Contract blocks: join persona + verified exam intelligence + progress
+    # into an explainable, aspirant-safe shape.
+    exam_context = _load_exam_context(supabase, exam_intel)
+    update_context = _load_update_context(supabase, user_id)
+    safe_user_explanation = _safe_user_explanation(
+        snapshot, metrics, review, study_policy
+    )
+    plan_reasoning = _plan_reasoning(
+        snapshot, exam_context, metrics, review, study_policy, update_context
+    )
+
     preview_flags: list[str] = []
     if not (exam_intel and exam_intel.get("available")):
         preview_flags.append("exam_intelligence_not_connected")
@@ -663,18 +932,24 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
         preview_flags.append("no_active_study_plan")
 
     return {
+        "date": _today_iso(),
         "user_context": {
+            "persona_snapshot_id": snapshot.get("id"),
             "persona_version": snapshot.get("persona_version") or "v1",
             "primary_persona": snapshot.get("primary_persona"),
             "dimensions": dimensions,
             "scores": scores,
+            "safe_user_explanation": safe_user_explanation,
         },
         "study_policy": study_policy,
         "plan": plan,
+        "exam_context": exam_context,
+        "update_context": update_context,
         "today_tasks": today_tasks,
         "metrics": metrics,
         "next_best_action": next_best_action,
         "truth_panel": truth_panel,
+        "plan_reasoning": plan_reasoning,
         "progressive_question": progressive_question,
         "engine_trace": engine_trace,
         "exam_intelligence": exam_intel,
@@ -684,3 +959,70 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
             "preview_flags": preview_flags,
         },
     }
+
+
+# ─── Task reasoning endpoint ──────────────────────────────────────────────
+def _load_task_for_user(
+    supabase: Any, user_id: str, task_id: str
+) -> dict[str, Any] | None:
+    """Load a study task, but only if its plan belongs to ``user_id``.
+
+    Returns ``None`` when the task is missing or owned by another user —
+    the route maps that to a 404 so task ids can't be probed.
+    """
+    rows = _safe(
+        lambda: (
+            supabase.table("study_tasks")
+            .select(
+                "id, plan_id, title, subject, topic, microtopic, task_type, "
+                "status, planned_minutes, duration_mins, scheduled_date"
+            )
+            .eq("id", task_id)
+            .limit(1)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    if not rows:
+        return None
+    task = rows[0]
+    plan_id = task.get("plan_id")
+    if not plan_id:
+        return None
+    plan_rows = _safe(
+        lambda: (
+            supabase.table("study_plans")
+            .select("id, user_id")
+            .eq("id", plan_id)
+            .limit(1)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    if not plan_rows or plan_rows[0].get("user_id") != user_id:
+        return None
+    return task
+
+
+def build_task_reasoning_response(
+    supabase: Any, user_id: str, task_id: str
+) -> dict[str, Any] | None:
+    """Compose the GET /api/study/task-reasoning/:task_id response.
+
+    Returns ``None`` when the task is not found / not owned by the user.
+    Never raises — every read is wrapped.
+    """
+    task = _load_task_for_user(supabase, user_id, task_id)
+    if task is None:
+        return None
+    snapshot = _load_persona_snapshot(supabase, user_id)
+    exam_intel = _load_exam_intelligence(supabase, user_id)
+    exam_context = _load_exam_context(supabase, exam_intel)
+    return build_task_reasoning_detail(
+        task,
+        dimensions=snapshot.get("dimensions") or {},
+        study_policy=dict(snapshot.get("study_policy") or {}),
+        exam_context=exam_context,
+    )

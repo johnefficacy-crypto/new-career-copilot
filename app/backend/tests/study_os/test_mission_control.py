@@ -214,6 +214,94 @@ def test_meta_preview_flags_marked():
     assert "exam_intelligence_not_connected" in out["meta"]["preview_flags"]
 
 
+def test_mission_control_includes_contract_blocks():
+    sb = SBStub({"aspirant_persona_snapshots": [_snapshot_row()]})
+    out = build_mission_control(sb, "u-1")
+    # New Phase 5 contract blocks are present and well-shaped.
+    assert out["date"]
+    assert "safe_user_explanation" in out["user_context"]
+    assert isinstance(out["user_context"]["safe_user_explanation"], list)
+    assert out["user_context"]["safe_user_explanation"]  # never empty
+    ec = out["exam_context"]
+    assert set(ec) >= {
+        "exam_id", "exam", "verified_intelligence_status", "high_yield_topics",
+        "days_remaining", "exam_family", "cycle", "phase",
+    }
+    uc = out["update_context"]
+    assert uc["official_updates"] == []
+    assert uc["affects_plan"] is False
+    assert uc["affects_deadline"] is False
+    assert uc["affects_eligibility"] is False
+    assert isinstance(out["plan_reasoning"], list)
+    for entry in out["plan_reasoning"]:
+        assert entry["reason_type"] in {"persona", "exam_intelligence", "progress", "update"}
+        assert entry["summary"]
+
+
+def test_exam_context_high_yield_only_from_locked():
+    sb = SBStub({
+        "aspirant_persona_snapshots": [_snapshot_row()],
+        "profiles": [{"id": "u-1", "target_exam": "ssc-cgl"}],
+        "exams": [
+            {"id": "exam-1", "slug": "ssc-cgl", "name": "SSC CGL",
+             "exam_type": "recruitment", "is_active": True}
+        ],
+        "exam_topic_coverage": [
+            {"id": "c1", "exam_id": "exam-1", "topic_id": "t1",
+             "exam_priority_score": 84, "is_high_yield": True,
+             "confidence_score": 0.78, "reviewer_status": "locked"},
+            {"id": "c2", "exam_id": "exam-1", "topic_id": "t2",
+             "exam_priority_score": 60, "is_high_yield": True,
+             "confidence_score": 0.6, "reviewer_status": "reviewed"},
+            {"id": "c3", "exam_id": "exam-1", "topic_id": "t3",
+             "exam_priority_score": 90, "is_high_yield": True,
+             "confidence_score": 0.9, "reviewer_status": "draft"},
+        ],
+        "topics": [
+            {"id": "t1", "name": "Percentage", "slug": "percentage", "is_active": True},
+            {"id": "t2", "name": "Ratios", "slug": "ratios", "is_active": True},
+            {"id": "t3", "name": "Time & Work", "slug": "tw", "is_active": True},
+        ],
+        "syllabus_topic_mentions": [
+            {"id": "m1", "exam_id": "exam-1", "reviewer_status": "verified"}
+        ],
+    })
+    out = build_mission_control(sb, "u-1")
+    hy = out["exam_context"]["high_yield_topics"]
+    # Only the locked row reaches the aspirant — reviewed/draft are excluded.
+    assert [t["topic"] for t in hy] == ["Percentage"]
+    assert hy[0]["status"] == "locked"
+    assert out["exam_context"]["verified_intelligence_status"] == "verified"
+
+
+def test_safe_user_explanation_never_contains_raw_persona_labels():
+    sb = SBStub({"aspirant_persona_snapshots": [_snapshot_row()]})
+    out = build_mission_control(sb, "u-1")
+    blob = " ".join(out["user_context"]["safe_user_explanation"]).lower()
+    # Raw dimension labels must stay internal.
+    for label in (
+        "low_availability", "beginner_aspirant", "insufficient_data",
+        "targeted_exam_aspirant", "high_mock_low_review",
+    ):
+        assert label not in blob
+
+
+def test_plan_reasoning_separates_persona_and_progress():
+    sb = SBStub({
+        "aspirant_persona_snapshots": [_snapshot_row()],
+        "study_plans": [{"id": "p1", "user_id": "u-1", "status": "active"}],
+        "study_tasks": [
+            {"id": f"t{i}", "plan_id": "p1", "title": f"Task {i}",
+             "status": "missed"} for i in range(4)
+        ],
+    })
+    out = build_mission_control(sb, "u-1")
+    types = {e["reason_type"] for e in out["plan_reasoning"]}
+    assert "persona" in types
+    # 4 missed tasks → backlog → a progress reason.
+    assert "progress" in types
+
+
 def test_truth_panel_summary_reflects_today_completion():
     sb = SBStub({
         "aspirant_persona_snapshots": [_snapshot_row()],
