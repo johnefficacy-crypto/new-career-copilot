@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import require_permission
 from app.db.supabase_client import get_supabase_admin
+from app.study_os.plan_impact import compute_plan_impact, record_plan_impact_decision
 
 logger = logging.getLogger("career_copilot.api.admin_exam_intelligence")
 
@@ -802,3 +803,57 @@ def review_policy_update(
     if not updated:
         raise HTTPException(status_code=404, detail="Policy update not found")
     return updated[0]
+
+
+# ─── 7. Plan Impact (before/after diff of locking a coverage row) ─────────
+@router.get("/plan-impact/{coverage_id}")
+def get_plan_impact(
+    coverage_id: str,
+    _admin: dict = Depends(require_permission(ADMIN_PERM)),
+) -> dict[str, Any]:
+    """Return the before/after planner-ranking diff of locking a coverage row.
+
+    Deterministic and read-only — see ``app/study_os/plan_impact.py``.
+    """
+    sb = get_supabase_admin()
+    impact = _safe(lambda: compute_plan_impact(sb, coverage_id), default=None)
+    if impact is None:
+        raise HTTPException(status_code=500, detail="Plan impact computation failed")
+    if not impact.get("available"):
+        raise HTTPException(status_code=404, detail="Coverage row not found")
+    return impact
+
+
+class PlanImpactDecisionBody(BaseModel):
+    decision: str = Field(..., pattern="^(hold|stage|approve)$")
+    notes: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/plan-impact/{coverage_id}/decision")
+def post_plan_impact_decision(
+    coverage_id: str,
+    body: PlanImpactDecisionBody = Body(...),
+    admin: dict = Depends(require_permission(ADMIN_PERM)),
+) -> dict[str, Any]:
+    """Record a hold / stage / approve rollout-gate decision for a coverage row.
+
+    The impact snapshot is recomputed server-side before it is stored, so
+    ``impact_summary`` always reflects the real diff at decision time. This
+    endpoint records intent only — it does not lock the coverage row.
+    """
+    sb = get_supabase_admin()
+    row = _safe(
+        lambda: record_plan_impact_decision(
+            sb,
+            coverage_id,
+            decision=body.decision,
+            admin_id=admin.get("id"),
+            notes=body.notes,
+        ),
+        default=None,
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail="Coverage row not found or decision invalid"
+        )
+    return row

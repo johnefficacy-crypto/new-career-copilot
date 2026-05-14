@@ -564,6 +564,92 @@ def test_fallback_attaches_age_and_education_rows_to_posts():
     assert posts[0]["education_criteria"][0]["min_qualification_level"] == "graduate"
 
 
+# ── Gap 8: criteria-table loads fail closed on transient errors ────────────
+
+
+class _CriteriaErrorQ(FallbackQ):
+    """FallbackQ that raises a chosen error when a chosen criteria table
+    is queried in the per-table fallback loop."""
+
+    def __init__(self, name, db, error_table, error_exc):
+        super().__init__(name, db)
+        self._error_table = error_table
+        self._error_exc = error_exc
+
+    def execute(self):
+        if self.name == self._error_table:
+            raise self._error_exc
+        return super().execute()
+
+
+def _criteria_error_sb(error_table: str, error_exc: Exception):
+    class _SB(FallbackSB):
+        def table(self, n):
+            self.queried_tables.append(n)
+            return _CriteriaErrorQ(n, self.db, error_table, error_exc)
+
+    return _SB()
+
+
+def test_criteria_fallback_reraises_transient_table_failure():
+    # A transient/unexpected failure on an expected criteria table
+    # (attempt_limits) must NOT be swallowed into "no rows" — that would
+    # silently produce an overly-permissive verdict. The loader re-raises.
+    sb = _criteria_error_sb(
+        "attempt_limits",
+        RuntimeError("503 upstream connect error / connection timeout"),
+    )
+    try:
+        runner._load_active_posts_with_criteria(sb)
+        assert False, "expected the transient failure to propagate"
+    except RuntimeError as exc:
+        assert "timeout" in str(exc)
+
+
+def test_criteria_fallback_degrades_on_genuinely_missing_table():
+    # A genuine "relation does not exist" / PGRST205 means the table is
+    # absent in this (older) deployment — safe to treat as no rows.
+    sb = _criteria_error_sb(
+        "attempt_limits",
+        RuntimeError('relation "public.attempt_limits" does not exist'),
+    )
+    posts = runner._load_active_posts_with_criteria(sb)
+    assert posts[0]["attempt_limits"] == []
+    # Other criteria still loaded normally.
+    assert posts[0]["age_criteria"][0]["max_age"] == 35
+
+
+def test_criteria_fallback_reraises_transient_certification_failure():
+    # Same fail-closed contract for the certification_criteria fetch.
+    sb = _criteria_error_sb(
+        "certification_criteria",
+        RuntimeError("500 internal error from PostgREST"),
+    )
+    try:
+        runner._load_active_posts_with_criteria(sb)
+        assert False, "expected the transient failure to propagate"
+    except RuntimeError as exc:
+        assert "500" in str(exc)
+
+
+def test_criteria_fallback_transient_failure_surfaces_as_database_error(monkeypatch):
+    # End-to-end: a transient criteria-table failure inside the runner is
+    # caught and re-raised as DatabaseError, so the recompute fails loud
+    # instead of writing a falsely-permissive verdict.
+    from app.core.errors import DatabaseError
+
+    sb = _criteria_error_sb(
+        "attempt_limits",
+        RuntimeError("connection reset by peer"),
+    )
+    monkeypatch.setattr(runner, "check_eligibility_batch", lambda *a, **k: [])
+    try:
+        runner.run_eligibility_for_user("u1", sb)
+        assert False, "expected DatabaseError"
+    except DatabaseError:
+        pass
+
+
 def test_needs_review_recruitments_excluded_from_recompute(monkeypatch):
     sb = FallbackSB(publish_status="needs_review")
     captured = {"count": None}

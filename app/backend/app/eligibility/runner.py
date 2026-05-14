@@ -121,6 +121,25 @@ def _looks_like_missing_embed(exc: Exception) -> bool:
     )
 
 
+def _looks_like_missing_relation(exc: Exception) -> bool:
+    """True only when the error means the table genuinely does not exist
+    in this deployment — as opposed to a transient/unexpected DB failure.
+
+    Used by the criteria-fallback loader to decide whether an empty result
+    is *safe* (old deployment without that optional table) or *dangerous*
+    (a real table failed to load, and silently dropping its criteria would
+    produce a falsely-permissive verdict). Genuine "missing relation" →
+    degrade to empty; anything else → re-raise so the recompute fails loud.
+    """
+    text = str(exc)
+    return (
+        "PGRST205" in text                       # PostgREST: table not in schema cache
+        or "Could not find the table" in text
+        or ("relation" in text and "does not exist" in text)  # bare Postgres 42P01
+        or "schema cache" in text
+    )
+
+
 def _attach_rows_by_post(posts: list[dict[str, Any]], table: str, rows: list[dict[str, Any]]) -> None:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -184,7 +203,13 @@ def _load_active_posts_with_criteria(supabase: Client) -> list[dict[str, Any]]:
         try:
             rows = supabase.table(table).select(select_cols).in_("post_id", post_ids).execute().data or []
         except Exception as exc:  # noqa: BLE001
-            logger.info("eligibility.%s fallback skipped: %s", table, exc)
+            # Fail closed: only treat a *genuinely missing table* as "no
+            # criteria". A transient/unexpected failure must re-raise —
+            # silently dropping e.g. attempt_limits would produce an
+            # overly-permissive verdict.
+            if not _looks_like_missing_relation(exc):
+                raise
+            logger.info("eligibility.%s table absent; treating as no rows: %s", table, exc)
             rows = []
         _attach_rows_by_post(posts, table, rows)
 
@@ -198,7 +223,9 @@ def _load_active_posts_with_criteria(supabase: Client) -> list[dict[str, Any]]:
             or []
         )
     except Exception as exc:  # noqa: BLE001
-        logger.info("eligibility.certification_criteria fallback skipped: %s", exc)
+        if not _looks_like_missing_relation(exc):
+            raise
+        logger.info("eligibility.certification_criteria table absent; treating as no rows: %s", exc)
         cert_rows = []
     _attach_rows_by_post(posts, "certification_criteria", cert_rows)
     return posts

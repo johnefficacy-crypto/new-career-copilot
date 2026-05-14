@@ -213,20 +213,27 @@ def _attempts_used_for_limit(
     limit: AttemptLimit,
     criteria: PostCriteria,
     exam_attempts: list[UserExamAttempts],
-) -> int:
-    """Look up the right ``attempts_used`` count for a given limit row.
+) -> int | None:
+    """Look up the ``attempts_used`` count for a given limit row.
+
+    Returns the count, or ``None`` when the count cannot be determined
+    unambiguously — the caller treats ``None`` as an *unverifiable*
+    attempt rule rather than guessing.
 
     Routing by `limit.attempt_scope`:
       * ``"post"``: strict match on
-        ``(attempt_scope, recruitment_id, post_id)``.
+        ``(attempt_scope, recruitment_id, post_id)``. No match → 0.
       * ``"recruitment"``: strict match on
-        ``(attempt_scope, recruitment_id)``.
-      * ``"exam_family"``: strict match on
-        ``(attempt_scope, exam_id == recruitment_exam_id)`` when both
-        sides carry an ``exam_id``; otherwise lenient — the first
-        exam-family record wins. The lenient fallback preserves the
-        pre-migration behaviour where ``aspirant_exam_attempts`` had no
-        canonical exam reference.
+        ``(attempt_scope, recruitment_id)``. No match → 0.
+      * ``"exam_family"``:
+          - When the recruitment carries a canonical ``exam_id``: strict
+            match on ``a.exam_id == recruitment_exam_id``. No match → 0.
+          - When the recruitment has no ``exam_id`` (not backfilled):
+            fall back ONLY if the candidate has at most one exam-family
+            attempt row — then it is unambiguous which family applies.
+            With two or more rows the engine cannot tell which family
+            this recruitment belongs to, so it returns ``None``
+            (unverifiable) instead of borrowing an arbitrary count.
     """
     scope = limit.attempt_scope
     if scope == "post":
@@ -239,7 +246,9 @@ def _attempts_used_for_limit(
             ),
             None,
         )
-    elif scope == "recruitment":
+        return match.attempts_used if match is not None else 0
+
+    if scope == "recruitment":
         match = next(
             (
                 a for a in exam_attempts
@@ -248,25 +257,29 @@ def _attempts_used_for_limit(
             ),
             None,
         )
-    else:  # exam_family
-        rec_exam_id = criteria.recruitment_exam_id
+        return match.attempts_used if match is not None else 0
+
+    # exam_family
+    rec_exam_id = criteria.recruitment_exam_id
+    family_attempts = [a for a in exam_attempts if a.attempt_scope == "exam_family"]
+
+    if rec_exam_id is not None:
+        # Strict: the recruitment knows its exam family. Match exactly;
+        # an attempt row in a *different* family contributes 0 here.
         match = next(
-            (
-                a for a in exam_attempts
-                if a.attempt_scope == "exam_family"
-                and (
-                    # strict: both sides populated and equal
-                    (rec_exam_id is not None
-                     and a.exam_id is not None
-                     and a.exam_id == rec_exam_id)
-                    # lenient: either side missing → first record wins
-                    or rec_exam_id is None
-                    or a.exam_id is None
-                )
-            ),
+            (a for a in family_attempts if a.exam_id == rec_exam_id),
             None,
         )
-    return match.attempts_used if match is not None else 0
+        return match.attempts_used if match is not None else 0
+
+    # Recruitment has no exam_id. Lenient fallback is only safe when it
+    # cannot be ambiguous.
+    if not family_attempts:
+        return 0
+    if len(family_attempts) == 1:
+        return family_attempts[0].attempts_used
+    # Two or more candidate rows and nothing to disambiguate on.
+    return None
 
 
 def check_eligibility(
@@ -684,19 +697,39 @@ def check_eligibility(
                 applicable, criteria, exam_attempts
             )
             max_attempts = applicable.max_attempts
-            passed = attempts_used < max_attempts
-            checks.append(
-                EligibilityCheck(
-                    rule="attempts",
-                    passed=passed,
-                    detail=(
-                        f"{attempts_used} of {max_attempts} attempts used."
-                        if passed
-                        else f"Attempt limit reached: {attempts_used}/{max_attempts} "
-                        f"for category {user_category}."
-                    ),
+            if attempts_used is None:
+                # Exam-family scope, recruitment has no canonical exam_id,
+                # and the candidate has multiple exam-family attempt rows —
+                # the engine can't tell which family this limit applies to.
+                # Surface as unverifiable rather than guessing a count.
+                is_conditional = True
+                checks.append(
+                    EligibilityCheck(
+                        rule="attempts",
+                        passed=False,
+                        is_unverifiable=True,
+                        detail=(
+                            "Attempt limit is unverifiable: this recruitment "
+                            "has no exam-family link and the candidate has "
+                            "multiple exam-family attempt records — cannot "
+                            "determine which applies."
+                        ),
+                    )
                 )
-            )
+            else:
+                passed = attempts_used < max_attempts
+                checks.append(
+                    EligibilityCheck(
+                        rule="attempts",
+                        passed=passed,
+                        detail=(
+                            f"{attempts_used} of {max_attempts} attempts used."
+                            if passed
+                            else f"Attempt limit reached: {attempts_used}/{max_attempts} "
+                            f"for category {user_category}."
+                        ),
+                    )
+                )
 
     # ── 4. Required exam credentials ────────────────────────────────────────
     if criteria.required_exam_keys:

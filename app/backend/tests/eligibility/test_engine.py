@@ -505,6 +505,61 @@ def test_attempt_scope_exam_family_strict_mismatch_treats_attempts_as_zero():
     assert result.is_eligible is True
 
 
+def test_attempt_scope_exam_family_ambiguous_is_unverifiable():
+    # Gap 2: the recruitment has no canonical exam_id AND the candidate has
+    # TWO exam-family attempt rows. The engine cannot tell which family
+    # this limit applies to. It must NOT borrow an arbitrary count — it
+    # surfaces an unverifiable attempts check and the result is conditional.
+    pc = PostCriteria(
+        post_id="p-1",
+        recruitment_id="r-1",
+        recruitment_exam_id=None,  # not backfilled
+        attempt_limits=[AttemptLimit(category=None, max_attempts=3, attempt_scope="exam_family")],
+    )
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [
+            UserExamAttempts(attempt_scope="exam_family", exam_id="exam-ssc-cgl", attempts_used=1),
+            UserExamAttempts(attempt_scope="exam_family", exam_id="exam-upsc-cse", attempts_used=9),
+        ],
+        [UserExamCredential(exam_key="gate")],
+        pc,
+    )
+    attempts_check = next(c for c in result.checks if c.rule == "attempts")
+    assert attempts_check.passed is False
+    assert attempts_check.is_unverifiable is True
+    assert "unverifiable" in attempts_check.detail.lower()
+    assert result.is_eligible is False
+    assert result.is_conditional is True
+
+
+def test_attempt_scope_exam_family_ambiguous_resolved_by_recruitment_exam_id():
+    # Same two-row candidate, but the recruitment now HAS a canonical
+    # exam_id. Strict matching disambiguates → the matching family's count
+    # is used, no unverifiable check.
+    pc = PostCriteria(
+        post_id="p-1",
+        recruitment_id="r-1",
+        recruitment_exam_id="exam-ssc-cgl",
+        attempt_limits=[AttemptLimit(category=None, max_attempts=3, attempt_scope="exam_family")],
+    )
+    result = check_eligibility(
+        _profile(),
+        _education(),
+        [
+            UserExamAttempts(attempt_scope="exam_family", exam_id="exam-ssc-cgl", attempts_used=1),
+            UserExamAttempts(attempt_scope="exam_family", exam_id="exam-upsc-cse", attempts_used=9),
+        ],
+        [UserExamCredential(exam_key="gate")],
+        pc,
+    )
+    attempts_check = next(c for c in result.checks if c.rule == "attempts")
+    assert attempts_check.is_unverifiable is False
+    assert attempts_check.passed is True  # 1 of 3 used (SSC-CGL row)
+    assert result.is_eligible is True
+
+
 def test_attempt_scope_recruitment_strict_match():
     pc = PostCriteria(
         post_id="p-1",
