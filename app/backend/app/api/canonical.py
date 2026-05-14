@@ -1919,6 +1919,19 @@ async def focus_summary(user: dict = Depends(get_current_user)):
     }
 
 
+class MockTopicBreakdown(BaseModel):
+    topic_id: str
+    subject_id: str | None = None
+    total_questions: int | None = None
+    correct_answers: int | None = None
+    wrong_answers: int | None = None
+    skipped_questions: int | None = None
+    marks: float | None = None
+    avg_time_sec: float | None = None
+    # {error_type: count}, e.g. {"careless": 2, "concept_gap": 1}
+    error_types: dict[str, int] | None = None
+
+
 class MockEntry(BaseModel):
     exam_name: str | None = None
     exam: str | None = None  # legacy alias
@@ -1932,6 +1945,12 @@ class MockEntry(BaseModel):
     wrong_answers: int | None = None
     duration_mins: int | None = None
     notes: str | None = None
+    # Optional canonical scoping + per-topic results. When topic_breakdowns
+    # is present it is persisted to mock_topic_breakdowns and feeds the
+    # Phase 6 user_topic_mastery recompute.
+    exam_id: str | None = None
+    exam_phase_id: str | None = None
+    topic_breakdowns: list[MockTopicBreakdown] | None = None
 
 
 @router_study.get("/mocks")
@@ -1950,6 +1969,28 @@ async def list_mocks(user: dict = Depends(get_current_user)):
     return {"items": rows}
 
 
+def _mock_breakdown_row(mock_test_id: str, b: "MockTopicBreakdown") -> dict[str, Any]:
+    correct = b.correct_answers
+    wrong = b.wrong_answers
+    accuracy = None
+    if correct is not None and wrong is not None and (correct + wrong) > 0:
+        accuracy = round(correct / (correct + wrong) * 100, 2)
+    row: dict[str, Any] = {
+        "mock_test_id": mock_test_id,
+        "topic_id": b.topic_id,
+        "subject_id": b.subject_id,
+        "total_questions": b.total_questions,
+        "correct_answers": correct,
+        "wrong_answers": wrong,
+        "skipped_questions": b.skipped_questions,
+        "marks": b.marks,
+        "accuracy": accuracy,
+        "avg_time_sec": b.avg_time_sec,
+        "error_types": b.error_types or {},
+    }
+    return {k: v for k, v in row.items() if v is not None}
+
+
 @router_study.post("/mocks")
 async def add_mock(body: MockEntry, user: dict = Depends(get_current_user)):
     supabase = get_supabase_admin()
@@ -1964,11 +2005,26 @@ async def add_mock(body: MockEntry, user: dict = Depends(get_current_user)):
         "wrong_answers": body.wrong_answers,
         "duration_mins": body.duration_mins,
         "notes": body.notes,
+        "exam_id": body.exam_id,
+        "exam_phase_id": body.exam_phase_id,
         "attempted_at": _now_iso(),
     }
     payload = {k: v for k, v in payload.items() if v is not None}
     inserted = supabase.table("mock_tests").insert(payload).execute().data or []
-    return inserted[0] if inserted else payload
+    mock = inserted[0] if inserted else payload
+
+    # Persist per-topic results and refresh the user's mastery snapshot.
+    # Both are best-effort: a mock submission must still succeed even if
+    # the topic-intelligence side fails.
+    mock_id = mock.get("id")
+    if body.topic_breakdowns and mock_id:
+        rows = [_mock_breakdown_row(mock_id, b) for b in body.topic_breakdowns]
+        _safe(lambda: supabase.table("mock_topic_breakdowns").insert(rows).execute())
+        from app.study_os.mastery import recompute_topic_mastery
+
+        _safe(lambda: recompute_topic_mastery(supabase, user["id"]))
+
+    return mock
 
 
 @router_study.get("/subjects")

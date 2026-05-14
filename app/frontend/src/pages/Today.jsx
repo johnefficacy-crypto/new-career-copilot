@@ -14,12 +14,15 @@ import UpdateIntelligencePanel from "../features/study/components/UpdateIntellig
 import SafeExplanationCard from "../features/study/components/SafeExplanationCard";
 import PlanReasoningCard from "../features/study/components/PlanReasoningCard";
 import ExamContextCard from "../features/study/components/ExamContextCard";
+import CompetitionContextCard from "../features/study/components/CompetitionContextCard";
 
 const EMPTY_MC = {
   user_context: { dimensions: {}, scores: {}, safe_user_explanation: [] },
   study_policy: {},
   plan: null,
   exam_context: null,
+  competition_context: null,
+  policy_update_context: null,
   update_context: null,
   today_tasks: [],
   plan_reasoning: [],
@@ -188,6 +191,7 @@ export default function Today() {
   const safeExplanation = mc.user_context?.safe_user_explanation || [];
   const planReasoning = mc.plan_reasoning || [];
   const examContext = mc.exam_context;
+  const competitionContext = mc.competition_context;
   const updateContext = mc.update_context || {};
   // Render the question card unless it would duplicate the existing
   // PersonaQuestionCard. We always use PersonaQuestionCard so the skip
@@ -295,6 +299,8 @@ export default function Today() {
       <TruthPanelCard panel={truth} />
 
       <ExamContextCard examContext={examContext} />
+
+      <CompetitionContextCard competitionContext={competitionContext} />
 
       <EngineTrace steps={engine} />
 
