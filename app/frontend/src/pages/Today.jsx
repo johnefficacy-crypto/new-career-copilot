@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from "react";
-import { Target } from "lucide-react";
 import { api } from "../lib/api";
 import PersonaQuestionCard from "../features/persona-questions/PersonaQuestionCard";
 import StudyMetricCard from "../features/study/components/StudyMetricCard";
@@ -16,6 +15,7 @@ import PlanReasoningCard from "../features/study/components/PlanReasoningCard";
 import ExamContextCard from "../features/study/components/ExamContextCard";
 import CompetitionContextCard from "../features/study/components/CompetitionContextCard";
 import PlanPreferencesCard from "../features/study/components/PlanPreferencesCard";
+import { Eyebrow, Pill, StatusDot, StudyCard, TrustStamp } from "../shared/ui/studyos";
 
 const EMPTY_MC = {
   user_context: { dimensions: {}, scores: {}, safe_user_explanation: [] },
@@ -143,32 +143,33 @@ export default function Today() {
             {error}
           </div>
         ) : null}
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
-            Today · {fallbackPlan.date}
-          </div>
-          <h1 className="font-heading text-4xl font-semibold tracking-tight mt-1">
-            Today's plan
-          </h1>
-          <p className="text-muted-foreground mt-1">
+        <header>
+          <Eyebrow>Today · Study OS Mission Control{fallbackPlan.date ? ` · ${fallbackPlan.date}` : ""}</Eyebrow>
+          <h1 className="font-heading text-[40px] leading-[1.05] mt-2">Today's plan</h1>
+          <p className="text-clay-700 mt-2">
             {done} of {tasks.length} tasks complete
           </p>
-        </div>
-        <div className="soft-card rounded-2xl p-6">
-          <div className="flex items-center gap-3 text-sm">
-            <Target className="h-4 w-4 text-clay-600" />
-            <span className="font-semibold">{fallbackPlan.plan?.theme}</span>
-            <span className="text-muted-foreground">·</span>
-            <span className="text-muted-foreground">
-              {fallbackPlan.plan?.target}
-            </span>
+        </header>
+        <StudyCard>
+          <Eyebrow>Active plan</Eyebrow>
+          <h2 className="font-heading text-[22px] mt-1">{fallbackPlan.plan?.theme || "Your study plan"}</h2>
+          {fallbackPlan.plan?.target ? (
+            <p className="text-[13px] text-clay-700 mt-1.5">{fallbackPlan.plan.target}</p>
+          ) : null}
+        </StudyCard>
+        <StudyCard padded={false}>
+          <div className="px-7 pt-6 pb-3">
+            <Eyebrow>Today's tasks</Eyebrow>
           </div>
-          <ul className="mt-5 space-y-2">
-            {tasks.map((t) => (
-              <StudyTaskCard key={t.id} task={t} onToggle={toggleTask} />
-            ))}
-          </ul>
-        </div>
+          <div className="hairline mx-7" />
+          <div className="px-7 pb-6 pt-2">
+            <ul>
+              {tasks.map((t) => (
+                <StudyTaskCard key={t.id} task={t} onToggle={toggleTask} />
+              ))}
+            </ul>
+          </div>
+        </StudyCard>
         <PersonaQuestionCard />
       </div>
     );
@@ -197,9 +198,10 @@ export default function Today() {
   const examContext = mc.exam_context;
   const competitionContext = mc.competition_context;
   const updateContext = mc.update_context || {};
-  // Render the question card unless it would duplicate the existing
-  // PersonaQuestionCard. We always use PersonaQuestionCard so the skip
-  // and save behaviour stays single-sourced in PR2.
+  const meta = mc.meta || {};
+
+  const done = tasks.filter((t) => t.done || t.status === "completed").length;
+  const pct = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
 
   return (
     <div className="space-y-6" data-testid="today-page">
@@ -209,49 +211,84 @@ export default function Today() {
         </div>
       ) : null}
 
-      <header>
-        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
-          Today · Study OS Mission Control
+      {/* Header */}
+      <header className="flex items-end justify-between gap-6 flex-wrap">
+        <div>
+          <Eyebrow>
+            Today · Study OS Mission Control{meta.generated_at ? ` · ${meta.generated_at}` : ""}
+          </Eyebrow>
+          <h1 className="font-heading text-[40px] leading-[1.05] mt-2 max-w-[22ch]">
+            Your plan, adapted from verified signals and recent progress.
+          </h1>
+          <p className="text-[15px] text-clay-700 mt-2 max-w-[64ch]">
+            {tasks.length} task{tasks.length === 1 ? "" : "s"} today · compiled from your study
+            signals, exam intelligence and recent progress. Each task is traceable.
+          </p>
         </div>
-        <h1 className="font-heading text-4xl font-semibold tracking-tight mt-1">
-          Your plan, adapted
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          Your plan adapts from your study signals and recent progress.
-        </p>
+        <div className="text-right shrink-0">
+          <Eyebrow>Status</Eyebrow>
+          <div className="font-heading text-[20px] mt-1">
+            {examContext?.exam || plan?.target || "Study OS"}
+          </div>
+          <div className="mt-2 flex justify-end">
+            <StatusDot state="live" label="Live · /api/study/mission-control" />
+          </div>
+        </div>
       </header>
 
+      {/* Active plan */}
       {plan ? (
-        <section className="soft-card rounded-2xl p-6" data-testid="active-plan">
-          <div className="flex items-center gap-3 text-sm">
-            <Target className="h-4 w-4 text-clay-600" />
-            <span className="font-semibold">{plan.theme}</span>
-            <span className="text-muted-foreground">·</span>
-            <span className="text-muted-foreground">{plan.target}</span>
+        <StudyCard data-testid="active-plan">
+          <div className="flex items-start justify-between gap-6 flex-wrap">
+            <div>
+              <Eyebrow>Active plan</Eyebrow>
+              <h2 className="font-heading text-[22px] mt-1">{plan.theme || "Your study plan"}</h2>
+              {plan.target ? (
+                <p className="text-[13px] text-clay-700 mt-1.5 max-w-[60ch]">{plan.target}</p>
+              ) : null}
+              <div className="mt-3 flex flex-wrap gap-2 items-center">
+                {examContext?.exam ? <Pill tone="ink">{examContext.exam}</Pill> : null}
+                {examContext?.phase ? <Pill tone="sage">{examContext.phase}</Pill> : null}
+                {examContext?.days_remaining != null ? (
+                  <Pill tone="clay">{examContext.days_remaining}d to D-day</Pill>
+                ) : null}
+              </div>
+            </div>
+            <div className="text-right shrink-0">
+              {meta.plan_version ? (
+                <div className="num-mono text-[10.5px] text-clay-700">{meta.plan_version}</div>
+              ) : null}
+              <div className="mt-3 flex justify-end">
+                <StatusDot state="live" label="" />
+              </div>
+            </div>
           </div>
-        </section>
+        </StudyCard>
       ) : (
-        <section className="soft-card rounded-2xl p-6" data-testid="active-plan-empty">
-          <div className="text-sm text-muted-foreground">
-            No active study plan yet. You can still set one up from{" "}
-            <a className="text-clay-700 underline" href="/app/study-plan">
+        <StudyCard data-testid="active-plan-empty">
+          <Eyebrow>Active plan</Eyebrow>
+          <p className="text-sm text-clay-700 mt-2">
+            No active study plan yet. You can set one up from{" "}
+            <a className="text-clay-800 underline underline-offset-2" href="/app/study-plan">
               Study Plan
             </a>
             .
-          </div>
-        </section>
+          </p>
+        </StudyCard>
       )}
 
       <SafeExplanationCard explanations={safeExplanation} />
 
+      {/* Metrics row */}
       <section
-        className="grid grid-cols-2 md:grid-cols-4 gap-3"
+        className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3"
         data-testid="metrics-row"
       >
         <StudyMetricCard
           label="Today"
           value={`${metrics.tasks_completed || 0}/${metrics.tasks_total || 0}`}
-          hint={`${formatPercent(metrics.task_completion_rate)} complete`}
+          delta={`${formatPercent(metrics.task_completion_rate)} complete`}
+          state="live"
         />
         <StudyMetricCard
           label="Adherence"
@@ -260,43 +297,82 @@ export default function Today() {
               ? "—"
               : formatPercent(metrics.adherence)
           }
-          hint={`${metrics.hours_studied_7d || 0}h studied this week`}
-          accent="sage"
+          delta="7-day"
+          tone="sage"
+          state={metrics.adherence == null ? "preview" : "live"}
+        />
+        <StudyMetricCard
+          label="Hours · 7d"
+          value={`${metrics.hours_studied_7d || 0}h`}
+          delta={`of ${metrics.hours_planned_week || 0}h planned`}
+          state="live"
         />
         <StudyMetricCard
           label="Backlog"
           value={metrics.backlog_count ?? 0}
-          hint="Tasks to catch up"
-          accent={metrics.backlog_count && metrics.backlog_count >= 5 ? "dusk" : "clay"}
+          delta="Tasks to catch up"
+          tone={metrics.backlog_count && metrics.backlog_count >= 5 ? "amber" : "clay"}
+          state="live"
         />
         <StudyMetricCard
           label="Mocks · week"
           value={metrics.mocks_taken ?? 0}
-          hint="Logged this week"
+          delta="Logged this week"
+          state="live"
+        />
+        <StudyMetricCard
+          label="Plan progress"
+          value={`${pct}%`}
+          delta={`${done}/${tasks.length} done`}
+          tone="sage"
+          state="live"
         />
       </section>
 
       {nextBest ? <NextBestActionCard action={nextBest} /> : null}
 
-      <section className="soft-card rounded-2xl p-6" data-testid="today-tasks">
-        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
-          Today's tasks
+      {/* Tasks + reasoning sidebar */}
+      <div className="grid lg:grid-cols-[1fr_360px] gap-6 items-start">
+        <StudyCard padded={false} data-testid="today-tasks">
+          <div className="px-7 pt-6 pb-4 flex items-end justify-between gap-4">
+            <div>
+              <Eyebrow>Today's tasks</Eyebrow>
+              <h2 className="font-heading text-[22px] mt-1 leading-tight">
+                Each task carries its reasoning.
+              </h2>
+              <p className="text-[12.5px] text-clay-700 mt-1">
+                Tap "Why this task" to open the reasoning drawer.
+              </p>
+            </div>
+            <div className="text-right shrink-0">
+              <div className="num-mono text-[11.5px] text-clay-700">
+                {done}/{tasks.length} done · {pct}%
+              </div>
+              <div className="mt-1.5 w-[160px] h-[6px] bg-[#EFE2C9] rounded-full overflow-hidden">
+                <div className="h-full bg-sage-500" style={{ width: `${pct}%` }} />
+              </div>
+            </div>
+          </div>
+          <div className="hairline mx-7" />
+          <div className="px-7 pb-6 pt-2">
+            {tasks.length ? (
+              <ul>
+                {tasks.map((t) => (
+                  <StudyTaskCard key={t.id} task={t} onToggle={toggleTask} />
+                ))}
+              </ul>
+            ) : (
+              <p className="py-6 text-sm text-clay-700">
+                No tasks scheduled for today. The next-best action above will get you moving.
+              </p>
+            )}
+          </div>
+        </StudyCard>
+        <div className="space-y-6">
+          <PersonaQuestionCard />
+          <PlanReasoningCard reasoning={planReasoning} />
         </div>
-        {tasks.length ? (
-          <ul className="mt-3 space-y-2">
-            {tasks.map((t) => (
-              <StudyTaskCard key={t.id} task={t} onToggle={toggleTask} />
-            ))}
-          </ul>
-        ) : (
-          <p className="mt-3 text-sm text-muted-foreground">
-            No tasks scheduled for today. The next-best action above will get
-            you moving.
-          </p>
-        )}
-      </section>
-
-      <PlanReasoningCard reasoning={planReasoning} />
+      </div>
 
       <PlanPreferencesCard onRegenerated={() => setReloadKey((k) => k + 1)} />
 
@@ -304,9 +380,10 @@ export default function Today() {
 
       <TruthPanelCard panel={truth} />
 
-      <ExamContextCard examContext={examContext} />
-
-      <CompetitionContextCard competitionContext={competitionContext} />
+      <div className="grid lg:grid-cols-2 gap-6">
+        <ExamContextCard examContext={examContext} />
+        <CompetitionContextCard competitionContext={competitionContext} />
+      </div>
 
       <EngineTrace steps={engine} />
 
@@ -318,7 +395,19 @@ export default function Today() {
         isPreview={false}
       />
 
-      <PersonaQuestionCard />
+      {/* Trust policy footer */}
+      <footer className="pt-2 pb-6 flex items-center justify-between flex-wrap gap-3">
+        <div className="num-mono text-[10.5px] text-clay-700">
+          Career Copilot · Study OS{meta.plan_version ? ` · ${meta.plan_version}` : ""}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="num-mono text-[10.5px] text-clay-700">Trust policy:</span>
+          <TrustStamp kind="official" label="Auto-apply after review" />
+          <TrustStamp kind="aggregator" label="Discovery only" />
+          <TrustStamp kind="research" label="Hint only" />
+          <TrustStamp kind="opportunity" label="Adjacent" />
+        </div>
+      </footer>
     </div>
   );
 }

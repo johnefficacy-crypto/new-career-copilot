@@ -1,7 +1,11 @@
 import React from "react";
+import { Eyebrow, SectionHeader, MiniBar, StatusDot } from "../../../shared/ui/studyos";
+import { StudyCard } from "../../../shared/ui/studyos";
 
 const SIZE_LABEL = { small: "Small", medium: "Medium", large: "Large" };
 
+// Mirrors the prototype StudyPolicyPreview: 3-column grid of daily target,
+// task-mix bars and constraints. Generated from the persona snapshot.
 export default function StudyPolicyPreview({ policy }) {
   if (!policy || !Object.keys(policy).length) return null;
   const mix = policy.task_mix || {};
@@ -10,70 +14,66 @@ export default function StudyPolicyPreview({ policy }) {
   const constraintBadges = Object.entries(constraints)
     .filter(([, v]) => v === true)
     .map(([k]) => k.replaceAll("_", " "));
+  const mixEntries = Object.entries(mix);
 
   return (
-    <section
-      className="soft-card rounded-2xl p-5"
-      aria-labelledby="study-policy-heading"
-      data-testid="study-policy-preview"
-    >
-      <h2
-        id="study-policy-heading"
-        className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold"
-      >
-        Today's policy
-      </h2>
-      <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+    <StudyCard data-testid="study-policy-preview">
+      <SectionHeader
+        eyebrow="Study policy preview"
+        title="The rules behind today's task selection."
+        sub="Generated from your persona snapshot. Adjust it from Plan preferences."
+        right={<StatusDot state="partial" label="Persona-derived" />}
+      />
+      <div className="grid md:grid-cols-3 gap-5">
         <div>
-          <div className="text-xs text-muted-foreground">Daily target</div>
-          <div className="font-medium text-clay-800">
+          <Eyebrow>Daily target</Eyebrow>
+          <div className="font-heading text-[18px] mt-1.5">
             {policy.daily_minutes_target ? `${policy.daily_minutes_target} min` : "—"}
           </div>
-        </div>
-        <div>
-          <div className="text-xs text-muted-foreground">Max tasks / day</div>
-          <div className="font-medium text-clay-800">
-            {policy.max_tasks_per_day ?? "—"}
+          <div className="text-[12px] text-clay-700 mt-1">
+            Max {policy.max_tasks_per_day ?? "—"} tasks · prefer {sizeLabel.toLowerCase()}
+            {policy.nudge_style
+              ? ` · ${String(policy.nudge_style).replaceAll("_", " ")} nudges`
+              : ""}
           </div>
         </div>
         <div>
-          <div className="text-xs text-muted-foreground">Preferred size</div>
-          <div className="font-medium text-clay-800">{sizeLabel}</div>
+          <Eyebrow>Task mix</Eyebrow>
+          {mixEntries.length ? (
+            <div className="mt-2 space-y-1.5">
+              {mixEntries.map(([k, v]) => {
+                const pct = Math.round(Number(v || 0) * 100);
+                return (
+                  <div key={k} className="flex items-center gap-2 text-[12px]">
+                    <span className="w-[110px] text-clay-800 capitalize">
+                      {k.replaceAll("_", " ")}
+                    </span>
+                    <MiniBar pct={pct / 100} width={110} />
+                    <span className="num-mono text-[11px] text-clay-700">{pct}%</span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="mt-2 text-[12px] text-clay-700">No task mix configured.</p>
+          )}
         </div>
         <div>
-          <div className="text-xs text-muted-foreground">Nudge style</div>
-          <div className="font-medium text-clay-800">
-            {(policy.nudge_style || "").replaceAll("_", " ") || "—"}
-          </div>
+          <Eyebrow>Constraints</Eyebrow>
+          {constraintBadges.length ? (
+            <ul className="mt-2 space-y-1.5 text-[12.5px] text-clay-800">
+              {constraintBadges.map((c) => (
+                <li key={c} className="flex items-start gap-2 capitalize">
+                  <span className="text-sage-600 mt-0.5" aria-hidden="true">·</span>
+                  <span>{c}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 text-[12px] text-clay-700">No special constraints.</p>
+          )}
         </div>
       </div>
-      {Object.keys(mix).length ? (
-        <div className="mt-4">
-          <div className="text-xs text-muted-foreground mb-1">Task mix</div>
-          <div className="flex flex-wrap gap-1">
-            {Object.entries(mix).map(([k, v]) => (
-              <span
-                key={k}
-                className="pill text-[10px] uppercase tracking-wider bg-clay-50 text-clay-700 px-2 py-0.5 rounded-full"
-              >
-                {k.replaceAll("_", " ")} {Math.round(Number(v || 0) * 100)}%
-              </span>
-            ))}
-          </div>
-        </div>
-      ) : null}
-      {constraintBadges.length ? (
-        <div className="mt-3 flex flex-wrap gap-1">
-          {constraintBadges.map((c) => (
-            <span
-              key={c}
-              className="pill text-[10px] uppercase tracking-wider bg-sage-50 text-sage-700 px-2 py-0.5 rounded-full"
-            >
-              {c}
-            </span>
-          ))}
-        </div>
-      ) : null}
-    </section>
+    </StudyCard>
   );
 }

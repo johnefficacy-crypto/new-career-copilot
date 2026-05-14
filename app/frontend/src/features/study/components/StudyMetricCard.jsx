@@ -1,22 +1,29 @@
 import React from "react";
+import { Eyebrow, StatusDot } from "../../../shared/ui/studyos";
 
-export default function StudyMetricCard({ label, value, hint, accent = "clay" }) {
-  const accentClass =
-    accent === "sage"
-      ? "text-sage-600"
-      : accent === "dusk"
-        ? "text-dusk-600"
-        : "text-clay-600";
+// Mirrors the prototype MetricsRow card: grained soft-card, eyebrow label,
+// serif value, a small delta line and a status dot in the top-right.
+const DELTA_TONE = {
+  sage: "text-sage-700",
+  amber: "text-[#6F5A22]",
+  clay: "text-clay-700",
+};
+
+export default function StudyMetricCard({ label, value, hint, delta, tone = "clay", state }) {
+  const deltaText = delta ?? hint;
   return (
-    <div className="soft-card rounded-2xl p-4" data-testid={`metric-${label}`}>
-      <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
-        {label}
-      </div>
-      <div className={`mt-1 font-heading text-2xl font-semibold ${accentClass}`}>
+    <div className="soft-card grain relative overflow-hidden rounded-[14px] px-4 py-3.5" data-testid={`metric-${label}`}>
+      <Eyebrow>{label}</Eyebrow>
+      <div className="font-heading text-[22px] mt-1.5 leading-none">
         {value === null || value === undefined || value === "" ? "—" : value}
       </div>
-      {hint ? (
-        <div className="mt-1 text-xs text-muted-foreground">{hint}</div>
+      {deltaText ? (
+        <div className={`text-[11px] mt-2 ${DELTA_TONE[tone] || DELTA_TONE.clay}`}>{deltaText}</div>
+      ) : null}
+      {state ? (
+        <div className="absolute top-3 right-3">
+          <StatusDot state={state} label="" />
+        </div>
       ) : null}
     </div>
   );

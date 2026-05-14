@@ -9,6 +9,7 @@ import PersonaUserInspector from "../../features/admin/persona/PersonaUserInspec
 import PersonaQueueTable from "../../features/admin/persona/PersonaQueueTable";
 import PersonaSignalEventsTable from "../../features/admin/persona/PersonaSignalEventsTable";
 import { AdminSafetyBanner } from "../../shared/ui";
+import { StatusDot } from "../../shared/ui/studyos";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -177,16 +178,19 @@ export default function AdminPersona() {
 
   return (
     <div className="space-y-6" data-testid="admin-persona-page">
-      <header>
-        <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
-          <Compass className="h-3.5 w-3.5" /> Persona controls
+      <header className="flex items-end justify-between gap-6 flex-wrap">
+        <div>
+          <div className="eyebrow inline-flex items-center gap-2">
+            <Compass className="h-3.5 w-3.5" /> Persona controls · internal
+          </div>
+          <h1 className="font-heading text-[34px] leading-[1.05] mt-2">Persona Controls</h1>
+          <p className="text-[14px] text-clay-700 mt-2 max-w-[72ch]">
+            Inspect progressive questions, persona snapshots, and Study OS policy outputs.
+            Persona is internal personalization metadata — not identity, diagnosis, eligibility
+            truth, or recruitment truth.
+          </p>
         </div>
-        <h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight">
-          Persona Controls
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          Inspect progressive questions, persona snapshots, and Study OS policy outputs.
-        </p>
+        <StatusDot state="live" label="Live · /api/admin/persona" />
       </header>
 
       <AdminSafetyBanner
@@ -199,17 +203,20 @@ export default function AdminPersona() {
         This page is read-light: no AI, no exam intelligence, no profile edits.
       </AdminSafetyBanner>
 
-      <nav className="flex flex-wrap gap-2" aria-label="Persona tabs">
+      <nav
+        className="flex flex-wrap gap-1 bg-[#F3EADB] p-1 rounded-full border border-[#E7DECB] w-fit"
+        aria-label="Persona tabs"
+      >
         {TABS.map((t) => (
           <button
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
             data-testid={`admin-persona-tab-${t.id}`}
-            className={`pill px-3 py-1 text-xs rounded-full border ${
+            className={`px-3.5 py-1.5 rounded-full text-[12px] font-semibold transition ${
               tab === t.id
-                ? "border-clay-500 bg-clay-50 text-clay-800"
-                : "border-clay-200 text-muted-foreground hover:bg-clay-50"
+                ? "bg-[#2E2218] text-[#F3EADB]"
+                : "text-clay-700 hover:bg-[#E7D6BA]"
             }`}
             aria-pressed={tab === t.id}
           >

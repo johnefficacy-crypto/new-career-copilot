@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { AlertCircle, CheckCircle2, ArrowRight } from "lucide-react";
 import { api } from "../../lib/api";
+import { Eyebrow, StatusDot, StudyCard, SectionHeader } from "../../shared/ui/studyos";
 
 // All optional fields below are read defensively — the weekly-review
 // endpoint may or may not return them. Anything missing renders as a calm
@@ -72,155 +72,142 @@ export default function WeeklyReview() {
       ? d.backlog_end - d.backlog_start
       : null;
 
+  const cells = [
+    { k: "Planned vs studied", v: `${d.hours_studied}h`, sub: `of ${d.hours_planned}h planned` },
+    { k: "Adherence", v: `${adherencePct}%`, sub: "Goal 85%" },
+    {
+      k: "Task completion",
+      v: taskCompletion,
+      sub: taskCompletion === "—" ? "Not reported" : "Done / planned",
+    },
+    {
+      k: "Mocks taken",
+      v: d.mocks_taken,
+      sub: d.mock_trend.length ? `trend ${d.mock_trend.slice(-2).join(" → ")}` : "No trend yet",
+    },
+    {
+      k: "Backlog",
+      v: backlogMoved === null ? "—" : `${d.backlog_start} → ${d.backlog_end}`,
+      sub:
+        backlogMoved === null
+          ? "Not reported"
+          : backlogMoved > 0
+            ? `+${backlogMoved} carried`
+            : backlogMoved < 0
+              ? `${backlogMoved} cleared`
+              : "Held steady",
+    },
+    {
+      k: "Revision coverage",
+      v: d.revision_coverage !== null ? `${Math.round(d.revision_coverage * 100)}%` : "—",
+      sub: d.revision_coverage !== null ? "Revised on time" : "Not reported",
+    },
+  ];
+
   return (
     <div className="space-y-6" data-testid="weekly-review-page">
-      {err && <div className="text-xs text-clay-700">{err}</div>}
-      <div>
-        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
-          Weekly review · {d.week_of}
+      {err && <div className="rounded-xl bg-clay-50 text-clay-800 text-xs px-3 py-2">{err}</div>}
+
+      <header className="flex items-end justify-between gap-6 flex-wrap">
+        <div>
+          <Eyebrow>Weekly review · {d.week_of}</Eyebrow>
+          <h1 className="font-heading text-[36px] leading-[1.05] mt-2">Close the loop.</h1>
+          <p className="text-[14px] text-clay-700 mt-2 max-w-[64ch]">
+            An honest read of the week — what improved, what declined, and what Study OS will
+            change next. Calmly. No streaks. No shame.
+          </p>
         </div>
-        <h1 className="font-heading text-4xl font-semibold tracking-tight mt-1">The honest panel.</h1>
-        <p className="text-muted-foreground mt-1">
-          A calm read on the week — what held, what slipped, and what changes next.
-        </p>
-      </div>
+        <StatusDot state="live" label="Live · /api/study/weekly-review" />
+      </header>
 
       {/* Headline metrics */}
-      <div className="grid md:grid-cols-3 lg:grid-cols-5 gap-4">
-        <Stat
-          label="Planned vs studied"
-          value={`${d.hours_studied}h`}
-          foot={`of ${d.hours_planned}h planned`}
-        />
-        <Stat label="Adherence" value={`${adherencePct}%`} foot="Goal 85%" />
-        <Stat
-          label="Task completion"
-          value={taskCompletion}
-          foot={taskCompletion === "—" ? "Not reported" : "Tasks done / planned"}
-        />
-        <Stat
-          label="Mocks taken"
-          value={d.mocks_taken}
-          foot={d.mock_trend.length ? `trend ${d.mock_trend.slice(-2).join(" → ")}` : "No trend yet"}
-        />
-        <Stat
-          label="Revision coverage"
-          value={d.revision_coverage !== null ? `${Math.round(d.revision_coverage * 100)}%` : "—"}
-          foot={d.revision_coverage !== null ? "Topics revised on time" : "Not reported"}
-        />
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        {cells.map((c) => (
+          <div
+            key={c.k}
+            className="soft-card grain relative overflow-hidden rounded-[14px] px-4 py-3.5"
+          >
+            <Eyebrow>{c.k}</Eyebrow>
+            <div className="font-heading text-[24px] mt-1.5 leading-none">{c.v}</div>
+            <div className="text-[11px] text-clay-700 mt-2">{c.sub}</div>
+          </div>
+        ))}
       </div>
 
       {/* Improved / declined */}
-      <div className="grid md:grid-cols-2 gap-4">
-        <div className="soft-card rounded-2xl p-6">
-          <div className="text-[11px] uppercase tracking-widest text-muted-foreground">What improved</div>
+      <div className="grid md:grid-cols-2 gap-6">
+        <StudyCard className="!bg-[#F0F5EF] !border-[#B9CFAF]">
+          <Eyebrow>What improved</Eyebrow>
+          <h2 className="font-heading text-[20px] mt-1.5 text-[#33482F]">These are working.</h2>
           {d.highlights.length ? (
-            <ul className="mt-3 space-y-2">
+            <ul className="mt-4 space-y-2.5">
               {d.highlights.map((h, i) => (
-                <li key={`${h}-${i}`} className="flex items-start gap-2 text-sm">
-                  <CheckCircle2 className="h-4 w-4 text-sage-500 mt-0.5 shrink-0" aria-hidden="true" />
+                <li key={`${i}`} className="flex items-start gap-2 text-[13px] text-[#33482F]">
+                  <span className="text-[#54794E] mt-0.5" aria-hidden="true">·</span>
                   <span>{typeof h === "string" ? h : h?.message || ""}</span>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="mt-3 text-sm text-muted-foreground">
+            <p className="mt-3 text-[13px] text-[#41603D]">
               Nothing flagged as improved yet — keep logging and the panel fills in.
             </p>
           )}
-        </div>
-        <div className="soft-card rounded-2xl p-6">
-          <div className="text-[11px] uppercase tracking-widest text-muted-foreground">What declined</div>
+        </StudyCard>
+        <StudyCard className="!bg-[#F2DDD6] !border-[#D9B4A6]">
+          <Eyebrow>What declined</Eyebrow>
+          <h2 className="font-heading text-[20px] mt-1.5 text-[#7A3925]">These need attention.</h2>
           {d.corrections.length ? (
-            <ul className="mt-3 space-y-2">
+            <ul className="mt-4 space-y-2.5">
               {d.corrections.map((c, i) => (
-                <li key={`${c}-${i}`} className="flex items-start gap-2 text-sm">
-                  <AlertCircle className="h-4 w-4 text-clay-500 mt-0.5 shrink-0" aria-hidden="true" />
+                <li key={`${i}`} className="flex items-start gap-2 text-[13px] text-[#7A3925]">
+                  <span className="opacity-60 mt-0.5" aria-hidden="true">·</span>
                   <span>{typeof c === "string" ? c : c?.message || ""}</span>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="mt-3 text-sm text-muted-foreground">
+            <p className="mt-3 text-[13px] text-[#7A3925]/80">
               No declines to correct this week. That is a good week.
             </p>
           )}
-        </div>
-      </div>
-
-      {/* Backlog movement */}
-      <div className="soft-card rounded-2xl p-6">
-        <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Backlog movement</div>
-        {d.backlog_start !== null && d.backlog_end !== null ? (
-          <div className="mt-3 flex items-center gap-4">
-            <div className="text-center">
-              <div className="font-heading text-2xl font-semibold">{d.backlog_start}</div>
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Start</div>
-            </div>
-            <ArrowRight className="h-4 w-4 text-clay-400" aria-hidden="true" />
-            <div className="text-center">
-              <div className="font-heading text-2xl font-semibold">{d.backlog_end}</div>
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">End</div>
-            </div>
-            <span
-              className={`pill ${backlogMoved > 0 ? "pill-clay" : "pill-sage"}`}
-            >
-              {backlogMoved > 0 ? `+${backlogMoved} carried` : backlogMoved < 0 ? `${backlogMoved} cleared` : "Held steady"}
-            </span>
-          </div>
-        ) : (
-          <p className="mt-2 text-sm text-muted-foreground">
-            Backlog movement is not reported for this week yet.
-          </p>
-        )}
+        </StudyCard>
       </div>
 
       {/* What Study OS will change next + plan change preview */}
-      <section
-        className="soft-card rounded-2xl p-6"
-        data-testid="plan-change-preview"
-        aria-labelledby="plan-change-heading"
-      >
-        <div className="flex items-center justify-between gap-3">
-          <h2
-            id="plan-change-heading"
-            className="text-[11px] uppercase tracking-widest text-muted-foreground"
-          >
-            What Study OS will change next
-          </h2>
-          {d.next_changes.length ? null : (
-            <span className="pill pill-dusk text-[10px]">Preview</span>
-          )}
-        </div>
+      <StudyCard data-testid="plan-change-preview">
+        <SectionHeader
+          eyebrow="What Study OS will change next"
+          title="Preview only. Nothing applies silently."
+          sub="The engine drafts adaptations from this week's signals — they preview here before they reach your week."
+          right={
+            d.next_changes.length ? (
+              <StatusDot state="live" label="" />
+            ) : (
+              <span className="stamp stamp-preview">Preview</span>
+            )
+          }
+        />
         {d.next_changes.length ? (
-          <ol className="mt-3 space-y-2">
+          <ol className="space-y-3">
             {d.next_changes.map((c, i) => (
-              <li key={`${i}`} className="flex items-start gap-3 text-sm">
-                <span className="font-mono text-xs text-muted-foreground mt-0.5">
+              <li key={`${i}`} className="grid grid-cols-[40px_1fr] gap-3 items-start">
+                <div className="num-mono text-[12px] text-clay-700 pt-0.5">
                   {String(i + 1).padStart(2, "0")}
-                </span>
-                <span>{typeof c === "string" ? c : c?.message || c?.change || ""}</span>
+                </div>
+                <div className="text-[13.5px] text-clay-800">
+                  {typeof c === "string" ? c : c?.message || c?.change || ""}
+                </div>
               </li>
             ))}
           </ol>
         ) : (
-          <p className="mt-2 text-sm text-muted-foreground">
-            No plan changes are scheduled from this review yet. When the planner
-            proposes adjustments, they will preview here before they reach your week —
-            nothing changes silently.
+          <p className="text-[13px] text-clay-700">
+            No plan changes are scheduled from this review yet. When the planner proposes
+            adjustments, they will preview here before they reach your week.
           </p>
         )}
-      </section>
-    </div>
-  );
-}
-
-function Stat({ label, value, foot }) {
-  return (
-    <div className="soft-card rounded-2xl p-5">
-      <div className="text-[11px] uppercase tracking-widest text-muted-foreground">{label}</div>
-      <div className="mt-2 font-heading text-3xl font-semibold">{value}</div>
-      <div className="text-xs text-muted-foreground mt-1">{foot}</div>
+      </StudyCard>
     </div>
   );
 }

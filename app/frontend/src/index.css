@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -179,3 +179,160 @@ h1, h2, h3, h4, h5 {
   background: hsl(var(--primary));
   box-shadow: 0 0 0 4px rgba(166, 128, 87, 0.16);
 }
+
+/* ───────────────────────────────────────────────────────────────────
+   Study OS prototype design system
+   Ported verbatim from docs/reference/study-OS_UI_reference (studyos.html)
+   so production screens share the prototype's visual language.
+   ─────────────────────────────────────────────────────────────────── */
+
+/* type */
+.eyebrow {
+  font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase;
+  font-weight: 600; color: rgba(46, 34, 24, 0.55);
+}
+.eyebrow-dark { color: #D6BC93; }
+.num-mono { font-variant-numeric: tabular-nums; font-family: "JetBrains Mono", ui-monospace, monospace; }
+
+/* surfaces */
+.hairline { height: 1px; background: linear-gradient(90deg, transparent, #D6C9AC, transparent); }
+.rule { border-top: 1px solid #E7DECB; }
+
+/* extra pill tones (base .pill defined above) */
+.pill-ink { background: #2E2218; color: #FBF6EF; }
+.pill-outline { background: transparent; border: 1px solid #DCD0B6; color: #4E3A29; }
+.pill-rose { background: #F2DDD6; color: #7A3925; }
+
+/* provenance chips */
+.chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px;
+  border-radius: 6px; font-size: 10.5px; font-weight: 500;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+.chip-user { background: #ECE7F2; color: #31293B; }
+.chip-exam { background: #E4EDE0; color: #33482F; }
+.chip-update { background: #F1E1CD; color: #6C5038; }
+.chip-engine { background: #2E2218; color: #F3EADB; }
+.chip-plan { background: #DDE3EC; color: #1F2D3F; }
+
+/* trust stamps */
+.stamp {
+  font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10px;
+  letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 6px;
+  border-radius: 4px; display: inline-flex; align-items: center; gap: 5px;
+}
+.stamp-official { background: #33482F; color: #F0F5EF; }
+.stamp-aggregator { background: #FBF8F2; color: #524864; border: 1px dashed #8F86A1; }
+.stamp-research { background: #F1E1CD; color: #6C5038; }
+.stamp-opportunity { background: #2E2218; color: #F3EADB; }
+.stamp-verified { background: #54794E; color: #F0F5EF; }
+.stamp-needs { background: #FBF8F2; color: #524864; border: 1px dashed #8F86A1; }
+.stamp-locked { background: #2E2218; color: #F3EADB; }
+.stamp-preview { background: #F1E1CD; color: #6C5038; border: 1px dashed #BE9C6B; }
+.stamp-notcon { background: #FBF8F2; color: #8A6846; border: 1px solid #E7DECB; }
+.stamp-live { background: #E4EDE0; color: #33482F; }
+
+/* verified seal + update cards */
+.seal-verified {
+  background: radial-gradient(circle at 30% 30%, #B9CFAF 0%, #54794E 70%);
+  box-shadow: inset 0 0 0 2px #F0F5EF, 0 1px 0 rgba(0, 0, 0, 0.05);
+}
+.needs-verify-card {
+  border: 1px dashed #8F86A1;
+  background: repeating-linear-gradient(135deg, rgba(143, 134, 161, 0.045) 0 8px, transparent 8px 16px), #FBF8F2;
+}
+.verified-card {
+  border: 1px solid #94B28A;
+  background: linear-gradient(0deg, rgba(218, 231, 214, 0.35), rgba(218, 231, 214, 0.10)), #F8FAF6;
+  box-shadow: 0 1px 0 rgba(84, 121, 78, 0.08), 0 10px 24px -22px rgba(84, 121, 78, 0.35);
+}
+
+/* layer cards */
+.layer-card {
+  border: 1px solid #E7DECB; border-radius: 14px; padding: 14px 14px 12px;
+  background: rgba(255, 253, 248, 0.85);
+}
+.layer-card.user { background: linear-gradient(180deg, #F7F5FB 0%, rgba(255, 253, 248, 0.9)); }
+.layer-card.exam { background: linear-gradient(180deg, #F1F6EF 0%, rgba(255, 253, 248, 0.9)); }
+.layer-card.update { background: linear-gradient(180deg, #FBF1E3 0%, rgba(255, 253, 248, 0.9)); }
+.layer-card.engine {
+  background: linear-gradient(180deg, #2E2218 0%, #4E3A29 100%);
+  color: #F3EADB; border-color: #2E2218;
+}
+.layer-card.engine .eyebrow { color: rgba(243, 234, 219, 0.55); }
+
+/* task ticks */
+.tick {
+  width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid #C9B68F;
+  display: inline-block; flex: 0 0 auto;
+}
+.tick.done { background: #54794E; border-color: #54794E; }
+.tick.skip { background: #FBF8F2; border-color: #8F86A1; }
+
+/* engine flow line */
+@keyframes flow { 0% { stroke-dashoffset: 220; } 100% { stroke-dashoffset: 0; } }
+.flow-line { stroke-dasharray: 4 6; animation: flow 6s linear infinite; }
+
+/* details/summary reset */
+details > summary { list-style: none; cursor: pointer; }
+details > summary::-webkit-details-marker { display: none; }
+
+/* admin table */
+.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.tbl th {
+  text-align: left; font-weight: 600; color: #6C5038; padding: 10px 12px;
+  border-bottom: 1px solid #E7DECB; font-size: 10.5px; letter-spacing: 0.16em;
+  text-transform: uppercase; background: #FBF6EF;
+}
+.tbl td { padding: 12px; border-bottom: 1px solid #EFE7D4; vertical-align: top; }
+.tbl tr:hover td { background: #FBF8F2; }
+.tbl .right { text-align: right; }
+
+/* drawer */
+.drawer-bg { background: rgba(46, 34, 24, 0.35); backdrop-filter: blur(2px); }
+
+/* status dots */
+.sdot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.sdot-live { background: #54794E; box-shadow: 0 0 0 3px rgba(84, 121, 78, 0.18); }
+.sdot-partial { background: #BE9C6B; box-shadow: 0 0 0 3px rgba(190, 156, 107, 0.18); }
+.sdot-preview { background: #8F86A1; box-shadow: 0 0 0 3px rgba(143, 134, 161, 0.18); }
+.sdot-not { background: #C9B68F; box-shadow: 0 0 0 3px rgba(201, 182, 143, 0.18); }
+
+/* task-row layout */
+.task-row {
+  display: grid; grid-template-columns: 22px 70px 1fr auto; gap: 14px;
+  padding: 14px 4px; align-items: start; border-top: 1px solid #EFE7D4;
+}
+.task-row:first-of-type { border-top: 0; }
+
+/* topic tree */
+.tt-row {
+  display: grid; grid-template-columns: 1fr 90px 100px 100px 110px; gap: 10px;
+  padding: 8px 0; border-top: 1px dashed #E7DECB; align-items: center; font-size: 12.5px;
+}
+.tt-row.head {
+  font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase;
+  color: #6C5038; border-top: 0; padding-bottom: 8px;
+}
+.tt-row.sub { padding-left: 14px; color: #3a2e22; }
+.tt-row.micro { padding-left: 30px; color: #6C5038; font-size: 12px; }
+
+/* mock answer key */
+.qbox { border: 1px solid #E7DECB; border-radius: 10px; padding: 10px 12px; background: #FBF8F2; }
+.qbox.wrong { background: #F2DDD6; border-color: #D9B4A6; }
+.qbox.right { background: #E4EDE0; border-color: #B9CFAF; }
+
+/* keyboard hint */
+.kbd {
+  font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10.5px;
+  background: #FBF6EF; border: 1px solid #E7DECB; padding: 1px 6px;
+  border-radius: 4px; color: #6C5038;
+}
+
+/* timer ring */
+.ring-bg { stroke: #E7DECB; }
+.ring-fg { stroke: #54794E; transition: stroke-dashoffset 1s linear; }
+
+/* mini chart bar */
+.bar { background: #E7DECB; border-radius: 3px; }
+.bar > i { display: block; height: 100%; background: #54794E; border-radius: 3px; }
