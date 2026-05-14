@@ -182,7 +182,7 @@ def test_state_psc_domicile_mismatch():
     res = check_eligibility(
         _profile(domicile_state="Karnataka"),
         [_grad()], [], [],
-        _post(org_state="Maharashtra"),
+        _post(org_state="Maharashtra", requires_domicile=True),
     )
     assert res.is_eligible is False
 
@@ -206,7 +206,10 @@ def test_non_indian_nationality():
 
 
 def test_batch():
-    posts = [_post(rec_id="a", post_id="a-1"), _post(rec_id="b", post_id="b-1", org_state="Tamil Nadu")]
+    posts = [
+        _post(rec_id="a", post_id="a-1"),
+        _post(rec_id="b", post_id="b-1", org_state="Tamil Nadu", requires_domicile=True),
+    ]
     res = check_eligibility_batch(_profile(domicile_state=None), [_grad()], [], [], posts)
     assert len(res) == 2
     assert res[0].result.is_eligible is True
