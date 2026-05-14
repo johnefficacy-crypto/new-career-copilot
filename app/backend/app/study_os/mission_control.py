@@ -18,6 +18,11 @@ from typing import Any, Callable
 from app.exam_intelligence.coverage import locked_topic_coverage
 from app.exam_intelligence.lookup import resolve_exam_by_id
 from app.exam_intelligence.status import exam_intelligence_status
+from app.study_os.competition_context import competition_context
+from app.study_os.update_context import (
+    empty_policy_update_context,
+    policy_update_context,
+)
 from app.persona.snapshots import (
     compute_persona_snapshot,
     get_latest_persona_snapshot,
@@ -215,21 +220,41 @@ def _load_exam_context(supabase: Any, exam_intel: dict[str, Any]) -> dict[str, A
     }
 
 
-# ─── Update context (discovery-only) ──────────────────────────────────────
-def _load_update_context(supabase: Any, user_id: str) -> dict[str, Any]:
-    """Return the ``update_context`` block.
+# ─── Competition context (verified-only) ──────────────────────────────────
+def _load_competition_context(
+    supabase: Any, exam_intel: dict[str, Any], exam_context: dict[str, Any]
+) -> dict[str, Any]:
+    """Build the ``competition_context`` block.
 
-    No official-update intelligence source is wired into Study OS yet, so
-    this returns safe defaults. Trust rule: aggregator updates are
-    discovery-only and never auto-affect plan / deadline / eligibility.
+    Reads ``exam_competition_metrics`` via ``competition_context``, reusing
+    the ``days_remaining`` already computed for ``exam_context`` so the
+    cycle-pressure read is not duplicated.
     """
-    return {
-        "official_updates": [],
-        "needs_verification": [],
-        "affects_plan": False,
-        "affects_deadline": False,
-        "affects_eligibility": False,
-    }
+    exam_id = (exam_intel or {}).get("exam_id")
+    days_remaining = (exam_context or {}).get("days_remaining")
+    return _safe(
+        lambda: competition_context(
+            supabase, exam_id, days_remaining=days_remaining
+        ),
+        default=competition_context(None, None),
+    )
+
+
+# ─── Policy / update context (discovery + verified-only) ──────────────────
+def _load_policy_update_context(
+    supabase: Any, exam_intel: dict[str, Any]
+) -> dict[str, Any]:
+    """Return the ``policy_update_context`` block.
+
+    Verified official updates may carry ``affects_*`` flags; non-official
+    aggregator / research / opportunity rows are discovery-only and never
+    influence plan / deadline / eligibility.
+    """
+    exam_id = (exam_intel or {}).get("exam_id")
+    return _safe(
+        lambda: policy_update_context(supabase, exam_id),
+        default=empty_policy_update_context(),
+    )
 
 
 # ─── Safe user-facing explanation ─────────────────────────────────────────
@@ -278,14 +303,16 @@ def _plan_reasoning(
     review: dict[str, Any],
     study_policy: dict[str, Any],
     update_context: dict[str, Any],
+    competition_context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Tagged reasoning behind today's plan.
 
-    Each entry carries a ``reason_type`` in
-    ``{persona, exam_intelligence, progress, update}`` so the UI can keep
-    the signal channels visually separated.
+    Each entry carries a ``reason_type`` in ``{persona, exam_intelligence,
+    competition_pressure, policy_update, progress}`` so the UI can keep the
+    signal channels visually separated.
     """
     out: list[dict[str, Any]] = []
+    competition_context = competition_context or {}
 
     # persona
     size = (study_policy or {}).get("preferred_task_size")
@@ -330,6 +357,30 @@ def _plan_reasoning(
             }
         )
 
+    # competition_pressure
+    if competition_context.get("available"):
+        pressure = competition_context.get("cycle_pressure") or {}
+        level = pressure.get("pressure_level")
+        if level in {"medium", "high"}:
+            days = pressure.get("days_remaining")
+            near = days is not None and days <= 45
+            if level == "high" and near:
+                summary = (
+                    "Revision and timed practice are prioritized — this cycle has "
+                    "high competition pressure and the exam is near."
+                )
+            elif level == "high":
+                summary = (
+                    "Accuracy drills and PYQ practice are weighted up because this "
+                    "cycle has high competition pressure."
+                )
+            else:
+                summary = (
+                    "Practice volume is nudged up to match the competition pressure "
+                    "for this cycle."
+                )
+            out.append({"reason_type": "competition_pressure", "summary": summary})
+
     # progress
     backlog = int(review.get("backlog_count") or 0)
     mocks = int(review.get("mocks_taken") or 0)
@@ -357,14 +408,26 @@ def _plan_reasoning(
             }
         )
 
-    # update
-    if update_context.get("official_updates"):
-        out.append(
-            {
-                "reason_type": "update",
-                "summary": "A verified change to your exam affects this plan.",
-            }
-        )
+    # policy_update — only verified official updates reach this channel.
+    official_updates = update_context.get("official_updates") or []
+    if official_updates:
+        first = official_updates[0]
+        update_type = (first.get("update_type") or "").replace("_", " ")
+        if update_context.get("affects_vacancy"):
+            summary = (
+                "Vacancy was updated from an official source, so plan priority "
+                "was recalculated."
+            )
+        elif update_context.get("affects_syllabus"):
+            summary = (
+                "An official syllabus change was verified — affected topics are "
+                "flagged for coverage review before they reach the plan."
+            )
+        elif update_type:
+            summary = f"A verified official update ({update_type}) affects this plan."
+        else:
+            summary = "A verified official update affects this plan."
+        out.append({"reason_type": "policy_update", "summary": summary})
 
     return out
 
@@ -914,15 +977,26 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
     scores = _scores_block(snapshot)
     engine_trace = _engine_trace(snapshot, plan, exam_intel)
 
-    # Contract blocks: join persona + verified exam intelligence + progress
-    # into an explainable, aspirant-safe shape.
+    # Contract blocks: join persona + verified exam intelligence +
+    # competition + policy updates + progress into an explainable,
+    # aspirant-safe shape.
     exam_context = _load_exam_context(supabase, exam_intel)
-    update_context = _load_update_context(supabase, user_id)
+    competition_ctx = _load_competition_context(supabase, exam_intel, exam_context)
+    policy_update_ctx = _load_policy_update_context(supabase, exam_intel)
+    # `update_context` is kept as a backward-compatible alias of the clearer
+    # `policy_update_context` object — both point at the same shape.
+    update_context = policy_update_ctx
     safe_user_explanation = _safe_user_explanation(
         snapshot, metrics, review, study_policy
     )
     plan_reasoning = _plan_reasoning(
-        snapshot, exam_context, metrics, review, study_policy, update_context
+        snapshot,
+        exam_context,
+        metrics,
+        review,
+        study_policy,
+        update_context,
+        competition_ctx,
     )
 
     preview_flags: list[str] = []
@@ -944,6 +1018,8 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
         "study_policy": study_policy,
         "plan": plan,
         "exam_context": exam_context,
+        "competition_context": competition_ctx,
+        "policy_update_context": policy_update_ctx,
         "update_context": update_context,
         "today_tasks": today_tasks,
         "metrics": metrics,

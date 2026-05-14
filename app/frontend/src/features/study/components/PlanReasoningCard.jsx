@@ -2,10 +2,13 @@ import React from "react";
 import { GitBranch } from "lucide-react";
 
 // Renders `plan_reasoning` — each entry is tagged with a reason_type so the
-// persona / exam / progress / update signal channels stay visually separate.
+// persona / exam / competition / policy / progress signal channels stay
+// visually separate.
 const REASON_META = {
   persona: { label: "Persona", tone: "pill-dusk" },
   exam_intelligence: { label: "Exam intelligence", tone: "pill-sage" },
+  competition_pressure: { label: "Competition", tone: "pill-clay" },
+  policy_update: { label: "Policy update", tone: "pill-amber" },
   progress: { label: "Progress", tone: "pill-clay" },
   update: { label: "Update", tone: "pill-amber" },
 };

@@ -514,6 +514,48 @@ def list_topic_coverage(
     return {"items": items, "count": len(rows)}
 
 
+# ─── 3c. Topic coverage lifecycle review ──────────────────────────────────
+class CoverageReviewBody(BaseModel):
+    reviewer_status: str = Field(
+        ..., pattern="^(draft|pending_review|reviewed|locked|rejected)$"
+    )
+
+
+@router.patch("/topic-coverage/{row_id}/review")
+def review_topic_coverage(
+    row_id: str,
+    body: CoverageReviewBody = Body(...),
+    admin: dict = Depends(require_permission(ADMIN_PERM)),
+) -> dict[str, Any]:
+    """Move an ``exam_topic_coverage`` row through its review lifecycle.
+
+    Lifecycle: ``draft → pending_review → reviewed → locked → rejected``.
+    Only ``locked`` rows are planner-ready — ``locked_topic_coverage`` in
+    the Study OS mission-control path consumes nothing else. Transitions
+    are operator-driven and any target state is allowed so a reviewer can
+    walk a row back (e.g. ``locked → reviewed``).
+    """
+    sb = get_supabase_admin()
+    patch: dict[str, Any] = {
+        "reviewer_status": body.reviewer_status,
+        "reviewed_by": admin.get("id"),
+        "reviewed_at": _now_iso(),
+    }
+    updated = _safe(
+        lambda: (
+            sb.table("exam_topic_coverage")
+            .update(patch)
+            .eq("id", row_id)
+            .execute()
+            .data
+        ),
+        default=None,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Coverage row not found")
+    return updated[0]
+
+
 # ─── 4. Mark review status ────────────────────────────────────────────────
 class ReviewBody(BaseModel):
     reviewer_status: str = Field(..., pattern="^(pending|verified|rejected|needs_correction)$")
@@ -546,4 +588,217 @@ def review_item(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Row not found")
+    return updated[0]
+
+
+# ─── 5. Competition Intelligence (exam_competition_metrics) ───────────────
+_COMPETITION_COLUMNS = (
+    "id, exam_id, exam_cycle_id, exam_phase_id, vacancy_total, "
+    "vacancy_by_category, applicant_count, selection_ratio, cutoff_trend, "
+    "difficulty_trend, competition_pressure_score, source_basis, "
+    "confidence_score, evidence_count, reviewer_status, reviewed_at, "
+    "reviewer_notes, metadata, created_at"
+)
+
+
+def _exam_name_map(sb: Any, exam_ids: list[str]) -> dict[str, dict[str, Any]]:
+    if not exam_ids:
+        return {}
+    rows = _safe(
+        lambda: (
+            sb.table("exams")
+            .select("id, slug, name")
+            .in_("id", exam_ids)
+            .limit(500)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    return {e["id"]: e for e in rows if e.get("id")}
+
+
+@router.get("/competition-metrics")
+def list_competition_metrics(
+    exam_id: str | None = Query(None),
+    status: str = Query("all"),
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=10000),
+    _admin: dict = Depends(require_permission(ADMIN_PERM)),
+) -> dict[str, Any]:
+    """List ``exam_competition_metrics`` rows for admin review.
+
+    Only ``locked`` rows are planner-ready; the lifecycle mirrors
+    ``exam_topic_coverage`` (draft → pending_review → reviewed → locked →
+    rejected).
+    """
+    if status != "all" and status not in _COVERAGE_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid status filter")
+    sb = get_supabase_admin()
+
+    def _builder():
+        q = sb.table("exam_competition_metrics").select(_COMPETITION_COLUMNS)
+        if exam_id:
+            q = q.eq("exam_id", exam_id)
+        if status != "all":
+            q = q.eq("reviewer_status", status)
+        return q.order("created_at", desc=True).limit(limit + offset).execute().data
+
+    rows = _safe(_builder, default=[]) or []
+    page = rows[offset : offset + limit]
+    exams_by_id = _exam_name_map(
+        sb, list({r.get("exam_id") for r in page if r.get("exam_id")})
+    )
+
+    items = []
+    for r in page:
+        exam = exams_by_id.get(r.get("exam_id")) or {}
+        items.append(
+            {
+                **r,
+                "exam": exam.get("name"),
+                "exam_slug": exam.get("slug"),
+                "status": r.get("reviewer_status"),
+            }
+        )
+    return {"items": items, "count": len(rows)}
+
+
+@router.patch("/competition-metrics/{row_id}/review")
+def review_competition_metric(
+    row_id: str,
+    body: CoverageReviewBody = Body(...),
+    admin: dict = Depends(require_permission(ADMIN_PERM)),
+) -> dict[str, Any]:
+    """Move an ``exam_competition_metrics`` row through its lifecycle.
+
+    Lifecycle: ``draft → pending_review → reviewed → locked → rejected``.
+    Only ``locked`` rows are read by ``competition_context`` in Study OS.
+    """
+    sb = get_supabase_admin()
+    patch: dict[str, Any] = {
+        "reviewer_status": body.reviewer_status,
+        "reviewed_by": admin.get("id"),
+        "reviewed_at": _now_iso(),
+        "updated_at": _now_iso(),
+    }
+    updated = _safe(
+        lambda: (
+            sb.table("exam_competition_metrics")
+            .update(patch)
+            .eq("id", row_id)
+            .execute()
+            .data
+        ),
+        default=None,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Competition metric not found")
+    return updated[0]
+
+
+# ─── 6. Policy / Update Intelligence (exam_policy_updates) ────────────────
+_POLICY_COLUMNS = (
+    "id, exam_id, exam_cycle_id, source_id, update_type, title, summary, "
+    "source_url, source_type, claim_status, reviewer_status, affects_plan, "
+    "affects_deadline, affects_eligibility, affects_documents, "
+    "affects_syllabus, affects_vacancy, change_summary, published_at, "
+    "effective_from, reviewed_at, reviewer_notes, created_at"
+)
+_POLICY_SOURCE_TYPES = ("official", "aggregator", "research", "opportunity", "unknown")
+
+
+@router.get("/policy-updates")
+def list_policy_updates(
+    exam_id: str | None = Query(None),
+    status: str = Query("all"),
+    source_type: str = Query("all"),
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=10000),
+    _admin: dict = Depends(require_permission(ADMIN_PERM)),
+) -> dict[str, Any]:
+    """List ``exam_policy_updates`` rows for admin review.
+
+    Two axes are surfaced: ``reviewer_status`` (operator workflow) and
+    ``source_type`` (trust origin). Only verified official rows ever reach
+    the planner; non-official rows are discovery-only.
+    """
+    if status != "all" and status not in _ALLOWED_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid status filter")
+    if source_type != "all" and source_type not in _POLICY_SOURCE_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid source_type filter")
+    sb = get_supabase_admin()
+
+    def _builder():
+        q = sb.table("exam_policy_updates").select(_POLICY_COLUMNS)
+        if exam_id:
+            q = q.eq("exam_id", exam_id)
+        if status != "all":
+            q = q.eq("reviewer_status", status)
+        if source_type != "all":
+            q = q.eq("source_type", source_type)
+        return q.order("created_at", desc=True).limit(limit + offset).execute().data
+
+    rows = _safe(_builder, default=[]) or []
+    page = rows[offset : offset + limit]
+    exams_by_id = _exam_name_map(
+        sb, list({r.get("exam_id") for r in page if r.get("exam_id")})
+    )
+
+    items = []
+    for r in page:
+        exam = exams_by_id.get(r.get("exam_id")) or {}
+        items.append(
+            {
+                **r,
+                "exam": exam.get("name"),
+                "exam_slug": exam.get("slug"),
+                "status": r.get("reviewer_status"),
+            }
+        )
+    return {"items": items, "count": len(rows)}
+
+
+class PolicyUpdateReviewBody(BaseModel):
+    reviewer_status: str = Field(
+        ..., pattern="^(pending|verified|rejected|needs_correction)$"
+    )
+    reviewer_notes: str | None = Field(default=None, max_length=500)
+
+
+@router.patch("/policy-updates/{row_id}/review")
+def review_policy_update(
+    row_id: str,
+    body: PolicyUpdateReviewBody = Body(...),
+    admin: dict = Depends(require_permission(ADMIN_PERM)),
+) -> dict[str, Any]:
+    """Move an ``exam_policy_updates`` row through operator review.
+
+    Only ``source_type='official'`` rows that reach ``verified`` are read
+    by ``policy_update_context`` as plan-affecting; everything else stays
+    discovery-only. This endpoint never flips ``affects_*`` flags — those
+    are set when the row is created and gated by a DB check constraint.
+    """
+    sb = get_supabase_admin()
+    patch: dict[str, Any] = {
+        "reviewer_status": body.reviewer_status,
+        "reviewed_by": admin.get("id"),
+        "reviewed_at": _now_iso(),
+        "updated_at": _now_iso(),
+    }
+    if body.reviewer_notes is not None:
+        patch["reviewer_notes"] = body.reviewer_notes
+
+    updated = _safe(
+        lambda: (
+            sb.table("exam_policy_updates")
+            .update(patch)
+            .eq("id", row_id)
+            .execute()
+            .data
+        ),
+        default=None,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Policy update not found")
     return updated[0]
