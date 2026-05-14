@@ -122,9 +122,11 @@ The page also surfaces a permanent safety card:
 
 ## Future admin roadmap
 
-- **PR5+ — Exam intelligence admin.** Only after persona admin is
-  stable. Adds a separate console for syllabus/PYQ/update review with
-  its own trust model. PR4 does not pre-shape it.
+- **PR5 — shipped.** `/admin/exam-intelligence` adds a separate
+  read-light surface for syllabus mentions and PYQ tag review. It
+  reuses the same access pattern (`require_permission` with a
+  dedicated `exam_intelligence.review` permission, super_admin
+  bypasses). See `docs/engineering/exam-intelligence-contracts-v1.md`.
 - **Rules viewer / classifier weights.** Read-only inspection of the
   deterministic rule catalog (`app.persona.classifier`) — useful for
   debugging "why did this user get learning_behavior=mock_avoider".

@@ -178,12 +178,25 @@ shows the data pipeline status without naming the user.
 
 ## What is intentionally NOT connected yet
 
-- **Exam intelligence** — `engine_trace` includes a step explicitly
-  marked `not_connected`. No PYQ / update / verified-exam claims appear
-  anywhere in the response.
 - **Plan generation / task creation** — PR3 only reads. Writes still
   go through existing `/api/study/plan/toggle` and `/api/study/tasks/...`
   routes; mission-control composes around them.
+
+## Exam intelligence wiring (PR5)
+
+PR5 introduced the verified-only `exam_intelligence` contract. The
+mission-control response now includes:
+
+- A top-level `exam_intelligence` block carrying
+  `{available, exam_id, exam_slug, exam_name, verified_topics, verified_pyq_tags, verified_syllabus_mentions}`.
+- An `engine_trace` `Exam intelligence` step that flips from
+  `not_connected` to `available` only when at least one verified row
+  exists for the user's target exam.
+- `meta.preview_flags` no longer includes
+  `exam_intelligence_not_connected` once verified data is present.
+
+No marketing copy (`high-yield`, `official update`, etc.) appears
+anywhere. See `docs/engineering/exam-intelligence-contracts-v1.md`.
 
 ## Admin visibility (PR4)
 

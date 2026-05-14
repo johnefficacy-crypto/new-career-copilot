@@ -15,6 +15,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
+from app.exam_intelligence.status import exam_intelligence_status
 from app.persona.snapshots import (
     compute_persona_snapshot,
     get_latest_persona_snapshot,
@@ -47,6 +48,67 @@ def _week_start_iso() -> str:
     now = datetime.now(timezone.utc)
     monday = now - timedelta(days=now.weekday())
     return monday.date().isoformat()
+
+
+# ─── Exam intelligence ────────────────────────────────────────────────────
+def _load_exam_intelligence(supabase: Any, user_id: str) -> dict[str, Any]:
+    """Read the user's target exam and look up verified intelligence status.
+
+    Returns the status dict from ``exam_intelligence_status`` — always a
+    dict, with ``available=False`` when nothing is verified.
+    """
+    profile_rows = _safe(
+        lambda: (
+            supabase.table("profiles")
+            .select("target_exam, goal_exams")
+            .eq("id", user_id)
+            .limit(1)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    profile = profile_rows[0] if profile_rows else {}
+    target = profile.get("target_exam")
+    if not target:
+        # Fall back to the first preference exam if profile lacks a single target.
+        prefs = _safe(
+            lambda: (
+                supabase.table("aspirant_preferences")
+                .select("target_exams")
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+                .data
+            ),
+            default=[],
+        ) or []
+        exams = (prefs[0] if prefs else {}).get("target_exams") or []
+        if isinstance(exams, list) and exams:
+            target = exams[0]
+    if not target:
+        return {
+            "available": False,
+            "exam_id": None,
+            "exam_slug": None,
+            "exam_name": None,
+            "verified_topics": 0,
+            "verified_pyq_tags": 0,
+            "verified_syllabus_mentions": 0,
+        }
+    try:
+        return exam_intelligence_status(supabase, target)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("mission_control exam intelligence lookup failed: %s", exc)
+        return {
+            "available": False,
+            "exam_id": None,
+            "exam_slug": target,
+            "exam_name": None,
+            "verified_topics": 0,
+            "verified_pyq_tags": 0,
+            "verified_syllabus_mentions": 0,
+        }
 
 
 # ─── Persona snapshot ──────────────────────────────────────────────────────
@@ -485,9 +547,25 @@ def _build_next_best_action(
 def _engine_trace(
     snapshot: dict[str, Any],
     plan: dict[str, Any] | None,
+    exam_intel: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     persona_available = bool(snapshot.get("persona_version"))
     policy_available = bool(snapshot.get("study_policy"))
+    intel = exam_intel or {}
+    intel_available = bool(intel.get("available"))
+    if intel_available:
+        bits = []
+        if intel.get("exam_name"):
+            bits.append(intel["exam_name"])
+        if intel.get("verified_topics"):
+            bits.append(f"{intel['verified_topics']} verified topics")
+        if intel.get("verified_pyq_tags"):
+            bits.append(f"{intel['verified_pyq_tags']} verified PYQ tags")
+        if intel.get("verified_syllabus_mentions"):
+            bits.append(f"{intel['verified_syllabus_mentions']} verified syllabus mentions")
+        intel_details = " · ".join(bits) if bits else "Verified items available"
+    else:
+        intel_details = "Admin-reviewed exam intelligence is not connected yet"
     return [
         {
             "label": "User signals",
@@ -518,8 +596,8 @@ def _engine_trace(
         },
         {
             "label": "Exam intelligence",
-            "status": "not_connected",
-            "details": "Admin-reviewed exam intelligence is not connected yet",
+            "status": "available" if intel_available else "not_connected",
+            "details": intel_details,
         },
     ]
 
@@ -544,6 +622,7 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
     focus = _focus_summary(supabase, user_id)
     weekly_hours_goal = _weekly_hours_goal(snapshot)
     review = _weekly_review(supabase, user_id, plan_id)
+    exam_intel = _load_exam_intelligence(supabase, user_id)
 
     today_tasks: list[dict[str, Any]] = []
     has_active_plan = bool(plan_id)
@@ -575,9 +654,11 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
         study_policy,
     )
     scores = _scores_block(snapshot)
-    engine_trace = _engine_trace(snapshot, plan)
+    engine_trace = _engine_trace(snapshot, plan, exam_intel)
 
-    preview_flags = ["exam_intelligence_not_connected"]
+    preview_flags: list[str] = []
+    if not (exam_intel and exam_intel.get("available")):
+        preview_flags.append("exam_intelligence_not_connected")
     if not plan:
         preview_flags.append("no_active_study_plan")
 
@@ -596,6 +677,7 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
         "truth_panel": truth_panel,
         "progressive_question": progressive_question,
         "engine_trace": engine_trace,
+        "exam_intelligence": exam_intel,
         "meta": {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source": MISSION_CONTROL_SOURCE,

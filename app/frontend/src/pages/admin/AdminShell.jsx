@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, Outlet } from "react-router-dom";
-import { Bell, Bot, Compass, CreditCard, Database, ExternalLink, FileSearch, GaugeCircle, LayoutGrid, ListChecks, LogOut, Menu, MessagesSquare, PanelLeftClose, PanelLeftOpen, Radar, ScrollText, ShieldCheck, ShoppingBag, Sparkles, Users2 } from "lucide-react";
+import { Bell, Bot, Compass, CreditCard, Database, ExternalLink, FileSearch, GaugeCircle, GraduationCap, LayoutGrid, ListChecks, LogOut, Menu, MessagesSquare, PanelLeftClose, PanelLeftOpen, Radar, ScrollText, ShieldCheck, ShoppingBag, Sparkles, Users2 } from "lucide-react";
 import { useAuth } from "../../lib/authContext";
 import AppSidebar from "../../shared/layouts/AppSidebar";
 import TopBar from "../../shared/layouts/TopBar";
@@ -22,6 +22,7 @@ const GOVERNANCE_NAV = [
   { to: "/admin/rbac", label: "RBAC & Users", icon: ShieldCheck, testId: "admin-nav-rbac-&-users" },
   { to: "/admin/ai-policy", label: "AI Policy", icon: Bot, testId: "admin-nav-ai-policy" },
   { to: "/admin/persona", label: "Persona", icon: Sparkles, testId: "admin-nav-persona", description: "Question bank, snapshots, and Study OS policy preview." },
+  { to: "/admin/exam-intelligence", label: "Exam Intelligence", icon: GraduationCap, testId: "admin-nav-exam-intelligence", description: "Verify syllabus mentions and PYQ topic tags before they reach users." },
 ];
 
 const BUSINESS_NAV = [

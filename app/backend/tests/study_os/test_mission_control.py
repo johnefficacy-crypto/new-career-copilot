@@ -189,14 +189,23 @@ def test_engine_trace_marks_exam_intelligence_not_connected():
     assert labels["Exam intelligence"]["status"] == "not_connected"
 
 
-def test_no_fake_exam_intelligence_in_response():
+def test_no_fake_exam_intelligence_claims_in_response():
     sb = SBStub({"aspirant_persona_snapshots": [_snapshot_row()]})
     out = build_mission_control(sb, "u-1")
-    # Stringify the entire response and assert no forbidden phrases.
     import json
     blob = json.dumps(out).lower()
-    for forbidden in ("pyq", "high-yield", "official update", "verified exam", "exam intelligence updated"):
+    # No marketing / claim-style phrases anywhere.
+    for forbidden in ("high-yield", "official update", "exam intelligence updated"):
         assert forbidden not in blob
+    # When no verified exam intelligence exists, the engine_trace must
+    # explicitly mark it as not_connected and the response must report
+    # zero verified counts.
+    intel_steps = [s for s in out["engine_trace"] if s["label"] == "Exam intelligence"]
+    assert intel_steps and intel_steps[0]["status"] == "not_connected"
+    ei = out.get("exam_intelligence") or {}
+    assert ei.get("available") is False
+    assert ei.get("verified_pyq_tags", 0) == 0
+    assert ei.get("verified_syllabus_mentions", 0) == 0
 
 
 def test_meta_preview_flags_marked():
