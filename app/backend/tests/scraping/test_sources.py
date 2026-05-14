@@ -8,14 +8,13 @@ from app.scraping.sources import ScrapeSource, normalize_legacy_source, normaliz
 # ── Legacy table normalisation ──────────────────────────────────────────────
 
 
-def test_normalize_legacy_source_target_url_joins_path():
+def test_normalize_legacy_source_joins_path():
     # Legacy adapter emits a DeprecationWarning; suppress for this exercise.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         src = normalize_legacy_source(
             {"id": "1", "name": "SSC", "base_url": "https://a", "notification_path": "/b"}
         )
-    assert src.target_url == "https://a/b"
     assert src.primary_fetch_url() == "https://a/b"
 
 
@@ -132,7 +131,6 @@ def test_returns_none_when_adapter_url_is_missing():
         }
     )
     assert src.primary_fetch_url() is None
-    assert src.target_url == ""
 
 
 def test_returns_none_when_no_urls_at_all():

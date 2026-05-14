@@ -8,23 +8,70 @@ def test_fetch_empty_url_returns_error():
     assert result.text is None
 
 
-def test_fetch_rss_adapter_is_not_implemented_yet():
+def _xml_resp(body: str):
+    class _Resp:
+        status_code = 200
+        text = body
+        content = body.encode()
+        headers = {"content-type": "application/xml"}
+        url = "https://example.gov.in/final"
+
+        def raise_for_status(self):
+            pass
+
+    return _Resp()
+
+
+def test_fetch_dispatches_rss_adapter(monkeypatch):
+    feed = '<rss><channel><item><title>T</title><link>https://x/1</link></item></channel></rss>'
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", lambda url, **kwargs: _xml_resp(feed))
     result = fetch("https://example.gov.in/feed.xml", adapter_type="rss")
     assert isinstance(result, FetchResult)
-    assert result.ok is False
-    assert result.error == "adapter_not_implemented"
+    assert result.ok is True
+    assert result.text == feed  # FetchResult only; entries dropped by fetch()
 
 
-def test_fetch_api_adapter_is_not_implemented_yet():
+def test_fetch_dispatches_api_adapter(monkeypatch):
+    class _Resp:
+        status_code = 200
+        text = '[{"title": "T", "link": "https://x/1"}]'
+        content = b'[{"title": "T", "link": "https://x/1"}]'
+        headers = {"content-type": "application/json"}
+        url = "https://example.gov.in/final"
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", lambda url, **kwargs: _Resp())
     result = fetch("https://example.gov.in/api", adapter_type="api")
-    assert result.ok is False
-    assert result.error == "adapter_not_implemented"
+    assert result.ok is True
 
 
-def test_fetch_pdf_adapter_is_not_implemented_yet():
+def test_fetch_dispatches_sitemap_adapter(monkeypatch):
+    sm = '<urlset><url><loc>https://x/1</loc></url></urlset>'
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", lambda url, **kwargs: _xml_resp(sm))
+    result = fetch("https://example.gov.in/sitemap.xml", adapter_type="sitemap")
+    assert result.ok is True
+    assert result.text == sm
+
+
+def test_fetch_dispatches_pdf_adapter(monkeypatch):
+    monkeypatch.setattr("app.scraping.fetcher.parse_pdf_bytes", lambda raw: "extracted body")
+
+    class _Resp:
+        status_code = 200
+        text = ""
+        content = b"%PDF-1.4 fake"
+        headers = {"content-type": "application/pdf"}
+        url = "https://example.gov.in/final.pdf"
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", lambda url, **kwargs: _Resp())
     result = fetch("https://example.gov.in/bulletin.pdf", adapter_type="pdf")
-    assert result.ok is False
-    assert result.error == "adapter_not_implemented"
+    assert result.ok is True
+    assert result.text == "extracted body"
 
 
 def test_fetch_html_returns_structured_result(monkeypatch):
@@ -557,3 +604,103 @@ def test_split_pdf_text_invalid_regex_returns_single_chunk():
 def test_split_pdf_text_no_matches_returns_single_chunk():
     chunks = split_pdf_text("plain text without any boundary marker", regex=r"^\d+\.")
     assert chunks == ["plain text without any boundary marker"]
+
+
+# ─── API pagination ─────────────────────────────────────────────────────────
+
+
+def _json_resp(body: str):
+    class _Resp:
+        status_code = 200
+        text = body
+        content = body.encode()
+        headers = {"content-type": "application/json"}
+        url = "https://api.gov.in/x"
+
+        def raise_for_status(self):
+            pass
+
+    return _Resp()
+
+
+def test_fetch_api_paginated_without_config_is_single_fetch(monkeypatch):
+    from app.scraping.fetcher import fetch_api_paginated
+
+    calls = []
+
+    def _get(url, **kwargs):
+        calls.append(url)
+        return _json_resp('[{"title": "T", "link": "https://x/1"}]')
+
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", _get)
+    result, entries = fetch_api_paginated("https://api.gov.in/jobs", adapter_config={})
+    assert result.ok is True
+    assert len(entries) == 1
+    assert len(calls) == 1
+
+
+def test_fetch_api_paginated_page_mode_walks_until_empty(monkeypatch):
+    from app.scraping.fetcher import fetch_api_paginated
+
+    # page 1 (base url, no page param) + page 2 + page 3, then empty page 4.
+    pages = {
+        "1": '[{"title": "p1", "link": "https://x/1"}]',
+        "2": '[{"title": "p2", "link": "https://x/2"}]',
+        "3": '[{"title": "p3", "link": "https://x/3"}]',
+    }
+    calls = []
+
+    def _get(url, **kwargs):
+        calls.append(url)
+        # base url with no ?page= is page 1; ?page=N for the rest.
+        import urllib.parse as up
+        q = dict(up.parse_qsl(up.urlparse(url).query))
+        page = q.get("page", "1")
+        return _json_resp(pages.get(page, "[]"))
+
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", _get)
+    result, entries = fetch_api_paginated(
+        "https://api.gov.in/jobs",
+        adapter_config={"pagination": {"type": "page", "page_param": "page", "start_page": 1, "max_pages": 10}},
+    )
+    assert result.ok is True
+    assert [e.title for e in entries] == ["p1", "p2", "p3"]
+    # base + ?page=2 + ?page=3 + ?page=4 (empty, stops) = 4 calls
+    assert len(calls) == 4
+
+
+def test_fetch_api_paginated_respects_max_pages(monkeypatch):
+    from app.scraping.fetcher import fetch_api_paginated
+
+    def _get(url, **kwargs):
+        return _json_resp('[{"title": "x", "link": "https://x/n"}]')  # never empty
+
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", _get)
+    result, entries = fetch_api_paginated(
+        "https://api.gov.in/jobs",
+        adapter_config={"pagination": {"type": "page", "max_pages": 3}},
+    )
+    # max_pages=3 → page 1 + 2 more = 3 pages of 1 entry each.
+    assert len(entries) == 3
+
+
+def test_fetch_api_paginated_cursor_mode_follows_next_path(monkeypatch):
+    from app.scraping.fetcher import fetch_api_paginated
+
+    responses = {
+        "https://api.gov.in/jobs": '{"items": [{"title": "c1", "link": "https://x/1"}], "meta": {"next": "https://api.gov.in/jobs?cursor=2"}}',
+        "https://api.gov.in/jobs?cursor=2": '{"items": [{"title": "c2", "link": "https://x/2"}], "meta": {"next": null}}',
+    }
+
+    def _get(url, **kwargs):
+        return _json_resp(responses.get(url, '{"items": []}'))
+
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", _get)
+    result, entries = fetch_api_paginated(
+        "https://api.gov.in/jobs",
+        adapter_config={
+            "entries_path": "items",
+            "pagination": {"type": "cursor", "next_path": "meta.next", "max_pages": 10},
+        },
+    )
+    assert [e.title for e in entries] == ["c1", "c2"]

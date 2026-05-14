@@ -47,6 +47,43 @@ HIGH_RISK_FIELDS: frozenset[str] = RECRUITMENT_LEVEL_FIELDS | POST_SCOPED_FIELDS
 _VERIFIED_STATUSES = frozenset({"verified", "corrected"})
 
 
+# Normalizer warnings that represent a hard data contradiction — promoting
+# them would write self-inconsistent canonical rows (e.g. an apply window
+# that closes before it opens). These block promotion. Missing-field and
+# advisory warnings (``missing_*``, ``posts_missing_eligibility``,
+# ``year_date_mismatch``) are NOT here: they're surfaced for review but
+# don't make the data internally contradictory.
+BLOCKING_NORMALIZER_WARNINGS: frozenset[str] = frozenset({
+    "date_order_invalid",
+    "notification_after_apply_end",
+    "age_range_invalid",
+    "vacancy_sum_mismatch",
+})
+
+
+def _blocking_contradictions(queue_item: dict[str, Any]) -> list[str]:
+    """Re-run the normalizer on the queue item's current extracted_data
+    and return any blocking contradiction warnings.
+
+    Re-running (rather than trusting the frozen ``extracted_data._meta``
+    warnings) means admin field corrections are reflected — a reviewer
+    who fixes ``apply_end_date`` clears the ``date_order_invalid`` block.
+    If the payload can't be constructed into the extraction shape the
+    check is skipped; the strict promotion model catches that case.
+    """
+    extracted = queue_item.get("extracted_data")
+    if not isinstance(extracted, dict):
+        return []
+    try:
+        from .normalizer import normalize_recruitment
+        from .schemas import ExtractedRecruitment
+
+        normalized = normalize_recruitment(ExtractedRecruitment(**extracted))
+    except Exception:  # noqa: BLE001
+        return []
+    return sorted(set(normalized.warnings) & BLOCKING_NORMALIZER_WARNINGS)
+
+
 @dataclass
 class GateResult:
     ok: bool
@@ -151,4 +188,16 @@ def evaluate_promotion_gate(supabase: Client, queue_item: dict[str, Any]) -> Gat
             reason="high_risk_fields_unverified",
             unverified_fields=sorted(missing),
         )
+
+    # Hard data contradictions block even when every high-risk field is
+    # verified — a reviewer can verify the *value* of apply_end_date and
+    # still leave it earlier than apply_start_date.
+    contradictions = _blocking_contradictions(queue_item)
+    if contradictions:
+        return GateResult(
+            ok=False,
+            reason="data_contradictions",
+            unverified_fields=contradictions,
+        )
+
     return GateResult(ok=True, warnings=warnings)

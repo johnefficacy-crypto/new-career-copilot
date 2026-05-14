@@ -6,11 +6,16 @@ Phase 4 of the scraper audit pulled the HTTP fetch primitives out of
 * extraction stays focused on parsing/AI calls
 * the runner can use a structured ``FetchResult`` (status, final URL,
   content hash, etc.) instead of just a bare string
-* non-HTML adapters (RSS, JSON API, PDF) get a single dispatch point.
-  Real implementations land in a follow-up PR; this module returns
-  ``adapter_not_implemented`` for those so the runner logs a clear
-  reason instead of silently passing the raw bytes to the HTML
-  extractor.
+
+Every adapter is implemented here: HTML via :func:`fetch`, plus
+:func:`fetch_rss`, :func:`fetch_api`, :func:`fetch_pdf`,
+:func:`fetch_sitemap`, and :func:`fetch_sitemap_recursive`. The
+``fetch_*`` variants return ``(FetchResult, parsed_entries)`` because
+their callers need the parsed list; :func:`fetch` is the single
+dispatch point that returns just a ``FetchResult`` — it delegates to
+the right adapter based on ``adapter_type`` and drops the parsed
+entries (callers that need them call the specialised function
+directly).
 """
 from __future__ import annotations
 
@@ -18,7 +23,8 @@ import hashlib
 import logging
 import re
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 
@@ -58,8 +64,12 @@ def fetch(
 ) -> FetchResult:
     """Fetch ``url`` and return a structured result.
 
-    ``adapter_type`` routes to the right parser when supported.
-    Non-HTML adapters still scaffold to ``adapter_not_implemented``.
+    Single dispatch point: ``adapter_type`` routes to the matching
+    adapter (``rss`` / ``api`` / ``pdf`` / ``sitemap``, defaulting to
+    HTML). For the feed-shaped adapters this returns only the
+    ``FetchResult`` and drops the parsed entries — callers that need
+    the entries should call :func:`fetch_rss` / :func:`fetch_api` /
+    :func:`fetch_sitemap` directly.
 
     Conditional fetch: pass ``if_none_match`` (an ETag value) and/or
     ``if_modified_since`` (an HTTP-date string) to send the standard
@@ -72,8 +82,29 @@ def fetch(
         return FetchResult(ok=False, url="", error="empty_url")
 
     adapter = (adapter_type or "html").lower()
-    if adapter in {"rss", "api", "pdf"}:
-        return FetchResult(ok=False, url=url, error="adapter_not_implemented")
+    if adapter == "rss":
+        result, _ = fetch_rss(
+            url, timeout=timeout,
+            if_none_match=if_none_match, if_modified_since=if_modified_since,
+        )
+        return result
+    if adapter == "api":
+        result, _ = fetch_api(
+            url, timeout=timeout,
+            if_none_match=if_none_match, if_modified_since=if_modified_since,
+        )
+        return result
+    if adapter == "pdf":
+        return fetch_pdf(
+            url, timeout=timeout,
+            if_none_match=if_none_match, if_modified_since=if_modified_since,
+        )
+    if adapter == "sitemap":
+        result, _ = fetch_sitemap(
+            url, timeout=timeout,
+            if_none_match=if_none_match, if_modified_since=if_modified_since,
+        )
+        return result
 
     return _fetch_html(
         url,
@@ -551,6 +582,128 @@ def fetch_api(
     return result, entries
 
 
+def _with_query(url: str, params: dict[str, Any]) -> str:
+    """Return ``url`` with ``params`` merged into its query string."""
+    parts = urlparse(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query.update({k: str(v) for k, v in params.items()})
+    return urlunparse(parts._replace(query=urlencode(query)))
+
+
+def fetch_api_paginated(
+    url: str,
+    *,
+    adapter_config: dict[str, Any] | None = None,
+    timeout: float = 15.0,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
+) -> tuple[FetchResult, list[ApiEntry]]:
+    """Fetch a JSON endpoint across multiple pages and return the first
+    page's ``FetchResult`` plus the flattened entries from every page.
+
+    Pagination is opt-in via ``adapter_config["pagination"]``:
+
+      * ``{"type": "page", "page_param": "page", "start_page": 1,
+         "max_pages": 10}`` — increments a page-number query param.
+      * ``{"type": "offset", "offset_param": "offset",
+         "limit_param": "limit", "page_size": 50, "max_pages": 10}`` —
+        walks an offset/limit window.
+      * ``{"type": "cursor", "next_path": "meta.next", "max_pages": 10}``
+        — follows a next-page URL found at a dotted path in each
+        response body.
+
+    When ``pagination`` is unset this behaves exactly like
+    :func:`fetch_api` (single request). Traversal stops on the first
+    empty page, when ``max_pages`` is reached, or (cursor mode) when
+    there's no next link. Conditional-fetch headers apply to the first
+    request only — a 304 there short-circuits the whole walk.
+    """
+    cfg = adapter_config or {}
+    pagination = cfg.get("pagination")
+    if not isinstance(pagination, dict) or not pagination:
+        return fetch_api(
+            url, adapter_config=cfg, timeout=timeout,
+            if_none_match=if_none_match, if_modified_since=if_modified_since,
+        )
+
+    ptype = str(pagination.get("type") or "").lower()
+    try:
+        max_pages = max(1, min(int(pagination.get("max_pages", 10)), 100))
+    except (TypeError, ValueError):
+        max_pages = 10
+
+    first_result, first_entries = fetch_api(
+        url, adapter_config=cfg, timeout=timeout,
+        if_none_match=if_none_match, if_modified_since=if_modified_since,
+    )
+    # 304 / error / empty first page: nothing to paginate.
+    if not first_result.ok or not first_entries:
+        return first_result, first_entries
+
+    all_entries: list[ApiEntry] = list(first_entries)
+    seen_urls: set[str] = {url}
+
+    if ptype == "cursor":
+        next_path = str(pagination.get("next_path") or "").strip()
+        next_url: Any = None
+        try:
+            import json as _json
+            next_url = _drill(_json.loads(first_result.text or "null"), next_path) if next_path else None
+        except Exception:  # noqa: BLE001
+            next_url = None
+        pages = 1
+        while next_url and isinstance(next_url, str) and next_url not in seen_urls and pages < max_pages:
+            seen_urls.add(next_url)
+            page_result, page_entries = fetch_api(next_url, adapter_config=cfg, timeout=timeout)
+            if not page_result.ok or not page_entries:
+                break
+            all_entries.extend(page_entries)
+            pages += 1
+            try:
+                import json as _json
+                next_url = _drill(_json.loads(page_result.text or "null"), next_path) if next_path else None
+            except Exception:  # noqa: BLE001
+                next_url = None
+        return first_result, all_entries
+
+    # page / offset modes: synthesise the next request URL by query param.
+    if ptype == "offset":
+        offset_param = str(pagination.get("offset_param") or "offset")
+        limit_param = str(pagination.get("limit_param") or "limit")
+        try:
+            page_size = max(1, int(pagination.get("page_size", 50)))
+        except (TypeError, ValueError):
+            page_size = 50
+        for page_idx in range(1, max_pages):
+            params = {offset_param: page_idx * page_size, limit_param: page_size}
+            page_url = _with_query(url, params)
+            if page_url in seen_urls:
+                break
+            seen_urls.add(page_url)
+            page_result, page_entries = fetch_api(page_url, adapter_config=cfg, timeout=timeout)
+            if not page_result.ok or not page_entries:
+                break
+            all_entries.extend(page_entries)
+        return first_result, all_entries
+
+    # default: page-number mode.
+    page_param = str(pagination.get("page_param") or "page")
+    try:
+        start_page = int(pagination.get("start_page", 1))
+    except (TypeError, ValueError):
+        start_page = 1
+    for offset in range(1, max_pages):
+        page_url = _with_query(url, {page_param: start_page + offset})
+        if page_url in seen_urls:
+            break
+        seen_urls.add(page_url)
+        page_result, page_entries = fetch_api(page_url, adapter_config=cfg, timeout=timeout)
+        if not page_result.ok or not page_entries:
+            break
+        all_entries.extend(page_entries)
+    return first_result, all_entries
+
+
 # ─── PDF adapter ────────────────────────────────────────────────────────────
 
 
@@ -776,6 +929,8 @@ def fetch_sitemap_recursive(
     timeout: float = 15.0,
     max_depth: int = 2,
     max_total: int = 1000,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
 ) -> tuple[FetchResult, list[SitemapEntry]]:
     """Fetch a sitemap, recursing into child sitemaps up to ``max_depth``.
 
@@ -789,8 +944,17 @@ def fetch_sitemap_recursive(
     ``max_total`` caps the flattened entry count so a runaway
     sitemapindex (some sites publish thousands of children) can't
     explode the run.
+
+    Conditional fetch applies to the *root* only: a 304 on the root
+    yields ``FetchResult(ok=False, status_code=304, ...)`` with an empty
+    entry list so the caller can short-circuit the whole tree. Child
+    sitemaps are always fetched fresh (they have their own lastmod the
+    caller doesn't track per-child).
     """
-    root_result, top_entries = fetch_sitemap(url, timeout=timeout)
+    root_result, top_entries = fetch_sitemap(
+        url, timeout=timeout,
+        if_none_match=if_none_match, if_modified_since=if_modified_since,
+    )
     if not root_result.ok:
         return root_result, []
 
