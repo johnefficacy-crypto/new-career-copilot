@@ -291,8 +291,16 @@ def record_plan_impact_decision(
     """Persist a hold / stage / approve decision for ``coverage_id``.
 
     Recomputes the impact server-side so the stored ``impact_summary`` is
-    trustworthy. Returns the inserted row, or ``None`` when the coverage
-    row is missing / the decision is invalid.
+    trustworthy. An ``approve`` decision is the rollout gate: it flips the
+    ``exam_topic_coverage`` row to ``reviewer_status='locked'`` so the
+    planner starts consuming it. ``hold`` / ``stage`` record intent only and
+    never touch the coverage row.
+
+    This deliberately does *not* fan out a plan regeneration — the daily
+    ``study:plan_regen`` sweep and on-demand generation pick the newly
+    locked row up on their next run. Returns the inserted decision row
+    (with a ``coverage_locked`` flag), or ``None`` when the coverage row is
+    missing / the decision is invalid.
     """
     if decision not in _VALID_DECISIONS:
         return None
@@ -322,4 +330,33 @@ def record_plan_impact_decision(
         )
         or []
     )
-    return rows[0] if rows else None
+    row = rows[0] if rows else None
+    if row is None:
+        return None
+
+    # `approve` is the rollout gate — lock the coverage row so it becomes
+    # planner-ready. Idempotent: an already-locked row is left untouched.
+    coverage_locked = False
+    if decision == "approve" and not impact.get("already_locked"):
+        now = datetime.now(timezone.utc).isoformat()
+        updated = _safe(
+            lambda: (
+                supabase.table("exam_topic_coverage")
+                .update(
+                    {
+                        "reviewer_status": "locked",
+                        "reviewed_by": admin_id,
+                        "reviewed_at": now,
+                        "updated_at": now,
+                    }
+                )
+                .eq("id", coverage_id)
+                .execute()
+                .data
+            ),
+            default=None,
+        )
+        coverage_locked = bool(updated)
+
+    row["coverage_locked"] = coverage_locked
+    return row

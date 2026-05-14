@@ -118,11 +118,15 @@ export default function PlanImpactPreview() {
     setSaveMsg("");
     setError("");
     try {
-      await api.post(
+      const res = await api.post(
         `/api/admin/exam-intelligence/plan-impact/${encodeURIComponent(selectedId)}/decision`,
         { decision, notes: notes || undefined },
       );
-      setSaveMsg(`Decision saved: ${decision}`);
+      setSaveMsg(
+        res?.coverage_locked
+          ? "Approved — coverage row locked into the planner."
+          : `Decision saved: ${decision}`,
+      );
       await loadImpact(selectedId);
     } catch (e) {
       setError(e?.message || "Could not save decision");
