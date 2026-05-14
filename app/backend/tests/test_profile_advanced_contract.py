@@ -33,6 +33,14 @@ class _SB:
     def __init__(self):
         self.db={"profiles":[{"id":"u1","full_name":"U","date_of_birth":"2000-01-01","category":"general","domicile_state":"x","phone":"1","nationality":"Indian"}],"aspirant_certifications":[],"aspirant_experience":[],"aspirant_exam_attempts":[],"eligibility_recompute_queue":[]}
     def table(self,name): return _Q(name,self.db)
+    def rpc(self, fn, params):
+        # `enqueue_eligibility_recompute` (PR #132) calls supabase.rpc first.
+        # Raise PGRST202 so the helper falls through to its legacy Python
+        # path, which this mock's table()/select()/insert() supports.
+        raise RuntimeError(
+            "PGRST202 Could not find the function "
+            "public.enqueue_eligibility_recompute in the schema cache"
+        )
 
 def _u(id="u1"): return {"id":id,"email":"a@a.com"}
 
