@@ -42,11 +42,22 @@ from .schemas import (
 # treated as stale and recomputed on the next runner pass. Persisted to
 # `eligibility_results.rules_version` by the runner; compared on read for the
 # skip-cache decision.
+#
+# CONTRIBUTOR NOTE: any PR that changes how a verdict is computed — a new
+# rule, a changed comparison, a new field the engine reads — MUST bump this
+# constant in the same PR. Otherwise cached rows written under the old
+# semantics keep being served.
+#
 # History:
 #   "2026.05" — first versioned cut: exact-age, strict cutoff, explicit
 #               domicile flag, normalized OBC attempt matching, unverifiable
 #               propagation, unknown-category guard.
-RULES_VERSION = "2026.05"
+#   "2026.06" — scope-aware attempt limits (exam_family/recruitment/post),
+#               issuer-aware certification matching, per-row CGPA conversion
+#               basis, discipline alias registry, education-level taxonomy.
+#               (These landed across separate PRs without a version bump;
+#               this catches the cache up in one pass.)
+RULES_VERSION = "2026.06"
 
 # ─── Education level ordering ────────────────────────────────────────────────
 #

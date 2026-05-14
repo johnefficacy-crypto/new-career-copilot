@@ -63,14 +63,26 @@ def _stable_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
-def _profile_hash(mapped_profile: dict[str, Any]) -> str:
+def _profile_hash(
+    mapped_profile: dict[str, Any],
+    recruitment_attempts: list[dict[str, Any]] | None = None,
+) -> str:
     payload = {
         "identity": mapped_profile.get("identity") or {},
         "reservations": mapped_profile.get("reservations") or {},
         "location": mapped_profile.get("location") or {},
         "education": sorted(mapped_profile.get("education") or [], key=lambda r: _stable_json(r)),
         "certifications": sorted(mapped_profile.get("certifications") or [], key=lambda r: _stable_json(r)),
+        # Exam-family attempts (aspirant_exam_attempts), via the mapper.
         "attempts": sorted(mapped_profile.get("attempts") or [], key=lambda r: _stable_json(r)),
+        # Recruitment- and post-scoped attempts live in a separate table
+        # (aspirant_recruitment_attempts, migration 049). They MUST be in
+        # the cache key: otherwise a change to a cycle/post attempt count
+        # leaves profile_hash unchanged and the runner skips recompute,
+        # serving a stale verdict against scope-aware attempt limits.
+        "recruitment_attempts": sorted(
+            recruitment_attempts or [], key=lambda r: _stable_json(r)
+        ),
         "credentials": sorted(mapped_profile.get("credentials") or [], key=lambda r: _stable_json(r)),
     }
     return hashlib.sha256(_stable_json(payload).encode("utf-8")).hexdigest()
@@ -206,7 +218,16 @@ def run_eligibility_for_user(
     # ── 1. Load user data ──────────────────────────────────────────────────
     mapped_model = build_user_eligibility_profile(supabase, user_id)
     mapped = mapped_model.model_dump()
-    profile_hash = _profile_hash(mapped)
+    # Read recruitment/post-scoped attempts up front: they're a second
+    # attempt source the mapper doesn't cover, and they have to be folded
+    # into the cache key *before* the skip decision below.
+    recruitment_attempt_rows = safe_select(
+        supabase,
+        "aspirant_recruitment_attempts",
+        "recruitment_id, post_id, attempts_used",
+        user_id=user_id,
+    )
+    profile_hash = _profile_hash(mapped, recruitment_attempt_rows)
     if not mapped.get("identity"):
         return {
             "processed": 0,
@@ -256,12 +277,13 @@ def run_eligibility_for_user(
 
     education = [UserEducation(**row) for row in (mapped.get("education") or [])]
 
-    # Attempts come from two tables now (migration 050):
+    # Attempts come from two tables (migration 049):
     #   * aspirant_exam_attempts — exam-family scope (career-wide, e.g.
     #     SSC-CGL). The mapper already reads this. exam_ref_id is the
     #     canonical FK to public.exams; legacy exam_id is the fallback.
-    #   * aspirant_recruitment_attempts — recruitment/post scope. New
-    #     table; runner queries it directly.
+    #   * aspirant_recruitment_attempts — recruitment/post scope. Already
+    #     fetched above (recruitment_attempt_rows) so it can feed the
+    #     cache key; reused here to build the engine-shaped records.
     exam_attempts: list[UserExamAttempts] = []
     for row in mapped.get("attempts") or []:
         exam_attempts.append(
@@ -272,12 +294,7 @@ def run_eligibility_for_user(
             )
         )
     # Recruitment- and post-scoped counts.
-    for row in safe_select(
-        supabase,
-        "aspirant_recruitment_attempts",
-        "recruitment_id, post_id, attempts_used",
-        user_id=user_id,
-    ):
+    for row in recruitment_attempt_rows:
         rec_id = row.get("recruitment_id")
         if not rec_id:
             continue

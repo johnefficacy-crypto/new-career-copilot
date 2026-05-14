@@ -43,7 +43,8 @@ class SB:
             "aspirant_reservations":[{"user_id":"u1","category":"general"}],
             "aspirant_education":[{"user_id":"u1","level":"graduate","percentage":75,"is_completed":True}],
             "aspirant_certifications":[],"aspirant_experience":[],"aspirant_preferences":[],
-            "aspirant_exam_attempts":[],"aspirant_exam_credentials":[],"tracked_recruitments":[],
+            "aspirant_exam_attempts":[],"aspirant_recruitment_attempts":[],
+            "aspirant_exam_credentials":[],"tracked_recruitments":[],
             "posts":[{"id":"p1","recruitment_id":"r1","age_criteria":[],"education_criteria":[],"attempt_limits":[],"certification_criteria":[],"recruitments":{"status":"open","publish_status":"verified","organizations":{"state":"MH"}}}],
             "eligibility_results":[],"notification_alerts":[],"recruitments":[]
         }
@@ -112,9 +113,19 @@ def _seed_existing_row(sb, *, profile_hash, criteria_hash, rules_version):
 
 
 def _current_hashes(sb):
+    from app.db.utils import safe_select
     from app.eligibility.schemas import PostCriteria
 
-    h = runner._profile_hash(runner.build_user_eligibility_profile(sb, "u1").model_dump())
+    # Faithful mirror of the runner: profile_hash folds in BOTH the mapper
+    # output and the recruitment/post-scoped attempt rows.
+    mapped = runner.build_user_eligibility_profile(sb, "u1").model_dump()
+    rec_attempts = safe_select(
+        sb,
+        "aspirant_recruitment_attempts",
+        "recruitment_id, post_id, attempts_used",
+        user_id="u1",
+    )
+    h = runner._profile_hash(mapped, rec_attempts)
     # Mirrors how the runner constructs PostCriteria for the SB mock's p1 row
     # (all criteria arrays empty, org_state from the embedded organizations).
     pc = PostCriteria(post_id="p1", recruitment_id="r1", org_state="MH")
@@ -215,6 +226,88 @@ def test_recompute_invalidates_legacy_rows_without_cache_keys(monkeypatch):
     out = runner.run_eligibility_for_user("u1", sb)
     assert out["skipped"] == 0
     assert calls["n"] == 2
+
+
+def test_profile_hash_includes_recruitment_attempts():
+    # Gap 1 regression: aspirant_recruitment_attempts is a second attempt
+    # source that the mapper does not cover. _profile_hash must fold it in,
+    # otherwise a change to a cycle/post attempt count leaves the cache key
+    # unchanged and the runner serves a stale verdict.
+    mapped = runner.build_user_eligibility_profile(SB(), "u1").model_dump()
+    base = runner._profile_hash(mapped, [])
+    with_attempt = runner._profile_hash(
+        mapped,
+        [{"recruitment_id": "r1", "post_id": None, "attempts_used": 2}],
+    )
+    assert base != with_attempt
+    # Same input → same hash (stable).
+    assert with_attempt == runner._profile_hash(
+        mapped,
+        [{"recruitment_id": "r1", "post_id": None, "attempts_used": 2}],
+    )
+    # A different attempt count → different hash.
+    bumped = runner._profile_hash(
+        mapped,
+        [{"recruitment_id": "r1", "post_id": None, "attempts_used": 3}],
+    )
+    assert with_attempt != bumped
+
+
+def test_profile_hash_recruitment_attempts_order_insensitive():
+    # The DB has no inherent row order; the hash must not depend on it.
+    mapped = runner.build_user_eligibility_profile(SB(), "u1").model_dump()
+    rows_a = [
+        {"recruitment_id": "r1", "post_id": None, "attempts_used": 2},
+        {"recruitment_id": "r2", "post_id": "p9", "attempts_used": 1},
+    ]
+    rows_b = list(reversed(rows_a))
+    assert runner._profile_hash(mapped, rows_a) == runner._profile_hash(mapped, rows_b)
+
+
+def test_recompute_invalidates_when_recruitment_attempts_change(monkeypatch):
+    # Gap 1 end-to-end: a cached row whose profile_hash was computed with
+    # one recruitment-attempt count must be recomputed once that count
+    # changes — even though profiles / education / exam_attempts are all
+    # untouched and criteria + rules_version still match.
+    sb = SB()
+    sb.db["aspirant_recruitment_attempts"] = [
+        {"user_id": "u1", "recruitment_id": "r1", "post_id": None, "attempts_used": 1},
+    ]
+    calls = {"n": 0}
+
+    def _batch(*a, **k):
+        calls["n"] += 1
+        return []
+
+    monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
+    runner.run_eligibility_for_user("u1", sb)
+
+    # Seed a cached row matching the CURRENT state (1 attempt).
+    profile_h, criteria_h = _current_hashes(sb)
+    _seed_existing_row(
+        sb,
+        profile_hash=profile_h,
+        criteria_hash=criteria_h,
+        rules_version=runner.RULES_VERSION,
+    )
+    # Sanity: with the state unchanged, the second pass skips.
+    out = runner.run_eligibility_for_user("u1", sb)
+    assert out["skipped"] == 1
+
+    # Now the user logs another attempt for this recruitment cycle.
+    sb.db["aspirant_recruitment_attempts"][0]["attempts_used"] = 2
+    out = runner.run_eligibility_for_user("u1", sb)
+    # The cache key changed → recompute, no skip.
+    assert out["skipped"] == 0
+
+
+def test_rules_version_is_current_marker():
+    # Gap 3 guard: RULES_VERSION must be past the "2026.05" cut that
+    # pre-dates scope-aware attempts / cert-issuer / CGPA-basis /
+    # discipline-alias / education-taxonomy semantics. A PR that changes
+    # verdict logic without bumping this will trip here.
+    assert runner.RULES_VERSION != "2026.05"
+    assert runner.RULES_VERSION >= "2026.06"
 
 
 def test_recompute_writes_criteria_hash_and_rules_version(monkeypatch):
