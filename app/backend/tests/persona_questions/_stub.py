@@ -45,6 +45,10 @@ class _Query:
         self.filters.append((key, "is", val))
         return self
 
+    def in_(self, key, vals):
+        self.filters.append((key, "in", list(vals)))
+        return self
+
     def order(self, key, desc=False, **kwargs):
         self._order_key = key
         self._desc = desc
@@ -84,6 +88,8 @@ class _Query:
             if op == "gte" and not (cell is not None and cell >= val):
                 return False
             if op == "lte" and not (cell is not None and cell <= val):
+                return False
+            if op == "in" and cell not in val:
                 return False
         return True
 
