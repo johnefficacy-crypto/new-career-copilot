@@ -17,6 +17,7 @@ from app.study_os.mission_control import (
     build_mission_control,
     build_task_reasoning_response,
 )
+from app.study_os.planner import generate_plan
 
 logger = logging.getLogger("career_copilot.api.study_os")
 
@@ -139,6 +140,27 @@ async def mission_control(user: dict = Depends(get_current_user)) -> dict[str, A
                 "error": str(exc)[:200],
             },
         }
+
+
+@router.post("/plan/generate")
+async def generate_study_plan(user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    """Phase 7 — deterministic plan generation.
+
+    Composes today's ``study_tasks`` from locked exam intelligence, verified
+    PYQ frequency, the user's topic mastery, competition pressure and the
+    persona study policy. Persists the plan, an audit version row and an
+    adaptation event. Returns ``generated=False`` with a ``reason`` when the
+    plan cannot be built (no target exam, or no locked coverage yet).
+    """
+    user_id = user.get("id")
+    supabase = get_supabase_admin()
+    try:
+        return generate_plan(supabase, user_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("plan generation failed for %s", user_id)
+        raise HTTPException(
+            status_code=500, detail="Plan generation is temporarily unavailable."
+        )
 
 
 @router.get("/task-reasoning/{task_id}")
