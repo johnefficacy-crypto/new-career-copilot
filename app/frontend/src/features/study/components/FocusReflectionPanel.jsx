@@ -52,7 +52,7 @@ function ToggleGroup({ legend, options, value, onChange, name }) {
   );
 }
 
-export default function FocusReflectionPanel({ session, onDismiss, onSave }) {
+export default function FocusReflectionPanel({ session, onDismiss, onSave, bare = false }) {
   const [completion, setCompletion] = useState(null);
   const [difficulty, setDifficulty] = useState(null);
   const [distractions, setDistractions] = useState(0);
@@ -77,7 +77,11 @@ export default function FocusReflectionPanel({ session, onDismiss, onSave }) {
 
   return (
     <section
-      className="soft-card rounded-2xl p-6 space-y-4"
+      className={
+        bare
+          ? "space-y-4"
+          : "soft-card rounded-2xl p-6 space-y-4"
+      }
       data-testid="focus-reflection-panel"
       aria-labelledby="focus-reflection-heading"
     >

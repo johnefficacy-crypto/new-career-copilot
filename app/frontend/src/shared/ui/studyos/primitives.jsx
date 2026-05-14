@@ -156,3 +156,66 @@ export function MiniBar({ pct = 0, color = "#54794E", height = 6, width = 120 })
     </div>
   );
 }
+
+// Page-level header — eyebrow + serif title + sub + optional right slot.
+export function PageHeader({ eyebrow, title, sub, right }) {
+  return (
+    <header className="flex items-end justify-between gap-6 flex-wrap">
+      <div>
+        {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}
+        {title ? (
+          <h1 className="font-heading text-[36px] leading-[1.05] mt-2">{title}</h1>
+        ) : null}
+        {sub ? <p className="text-[14px] text-clay-700 mt-2 max-w-[70ch]">{sub}</p> : null}
+      </div>
+      {right || null}
+    </header>
+  );
+}
+
+// Right-anchored overlay drawer. Closes on backdrop click and Escape, and
+// focuses the panel on open so it is keyboard-dismissable.
+export function Drawer({ open, onClose, title, children, width = 480 }) {
+  React.useEffect(() => {
+    if (!open) return undefined;
+    function onKey(e) {
+      if (e.key === "Escape") onClose?.();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-40 drawer-bg" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={typeof title === "string" ? title : "Drawer"}
+        className="absolute right-0 top-0 bottom-0 bg-[#FBF6EF] border-l border-[#E7DECB] shadow-2xl flex flex-col max-w-full"
+        style={{ width }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-6 py-4 border-b border-[#E7DECB] flex items-center justify-between">
+          <div className="font-heading text-[18px]">{title}</div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close drawer"
+            className="text-clay-700 hover:text-clay-900"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M6 6l12 12M18 6L6 18"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto px-6 py-5">{children}</div>
+      </div>
+    </div>
+  );
+}

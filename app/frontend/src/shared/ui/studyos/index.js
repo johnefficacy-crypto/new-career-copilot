@@ -9,4 +9,6 @@ export {
   StudyCard,
   SectionHeader,
   MiniBar,
+  PageHeader,
+  Drawer,
 } from "./primitives";
