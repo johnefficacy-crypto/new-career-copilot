@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { CheckCircle2, Circle, Sparkles, Zap } from "lucide-react";
 import { api } from "../lib/api";
+import { Eyebrow, StatusDot } from "../shared/ui/studyos";
 
 export default function StudyPlan() {
   const [plan, setPlan] = useState({ tasks: [], plan: null });
@@ -35,25 +36,32 @@ export default function StudyPlan() {
 
   return (
     <div className="space-y-6" data-testid="study-plan-page">
-      {err && <div className="text-xs text-clay-700">{err}</div>}
-      <div className="flex items-end justify-between flex-wrap gap-3">
+      {err && <div className="rounded-xl bg-clay-50 text-clay-800 text-xs px-3 py-2">{err}</div>}
+      <header className="flex items-end justify-between flex-wrap gap-4">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Study OS · 90-day plan</div>
-          <h1 className="font-heading text-4xl font-semibold tracking-tight mt-1">
-            {plan.plan ? `Day ${plan.plan?.day} · "${plan.plan?.theme || "Active plan"}"` : "No active study plan yet"}
+          <Eyebrow>Study Plan · timeline &amp; adaptation</Eyebrow>
+          <h1 className="font-heading text-[36px] leading-[1.05] mt-2">
+            {plan.plan ? `Day ${plan.plan?.day} · ${plan.plan?.theme || "Active plan"}` : "Your week, with every change traced."}
           </h1>
-          <p className="text-muted-foreground mt-1">{plan.plan ? "Plan telemetry is synced from your latest saved schedule." : "Create or regenerate a study plan to start tracking progress."}</p>
+          <p className="text-[14px] text-clay-700 mt-2 max-w-[64ch]">
+            {plan.plan
+              ? "Plan telemetry is synced from your latest saved schedule. The plan only mutates after you preview and approve."
+              : "Create or regenerate a study plan to start tracking progress."}
+          </p>
         </div>
-        <button className="btn btn-primary"><Sparkles className="h-3.5 w-3.5" /> Regenerate with AI</button>
-      </div>
+        <div className="flex items-center gap-3">
+          <StatusDot state="live" label="" />
+          <button className="btn btn-primary"><Sparkles className="h-3.5 w-3.5" /> Regenerate with AI</button>
+        </div>
+      </header>
 
-      <div className="soft-card rounded-2xl p-5">
+      <div className="soft-card grain relative overflow-hidden rounded-[18px] p-5">
         <div className="flex items-baseline justify-between">
           <div>
-            <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">This week · adherence</div>
-            <div className="font-heading text-2xl font-semibold mt-0.5">{review?.hours_studied || 0}h <span className="text-muted-foreground text-base">/ {review?.hours_planned || 0}h planned</span></div>
+            <Eyebrow>This week · adherence</Eyebrow>
+            <div className="font-heading text-[24px] font-semibold mt-1">{review?.hours_studied || 0}h <span className="text-clay-700 text-base">/ {review?.hours_planned || 0}h planned</span></div>
           </div>
-          <div className="text-xs font-semibold text-sage-600">{Math.round((review?.adherence || 0) * 100)}% adherence</div>
+          <span className="pill pill-sage">{Math.round((review?.adherence || 0) * 100)}% adherence</span>
         </div>
         <div className="mt-5 flex items-end gap-3 h-40">
           {(week.length ? week : [{ d: "—", hrs: 0 }]).map((w) => (
@@ -70,9 +78,9 @@ export default function StudyPlan() {
       </div>
 
       <div className="grid lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 soft-card rounded-2xl p-5">
-          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Today's schedule</div>
-          <div className="font-heading text-xl font-semibold mt-0.5">{tasks.length} blocks</div>
+        <div className="lg:col-span-2 soft-card grain relative overflow-hidden rounded-[18px] p-5">
+          <Eyebrow>Today's schedule</Eyebrow>
+          <div className="font-heading text-[20px] font-semibold mt-1">{tasks.length} blocks</div>
           <button type="button" className="text-xs mt-2 link-under" onClick={carryForward}>Carry forward backlog</button>
           <ul className="mt-4 space-y-2.5">
             {tasks.map((t) => (

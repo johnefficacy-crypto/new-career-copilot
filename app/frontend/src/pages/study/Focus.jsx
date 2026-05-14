@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Pause, Play, RotateCcw, StopCircle, Link2 } from "lucide-react";
 import { api } from "../../lib/api";
 import FocusReflectionPanel from "../../features/study/components/FocusReflectionPanel";
+import { Eyebrow, StatusDot } from "../../shared/ui/studyos";
 
 const PRESETS = [25, 50, 90];
 
@@ -106,13 +107,22 @@ export default function Focus() {
 
   return (
     <div className="space-y-6" data-testid="focus-page">
-      <div>
-        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Focus timer</div>
-        <h1 className="font-heading text-4xl font-semibold tracking-tight mt-1">Deep work, one block at a time.</h1>
-      </div>
+      <header className="flex items-end justify-between gap-6 flex-wrap">
+        <div>
+          <Eyebrow>Focus · session</Eyebrow>
+          <h1 className="font-heading text-[36px] leading-[1.05] mt-2">
+            One task. Timed. With a reflection at the end.
+          </h1>
+          <p className="text-[14px] text-clay-700 mt-2 max-w-[64ch]">
+            The reflection feeds focus consistency back into your study policy — never used for
+            diagnosis, eligibility or recruitment decisions.
+          </p>
+        </div>
+        <StatusDot state="live" label="Live · /api/study/focus" />
+      </header>
 
       <div className="grid lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 rounded-3xl bg-dusk-900 text-white p-10 relative overflow-hidden">
+        <div className="lg:col-span-2 soft-card grain relative overflow-hidden rounded-[18px] !bg-[#2E2218] !border-[#2E2218] text-white p-10">
           <div className="absolute -top-20 -right-20 h-64 w-64 rounded-full blur-3xl bg-clay-500/30" />
           <div className="relative">
             <div className="text-[11px] uppercase tracking-widest text-white/60">{subject} · {topic}</div>
@@ -145,12 +155,15 @@ export default function Focus() {
                 </button>
               ))}
             </div>
+            <div className="mt-5 text-center text-[11px] text-white/50">
+              <span className="kbd">space</span> start / pause &nbsp; <span className="kbd">esc</span> end
+            </div>
           </div>
         </div>
 
-        <div className="soft-card rounded-2xl p-6 space-y-4">
+        <div className="soft-card grain relative overflow-hidden rounded-[18px] p-6 space-y-4">
           <div>
-            <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Session</div>
+            <Eyebrow>Session</Eyebrow>
             <div className="mt-2 space-y-3">
               {todayTasks.length > 0 ? (
                 <label className="block">
@@ -184,7 +197,7 @@ export default function Focus() {
           </div>
 
           <div className="pt-4 border-t border-border">
-            <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Last 7 days</div>
+            <Eyebrow>Last 7 days</Eyebrow>
             <div className="mt-3 font-heading text-3xl font-semibold">{summary.total_hours_7d} <span className="text-base text-muted-foreground">h</span></div>
             <div className="mt-3 flex items-end h-16 gap-2">
               {(summary.week || []).map((w, idx) => (

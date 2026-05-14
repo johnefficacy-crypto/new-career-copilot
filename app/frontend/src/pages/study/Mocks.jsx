@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Plus, Trophy, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
 import { api } from "../../lib/api";
 import MockCorrectionPreview from "../../features/study/components/MockCorrectionPreview";
+import { Eyebrow, StatusDot } from "../../shared/ui/studyos";
 
 // Error-type tagging is not part of the current mock-logging contract.
 // These categories render as a "not connected" preview so the panel never
@@ -67,16 +68,23 @@ export default function Mocks() {
 
   return (
     <div className="space-y-6" data-testid="mocks-page">
-      <div className="flex items-end justify-between flex-wrap gap-3">
+      <header className="flex items-end justify-between flex-wrap gap-4">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Study OS · Mock tests</div>
-          <h1 className="font-heading text-4xl font-semibold tracking-tight mt-1">Your mock curve.</h1>
-          <p className="text-muted-foreground mt-1">Log every mock honestly. The trend tells the truth.</p>
+          <Eyebrow>Mocks · analysis</Eyebrow>
+          <h1 className="font-heading text-[36px] leading-[1.05] mt-2">
+            Turn every mock into a correction plan.
+          </h1>
+          <p className="text-[14px] text-clay-700 mt-2 max-w-[64ch]">
+            A mock is just data until you review it. Log every mock honestly — the trend tells the truth.
+          </p>
         </div>
-        <button onClick={() => setOpen(true)} className="btn btn-primary" data-testid="add-mock-btn">
-          <Plus className="h-4 w-4" /> Log a mock
-        </button>
-      </div>
+        <div className="flex items-center gap-3">
+          <StatusDot state="live" label="" />
+          <button onClick={() => setOpen(true)} className="btn btn-primary" data-testid="add-mock-btn">
+            <Plus className="h-4 w-4" /> Log a mock
+          </button>
+        </div>
+      </header>
 
       <div className="grid md:grid-cols-4 gap-4">
         <Stat label="Mocks logged" value={items.length} />
@@ -91,7 +99,7 @@ export default function Mocks() {
       </div>
 
       {items.length === 0 ? (
-        <div className="soft-card rounded-2xl p-5">
+        <div className="soft-card grain relative overflow-hidden rounded-[18px] p-5">
           <div className="text-center py-10">
             <Trophy className="h-6 w-6 text-clay-500 mx-auto" />
             <div className="mt-3 font-heading text-lg font-semibold">No mocks yet</div>
@@ -101,8 +109,8 @@ export default function Mocks() {
       ) : (
         <div className="grid lg:grid-cols-5 gap-4">
           {/* Mock log list */}
-          <div className="soft-card rounded-2xl p-4 lg:col-span-2">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Mock log</div>
+          <div className="soft-card grain relative overflow-hidden rounded-[18px] p-4 lg:col-span-2">
+            <div className="eyebrow">Mock log</div>
             <ul className="mt-3 space-y-1.5">
               {items.map((m) => {
                 const active = m.id === selectedId;
@@ -145,10 +153,10 @@ export default function Mocks() {
           <div className="lg:col-span-3 space-y-4">
             {selected ? (
               <>
-                <div className="soft-card rounded-2xl p-5">
+                <div className="soft-card grain relative overflow-hidden rounded-[18px] p-5">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Mock analysis</div>
+                      <div className="eyebrow">Mock analysis</div>
                       <h2 className="font-heading text-2xl font-semibold mt-0.5">{selected.name}</h2>
                       <div className="text-sm text-muted-foreground mt-0.5">
                         {selected.exam_slug} · {selected.duration_min} min · {selected.score}/{selected.max_score}
@@ -163,7 +171,7 @@ export default function Mocks() {
                   {/* Review status — local only */}
                   <div className="mt-4 pt-4 border-t border-border">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Review status</div>
+                      <div className="eyebrow">Review status</div>
                       <span className="pill pill-dusk text-[10px]">Tracked on this device</span>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Review status">
@@ -191,8 +199,8 @@ export default function Mocks() {
                 </div>
 
                 {/* Weak topics — real logged data */}
-                <div className="soft-card rounded-2xl p-5">
-                  <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Weak topics</div>
+                <div className="soft-card grain relative overflow-hidden rounded-[18px] p-5">
+                  <div className="eyebrow">Weak topics</div>
                   {Array.isArray(selected.weak_topics) && selected.weak_topics.length ? (
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {selected.weak_topics.map((w, i) => (
@@ -207,11 +215,11 @@ export default function Mocks() {
                 </div>
 
                 {/* Error type panel — not connected */}
-                <div className="soft-card rounded-2xl p-5">
+                <div className="soft-card grain relative overflow-hidden rounded-[18px] p-5">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <AlertTriangle className="h-4 w-4 text-clay-600" aria-hidden="true" />
-                      <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Error patterns</div>
+                      <div className="eyebrow">Error patterns</div>
                     </div>
                     <span className="pill pill-dusk text-[10px]">Not connected</span>
                   </div>
@@ -232,7 +240,7 @@ export default function Mocks() {
                 <MockCorrectionPreview weakTopics={selected.weak_topics} />
               </>
             ) : (
-              <div className="soft-card rounded-2xl p-8 text-center text-sm text-muted-foreground">
+              <div className="soft-card grain relative overflow-hidden rounded-[18px] p-8 text-center text-sm text-muted-foreground">
                 Select a mock from the log to see its analysis.
               </div>
             )}
@@ -271,16 +279,16 @@ export default function Mocks() {
 }
 
 function Stat({ label, value, foot, tone = "flat" }) {
-  const Icon = tone === "up" ? TrendingUp : tone === "down" ? TrendingDown : TrendingUp;
+  const Icon = tone === "down" ? TrendingDown : TrendingUp;
   const iconClass = tone === "down" ? "text-dusk-500" : "text-clay-500";
   return (
-    <div className="soft-card rounded-2xl p-5">
-      <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">{label}</div>
-      <div className="mt-2 flex items-center gap-2">
+    <div className="soft-card grain relative overflow-hidden rounded-[14px] px-4 py-3.5">
+      <Eyebrow>{label}</Eyebrow>
+      <div className="mt-1.5 flex items-center gap-2">
         <Icon className={`h-4 w-4 ${iconClass}`} aria-hidden="true" />
-        <div className="font-heading text-3xl font-semibold">{value}</div>
+        <div className="font-heading text-[24px] leading-none font-semibold">{value}</div>
       </div>
-      {foot ? <div className="text-xs text-muted-foreground mt-1">{foot}</div> : null}
+      {foot ? <div className="text-[11px] text-clay-700 mt-2">{foot}</div> : null}
     </div>
   );
 }
@@ -288,7 +296,7 @@ function Stat({ label, value, foot, tone = "flat" }) {
 function F({ label, children }) {
   return (
     <label className="block">
-      <div className="text-[11px] uppercase tracking-widest text-muted-foreground mb-1">{label}</div>
+      <Eyebrow className="mb-1">{label}</Eyebrow>
       {children}
     </label>
   );

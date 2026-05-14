@@ -1,54 +1,68 @@
 import React from "react";
-import { Eye } from "lucide-react";
+import { SectionHeader, StatusDot, StudyCard } from "../../../shared/ui/studyos";
+
+// Truth panel styled after the prototype: an honest read split into calm
+// columns. Backend `truth_panel` provides { summary, warnings, corrections }.
+function TruthCol({ title, tone, items, emptyText }) {
+  const palette = {
+    sage: { bg: "#F0F5EF", fg: "#33482F" },
+    rose: { bg: "#F2DDD6", fg: "#7A3925" },
+    amber: { bg: "#F3E9CF", fg: "#6F5A22" },
+  }[tone];
+  const list = Array.isArray(items) ? items : [];
+  return (
+    <div
+      className="rounded-xl border border-[#E7DECB] p-4"
+      style={{ background: palette.bg }}
+    >
+      <div className="eyebrow" style={{ color: palette.fg, fontSize: 10 }}>
+        {title}
+      </div>
+      {list.length ? (
+        <ul className="mt-2 space-y-1.5 text-[12.5px]" style={{ color: palette.fg }}>
+          {list.map((it, i) => (
+            <li key={i} className="flex gap-2 items-start">
+              <span className="opacity-60" aria-hidden="true">·</span>
+              <span>{typeof it === "string" ? it : it?.message || ""}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-[12px]" style={{ color: palette.fg, opacity: 0.8 }}>
+          {emptyText}
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function TruthPanelCard({ panel }) {
-  const summary =
-    panel?.summary || "Not enough data yet to summarise your week.";
+  const summary = panel?.summary || "Not enough data yet to summarise your week.";
   const warnings = Array.isArray(panel?.warnings) ? panel.warnings : [];
   const corrections = Array.isArray(panel?.corrections) ? panel.corrections : [];
 
   return (
-    <section
-      className="soft-card rounded-2xl p-5"
-      data-testid="truth-panel"
-      aria-labelledby="truth-panel-heading"
-    >
-      <div className="flex items-start gap-3">
-        <Eye className="h-5 w-5 text-clay-500 mt-0.5" aria-hidden="true" />
-        <div className="flex-1">
-          <h2
-            id="truth-panel-heading"
-            className="font-heading font-semibold text-base"
-          >
-            What the data shows
-          </h2>
-          <p className="text-sm text-muted-foreground mt-1">{summary}</p>
-          {warnings.length ? (
-            <ul className="mt-3 space-y-1 text-xs">
-              {warnings.map((w, i) => (
-                <li
-                  key={`warn-${i}`}
-                  className="rounded-xl bg-dusk-50 text-dusk-800 px-3 py-2"
-                >
-                  {w}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {corrections.length ? (
-            <ul className="mt-2 space-y-1 text-xs">
-              {corrections.map((c, i) => (
-                <li
-                  key={`corr-${i}`}
-                  className="rounded-xl bg-clay-50 text-clay-800 px-3 py-2"
-                >
-                  {typeof c === "string" ? c : c?.message || ""}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
+    <StudyCard data-testid="truth-panel">
+      <SectionHeader
+        eyebrow="Truth panel · weekly"
+        title="Honest read. No motivational fluff."
+        sub={summary}
+        right={<StatusDot state="live" label="" />}
+      />
+      <div className="grid md:grid-cols-2 gap-5">
+        <TruthCol
+          title="Watch"
+          tone="amber"
+          items={warnings}
+          emptyText="Nothing flagged to watch this week."
+        />
+        <TruthCol
+          title="Needs correction"
+          tone="rose"
+          items={corrections}
+          emptyText="No corrections needed — a good week."
+        />
       </div>
-    </section>
+    </StudyCard>
   );
 }
