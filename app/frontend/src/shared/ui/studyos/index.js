@@ -11,11 +11,7 @@ export {
   SectionHeader,
   MiniBar,
   PageHeader,
-  Tabs,
-  StudyEmptyState,
-  StudyConfidencePill,
   Drawer,
-  StudyEvidenceDrawer,
 } from "./primitives";
 
 export {
