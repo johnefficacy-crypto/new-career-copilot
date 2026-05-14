@@ -2645,6 +2645,81 @@ def _is_duplicate_slug_rpc_error(exc: BaseException) -> tuple[bool, str | None]:
     return True, (match.group(1) if match else None)
 
 
+def _enqueue_recompute_fanout(supabase: Client, recruitment_id: str) -> int:
+    """Fan an eligibility recompute out to every onboarded user after a
+    recruitment is promoted.
+
+    The recompute queue + worker are *user*-keyed — ``run_eligibility_for_user``
+    recomputes a whole user, not one recruitment — so a newly promoted
+    recruitment would otherwise never be matched against any user until
+    that user independently triggered a recompute (a profile edit).
+    Promotion therefore enqueues one ``pending`` row per onboarded user.
+
+    Bounded: users who already have a ``pending`` row are skipped, so a
+    run that promotes many recruitments converges on roughly one row per
+    user (the worker's full-user recompute picks up every new
+    recruitment in one pass anyway). Best-effort — a failure here is
+    logged but never fails the promotion; the recruitment is already
+    written.
+    """
+    try:
+        users = (
+            supabase.table("profiles")
+            .select("id")
+            .eq("onboarding_completed", True)
+            .execute()
+            .data
+            or []
+        )
+        user_ids = [u["id"] for u in users if u.get("id")]
+        if not user_ids:
+            return 0
+        existing = (
+            supabase.table("eligibility_recompute_queue")
+            .select("user_id")
+            .eq("status", "pending")
+            .execute()
+            .data
+            or []
+        )
+        already = {r.get("user_id") for r in existing}
+        now = utc_now_iso()
+        rows = [
+            {
+                "user_id": uid,
+                "reason": "recruitment.promoted",
+                "status": "pending",
+                "queued_at": now,
+                "metadata": {"recruitment_id": recruitment_id},
+                "attempt_count": 0,
+            }
+            for uid in user_ids
+            if uid not in already
+        ]
+        if not rows:
+            return 0
+        inserted = 0
+        for i in range(0, len(rows), 500):  # chunked: bound the request size
+            chunk = rows[i : i + 500]
+            execute_or_default(
+                "eligibility_recompute_queue.fanout_insert",
+                lambda chunk=chunk: supabase.table("eligibility_recompute_queue").insert(chunk).execute(),
+                None,
+            )
+            inserted += len(chunk)
+        logger.info(
+            "[promote] recompute fan-out recruitment_id=%s onboarded_users=%s enqueued=%s",
+            recruitment_id, len(user_ids), inserted,
+        )
+        return inserted
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[promote] recompute fan-out failed recruitment_id=%s: %s",
+            recruitment_id, exc,
+        )
+        return 0
+
+
 def promote_to_recruitments(
     data: VerifiedRecruitmentForPromotion,
     supabase: Client,
@@ -2680,6 +2755,7 @@ def promote_to_recruitments(
                 source_id=source_id,
                 official_url=data.official_notification_url,
             )
+            _enqueue_recompute_fanout(supabase, rec_id)
             return rec_id
     except DuplicatePromotionError:
         raise
@@ -2708,6 +2784,7 @@ def promote_to_recruitments(
         source_id=source_id,
         official_url=data.official_notification_url,
     )
+    _enqueue_recompute_fanout(supabase, rec_id)
     return rec_id
 
 

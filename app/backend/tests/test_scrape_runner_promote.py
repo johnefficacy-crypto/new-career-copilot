@@ -1718,3 +1718,79 @@ def test_claim_falls_back_to_read_then_update_on_rpc_missing():
     out = run_scraping_pass(sb, source_ids=["src-1"], mock=True)
     # The fallback happened: source got claimed via read-then-update.
     assert out["items_found"] == 3
+
+
+# ── P0.4: eligibility recompute fan-out on promotion ────────────────────────
+
+
+class _FanoutSB:
+    """Minimal Supabase fake for _enqueue_recompute_fanout: a profiles
+    table and an eligibility_recompute_queue that records inserts."""
+    def __init__(self, profiles, pending=None):
+        self.db = {
+            "profiles": list(profiles),
+            "eligibility_recompute_queue": list(pending or []),
+        }
+        self.inserted = []
+
+    def table(self, name):
+        return _FanoutQuery(name, self)
+
+
+class _FanoutQuery:
+    def __init__(self, name, sb):
+        self.name = name
+        self.sb = sb
+        self._rows = None
+
+    def select(self, *a, **k):
+        self._rows = list(self.sb.db.get(self.name, []))
+        return self
+
+    def eq(self, *a, **k):
+        return self
+
+    def insert(self, payload):
+        rows = payload if isinstance(payload, list) else [payload]
+        self.sb.db.setdefault(self.name, []).extend(rows)
+        self.sb.inserted.extend(rows)
+        self._rows = rows
+        return self
+
+    def execute(self):
+        return E(self._rows if self._rows is not None else [])
+
+
+def test_recompute_fanout_enqueues_one_row_per_onboarded_user():
+    from app.scraping.runner import _enqueue_recompute_fanout
+
+    sb = _FanoutSB(profiles=[{"id": "u1"}, {"id": "u2"}, {"id": "u3"}])
+    n = _enqueue_recompute_fanout(sb, "rec-9")
+    assert n == 3
+    assert {r["user_id"] for r in sb.inserted} == {"u1", "u2", "u3"}
+    assert all(r["reason"] == "recruitment.promoted" for r in sb.inserted)
+    assert all(r["status"] == "pending" for r in sb.inserted)
+    assert all(r["metadata"] == {"recruitment_id": "rec-9"} for r in sb.inserted)
+
+
+def test_recompute_fanout_skips_users_with_pending_row():
+    from app.scraping.runner import _enqueue_recompute_fanout
+
+    sb = _FanoutSB(
+        profiles=[{"id": "u1"}, {"id": "u2"}],
+        pending=[{"user_id": "u1"}],  # u1 already queued
+    )
+    n = _enqueue_recompute_fanout(sb, "rec-9")
+    assert n == 1
+    assert [r["user_id"] for r in sb.inserted] == ["u2"]
+
+
+def test_recompute_fanout_is_best_effort_on_failure():
+    """A broken supabase must not raise — promotion already succeeded."""
+    from app.scraping.runner import _enqueue_recompute_fanout
+
+    class _Broken:
+        def table(self, name):
+            raise RuntimeError("db down")
+
+    assert _enqueue_recompute_fanout(_Broken(), "rec-9") == 0
