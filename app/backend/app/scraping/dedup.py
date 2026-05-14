@@ -52,9 +52,10 @@ def find_duplicate(
 
     Signals (first match wins, highest-trust first):
       1. Exact ``official_notification_url`` / ``official_apply_url`` match.
-      2. Same similarity key against canonical recruitments.
-      3. Same similarity key against an open queue row.
-      4. (org_norm, year, title fuzzy ≥ threshold) against canonical recruitments.
+      2. Same (org_norm, notification_number) against canonical recruitments.
+      3. Same similarity key against canonical recruitments.
+      4. Same similarity key against an open queue row.
+      5. (org_norm, year, title fuzzy ≥ threshold) against canonical recruitments.
 
     Title alone never decides — that was the old behaviour and it false-matched
     across organisations and years.
@@ -69,6 +70,10 @@ def find_duplicate(
     extracted_org = _norm(extracted.get("organization_name"))
     extracted_year = extracted.get("year")
     extracted_title = extracted.get("title") or ""
+    # Advertisement / notification number, normalised. Org-scoped because
+    # numbers like "05/2026" repeat across organisations — only an
+    # (org, number) pair is trustworthy as an exact key.
+    extracted_notif_no = _norm(extracted.get("notification_number"))
 
     for r in existing_recruitments:
         rec_urls = {
@@ -83,6 +88,23 @@ def find_duplicate(
                 duplicate_recruitment_id=r.get("id"),
                 matched_fields=["official_url"],
             )
+
+    # (org, notification_number) exact match — second only to a URL match.
+    # Requires a non-trivial number so a stray "" / "1" can't collide.
+    if extracted_org and len(extracted_notif_no) >= 4:
+        for r in existing_recruitments:
+            org = r.get("organizations")
+            if isinstance(org, list):
+                org = org[0] if org else None
+            rec_org = _norm((org or {}).get("name")) if isinstance(org, dict) else _norm(r.get("organization_name"))
+            if rec_org and rec_org == extracted_org and _norm(r.get("notification_number")) == extracted_notif_no:
+                return DuplicateDecision(
+                    is_duplicate=True,
+                    score=99,
+                    reason="notification_number_exact",
+                    duplicate_recruitment_id=r.get("id"),
+                    matched_fields=["organization_name", "notification_number"],
+                )
 
     for r in existing_recruitments:
         org = r.get("organizations")

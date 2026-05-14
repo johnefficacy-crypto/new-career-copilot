@@ -114,6 +114,7 @@ def extract_recruitment_data(
         f'  "title": "string",\n'
         f'  "organization_name": "string",\n'
         f'  "org_type": "UPSC|SSC|Banking|Railway|State|Insurance|Defence|Other",\n'
+        f'  "notification_number": "string or null (the advertisement / notification number exactly as printed, e.g. \\"Advt. No. 05/2026\\")",\n'
         f'  "notification_date": "YYYY-MM-DD or null",\n'
         f'  "apply_start_date": "YYYY-MM-DD or null",\n'
         f'  "apply_end_date":   "YYYY-MM-DD or null",\n'

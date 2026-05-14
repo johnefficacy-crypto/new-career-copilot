@@ -23,7 +23,8 @@ import hashlib
 import logging
 import re
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 
@@ -579,6 +580,128 @@ def fetch_api(
     )
     entries = parse_json_feed(payload, adapter_config=adapter_config)
     return result, entries
+
+
+def _with_query(url: str, params: dict[str, Any]) -> str:
+    """Return ``url`` with ``params`` merged into its query string."""
+    parts = urlparse(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query.update({k: str(v) for k, v in params.items()})
+    return urlunparse(parts._replace(query=urlencode(query)))
+
+
+def fetch_api_paginated(
+    url: str,
+    *,
+    adapter_config: dict[str, Any] | None = None,
+    timeout: float = 15.0,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
+) -> tuple[FetchResult, list[ApiEntry]]:
+    """Fetch a JSON endpoint across multiple pages and return the first
+    page's ``FetchResult`` plus the flattened entries from every page.
+
+    Pagination is opt-in via ``adapter_config["pagination"]``:
+
+      * ``{"type": "page", "page_param": "page", "start_page": 1,
+         "max_pages": 10}`` — increments a page-number query param.
+      * ``{"type": "offset", "offset_param": "offset",
+         "limit_param": "limit", "page_size": 50, "max_pages": 10}`` —
+        walks an offset/limit window.
+      * ``{"type": "cursor", "next_path": "meta.next", "max_pages": 10}``
+        — follows a next-page URL found at a dotted path in each
+        response body.
+
+    When ``pagination`` is unset this behaves exactly like
+    :func:`fetch_api` (single request). Traversal stops on the first
+    empty page, when ``max_pages`` is reached, or (cursor mode) when
+    there's no next link. Conditional-fetch headers apply to the first
+    request only — a 304 there short-circuits the whole walk.
+    """
+    cfg = adapter_config or {}
+    pagination = cfg.get("pagination")
+    if not isinstance(pagination, dict) or not pagination:
+        return fetch_api(
+            url, adapter_config=cfg, timeout=timeout,
+            if_none_match=if_none_match, if_modified_since=if_modified_since,
+        )
+
+    ptype = str(pagination.get("type") or "").lower()
+    try:
+        max_pages = max(1, min(int(pagination.get("max_pages", 10)), 100))
+    except (TypeError, ValueError):
+        max_pages = 10
+
+    first_result, first_entries = fetch_api(
+        url, adapter_config=cfg, timeout=timeout,
+        if_none_match=if_none_match, if_modified_since=if_modified_since,
+    )
+    # 304 / error / empty first page: nothing to paginate.
+    if not first_result.ok or not first_entries:
+        return first_result, first_entries
+
+    all_entries: list[ApiEntry] = list(first_entries)
+    seen_urls: set[str] = {url}
+
+    if ptype == "cursor":
+        next_path = str(pagination.get("next_path") or "").strip()
+        next_url: Any = None
+        try:
+            import json as _json
+            next_url = _drill(_json.loads(first_result.text or "null"), next_path) if next_path else None
+        except Exception:  # noqa: BLE001
+            next_url = None
+        pages = 1
+        while next_url and isinstance(next_url, str) and next_url not in seen_urls and pages < max_pages:
+            seen_urls.add(next_url)
+            page_result, page_entries = fetch_api(next_url, adapter_config=cfg, timeout=timeout)
+            if not page_result.ok or not page_entries:
+                break
+            all_entries.extend(page_entries)
+            pages += 1
+            try:
+                import json as _json
+                next_url = _drill(_json.loads(page_result.text or "null"), next_path) if next_path else None
+            except Exception:  # noqa: BLE001
+                next_url = None
+        return first_result, all_entries
+
+    # page / offset modes: synthesise the next request URL by query param.
+    if ptype == "offset":
+        offset_param = str(pagination.get("offset_param") or "offset")
+        limit_param = str(pagination.get("limit_param") or "limit")
+        try:
+            page_size = max(1, int(pagination.get("page_size", 50)))
+        except (TypeError, ValueError):
+            page_size = 50
+        for page_idx in range(1, max_pages):
+            params = {offset_param: page_idx * page_size, limit_param: page_size}
+            page_url = _with_query(url, params)
+            if page_url in seen_urls:
+                break
+            seen_urls.add(page_url)
+            page_result, page_entries = fetch_api(page_url, adapter_config=cfg, timeout=timeout)
+            if not page_result.ok or not page_entries:
+                break
+            all_entries.extend(page_entries)
+        return first_result, all_entries
+
+    # default: page-number mode.
+    page_param = str(pagination.get("page_param") or "page")
+    try:
+        start_page = int(pagination.get("start_page", 1))
+    except (TypeError, ValueError):
+        start_page = 1
+    for offset in range(1, max_pages):
+        page_url = _with_query(url, {page_param: start_page + offset})
+        if page_url in seen_urls:
+            break
+        seen_urls.add(page_url)
+        page_result, page_entries = fetch_api(page_url, adapter_config=cfg, timeout=timeout)
+        if not page_result.ok or not page_entries:
+            break
+        all_entries.extend(page_entries)
+    return first_result, all_entries
 
 
 # ─── PDF adapter ────────────────────────────────────────────────────────────

@@ -105,6 +105,42 @@ def test_queued_match_returns_queue_id_not_recruitment_id():
     assert decision.duplicate_recruitment_id is None
 
 
+def test_notification_number_exact_match_with_same_org():
+    extracted = _extracted(
+        title="CGL 2026 Notice",  # different title wording
+        notification_number="Advt. No. 05/2026",
+        official_notification_url="https://ssc.gov.in/cgl-notice-page",
+    )
+    existing = _existing(notification_number="Advt No 05/2026")  # punctuation differs
+    decision = find_duplicate(
+        extracted,
+        sim_key=recruitment_key("SSC", 2026, "CGL 2026 Notice"),
+        existing_recruitments=[existing],
+    )
+    assert decision.is_duplicate is True
+    assert decision.reason == "notification_number_exact"
+    assert decision.duplicate_recruitment_id == "rec-1"
+
+
+def test_notification_number_does_not_match_across_orgs():
+    extracted = _extracted(
+        organization_name="UPSC",
+        notification_number="05/2026",
+        official_notification_url="https://upsc.gov.in/x",
+    )
+    # Same number, different org — must NOT collide.
+    existing = _existing(
+        organizations={"name": "SSC"},
+        notification_number="05/2026",
+    )
+    decision = find_duplicate(
+        extracted,
+        sim_key=recruitment_key("UPSC", 2026, "Combined Graduate Level"),
+        existing_recruitments=[existing],
+    )
+    assert decision.reason != "notification_number_exact"
+
+
 def test_recruitment_key_unified_across_callers():
     # The runner's existing-recruitment loop and new-extraction loop must
     # produce the same key for the same (org, year, title).

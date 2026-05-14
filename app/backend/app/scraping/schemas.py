@@ -87,6 +87,10 @@ class RawExtractedRecruitment(BaseModel):
     title: str
     organization_name: str
     org_type: str
+    # Advertisement / notification number as printed on the notice
+    # (e.g. "Advt. No. 05/2026"). High-trust dedup signal — combined
+    # with the organisation it is effectively a unique key.
+    notification_number: str | None = None
     notification_date: str | None = None
     apply_start_date: str | None = None
     apply_end_date: str | None = None

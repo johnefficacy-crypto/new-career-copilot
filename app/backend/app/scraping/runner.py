@@ -739,7 +739,7 @@ def _run_api_pass(
     official URLs replace the entry link before extraction.
     """
     from .aggregator import classify_aggregator_link
-    from .fetcher import fetch_api
+    from .fetcher import fetch_api_paginated
 
     if mock:
         entries = [
@@ -754,7 +754,10 @@ def _run_api_pass(
     else:
         prior_etag = src.get("last_listing_etag")
         prior_modified = src.get("last_listing_modified")
-        result, entries = fetch_api(
+        # fetch_api_paginated walks page/offset/cursor pagination when
+        # adapter_config["pagination"] is set; otherwise it's a single
+        # fetch_api call. Conditional headers apply to the first page.
+        result, entries = fetch_api_paginated(
             target_url,
             adapter_config=source.adapter_config,
             if_none_match=prior_etag,
@@ -1268,7 +1271,7 @@ def run_scraping_pass(
             execute_or_raise(
                 "recruitments.read_for_dedupe",
                 lambda: supabase.table("recruitments")
-                .select("id, name, year, organizations(name), official_notification_url, official_apply_url")
+                .select("id, name, year, organizations(name), official_notification_url, official_apply_url, notification_number")
                 .execute(),
             ).data
             or []
@@ -2598,6 +2601,7 @@ def _build_promotion_rpc_payload(
         "organization_name": data.organization_name,
         "org_type": data.org_type,
         "year": data.year,
+        "notification_number": data.notification_number,
         "notification_date": data.notification_date,
         "apply_start_date": data.apply_start_date,
         "apply_end_date": data.apply_end_date,
@@ -2740,6 +2744,7 @@ def _promote_to_recruitments_compensation(
         "organization_id": org_id,
         "name": data.title,
         "year": data.year,
+        "notification_number": data.notification_number,
         "notification_date": data.notification_date,
         "apply_start_date": data.apply_start_date,
         "apply_end_date": data.apply_end_date,
