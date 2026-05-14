@@ -2238,13 +2238,23 @@ _EDU_KEYWORD_TO_LEVEL: list[tuple[tuple[str, ...], str]] = [
 ]
 
 
-def _map_education_level(raw: str | None) -> str:
+def _map_education_level(raw: str | None) -> str | None:
+    """Map a free-text education requirement to a canonical level.
+
+    Returns ``None`` when the text can't be classified — the caller
+    must NOT substitute a default. Defaulting unclassified text to
+    ``"graduate"`` (the old behaviour) wrongly excluded 10th / 12th /
+    diploma candidates from eligibility. An unclassified post keeps its
+    ``raw_requirement_text`` so a mapper / reviewer can resolve it later.
+    """
     s = (raw or "").lower()
+    if not s.strip():
+        return None
     for keywords, level in _EDU_KEYWORD_TO_LEVEL:
         for k in keywords:
             if k in s:
                 return level
-    return "graduate"
+    return None
 
 
 def _find_or_create_organization(
@@ -2578,6 +2588,9 @@ def _build_promotion_rpc_payload(
             "age_relaxation": post.age_relaxation,
             "fees": post.fees,
             "selection_process": post.selection_process,
+            "job_location": post.job_location,
+            "certificates": post.certificates,
+            "source_evidence": post.source_evidence,
         })
     return {
         "slug": slug,
@@ -2801,6 +2814,11 @@ def _promote_to_recruitments_compensation(
                 # extracted value; default false is the safe choice when the
                 # extractor saw no domicile statement.
                 "requires_domicile": bool(post.requires_domicile),
+                # Rich post fields (migration 055) — kept in lockstep with
+                # the RPC path so the compensation fallback isn't lossy.
+                "job_location": post.job_location,
+                "certificates": post.certificates,
+                "source_evidence": post.source_evidence,
             }
             post_rows = execute_or_raise("posts.insert", lambda: supabase.table("posts").insert(post_payload).execute()).data or []
             if not post_rows:
