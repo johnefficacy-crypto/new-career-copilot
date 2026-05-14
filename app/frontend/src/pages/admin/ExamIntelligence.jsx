@@ -5,6 +5,8 @@ import ExamIntelligenceOverviewCards from "../../features/admin/exam-intelligenc
 import ExamListTable from "../../features/admin/exam-intelligence/ExamListTable";
 import ReviewQueueTable from "../../features/admin/exam-intelligence/ReviewQueueTable";
 import TopicCoveragePreview from "../../features/admin/exam-intelligence/TopicCoveragePreview";
+import CompetitionMetricsTable from "../../features/admin/exam-intelligence/CompetitionMetricsTable";
+import PolicyUpdatesTable from "../../features/admin/exam-intelligence/PolicyUpdatesTable";
 import PlanImpactPreview from "../../features/admin/exam-intelligence/PlanImpactPreview";
 import { AdminSafetyBanner } from "../../shared/ui";
 
@@ -13,8 +15,14 @@ const TABS = [
   { id: "exams", label: "Exams" },
   { id: "review", label: "Review queue" },
   { id: "coverage", label: "Topic Coverage" },
+  { id: "competition", label: "Competition Metrics" },
+  { id: "policy", label: "Policy Updates" },
   { id: "impact", label: "Plan Impact" },
 ];
+
+const COVERAGE_STATUSES = ["all", "draft", "pending_review", "reviewed", "locked", "rejected"];
+const POLICY_STATUSES = ["all", "pending", "verified", "rejected", "needs_correction"];
+const POLICY_SOURCE_TYPES = ["all", "official", "aggregator", "research", "opportunity", "unknown"];
 
 const KINDS = [
   { value: "syllabus_topic_mention", label: "Syllabus mentions" },
@@ -44,6 +52,21 @@ export default function AdminExamIntelligence() {
   const [coverage, setCoverage] = useState({ items: [], count: 0 });
   const [coverageLoading, setCoverageLoading] = useState(false);
   const [coverageStatus, setCoverageStatus] = useState("all");
+  const [coverageBusyRowId, setCoverageBusyRowId] = useState(null);
+  const [coverageError, setCoverageError] = useState("");
+
+  const [competition, setCompetition] = useState({ items: [], count: 0 });
+  const [competitionLoading, setCompetitionLoading] = useState(false);
+  const [competitionStatus, setCompetitionStatus] = useState("all");
+  const [competitionBusyRowId, setCompetitionBusyRowId] = useState(null);
+  const [competitionError, setCompetitionError] = useState("");
+
+  const [policy, setPolicy] = useState({ items: [], count: 0 });
+  const [policyLoading, setPolicyLoading] = useState(false);
+  const [policyStatus, setPolicyStatus] = useState("all");
+  const [policySourceType, setPolicySourceType] = useState("all");
+  const [policyBusyRowId, setPolicyBusyRowId] = useState(null);
+  const [policyError, setPolicyError] = useState("");
 
   const loadOverview = useCallback(async () => {
     setOverviewError("");
@@ -103,12 +126,48 @@ export default function AdminExamIntelligence() {
     }
   }, [coverageStatus]);
 
+  const loadCompetition = useCallback(async () => {
+    setCompetitionLoading(true);
+    try {
+      const params = new URLSearchParams({ status: competitionStatus, limit: "200" });
+      const d = await api.get(
+        `/api/admin/exam-intelligence/competition-metrics?${params.toString()}`,
+      );
+      setCompetition({ items: d?.items || [], count: d?.count || 0 });
+    } catch {
+      setCompetition({ items: [], count: 0 });
+    } finally {
+      setCompetitionLoading(false);
+    }
+  }, [competitionStatus]);
+
+  const loadPolicy = useCallback(async () => {
+    setPolicyLoading(true);
+    try {
+      const params = new URLSearchParams({
+        status: policyStatus,
+        source_type: policySourceType,
+        limit: "200",
+      });
+      const d = await api.get(
+        `/api/admin/exam-intelligence/policy-updates?${params.toString()}`,
+      );
+      setPolicy({ items: d?.items || [], count: d?.count || 0 });
+    } catch {
+      setPolicy({ items: [], count: 0 });
+    } finally {
+      setPolicyLoading(false);
+    }
+  }, [policyStatus, policySourceType]);
+
   useEffect(() => {
     if (tab === "overview") loadOverview();
     if (tab === "exams") loadExams();
     if (tab === "review") loadItems();
     if (tab === "coverage") loadCoverage();
-  }, [tab, loadOverview, loadExams, loadItems, loadCoverage]);
+    if (tab === "competition") loadCompetition();
+    if (tab === "policy") loadPolicy();
+  }, [tab, loadOverview, loadExams, loadItems, loadCoverage, loadCompetition, loadPolicy]);
 
   function gotoReviewQueue(exam) {
     setSelectedExam(exam);
@@ -129,6 +188,57 @@ export default function AdminExamIntelligence() {
       setReviewError(e?.message || "Review failed");
     } finally {
       setBusyRowId(null);
+    }
+  }
+
+  async function reviewCoverageRow(row, nextStatus) {
+    if (!row || !row.id) return;
+    setCoverageBusyRowId(row.id);
+    setCoverageError("");
+    try {
+      await api.patch(
+        `/api/admin/exam-intelligence/topic-coverage/${encodeURIComponent(row.id)}/review`,
+        { reviewer_status: nextStatus },
+      );
+      await loadCoverage();
+    } catch (e) {
+      setCoverageError(e?.message || "Coverage review failed");
+    } finally {
+      setCoverageBusyRowId(null);
+    }
+  }
+
+  async function reviewCompetitionRow(row, nextStatus) {
+    if (!row || !row.id) return;
+    setCompetitionBusyRowId(row.id);
+    setCompetitionError("");
+    try {
+      await api.patch(
+        `/api/admin/exam-intelligence/competition-metrics/${encodeURIComponent(row.id)}/review`,
+        { reviewer_status: nextStatus },
+      );
+      await loadCompetition();
+    } catch (e) {
+      setCompetitionError(e?.message || "Competition review failed");
+    } finally {
+      setCompetitionBusyRowId(null);
+    }
+  }
+
+  async function reviewPolicyRow(row, nextStatus) {
+    if (!row || !row.id) return;
+    setPolicyBusyRowId(row.id);
+    setPolicyError("");
+    try {
+      await api.patch(
+        `/api/admin/exam-intelligence/policy-updates/${encodeURIComponent(row.id)}/review`,
+        { reviewer_status: nextStatus },
+      );
+      await loadPolicy();
+    } catch (e) {
+      setPolicyError(e?.message || "Policy update review failed");
+    } finally {
+      setPolicyBusyRowId(null);
     }
   }
 
@@ -304,7 +414,117 @@ export default function AdminExamIntelligence() {
               {coverage.count} row{coverage.count === 1 ? "" : "s"}
             </p>
           </div>
-          <TopicCoveragePreview items={coverage.items} />
+          {coverageError ? (
+            <div className="rounded-xl bg-dusk-50 text-dusk-800 text-xs px-3 py-2">
+              {coverageError}
+            </div>
+          ) : null}
+          <TopicCoveragePreview
+            items={coverage.items}
+            onReview={reviewCoverageRow}
+            busyRowId={coverageBusyRowId}
+          />
+        </section>
+      ) : null}
+
+      {tab === "competition" ? (
+        <section className="space-y-3" data-testid="exam-intel-competition">
+          <p className="text-xs text-muted-foreground max-w-prose">
+            Competition Intelligence keeps the plan realistic: vacancy,
+            applicant ratio, cutoff and difficulty trends. Only{" "}
+            <span className="font-mono">locked</span> rows are read by the
+            Study OS planner.
+          </p>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="text-sm">
+              <span className="text-muted-foreground text-xs">Status</span>
+              <select
+                className="mt-1 block rounded-xl border border-clay-200 px-3 py-2 text-sm"
+                value={competitionStatus}
+                onChange={(e) => setCompetitionStatus(e.target.value)}
+              >
+                {COVERAGE_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" onClick={loadCompetition} className="btn btn-ghost">
+              {competitionLoading ? "Loading…" : "Refresh"}
+            </button>
+            <p className="text-xs text-muted-foreground self-center">
+              {competition.count} row{competition.count === 1 ? "" : "s"}
+            </p>
+          </div>
+          {competitionError ? (
+            <div className="rounded-xl bg-dusk-50 text-dusk-800 text-xs px-3 py-2">
+              {competitionError}
+            </div>
+          ) : null}
+          <CompetitionMetricsTable
+            items={competition.items}
+            onReview={reviewCompetitionRow}
+            busyRowId={competitionBusyRowId}
+          />
+        </section>
+      ) : null}
+
+      {tab === "policy" ? (
+        <section className="space-y-3" data-testid="exam-intel-policy">
+          <p className="text-xs text-muted-foreground max-w-prose">
+            Policy / Update Intelligence tracks official notification, cycle,
+            syllabus and vacancy changes. Only verified{" "}
+            <span className="font-mono">official</span> rows reach the
+            planner — aggregator, research and opportunity rows are
+            discovery-only and can never change a plan.
+          </p>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="text-sm">
+              <span className="text-muted-foreground text-xs">Status</span>
+              <select
+                className="mt-1 block rounded-xl border border-clay-200 px-3 py-2 text-sm"
+                value={policyStatus}
+                onChange={(e) => setPolicyStatus(e.target.value)}
+              >
+                {POLICY_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              <span className="text-muted-foreground text-xs">Source type</span>
+              <select
+                className="mt-1 block rounded-xl border border-clay-200 px-3 py-2 text-sm"
+                value={policySourceType}
+                onChange={(e) => setPolicySourceType(e.target.value)}
+              >
+                {POLICY_SOURCE_TYPES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" onClick={loadPolicy} className="btn btn-ghost">
+              {policyLoading ? "Loading…" : "Refresh"}
+            </button>
+            <p className="text-xs text-muted-foreground self-center">
+              {policy.count} row{policy.count === 1 ? "" : "s"}
+            </p>
+          </div>
+          {policyError ? (
+            <div className="rounded-xl bg-dusk-50 text-dusk-800 text-xs px-3 py-2">
+              {policyError}
+            </div>
+          ) : null}
+          <PolicyUpdatesTable
+            items={policy.items}
+            onReview={reviewPolicyRow}
+            busyRowId={policyBusyRowId}
+          />
         </section>
       ) : null}
 
