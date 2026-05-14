@@ -269,7 +269,10 @@ def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
                             # #135. The queue payload here has no posts, so the
                             # gate's no-posts fallback accepts a single
                             # recruitment-level verified row.
+<<<<<<< HEAD
                             {'field_name':'requires_domicile','reviewer_status':'verified'},
+=======
+>>>>>>> 587e1d9e2aad0026872b46f34f9867fcd1329f82
                             {'field_name':'requires_domicile','reviewer_status':'verified'},
                         ])
                 return FQ(self)
