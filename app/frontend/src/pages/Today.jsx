@@ -11,12 +11,18 @@ import MissionControlSkeleton from "../features/study/components/MissionControlS
 import StudyPolicyPreview from "../features/study/components/StudyPolicyPreview";
 import IntelligenceLayersPanel from "../features/study/components/IntelligenceLayersPanel";
 import UpdateIntelligencePanel from "../features/study/components/UpdateIntelligencePanel";
+import SafeExplanationCard from "../features/study/components/SafeExplanationCard";
+import PlanReasoningCard from "../features/study/components/PlanReasoningCard";
+import ExamContextCard from "../features/study/components/ExamContextCard";
 
 const EMPTY_MC = {
-  user_context: { dimensions: {}, scores: {} },
+  user_context: { dimensions: {}, scores: {}, safe_user_explanation: [] },
   study_policy: {},
   plan: null,
+  exam_context: null,
+  update_context: null,
   today_tasks: [],
+  plan_reasoning: [],
   metrics: {
     tasks_total: 0,
     tasks_completed: 0,
@@ -179,6 +185,10 @@ export default function Today() {
   const truth = mc.truth_panel;
   const engine = mc.engine_trace || [];
   const nextBest = mc.next_best_action;
+  const safeExplanation = mc.user_context?.safe_user_explanation || [];
+  const planReasoning = mc.plan_reasoning || [];
+  const examContext = mc.exam_context;
+  const updateContext = mc.update_context || {};
   // Render the question card unless it would duplicate the existing
   // PersonaQuestionCard. We always use PersonaQuestionCard so the skip
   // and save behaviour stays single-sourced in PR2.
@@ -223,6 +233,8 @@ export default function Today() {
           </div>
         </section>
       )}
+
+      <SafeExplanationCard explanations={safeExplanation} />
 
       <section
         className="grid grid-cols-2 md:grid-cols-4 gap-3"
@@ -276,15 +288,23 @@ export default function Today() {
         )}
       </section>
 
+      <PlanReasoningCard reasoning={planReasoning} />
+
       <StudyPolicyPreview policy={policy} />
 
       <TruthPanelCard panel={truth} />
+
+      <ExamContextCard examContext={examContext} />
 
       <EngineTrace steps={engine} />
 
       <IntelligenceLayersPanel />
 
-      <UpdateIntelligencePanel />
+      <UpdateIntelligencePanel
+        official={updateContext.official_updates}
+        unverified={updateContext.needs_verification}
+        isPreview={false}
+      />
 
       <PersonaQuestionCard />
     </div>
