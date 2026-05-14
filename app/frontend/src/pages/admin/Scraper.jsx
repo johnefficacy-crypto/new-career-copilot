@@ -60,7 +60,8 @@ function QueueDetailDrawer({ item, onClose, onAction, onFieldAction, onMerge }) 
           <Info label="Organization" value={extracted.organization_name || extracted.organization} />
           <Info label="Dates" value={`${extracted.apply_start_date || "-"} to ${extracted.apply_end_date || "-"}`} />
           <Info label="Duplicate" value={item.duplicate_of || "No canonical duplicate linked"} />
-          <Info label="Official provenance" value={item.official_source_resolved ? "Resolved" : "Required / unresolved"} />
+          <Info label="Official provenance" value={item.official_source_resolved ? `Resolved${item.official_source_host ? ` · ${item.official_source_host}` : ""}` : "Required / unresolved"} />
+          <Info label="Resolver reason" value={(extracted._meta && extracted._meta.resolver_reason) || (item.official_source_resolved ? "matched" : null)} />
         </section>
 
         {primaryDuplicate ? (
