@@ -6,12 +6,14 @@ module.exports = {
     container: { center: true, padding: "1.5rem", screens: { "2xl": "1400px" } },
     extend: {
       fontFamily: {
-        sans: ["Satoshi", "ui-sans-serif", "system-ui", "sans-serif"],
-        heading: ["'Cabinet Grotesk'", "Satoshi", "sans-serif"],
+        sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+        heading: ["'Fraunces'", "Georgia", "serif"],
         mono: ["'JetBrains Mono'", "ui-monospace", "monospace"],
         serif: ["'Fraunces'", "Georgia", "serif"],
       },
       colors: {
+        ink: "#2E2218",
+        paper: "#FBF6EF",
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -35,14 +37,18 @@ module.exports = {
       },
       keyframes: {
         "fade-up": { "0%": { opacity: 0, transform: "translateY(10px)" }, "100%": { opacity: 1, transform: "translateY(0)" } },
+        "drift-in": { from: { opacity: 0, transform: "translateY(10px)" }, to: { opacity: 1, transform: "translateY(0)" } },
         float: { "0%,100%": { transform: "translateY(0)" }, "50%": { transform: "translateY(-6px)" } },
         breathe: { "0%,100%": { transform: "scale(1)", opacity: 0.9 }, "50%": { transform: "scale(1.02)", opacity: 1 } },
+        "pulse-dot": { "0%,100%": { opacity: 1, transform: "scale(1)" }, "50%": { opacity: 0.6, transform: "scale(1.4)" } },
         shimmer: { "100%": { transform: "translateX(100%)" } },
       },
       animation: {
         "fade-up": "fade-up 0.6s cubic-bezier(.22,1,.36,1) both",
+        "drift-in": "drift-in 0.5s cubic-bezier(.22,1,.36,1) both",
         float: "float 8s ease-in-out infinite",
         breathe: "breathe 4.5s ease-in-out infinite",
+        "pulse-dot": "pulse-dot 2s ease-in-out infinite",
         shimmer: "shimmer 2.5s linear infinite",
       },
     },

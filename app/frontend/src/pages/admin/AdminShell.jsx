@@ -69,7 +69,7 @@ export default function AdminShell() {
   }, [sidebarCollapsed]);
 
   return (
-    <div className="flex min-h-screen bg-[#F1E9DB]">
+    <div className="flex min-h-screen linen-bg">
       <aside className="hidden lg:flex">
         <AdminSidebar collapsed={sidebarCollapsed} />
       </aside>
