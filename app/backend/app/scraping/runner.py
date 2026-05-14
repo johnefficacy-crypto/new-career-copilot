@@ -51,7 +51,7 @@ from app.common.time import utc_now_iso
 from app.core.errors import PromotionError
 from app.db.utils import execute_or_default, execute_or_raise
 
-from .schemas import ExtractedRecruitment, to_json_safe
+from .schemas import ExtractedRecruitment, VerifiedRecruitmentForPromotion, to_json_safe
 
 logger = logging.getLogger("career_copilot.scraping.runner")
 
@@ -2553,7 +2553,7 @@ def _compensate_promotion(
 
 
 def _build_promotion_rpc_payload(
-    data: ExtractedRecruitment,
+    data: VerifiedRecruitmentForPromotion,
     *,
     source_id: str | None,
     slug: str,
@@ -2646,7 +2646,7 @@ def _is_duplicate_slug_rpc_error(exc: BaseException) -> tuple[bool, str | None]:
 
 
 def promote_to_recruitments(
-    data: ExtractedRecruitment,
+    data: VerifiedRecruitmentForPromotion,
     supabase: Client,
     *,
     source_id: str | None = None,
@@ -2712,7 +2712,7 @@ def promote_to_recruitments(
 
 
 def _promote_to_recruitments_compensation(
-    data: ExtractedRecruitment,
+    data: VerifiedRecruitmentForPromotion,
     supabase: Client,
     *,
     source_id: str | None = None,
@@ -2886,7 +2886,7 @@ def _promote_to_recruitments_compensation(
     return rec_id
 
 
-def compute_promotion_slug(data: ExtractedRecruitment) -> str:
+def compute_promotion_slug(data: VerifiedRecruitmentForPromotion) -> str:
     return f"{slugify(data.title)}-{data.year}"
 
 
@@ -2943,7 +2943,9 @@ def promote_run(
             continue
 
         try:
-            extracted = ExtractedRecruitment(**d)
+            # Strict shape: structurally-incomplete rows fail here with a
+            # clear ValidationError instead of half-writing a recruitment.
+            extracted = VerifiedRecruitmentForPromotion(**d)
             rec_id = promote_to_recruitments(extracted, supabase, source_id=item.get("source_id"))
             rec_ids.append(rec_id)
             update = {

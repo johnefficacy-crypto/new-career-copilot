@@ -23,7 +23,7 @@ class Q:
             return R([row])
         return R([])
 class SB:
-    def __init__(self): self.state={'queue':[{'id':'q1','status':'approved','source_id':'src-1','notification_document_id':'doc-1','extracted_data':{'title':'t','organization_name':'Org','org_type':'central','year':2026,'official_notification_url':'https://x.gov/n'}}],'audits':[]}
+    def __init__(self): self.state={'queue':[{'id':'q1','status':'approved','source_id':'src-1','notification_document_id':'doc-1','extracted_data':{'title':'t','organization_name':'Org','org_type':'central','year':2026,'official_notification_url':'https://x.gov/n','apply_end_date':'2026-06-30','posts':[{'post_name':'Clerk'}]}}],'audits':[]}
     def table(self,t): return Q(t,self.state)
 
 def test_list_sources_uses_source_registry_only(monkeypatch):
@@ -258,9 +258,10 @@ def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
                             {'field_name':'organization_name','reviewer_status':'verified'},
                             {'field_name':'total_vacancies','reviewer_status':'verified'},
                             # Post-scoped high-risk field: the queue item has
-                            # no `posts`, so the gate's fallback accepts any
-                            # verified row for requires_domicile.
-                            {'field_name':'requires_domicile','reviewer_status':'verified'},
+                            # one post ("Clerk"), so requires_domicile needs a
+                            # verified row scoped to that post.
+                            {'field_name':'requires_domicile','reviewer_status':'verified',
+                             'entity_type':'post','entity_key':'clerk'},
                         ])
                 return FQ(self)
             return super().table(t)

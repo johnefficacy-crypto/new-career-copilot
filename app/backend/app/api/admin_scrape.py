@@ -590,8 +590,10 @@ def promote_queue_item(
     queue_id: str,
     admin: dict = Depends(require_permission("recruitments.manage")),
 ) -> dict[str, Any]:
+    from pydantic import ValidationError
+
     from app.scraping.runner import DuplicatePromotionError, promote_to_recruitments
-    from app.scraping.schemas import ExtractedRecruitment
+    from app.scraping.schemas import VerifiedRecruitmentForPromotion
 
     supabase = get_supabase_admin()
     rows = (
@@ -631,7 +633,22 @@ def promote_queue_item(
             )
         warnings = list(gate.warnings)
         effective_data = build_effective_extracted_data(supabase, queue_id)
-        extracted = ExtractedRecruitment(**effective_data)
+        # Strict shape: the gate verifies the high-risk *values*, but core
+        # structural fields (title / org_type / year / at least one post)
+        # are enforced here so a structurally-incomplete row fails with a
+        # clear 422 instead of a half-written recruitment or a 500.
+        try:
+            extracted = VerifiedRecruitmentForPromotion(**effective_data)
+        except ValidationError as exc:
+            missing = sorted({str(e.get("loc", ["?"])[0]) for e in exc.errors()})
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "Extracted data is missing fields required for promotion",
+                    "reason": "incomplete_for_promotion",
+                    "invalid_fields": missing,
+                },
+            ) from exc
         rec_id = promote_to_recruitments(extracted, supabase, source_id=item.get("source_id"))
     except HTTPException:
         raise

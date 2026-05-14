@@ -78,15 +78,20 @@ class ExtractedPost(BaseModel):
 class RawExtractedRecruitment(BaseModel):
     """Permissive queue/admin-review shape.
 
-    Most fields are optional so partial extractions still land in the
-    queue, where an admin can fill the gaps. Use
+    *Every* field is optional — a partial extraction (the AI couldn't
+    find the title, or only a listing fragment was scraped) must still
+    land in ``scrape_queue`` so an admin can fill the gaps. The previous
+    version required title / organization_name / org_type / year /
+    official_notification_url, so those partials raised a ValidationError
+    in the extractor and never reached the review queue at all — exactly
+    the opposite of "permissive". Use
     :class:`VerifiedRecruitmentForPromotion` for canonical writes.
     """
     model_config = ConfigDict(extra="ignore")
 
-    title: str
-    organization_name: str
-    org_type: str
+    title: str | None = None
+    organization_name: str | None = None
+    org_type: str | None = None
     # Advertisement / notification number as printed on the notice
     # (e.g. "Advt. No. 05/2026"). High-trust dedup signal — combined
     # with the organisation it is effectively a unique key.
@@ -95,8 +100,8 @@ class RawExtractedRecruitment(BaseModel):
     apply_start_date: str | None = None
     apply_end_date: str | None = None
     total_vacancies: int | None = None
-    year: int
-    official_notification_url: str
+    year: int | None = None
+    official_notification_url: str | None = None
     official_apply_url: str | None = None
     source_pdf_url: str | None = None
     posts: list[ExtractedPost] = Field(default_factory=list)
@@ -110,12 +115,18 @@ ExtractedRecruitment = RawExtractedRecruitment
 class VerifiedRecruitmentForPromotion(RawExtractedRecruitment):
     """Strict shape required for canonical promotion.
 
-    Pydantic enforces ``apply_end_date``, ``official_notification_url``,
-    and at least one post. Admin code that calls
-    ``promote_to_recruitments`` constructs this from the queue payload so
-    promotion fails fast on a missing gate field instead of writing a
-    partial recruitment.
+    Pydantic re-tightens every field the canonical schema needs:
+    ``title`` / ``organization_name`` / ``org_type`` / ``year`` /
+    ``official_notification_url`` / ``apply_end_date`` must be set, and
+    at least one post is required. Admin and runner promotion code
+    constructs this from the queue payload so promotion fails fast (with
+    a clear error) instead of writing a partial recruitment.
     """
+    title: str
+    organization_name: str
+    org_type: str
+    year: int
+    official_notification_url: str
     apply_end_date: str
     posts: list[ExtractedPost] = Field(min_length=1)
 
