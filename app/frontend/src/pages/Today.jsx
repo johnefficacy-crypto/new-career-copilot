@@ -9,6 +9,8 @@ import EngineTrace from "../features/study/components/EngineTrace";
 import NextBestActionCard from "../features/study/components/NextBestActionCard";
 import MissionControlSkeleton from "../features/study/components/MissionControlSkeleton";
 import StudyPolicyPreview from "../features/study/components/StudyPolicyPreview";
+import IntelligenceLayersPanel from "../features/study/components/IntelligenceLayersPanel";
+import UpdateIntelligencePanel from "../features/study/components/UpdateIntelligencePanel";
 
 const EMPTY_MC = {
   user_context: { dimensions: {}, scores: {} },
@@ -279,6 +281,10 @@ export default function Today() {
       <TruthPanelCard panel={truth} />
 
       <EngineTrace steps={engine} />
+
+      <IntelligenceLayersPanel />
+
+      <UpdateIntelligencePanel />
 
       <PersonaQuestionCard />
     </div>
