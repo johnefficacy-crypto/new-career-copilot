@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../../lib/api";
-import { Eyebrow, StatusDot, StudyCard, SectionHeader } from "../../shared/ui/studyos";
+import { Card, Eyebrow, PageHeader, SectionHeader, StatusDot } from "../../shared/ui/studyos";
 
 // All optional fields below are read defensively — the weekly-review
 // endpoint may or may not return them. Anything missing renders as a calm
@@ -25,6 +25,14 @@ const EMPTY = {
 function num(v) {
   return v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v);
 }
+
+// Static explainer — describes the weekly review → engine → plan loop.
+const LOOP_STEPS = [
+  { k: "Weekly signals", v: "adherence · backlog · revision · mock" },
+  { k: "Policy check", v: "availability · constraints · mix targets" },
+  { k: "Engine adapt", v: "next-week plan draft compiled" },
+  { k: "You approve", v: "applied or kept-current" },
+];
 
 export default function WeeklyReview() {
   const [d, setD] = useState(EMPTY);
@@ -108,25 +116,17 @@ export default function WeeklyReview() {
     <div className="space-y-6" data-testid="weekly-review-page">
       {err && <div className="rounded-xl bg-clay-50 text-clay-800 text-xs px-3 py-2">{err}</div>}
 
-      <header className="flex items-end justify-between gap-6 flex-wrap">
-        <div>
-          <Eyebrow>Weekly review · {d.week_of}</Eyebrow>
-          <h1 className="font-heading text-[36px] leading-[1.05] mt-2">Close the loop.</h1>
-          <p className="text-[14px] text-clay-700 mt-2 max-w-[64ch]">
-            An honest read of the week — what improved, what declined, and what Study OS will
-            change next. Calmly. No streaks. No shame.
-          </p>
-        </div>
-        <StatusDot state="live" label="Live · /api/study/weekly-review" />
-      </header>
+      <PageHeader
+        eyebrow={`Weekly review · ${d.week_of}`}
+        title="Close the loop."
+        sub="An honest read of the week — what improved, what declined, and what Study OS will change next. Calmly. No streaks. No shame."
+        right={<StatusDot state="live" label="Live · /api/study/weekly-review" />}
+      />
 
       {/* Headline metrics */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {cells.map((c) => (
-          <div
-            key={c.k}
-            className="soft-card grain relative overflow-hidden rounded-[14px] px-4 py-3.5"
-          >
+          <div key={c.k} className="soft-card grain relative overflow-hidden rounded-[14px] px-4 py-3.5">
             <Eyebrow>{c.k}</Eyebrow>
             <div className="font-heading text-[24px] mt-1.5 leading-none">{c.v}</div>
             <div className="text-[11px] text-clay-700 mt-2">{c.sub}</div>
@@ -136,7 +136,7 @@ export default function WeeklyReview() {
 
       {/* Improved / declined */}
       <div className="grid md:grid-cols-2 gap-6">
-        <StudyCard className="!bg-[#F0F5EF] !border-[#B9CFAF]">
+        <Card className="!bg-[#F0F5EF] !border-[#B9CFAF]">
           <Eyebrow>What improved</Eyebrow>
           <h2 className="font-heading text-[20px] mt-1.5 text-[#33482F]">These are working.</h2>
           {d.highlights.length ? (
@@ -153,8 +153,8 @@ export default function WeeklyReview() {
               Nothing flagged as improved yet — keep logging and the panel fills in.
             </p>
           )}
-        </StudyCard>
-        <StudyCard className="!bg-[#F2DDD6] !border-[#D9B4A6]">
+        </Card>
+        <Card className="!bg-[#F2DDD6] !border-[#D9B4A6]">
           <Eyebrow>What declined</Eyebrow>
           <h2 className="font-heading text-[20px] mt-1.5 text-[#7A3925]">These need attention.</h2>
           {d.corrections.length ? (
@@ -171,11 +171,11 @@ export default function WeeklyReview() {
               No declines to correct this week. That is a good week.
             </p>
           )}
-        </StudyCard>
+        </Card>
       </div>
 
       {/* What Study OS will change next + plan change preview */}
-      <StudyCard data-testid="plan-change-preview">
+      <Card data-testid="plan-change-preview">
         <SectionHeader
           eyebrow="What Study OS will change next"
           title="Preview only. Nothing applies silently."
@@ -207,7 +207,26 @@ export default function WeeklyReview() {
             adjustments, they will preview here before they reach your week.
           </p>
         )}
-      </StudyCard>
+      </Card>
+
+      {/* Review loop explainer */}
+      <Card className="!bg-[#2E2218] !border-[#2E2218]">
+        <Eyebrow dark>How this becomes next week's plan</Eyebrow>
+        <h3 className="font-heading text-[20px] text-[#F3EADB] mt-1.5">
+          Weekly signals → Engine → Adapted plan
+        </h3>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+          {LOOP_STEPS.map((s, i) => (
+            <div key={i} className="rounded-xl border border-[#6C5038] p-3 bg-[#4E3A29]/40">
+              <div className="num-mono text-[9.5px] text-[#D6BC93] uppercase tracking-[0.16em]">
+                {String(i + 1).padStart(2, "0")}
+              </div>
+              <div className="font-heading text-[15px] text-[#F3EADB] mt-1">{s.k}</div>
+              <div className="text-[11px] text-[#D6BC93] mt-1">{s.v}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }
