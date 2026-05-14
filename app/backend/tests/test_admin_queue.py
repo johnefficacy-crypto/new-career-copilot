@@ -270,6 +270,7 @@ def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
                             # gate's no-posts fallback accepts a single
                             # recruitment-level verified row.
                             {'field_name':'requires_domicile','reviewer_status':'verified'},
+                            {'field_name':'requires_domicile','reviewer_status':'verified'},
                         ])
                 return FQ(self)
             return super().table(t)
