@@ -1,31 +1,27 @@
--- Migration 055: promote_recruitment RPC — honest education level + rich post fields.
+-- Migration 059: recruitments.notification_number + RPC writes it (P2.2).
 --
--- Two scraper-audit fixes, both inside the single promotion transaction:
+-- NOTE: this redefines the same promote_recruitment function as
+-- migration 058 — 059 must run after 058 (it carries 058's education +
+-- rich-post-field changes forward and adds notification_number on top).
 --
--- P0.3 — education level no longer silently defaults to 'graduate'.
---   Migration 048 inserted education_criteria with
---   `coalesce(nullif(education_level,''), 'graduate')`. When the
---   extractor produced raw_requirement_text but no classified
---   education_level (10th / 12th / diploma cases), the canonical row
---   claimed 'graduate' — wrongly excluding lower-qualification
---   candidates from eligibility. Now an unclassified post stores
---   min_qualification_level = NULL and keeps raw_requirement_text, so a
---   mapper / reviewer can classify it later instead of the RPC guessing.
+-- The scraper's deduplicator only matched on official URL, an
+-- org+year+title similarity key, and fuzzy title. Two aggregators
+-- pointing at the same notice with slightly different titles, or the
+-- same notice re-scraped after a title tweak, slipped through as
+-- separate recruitments.
 --
--- #14.1 — persist certificates / job_location / source_evidence.
---   ExtractedPost has carried these since the rich-schema PR, but the
---   RPC never wrote them, so they were lost on promotion. This adds the
---   columns to public.posts and writes them through.
+-- The advertisement / notification number printed on a notice (e.g.
+-- "Advt. No. 05/2026") is, together with the organisation, effectively
+-- a unique key. This migration stores it on public.recruitments so
+-- find_duplicate() can match new extractions against canonical rows,
+-- and redefines promote_recruitment to persist it.
 --
--- Both changes are additive: existing payloads promote unchanged
--- (missing fields => NULL columns).
+-- Additive: existing payloads promote unchanged (missing field => NULL).
 
 begin;
 
-alter table public.posts
-  add column if not exists job_location    text,
-  add column if not exists certificates    jsonb,
-  add column if not exists source_evidence jsonb;
+alter table public.recruitments
+  add column if not exists notification_number text;
 
 create or replace function public.promote_recruitment(payload jsonb)
 returns uuid
@@ -80,12 +76,13 @@ begin
   end if;
 
   insert into public.recruitments (
-    slug, organization_id, name, year,
+    slug, organization_id, name, year, notification_number,
     notification_date, apply_start_date, apply_end_date,
     status, publish_status, total_vacancies,
     official_notification_url, official_apply_url, source_pdf_url, source_id
   ) values (
     v_slug, v_org_id, payload ->> 'title', (payload ->> 'year')::int,
+    nullif(payload ->> 'notification_number', ''),
     nullif(payload ->> 'notification_date', ''),
     nullif(payload ->> 'apply_start_date', ''),
     nullif(payload ->> 'apply_end_date', ''),
@@ -140,7 +137,7 @@ begin
       end if;
     end if;
 
-    -- #14.1: job_location / certificates / source_evidence now persisted.
+    -- #14.1: job_location / certificates / source_evidence persisted.
     insert into public.posts (
       recruitment_id, post_name, group_type, pay_level,
       job_type, recruitment_unit_id, language_requirements,
@@ -291,7 +288,7 @@ begin
       end loop;
     end if;
 
-    -- ── post_fees (PR migration 045 + this) ──────────────────────────
+    -- ── post_fees ───────────────────────────────────────────────────
     if (v_post -> 'fees') is not null
        and jsonb_typeof(v_post -> 'fees') = 'object' then
       v_fee_currency := coalesce(nullif(v_post -> 'fees' ->> 'currency', ''), 'INR');

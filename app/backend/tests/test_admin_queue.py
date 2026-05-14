@@ -9,6 +9,7 @@ class Q:
     def eq(self,k,v):
         if k=='id': self.id=v
         return self
+    def is_(self,k,v): return self
     def limit(self,*a,**k): return self
     def update(self,p): self.payload=p; return self
     def insert(self,p): self.payload=p; return self
@@ -25,6 +26,14 @@ class Q:
 class SB:
     def __init__(self): self.state={'queue':[{'id':'q1','status':'approved','source_id':'src-1','notification_document_id':'doc-1','extracted_data':{'title':'t','organization_name':'Org','org_type':'central','year':2026,'official_notification_url':'https://x.gov/n','apply_end_date':'2026-06-30','posts':[{'post_name':'Clerk'}]}}],'audits':[]}
     def table(self,t): return Q(t,self.state)
+    def rpc(self, fn, params):
+        # `enqueue_eligibility_recompute` (PR #132) calls supabase.rpc first.
+        # Raise PGRST202 so the helper falls back to the legacy Python path
+        # (table/select/eq/is_/limit/insert), which this mock supports.
+        raise RuntimeError(
+            "PGRST202 Could not find the function "
+            "public.enqueue_eligibility_recompute in the schema cache"
+        )
 
 def test_list_sources_uses_source_registry_only(monkeypatch):
     class SourceQ:
@@ -257,9 +266,11 @@ def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
                             {'field_name':'official_apply_url','reviewer_status':'verified'},
                             {'field_name':'organization_name','reviewer_status':'verified'},
                             {'field_name':'total_vacancies','reviewer_status':'verified'},
-                            # Post-scoped high-risk field: the queue item has
-                            # one post ("Clerk"), so requires_domicile needs a
-                            # verified row scoped to that post.
+                            # requires_domicile is a post-scoped HIGH_RISK
+                            # field (PR #135). The shared SB queue item now
+                            # carries one post ("Clerk"), so the gate's
+                            # post-scoped check needs a verified row scoped
+                            # to that post.
                             {'field_name':'requires_domicile','reviewer_status':'verified',
                              'entity_type':'post','entity_key':'clerk'},
                         ])

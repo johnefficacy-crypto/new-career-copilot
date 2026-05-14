@@ -2896,7 +2896,7 @@ def _promote_to_recruitments_compensation(
                 # extracted value; default false is the safe choice when the
                 # extractor saw no domicile statement.
                 "requires_domicile": bool(post.requires_domicile),
-                # Rich post fields (migration 055) — kept in lockstep with
+                # Rich post fields (migration 058) — kept in lockstep with
                 # the RPC path so the compensation fallback isn't lossy.
                 "job_location": post.job_location,
                 "certificates": post.certificates,

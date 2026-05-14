@@ -288,6 +288,65 @@ def test_review_patch_missing_row_returns_404():
     assert r.status_code == 404
 
 
+# ─── Topic coverage lifecycle review ──────────────────────────────────────
+def test_coverage_review_moves_status_and_records_reviewer():
+    sb = SBStub(_seed())
+    client = TestClient(_build_app(sb))
+    r = client.patch(
+        "/api/admin/exam-intelligence/topic-coverage/c2/review",
+        json={"reviewer_status": "pending_review"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["reviewer_status"] == "pending_review"
+    assert body["reviewed_by"] == "admin-1"
+    assert body["reviewed_at"]
+
+
+def test_coverage_review_can_lock_for_planner():
+    sb = SBStub(_seed())
+    client = TestClient(_build_app(sb))
+    r = client.patch(
+        "/api/admin/exam-intelligence/topic-coverage/c2/review",
+        json={"reviewer_status": "locked"},
+    )
+    assert r.status_code == 200
+    assert r.json()["reviewer_status"] == "locked"
+    # The row is now planner-ready in the stub store.
+    row = next(c for c in sb.db["exam_topic_coverage"] if c["id"] == "c2")
+    assert row["reviewer_status"] == "locked"
+
+
+def test_coverage_review_rejects_unknown_status():
+    sb = SBStub(_seed())
+    client = TestClient(_build_app(sb))
+    r = client.patch(
+        "/api/admin/exam-intelligence/topic-coverage/c1/review",
+        json={"reviewer_status": "verified"},
+    )
+    assert r.status_code == 422
+
+
+def test_coverage_review_missing_row_returns_404():
+    sb = SBStub(_seed())
+    client = TestClient(_build_app(sb))
+    r = client.patch(
+        "/api/admin/exam-intelligence/topic-coverage/no-such/review",
+        json={"reviewer_status": "locked"},
+    )
+    assert r.status_code == 404
+
+
+def test_coverage_review_blocked_for_non_admin():
+    sb = SBStub(_seed())
+    client = TestClient(_build_app(sb, role="user"))
+    r = client.patch(
+        "/api/admin/exam-intelligence/topic-coverage/c1/review",
+        json={"reviewer_status": "locked"},
+    )
+    assert r.status_code == 403
+
+
 def test_pyq_tag_review_excludes_notes_field():
     # pyq_question_topic_tags table doesn't carry reviewer_notes; verify the
     # PATCH ignores notes for that kind without erroring.
@@ -301,3 +360,127 @@ def test_pyq_tag_review_excludes_notes_field():
     body = r.json()
     assert body["reviewer_status"] == "verified"
     assert "reviewer_notes" not in body  # never written for this kind
+
+
+# ─── Competition metrics ──────────────────────────────────────────────────
+def _competition_seed():
+    return {
+        "exams": [
+            {"id": "e1", "slug": "ssc-cgl", "name": "SSC CGL", "exam_type": "recruitment", "is_active": True},
+        ],
+        "exam_competition_metrics": [
+            {"id": "cm1", "exam_id": "e1", "reviewer_status": "locked",
+             "vacancy_total": 17727, "competition_pressure_score": 72,
+             "source_basis": "reviewed_analysis", "confidence_score": 0.76,
+             "created_at": "2026-05-01T00:00:00+00:00"},
+            {"id": "cm2", "exam_id": "e1", "reviewer_status": "draft",
+             "vacancy_total": 15000, "competition_pressure_score": 60,
+             "created_at": "2026-04-20T00:00:00+00:00"},
+        ],
+        "exam_policy_updates": [
+            {"id": "pu1", "exam_id": "e1", "update_type": "vacancy_change",
+             "title": "Vacancies revised", "source_type": "official",
+             "reviewer_status": "verified", "affects_plan": True,
+             "affects_vacancy": True, "created_at": "2026-05-12T00:00:00+00:00"},
+            {"id": "pu2", "exam_id": "e1", "update_type": "date_change",
+             "title": "Date rumor", "source_type": "aggregator",
+             "reviewer_status": "pending", "created_at": "2026-05-10T00:00:00+00:00"},
+        ],
+    }
+
+
+def test_competition_metrics_list_maps_rows_and_exam_name():
+    sb = SBStub(_competition_seed())
+    client = TestClient(_build_app(sb))
+    r = client.get("/api/admin/exam-intelligence/competition-metrics?exam_id=e1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 2
+    by_id = {row["id"]: row for row in body["items"]}
+    assert by_id["cm1"]["exam"] == "SSC CGL"
+    assert by_id["cm1"]["status"] == "locked"
+    assert by_id["cm1"]["vacancy_total"] == 17727
+
+
+def test_competition_metrics_status_filter_and_invalid():
+    sb = SBStub(_competition_seed())
+    client = TestClient(_build_app(sb))
+    r = client.get("/api/admin/exam-intelligence/competition-metrics?status=locked")
+    assert r.status_code == 200
+    rows = r.json()["items"]
+    assert rows and all(row["status"] == "locked" for row in rows)
+    bad = client.get("/api/admin/exam-intelligence/competition-metrics?status=verified")
+    assert bad.status_code == 400
+
+
+def test_competition_metric_review_locks_for_planner():
+    sb = SBStub(_competition_seed())
+    client = TestClient(_build_app(sb))
+    r = client.patch(
+        "/api/admin/exam-intelligence/competition-metrics/cm2/review",
+        json={"reviewer_status": "locked"},
+    )
+    assert r.status_code == 200
+    assert r.json()["reviewer_status"] == "locked"
+    row = next(c for c in sb.db["exam_competition_metrics"] if c["id"] == "cm2")
+    assert row["reviewed_by"] == "admin-1"
+
+
+def test_competition_metric_review_missing_returns_404():
+    sb = SBStub(_competition_seed())
+    client = TestClient(_build_app(sb))
+    r = client.patch(
+        "/api/admin/exam-intelligence/competition-metrics/no-such/review",
+        json={"reviewer_status": "locked"},
+    )
+    assert r.status_code == 404
+
+
+# ─── Policy updates ───────────────────────────────────────────────────────
+def test_policy_updates_list_filters_by_source_type():
+    sb = SBStub(_competition_seed())
+    client = TestClient(_build_app(sb))
+    r = client.get(
+        "/api/admin/exam-intelligence/policy-updates?source_type=official"
+    )
+    assert r.status_code == 200
+    rows = r.json()["items"]
+    assert rows and all(row["source_type"] == "official" for row in rows)
+    bad = client.get(
+        "/api/admin/exam-intelligence/policy-updates?source_type=bogus"
+    )
+    assert bad.status_code == 400
+
+
+def test_policy_update_review_verifies_and_records_notes():
+    sb = SBStub(_competition_seed())
+    client = TestClient(_build_app(sb))
+    r = client.patch(
+        "/api/admin/exam-intelligence/policy-updates/pu2/review",
+        json={"reviewer_status": "rejected", "reviewer_notes": "No official source."},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["reviewer_status"] == "rejected"
+    assert body["reviewer_notes"] == "No official source."
+    assert body["reviewed_by"] == "admin-1"
+
+
+def test_policy_update_review_rejects_unknown_status():
+    sb = SBStub(_competition_seed())
+    client = TestClient(_build_app(sb))
+    r = client.patch(
+        "/api/admin/exam-intelligence/policy-updates/pu1/review",
+        json={"reviewer_status": "locked"},
+    )
+    assert r.status_code == 422
+
+
+def test_competition_and_policy_blocked_for_non_admin():
+    sb = SBStub(_competition_seed())
+    client = TestClient(_build_app(sb, role="user"))
+    for path in [
+        "/api/admin/exam-intelligence/competition-metrics",
+        "/api/admin/exam-intelligence/policy-updates",
+    ]:
+        assert client.get(path).status_code == 403

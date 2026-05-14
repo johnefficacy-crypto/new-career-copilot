@@ -10,6 +10,12 @@ dist/
 .next/
 .cache/
 
+# test / coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
 # env files
 .env
 .env.local
