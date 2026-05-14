@@ -6,11 +6,16 @@ Phase 4 of the scraper audit pulled the HTTP fetch primitives out of
 * extraction stays focused on parsing/AI calls
 * the runner can use a structured ``FetchResult`` (status, final URL,
   content hash, etc.) instead of just a bare string
-* non-HTML adapters (RSS, JSON API, PDF) get a single dispatch point.
-  Real implementations land in a follow-up PR; this module returns
-  ``adapter_not_implemented`` for those so the runner logs a clear
-  reason instead of silently passing the raw bytes to the HTML
-  extractor.
+
+Every adapter is implemented here: HTML via :func:`fetch`, plus
+:func:`fetch_rss`, :func:`fetch_api`, :func:`fetch_pdf`,
+:func:`fetch_sitemap`, and :func:`fetch_sitemap_recursive`. The
+``fetch_*`` variants return ``(FetchResult, parsed_entries)`` because
+their callers need the parsed list; :func:`fetch` is the single
+dispatch point that returns just a ``FetchResult`` — it delegates to
+the right adapter based on ``adapter_type`` and drops the parsed
+entries (callers that need them call the specialised function
+directly).
 """
 from __future__ import annotations
 
@@ -58,8 +63,12 @@ def fetch(
 ) -> FetchResult:
     """Fetch ``url`` and return a structured result.
 
-    ``adapter_type`` routes to the right parser when supported.
-    Non-HTML adapters still scaffold to ``adapter_not_implemented``.
+    Single dispatch point: ``adapter_type`` routes to the matching
+    adapter (``rss`` / ``api`` / ``pdf`` / ``sitemap``, defaulting to
+    HTML). For the feed-shaped adapters this returns only the
+    ``FetchResult`` and drops the parsed entries — callers that need
+    the entries should call :func:`fetch_rss` / :func:`fetch_api` /
+    :func:`fetch_sitemap` directly.
 
     Conditional fetch: pass ``if_none_match`` (an ETag value) and/or
     ``if_modified_since`` (an HTTP-date string) to send the standard
@@ -72,8 +81,29 @@ def fetch(
         return FetchResult(ok=False, url="", error="empty_url")
 
     adapter = (adapter_type or "html").lower()
-    if adapter in {"rss", "api", "pdf"}:
-        return FetchResult(ok=False, url=url, error="adapter_not_implemented")
+    if adapter == "rss":
+        result, _ = fetch_rss(
+            url, timeout=timeout,
+            if_none_match=if_none_match, if_modified_since=if_modified_since,
+        )
+        return result
+    if adapter == "api":
+        result, _ = fetch_api(
+            url, timeout=timeout,
+            if_none_match=if_none_match, if_modified_since=if_modified_since,
+        )
+        return result
+    if adapter == "pdf":
+        return fetch_pdf(
+            url, timeout=timeout,
+            if_none_match=if_none_match, if_modified_since=if_modified_since,
+        )
+    if adapter == "sitemap":
+        result, _ = fetch_sitemap(
+            url, timeout=timeout,
+            if_none_match=if_none_match, if_modified_since=if_modified_since,
+        )
+        return result
 
     return _fetch_html(
         url,
@@ -776,6 +806,8 @@ def fetch_sitemap_recursive(
     timeout: float = 15.0,
     max_depth: int = 2,
     max_total: int = 1000,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
 ) -> tuple[FetchResult, list[SitemapEntry]]:
     """Fetch a sitemap, recursing into child sitemaps up to ``max_depth``.
 
@@ -789,8 +821,17 @@ def fetch_sitemap_recursive(
     ``max_total`` caps the flattened entry count so a runaway
     sitemapindex (some sites publish thousands of children) can't
     explode the run.
+
+    Conditional fetch applies to the *root* only: a 304 on the root
+    yields ``FetchResult(ok=False, status_code=304, ...)`` with an empty
+    entry list so the caller can short-circuit the whole tree. Child
+    sitemaps are always fetched fresh (they have their own lastmod the
+    caller doesn't track per-child).
     """
-    root_result, top_entries = fetch_sitemap(url, timeout=timeout)
+    root_result, top_entries = fetch_sitemap(
+        url, timeout=timeout,
+        if_none_match=if_none_match, if_modified_since=if_modified_since,
+    )
     if not root_result.ok:
         return root_result, []
 

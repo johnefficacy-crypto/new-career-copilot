@@ -112,7 +112,8 @@ def test_promote_never_publishes(monkeypatch):
     import app.scraping.runner as runner
     import app.scraping.schemas as schemas
     monkeypatch.setattr(runner, 'promote_to_recruitments', lambda extracted, supabase, **kwargs: 'r1')
-    monkeypatch.setattr(admin_scrape, 'alert_users_for_new_recruitment', lambda *a, **k: 0)
+    # admin_scrape no longer imports alert_users_for_new_recruitment — the
+    # promote endpoint never fans out alerts, so there is nothing to patch.
     # ensure pending accepted
     sb.state['queue'][0]['status']='pending'
     import pytest
@@ -256,6 +257,10 @@ def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
                             {'field_name':'official_apply_url','reviewer_status':'verified'},
                             {'field_name':'organization_name','reviewer_status':'verified'},
                             {'field_name':'total_vacancies','reviewer_status':'verified'},
+                            # Post-scoped high-risk field: the queue item has
+                            # no `posts`, so the gate's fallback accepts any
+                            # verified row for requires_domicile.
+                            {'field_name':'requires_domicile','reviewer_status':'verified'},
                         ])
                 return FQ(self)
             return super().table(t)

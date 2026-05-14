@@ -109,7 +109,7 @@ def aggregator_max_items(row: dict[str, Any], default: int = 25) -> int:
 
 
 def mock_aggregator_detail_urls(source: ScrapeSource, count: int = 3) -> list[str]:
-    base = source.target_url.rstrip("/") or "mock://aggregator"
+    base = (source.primary_fetch_url() or "").rstrip("/") or "mock://aggregator"
     return [f"{base}/mock-recruitment-{idx + 1}/" for idx in range(count)]
 
 

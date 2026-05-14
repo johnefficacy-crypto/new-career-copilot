@@ -80,15 +80,6 @@ class ScrapeSource:
         return self.notification_url or self.crawl_url or self.official_url or None
 
     @property
-    def target_url(self) -> str:
-        """Back-compat alias for callers that don't yet handle ``None``.
-
-        New code should use ``primary_fetch_url()`` directly and route the
-        ``None`` case through ``source_config_invalid`` logging.
-        """
-        return self.primary_fetch_url() or ""
-
-    @property
     def is_aggregator(self) -> bool:
         return self.discovery_only or (self.source_type or "").lower() in _AGGREGATOR_SOURCE_TYPES
 

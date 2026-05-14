@@ -8,23 +8,70 @@ def test_fetch_empty_url_returns_error():
     assert result.text is None
 
 
-def test_fetch_rss_adapter_is_not_implemented_yet():
+def _xml_resp(body: str):
+    class _Resp:
+        status_code = 200
+        text = body
+        content = body.encode()
+        headers = {"content-type": "application/xml"}
+        url = "https://example.gov.in/final"
+
+        def raise_for_status(self):
+            pass
+
+    return _Resp()
+
+
+def test_fetch_dispatches_rss_adapter(monkeypatch):
+    feed = '<rss><channel><item><title>T</title><link>https://x/1</link></item></channel></rss>'
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", lambda url, **kwargs: _xml_resp(feed))
     result = fetch("https://example.gov.in/feed.xml", adapter_type="rss")
     assert isinstance(result, FetchResult)
-    assert result.ok is False
-    assert result.error == "adapter_not_implemented"
+    assert result.ok is True
+    assert result.text == feed  # FetchResult only; entries dropped by fetch()
 
 
-def test_fetch_api_adapter_is_not_implemented_yet():
+def test_fetch_dispatches_api_adapter(monkeypatch):
+    class _Resp:
+        status_code = 200
+        text = '[{"title": "T", "link": "https://x/1"}]'
+        content = b'[{"title": "T", "link": "https://x/1"}]'
+        headers = {"content-type": "application/json"}
+        url = "https://example.gov.in/final"
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", lambda url, **kwargs: _Resp())
     result = fetch("https://example.gov.in/api", adapter_type="api")
-    assert result.ok is False
-    assert result.error == "adapter_not_implemented"
+    assert result.ok is True
 
 
-def test_fetch_pdf_adapter_is_not_implemented_yet():
+def test_fetch_dispatches_sitemap_adapter(monkeypatch):
+    sm = '<urlset><url><loc>https://x/1</loc></url></urlset>'
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", lambda url, **kwargs: _xml_resp(sm))
+    result = fetch("https://example.gov.in/sitemap.xml", adapter_type="sitemap")
+    assert result.ok is True
+    assert result.text == sm
+
+
+def test_fetch_dispatches_pdf_adapter(monkeypatch):
+    monkeypatch.setattr("app.scraping.fetcher.parse_pdf_bytes", lambda raw: "extracted body")
+
+    class _Resp:
+        status_code = 200
+        text = ""
+        content = b"%PDF-1.4 fake"
+        headers = {"content-type": "application/pdf"}
+        url = "https://example.gov.in/final.pdf"
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr("app.scraping.fetcher.httpx.get", lambda url, **kwargs: _Resp())
     result = fetch("https://example.gov.in/bulletin.pdf", adapter_type="pdf")
-    assert result.ok is False
-    assert result.error == "adapter_not_implemented"
+    assert result.ok is True
+    assert result.text == "extracted body"
 
 
 def test_fetch_html_returns_structured_result(monkeypatch):

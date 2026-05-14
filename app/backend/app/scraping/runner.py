@@ -445,7 +445,7 @@ def _run_sitemap_pass(
     while still queuing recruitment-shaped paths.
     """
     from .aggregator import classify_aggregator_link
-    from .fetcher import fetch_sitemap, fetch_sitemap_recursive
+    from .fetcher import fetch_sitemap_recursive
 
     if mock:
         entries = [
@@ -458,7 +458,10 @@ def _run_sitemap_pass(
     else:
         prior_etag = src.get("last_listing_etag")
         prior_modified = src.get("last_listing_modified")
-        result, entries = fetch_sitemap(
+        # fetch_sitemap_recursive flattens sitemapindex children up to
+        # max_depth and returns only leaf <url> entries, plus the root
+        # FetchResult so we keep conditional-fetch bookkeeping.
+        result, entries = fetch_sitemap_recursive(
             target_url,
             if_none_match=prior_etag,
             if_modified_since=prior_modified,
@@ -487,34 +490,6 @@ def _run_sitemap_pass(
                 "at": utc_now_iso(),
             })
             return False
-        # Sitemapindex auto-recursion. If the root sitemap actually
-        # listed child sitemaps (every entry is_sitemap=True is the
-        # most common shape) flatten one level of children inline so
-        # the runner doesn't need an operator to wire each child as a
-        # separate source.
-        if any(getattr(e, "is_sitemap", False) for e in entries):
-            expanded: list[Any] = []
-            for e in entries:
-                if getattr(e, "is_sitemap", False):
-                    _child_result, children = fetch_sitemap(e.loc)
-                    if not _child_result.ok:
-                        logger.warning(
-                            "sitemap.child_fetch_failed source_id=%s child_url=%s error=%s",
-                            src.get("id"), e.loc, _child_result.error,
-                        )
-                        continue
-                    # Only keep leaf <url> entries from the child; deeper
-                    # nesting (sitemapindex pointing at sitemapindex) is
-                    # rare enough to leave to the operator to wire as a
-                    # separate source.
-                    expanded.extend([c for c in children if not getattr(c, "is_sitemap", False)])
-                else:
-                    expanded.append(e)
-            entries = expanded
-            logger.info(
-                "sitemap.recursed source_id=%s root_url=%s leaf_count=%s",
-                src.get("id"), target_url, len(entries),
-            )
 
     queued_any = False
     entries = entries[:run_limit]
@@ -659,12 +634,34 @@ def _run_pdf_pass(
                 None,
             )
         if not result.ok or not result.text:
-            error_log.append({
-                "source": source.name,
-                "url": target_url,
-                "error": result.error or "empty_pdf",
-                "at": utc_now_iso(),
-            })
+            # Distinguish a transport failure (retry-worthy) from a PDF
+            # that downloaded fine but yielded no extractable text — the
+            # latter is almost always a scanned / image-only bulletin
+            # that needs OCR or manual transcription, not a retry. The
+            # admin source-diagnostics view keys off this distinction.
+            fetched_ok = result.status_code == 200 or (
+                result.ok is False and result.error == "empty_pdf"
+            )
+            if fetched_ok and result.error == "empty_pdf":
+                error_log.append({
+                    "source": source.name,
+                    "url": target_url,
+                    "error": "pdf_no_extractable_text",
+                    "error_message": (
+                        "PDF downloaded but no text could be extracted — "
+                        "likely a scanned/image-only bulletin. Needs OCR "
+                        "or manual transcription; retrying will not help."
+                    ),
+                    "needs_manual_review": True,
+                    "at": utc_now_iso(),
+                })
+            else:
+                error_log.append({
+                    "source": source.name,
+                    "url": target_url,
+                    "error": result.error or "empty_pdf",
+                    "at": utc_now_iso(),
+                })
             return False
         raw_text = result.text
         pdf_raw_bytes = result.raw_bytes
@@ -1638,10 +1635,17 @@ def run_scraping_pass(
                         error_log=error_log,
                         mock=mock,
                     ):
+                        # _run_pdf_pass appended a typed entry to error_log;
+                        # mirror its class onto the source so the admin
+                        # source view shows "needs manual review" rather
+                        # than a generic empty_pdf for scanned bulletins.
+                        last_entry = error_log[-1] if error_log else {}
+                        pdf_error_class = last_entry.get("error") or "empty_pdf"
                         _bump_source_failure(
                             supabase, src,
-                            error_class="empty_pdf",
-                            error_message="pdf adapter returned no extractable text",
+                            error_class=pdf_error_class,
+                            error_message=last_entry.get("error_message")
+                            or "pdf adapter returned no extractable text",
                             attempted_url=target_url,
                         )
                         continue
