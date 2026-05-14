@@ -13,7 +13,7 @@ Allowed status transitions (``reviewer_status``):
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -28,6 +28,14 @@ ADMIN_PERM = "exam_intelligence.review"
 
 router = APIRouter(prefix="/admin/exam-intelligence", tags=["admin-exam-intelligence"])
 
+# A review row is "stale" once it has sat un-actioned for this long.
+_STALE_REVIEW_DAYS = 14
+# Mappings below this confidence need a closer look before they can be trusted.
+_LOW_CONFIDENCE_THRESHOLD = 0.5
+# exam_topic_coverage lifecycle (migration 030). Only `locked` rows are
+# planner-ready under the verified-only contract.
+_COVERAGE_STATUSES = ("draft", "pending_review", "reviewed", "locked", "rejected")
+
 
 def _safe(call: Callable[[], Any], default: Any = None) -> Any:
     try:
@@ -39,6 +47,19 @@ def _safe(call: Callable[[], Any], default: Any = None) -> Any:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _iso_days_ago(days: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
+def _as_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 # Tables we expose. Each table must already have:
@@ -103,6 +124,77 @@ def overview(_admin: dict = Depends(require_permission(ADMIN_PERM))) -> dict[str
         "total": len(exam_rows),
         "active": sum(1 for r in exam_rows if r.get("is_active")),
     }
+
+    # Topic coverage status breakdown. Only `locked` rows reach the Study OS
+    # planner — surfacing the funnel tells operators how much verified
+    # intelligence is actually planner-ready.
+    coverage_rows = _safe(
+        lambda: (
+            sb.table("exam_topic_coverage")
+            .select("reviewer_status, is_high_yield")
+            .limit(20000)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    coverage_counts = {s: 0 for s in _COVERAGE_STATUSES}
+    for r in coverage_rows:
+        st = r.get("reviewer_status") or "draft"
+        coverage_counts[st] = coverage_counts.get(st, 0) + 1
+    out["topic_coverage"] = {
+        "total": len(coverage_rows),
+        "high_yield": sum(1 for r in coverage_rows if r.get("is_high_yield")),
+        **coverage_counts,
+    }
+
+    # Low-confidence mappings + stale review items. Only the two mapping
+    # tables carry confidence_score; pyq_questions does not, so it is
+    # excluded from the confidence pass but still counted for staleness.
+    stale_cutoff = _iso_days_ago(_STALE_REVIEW_DAYS)
+    low_confidence = 0
+    stale_review_items = 0
+    for kind, cfg in _REVIEWABLE.items():
+        has_confidence = kind in {"syllabus_topic_mention", "pyq_question_topic_tag"}
+        cols = "reviewer_status, created_at"
+        if has_confidence:
+            cols += ", confidence_score"
+        detail_rows = _safe(
+            lambda t=cfg["table"], c=cols: (
+                sb.table(t).select(c).limit(20000).execute().data
+            ),
+            default=[],
+        ) or []
+        for r in detail_rows:
+            status_val = r.get("reviewer_status") or "pending"
+            if has_confidence:
+                cs = _as_float(r.get("confidence_score"))
+                if cs is not None and cs < _LOW_CONFIDENCE_THRESHOLD and status_val != "rejected":
+                    low_confidence += 1
+            if status_val in {"pending", "needs_correction"} and (
+                r.get("created_at") or ""
+            ) < stale_cutoff:
+                stale_review_items += 1
+    out["low_confidence_mappings"] = low_confidence
+    out["stale_review_items"] = stale_review_items
+
+    # User-facing readiness: a coarse signal of whether verified intelligence
+    # is actually flowing to aspirants. `ready` once locked coverage exists
+    # and no stale review backlog remains; `partial` if verified data exists
+    # but review work is outstanding; otherwise `not_ready`.
+    locked_coverage = coverage_counts.get("locked", 0)
+    verified_syllabus = out["tables"].get("syllabus_topic_mention", {}).get("verified", 0)
+    if locked_coverage > 0 and stale_review_items == 0:
+        readiness_level = "ready"
+    elif locked_coverage > 0 or verified_syllabus > 0:
+        readiness_level = "partial"
+    else:
+        readiness_level = "not_ready"
+    out["user_facing_readiness"] = {
+        "level": readiness_level,
+        "locked_topic_coverage": locked_coverage,
+        "verified_syllabus_mentions": verified_syllabus,
+    }
     return out
 
 
@@ -150,6 +242,19 @@ def list_exams(
         ),
         default=[],
     ) or []
+    # Coverage lifecycle read, kept separate from the legacy `is_active` read
+    # above so the new readiness fields stay populated regardless.
+    coverage_status_rows = _safe(
+        lambda: (
+            sb.table("exam_topic_coverage")
+            .select("exam_id, reviewer_status, is_high_yield")
+            .in_("exam_id", exam_ids)
+            .limit(20000)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
 
     def _counts():
         d: dict[str, dict[str, int]] = {}
@@ -171,16 +276,45 @@ def list_exams(
                 slot["coverage_active"] += 1
         return d
 
+    # Per-exam coverage lifecycle aggregation.
+    coverage_by_exam: dict[str, dict[str, int]] = {}
+    for r in coverage_status_rows:
+        slot = coverage_by_exam.setdefault(
+            r.get("exam_id") or "",
+            {"coverage_total": 0, "verified_topic_count": 0, "high_yield_topic_count": 0},
+        )
+        slot["coverage_total"] += 1
+        # `locked` is planner-ready; `reviewed` is verified-but-not-yet-locked.
+        if r.get("reviewer_status") in {"locked", "reviewed"}:
+            slot["verified_topic_count"] += 1
+        if r.get("is_high_yield"):
+            slot["high_yield_topic_count"] += 1
+
     counts = _counts()
     items = []
     for e in exams:
         c = counts.get(e["id"], {})
+        cov = coverage_by_exam.get(e["id"], {})
+        verified_topics = cov.get("verified_topic_count", 0)
+        syllabus_verified = c.get("syllabus_verified", 0)
+        syllabus_pending = c.get("syllabus_pending", 0)
+        if verified_topics > 0:
+            readiness_level = "ready"
+        elif syllabus_verified > 0:
+            readiness_level = "partial"
+        else:
+            readiness_level = "not_ready"
         items.append(
             {
                 **e,
-                "syllabus_verified": c.get("syllabus_verified", 0),
-                "syllabus_pending": c.get("syllabus_pending", 0),
+                "syllabus_verified": syllabus_verified,
+                "syllabus_pending": syllabus_pending,
                 "coverage_active": c.get("coverage_active", 0),
+                "coverage_total": cov.get("coverage_total", 0),
+                "verified_topic_count": verified_topics,
+                "high_yield_topic_count": cov.get("high_yield_topic_count", 0),
+                "pyq_coverage_status": "covered" if cov.get("coverage_total", 0) else "none",
+                "readiness_level": readiness_level,
             }
         )
     return {"items": items, "count": len(items)}
@@ -261,6 +395,123 @@ def list_items(
 
     rows = _safe(_builder, default=[]) or []
     return {"items": rows[offset : offset + limit], "count": len(rows)}
+
+
+# ─── 3b. Topic coverage (read-only) ───────────────────────────────────────
+_TOPIC_COVERAGE_COLUMNS = (
+    "id, exam_id, exam_cycle_id, exam_phase_id, section_id, topic_id, "
+    "coverage_depth, expected_difficulty, exam_priority_score, is_high_yield, "
+    "confidence_score, source_basis, reviewer_status, reviewed_at, "
+    "metadata, created_at"
+)
+
+
+@router.get("/topic-coverage")
+def list_topic_coverage(
+    exam_id: str | None = Query(None),
+    status: str = Query("all"),
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=10000),
+    _admin: dict = Depends(require_permission(ADMIN_PERM)),
+) -> dict[str, Any]:
+    """Read-only view of ``exam_topic_coverage``.
+
+    PR scope is strictly read: no reviewer write actions, no planner
+    mutation. Rows are mapped to the field names the admin UI expects and
+    enriched with topic / subject / exam names via follow-up reads.
+    """
+    if status != "all" and status not in _COVERAGE_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid status filter")
+    sb = get_supabase_admin()
+
+    def _builder():
+        q = sb.table("exam_topic_coverage").select(_TOPIC_COVERAGE_COLUMNS)
+        if exam_id:
+            q = q.eq("exam_id", exam_id)
+        if status != "all":
+            q = q.eq("reviewer_status", status)
+        return q.order("created_at", desc=True).limit(limit + offset).execute().data
+
+    rows = _safe(_builder, default=[]) or []
+    page = rows[offset : offset + limit]
+
+    topic_ids = list({r.get("topic_id") for r in page if r.get("topic_id")})
+    exam_ids = list({r.get("exam_id") for r in page if r.get("exam_id")})
+    topics_by_id: dict[str, dict[str, Any]] = {}
+    subjects_by_id: dict[str, dict[str, Any]] = {}
+    exams_by_id: dict[str, dict[str, Any]] = {}
+    if topic_ids:
+        topic_rows = _safe(
+            lambda: (
+                sb.table("topics")
+                .select("id, name, slug, subject_id")
+                .in_("id", topic_ids)
+                .limit(2000)
+                .execute()
+                .data
+            ),
+            default=[],
+        ) or []
+        topics_by_id = {t["id"]: t for t in topic_rows if t.get("id")}
+        subject_ids = list(
+            {t.get("subject_id") for t in topics_by_id.values() if t.get("subject_id")}
+        )
+        if subject_ids:
+            subj_rows = _safe(
+                lambda: (
+                    sb.table("subjects")
+                    .select("id, name")
+                    .in_("id", subject_ids)
+                    .limit(500)
+                    .execute()
+                    .data
+                ),
+                default=[],
+            ) or []
+            subjects_by_id = {s["id"]: s for s in subj_rows if s.get("id")}
+    if exam_ids:
+        exam_rows = _safe(
+            lambda: (
+                sb.table("exams")
+                .select("id, slug, name")
+                .in_("id", exam_ids)
+                .limit(500)
+                .execute()
+                .data
+            ),
+            default=[],
+        ) or []
+        exams_by_id = {e["id"]: e for e in exam_rows if e.get("id")}
+
+    items: list[dict[str, Any]] = []
+    for r in page:
+        topic = topics_by_id.get(r.get("topic_id")) or {}
+        subject = subjects_by_id.get(topic.get("subject_id")) or {}
+        exam = exams_by_id.get(r.get("exam_id")) or {}
+        meta = r.get("metadata") if isinstance(r.get("metadata"), dict) else {}
+        items.append(
+            {
+                "id": r.get("id"),
+                "exam_id": r.get("exam_id"),
+                "exam": exam.get("name"),
+                "exam_slug": exam.get("slug"),
+                "exam_phase_id": r.get("exam_phase_id"),
+                "phase": r.get("exam_phase_id"),
+                "subject": subject.get("name"),
+                "topic": topic.get("name"),
+                "topic_id": r.get("topic_id"),
+                "coverage_depth": r.get("coverage_depth"),
+                "expected_difficulty": r.get("expected_difficulty"),
+                "priority_score": r.get("exam_priority_score"),
+                "high_yield": bool(r.get("is_high_yield")),
+                "confidence_score": r.get("confidence_score"),
+                "evidence_count": meta.get("evidence_count", 0),
+                "source_basis": r.get("source_basis"),
+                "status": r.get("reviewer_status"),
+                "reviewed_at": r.get("reviewed_at"),
+            }
+        )
+    return {"items": items, "count": len(rows)}
 
 
 # ─── 4. Mark review status ────────────────────────────────────────────────
