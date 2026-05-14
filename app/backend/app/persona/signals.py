@@ -231,6 +231,32 @@ def collect_user_signals(supabase: Any, user_id: str) -> dict[str, Any]:
     # only needs a boolean signal.
     weekly_review_available = completed > 0
 
+    # Tiny-question answers (PR2). Latest non-skipped answer wins per
+    # question_key. Defensive read — missing table just yields {}.
+    question_answers = _safe(
+        lambda: (
+            supabase.table("persona_question_answers")
+            .select("question_key, normalized_value, answer_value, skipped, created_at")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(500)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    persona_question_answers: dict[str, Any] = {}
+    for row in question_answers:
+        key = row.get("question_key")
+        if not key or key in persona_question_answers:
+            continue
+        if row.get("skipped"):
+            continue
+        value = row.get("normalized_value")
+        if value is None:
+            value = row.get("answer_value")
+        persona_question_answers[key] = value
+
     return {
         "profile_completeness": _profile_completeness(profile, prefs),
         "goal_exams_count": _goal_exams_count(profile, prefs),
@@ -245,6 +271,7 @@ def collect_user_signals(supabase: Any, user_id: str) -> dict[str, Any]:
         "focus_minutes_7d": focus_minutes_7d,
         "mocks_taken_30d": mocks_taken_30d,
         "weekly_review_available": weekly_review_available,
+        "persona_question_answers": persona_question_answers,
         # Internal extras — used by classifier but not part of the
         # documented signal contract.
         "_career_stage": profile.get("career_stage"),
@@ -268,6 +295,7 @@ def _empty_signals() -> dict[str, Any]:
         "focus_minutes_7d": 0,
         "mocks_taken_30d": 0,
         "weekly_review_available": False,
+        "persona_question_answers": {},
         "_career_stage": None,
         "_onboarding_completed": False,
         "_total_tasks_14d": 0,

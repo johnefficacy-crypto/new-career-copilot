@@ -445,7 +445,7 @@ def _run_sitemap_pass(
     while still queuing recruitment-shaped paths.
     """
     from .aggregator import classify_aggregator_link
-    from .fetcher import fetch_sitemap
+    from .fetcher import fetch_sitemap, fetch_sitemap_recursive
 
     if mock:
         entries = [
@@ -487,6 +487,34 @@ def _run_sitemap_pass(
                 "at": utc_now_iso(),
             })
             return False
+        # Sitemapindex auto-recursion. If the root sitemap actually
+        # listed child sitemaps (every entry is_sitemap=True is the
+        # most common shape) flatten one level of children inline so
+        # the runner doesn't need an operator to wire each child as a
+        # separate source.
+        if any(getattr(e, "is_sitemap", False) for e in entries):
+            expanded: list[Any] = []
+            for e in entries:
+                if getattr(e, "is_sitemap", False):
+                    _child_result, children = fetch_sitemap(e.loc)
+                    if not _child_result.ok:
+                        logger.warning(
+                            "sitemap.child_fetch_failed source_id=%s child_url=%s error=%s",
+                            src.get("id"), e.loc, _child_result.error,
+                        )
+                        continue
+                    # Only keep leaf <url> entries from the child; deeper
+                    # nesting (sitemapindex pointing at sitemapindex) is
+                    # rare enough to leave to the operator to wire as a
+                    # separate source.
+                    expanded.extend([c for c in children if not getattr(c, "is_sitemap", False)])
+                else:
+                    expanded.append(e)
+            entries = expanded
+            logger.info(
+                "sitemap.recursed source_id=%s root_url=%s leaf_count=%s",
+                src.get("id"), target_url, len(entries),
+            )
 
     queued_any = False
     entries = entries[:run_limit]
@@ -597,8 +625,13 @@ def _run_pdf_pass(
     resolver; this default keeps the safer one-PDF-one-recruitment
     contract.
     """
-    from .fetcher import fetch_pdf
+    from .fetcher import fetch_pdf, parse_pdf_pages, split_pdf_text
 
+    adapter_config = source.adapter_config if isinstance(source.adapter_config, dict) else {}
+    split_per_page = bool(adapter_config.get("split_per_page"))
+    split_regex = adapter_config.get("split_regex") or None
+
+    pdf_raw_bytes: bytes | None = None
     if mock:
         raw_text = f"MOCK PDF BULLETIN BODY FOR {target_url}"
     else:
@@ -634,30 +667,55 @@ def _run_pdf_pass(
             })
             return False
         raw_text = result.text
+        pdf_raw_bytes = result.raw_bytes
 
-    listing_id = _upsert_aggregator_listing(
-        supabase,
-        source_id=src.get("id"),
-        scrape_run_id=run_id,
-        detail_url=target_url,
-        label=source.name,
-        event_type="new_recruitment",
-    )
-    _record_listing_observation(
-        supabase,
-        listing_id=listing_id,
-        source_id=src.get("id"),
-        scrape_run_id=run_id,
-        observed_url=target_url,
-        observed_label=source.name,
-        content_hash=None,
-    )
+    # Decide chunks. Default: one chunk = the whole PDF (existing
+    # one-PDF-one-notification contract). Multi-recruitment bulletins
+    # opt in via adapter_config.split_per_page or .split_regex.
+    chunks: list[str]
+    if mock:
+        chunks = [raw_text]
+    elif split_per_page:
+        pages = parse_pdf_pages(pdf_raw_bytes) if pdf_raw_bytes else [raw_text]
+        chunks = pages or [raw_text]
+    elif split_regex:
+        chunks = split_pdf_text(raw_text, regex=split_regex)
+    else:
+        chunks = [raw_text]
 
-    queued = queue_extraction(
-        src, source.name, target_url, raw_text,
-        listing_id=listing_id, resolver_result=None,
-    )
-    return bool(queued)
+    queued_any = False
+    for index, chunk in enumerate(chunks):
+        chunk_text = (chunk or "").strip()
+        if not chunk_text:
+            continue
+        # When the PDF was split, give each chunk its own listing URL
+        # by suffixing the chunk index. Single-chunk PDFs keep the
+        # original URL so existing pipelines see no behaviour change.
+        chunk_url = target_url if len(chunks) == 1 else f"{target_url}#chunk-{index + 1}"
+        chunk_label = source.name if len(chunks) == 1 else f"{source.name} (chunk {index + 1}/{len(chunks)})"
+        listing_id = _upsert_aggregator_listing(
+            supabase,
+            source_id=src.get("id"),
+            scrape_run_id=run_id,
+            detail_url=chunk_url,
+            label=chunk_label,
+            event_type="new_recruitment",
+        )
+        _record_listing_observation(
+            supabase,
+            listing_id=listing_id,
+            source_id=src.get("id"),
+            scrape_run_id=run_id,
+            observed_url=chunk_url,
+            observed_label=chunk_label,
+            content_hash=None,
+        )
+        if queue_extraction(
+            src, source.name, chunk_url, chunk_text,
+            listing_id=listing_id, resolver_result=None,
+        ):
+            queued_any = True
+    return queued_any
 
 
 # ─── JSON-API adapter pass ────────────────────────────────────────────────

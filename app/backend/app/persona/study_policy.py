@@ -64,9 +64,13 @@ def _normalize(mix: dict[str, float]) -> dict[str, float]:
     return {k: round(v / total, 3) for k, v in mix.items()}
 
 
-def derive_study_policy(dimensions: dict[str, str] | None) -> dict[str, Any]:
-    """Pure function: persona dimensions -> Study OS policy."""
+def derive_study_policy(
+    dimensions: dict[str, str] | None,
+    answers: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Pure function: persona dimensions (+ tiny-question answers) -> Study OS policy."""
     dims = dimensions or {}
+    answers = answers or {}
     time_constraint = dims.get("time_constraint") or "unknown"
     preparation = dims.get("preparation_stage") or "unknown"
     behavior = dims.get("learning_behavior") or "insufficient_data"
@@ -81,6 +85,12 @@ def derive_study_policy(dimensions: dict[str, str] | None) -> dict[str, Any]:
         behavior == "planner_poor_executor"
     )
     require_mock_review_before_next_mock = behavior == "high_mock_low_review"
+
+    # Working-professional / family-responsibilities blockers also flip
+    # weekend catchup on. We keep this explicit so it's auditable.
+    blocker = answers.get("study_consistency_blocker")
+    if blocker in {"job_or_college_schedule", "family_responsibilities"}:
+        weekend_catchup = True
 
     # Behaviour-specific adjustments. These keep the policy conservative
     # rather than aspirational — non-shaming nudges, not heroics.
@@ -109,6 +119,21 @@ def derive_study_policy(dimensions: dict[str, str] | None) -> dict[str, Any]:
         task_mix["mock_correction"] = task_mix.get("mock_correction", 0.0) + 0.10
         avoid_long_theory = True
 
+    # PR2: preferred_plan_style answer overrides for task shape.
+    plan_style = answers.get("preferred_plan_style")
+    strict_daily_schedule = False
+    if plan_style == "short_focus_blocks":
+        task_size = "small"
+        avoid_long_theory = True
+    elif plan_style == "weekly_targets_only":
+        # Avoid too many daily microtasks; keep the day's surface small.
+        max_tasks = min(max_tasks, 3)
+        task_size = "medium" if task_size != "small" else task_size
+    elif plan_style == "strict_daily_schedule":
+        strict_daily_schedule = True
+    elif plan_style == "flexible_task_list":
+        strict_daily_schedule = False
+
     return {
         "daily_minutes_target": daily_minutes,
         "max_tasks_per_day": max_tasks,
@@ -118,6 +143,7 @@ def derive_study_policy(dimensions: dict[str, str] | None) -> dict[str, Any]:
             "weekend_catchup_enabled": bool(weekend_catchup),
             "avoid_long_theory_blocks": bool(avoid_long_theory),
             "require_mock_review_before_next_mock": bool(require_mock_review_before_next_mock),
+            "strict_daily_schedule": bool(strict_daily_schedule),
         },
         "nudge_style": NUDGE_STYLE,
     }

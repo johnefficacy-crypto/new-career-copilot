@@ -376,12 +376,30 @@ def _shape_source(row: dict[str, Any]) -> dict[str, Any]:
         "notes": row.get("notes"),
         "last_success_at": row.get("last_success_at"),
         "last_error": row.get("last_error"),
+        # Typed failure detail (migration 037) — surfaced so the admin can
+        # filter "401 vs 5xx vs parser_error" instead of grepping `last_error`.
+        "last_error_class": row.get("last_error_class"),
+        "last_error_detail": row.get("last_error_detail"),
         "last_run": row.get("last_scraped_at"),
         "status": "ok" if (row.get("consecutive_fails") or 0) == 0 else "degraded",
         "is_active": row.get("is_active"),
         "is_official_source": row.get("is_official_source"),
         "discovery_only": row.get("discovery_only"),
         "requires_official_confirmation": row.get("requires_official_confirmation"),
+        # Adapter routing (migration 022): expose every typed URL column so
+        # the UI can show which URL the runner will actually hit.
+        "adapter_type": row.get("adapter_type"),
+        "crawl_url": row.get("crawl_url"),
+        "rss_url": row.get("rss_url"),
+        "api_url": row.get("api_url"),
+        "pdf_bulletin_url": row.get("pdf_bulletin_url"),
+        # Conditional-fetch state (migration 044): "has cached headers" is
+        # what operators actually want to know — exact ETag is too noisy.
+        "has_listing_cache": bool(row.get("last_listing_etag") or row.get("last_listing_modified")),
+        "last_listing_modified": row.get("last_listing_modified"),
+        # Concurrency lock (migration 052): non-null means a worker is
+        # currently scraping this source (or the lock is stale).
+        "currently_scraping_at": row.get("currently_scraping_at"),
         "parser_config": row.get("parser_config") or {},
         "scrape_config": row.get("scrape_config") or {},
         "trust_config": row.get("trust_config") or {},
