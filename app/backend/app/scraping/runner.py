@@ -625,8 +625,13 @@ def _run_pdf_pass(
     resolver; this default keeps the safer one-PDF-one-recruitment
     contract.
     """
-    from .fetcher import fetch_pdf
+    from .fetcher import fetch_pdf, parse_pdf_pages, split_pdf_text
 
+    adapter_config = source.adapter_config if isinstance(source.adapter_config, dict) else {}
+    split_per_page = bool(adapter_config.get("split_per_page"))
+    split_regex = adapter_config.get("split_regex") or None
+
+    pdf_raw_bytes: bytes | None = None
     if mock:
         raw_text = f"MOCK PDF BULLETIN BODY FOR {target_url}"
     else:
@@ -662,30 +667,55 @@ def _run_pdf_pass(
             })
             return False
         raw_text = result.text
+        pdf_raw_bytes = result.raw_bytes
 
-    listing_id = _upsert_aggregator_listing(
-        supabase,
-        source_id=src.get("id"),
-        scrape_run_id=run_id,
-        detail_url=target_url,
-        label=source.name,
-        event_type="new_recruitment",
-    )
-    _record_listing_observation(
-        supabase,
-        listing_id=listing_id,
-        source_id=src.get("id"),
-        scrape_run_id=run_id,
-        observed_url=target_url,
-        observed_label=source.name,
-        content_hash=None,
-    )
+    # Decide chunks. Default: one chunk = the whole PDF (existing
+    # one-PDF-one-notification contract). Multi-recruitment bulletins
+    # opt in via adapter_config.split_per_page or .split_regex.
+    chunks: list[str]
+    if mock:
+        chunks = [raw_text]
+    elif split_per_page:
+        pages = parse_pdf_pages(pdf_raw_bytes) if pdf_raw_bytes else [raw_text]
+        chunks = pages or [raw_text]
+    elif split_regex:
+        chunks = split_pdf_text(raw_text, regex=split_regex)
+    else:
+        chunks = [raw_text]
 
-    queued = queue_extraction(
-        src, source.name, target_url, raw_text,
-        listing_id=listing_id, resolver_result=None,
-    )
-    return bool(queued)
+    queued_any = False
+    for index, chunk in enumerate(chunks):
+        chunk_text = (chunk or "").strip()
+        if not chunk_text:
+            continue
+        # When the PDF was split, give each chunk its own listing URL
+        # by suffixing the chunk index. Single-chunk PDFs keep the
+        # original URL so existing pipelines see no behaviour change.
+        chunk_url = target_url if len(chunks) == 1 else f"{target_url}#chunk-{index + 1}"
+        chunk_label = source.name if len(chunks) == 1 else f"{source.name} (chunk {index + 1}/{len(chunks)})"
+        listing_id = _upsert_aggregator_listing(
+            supabase,
+            source_id=src.get("id"),
+            scrape_run_id=run_id,
+            detail_url=chunk_url,
+            label=chunk_label,
+            event_type="new_recruitment",
+        )
+        _record_listing_observation(
+            supabase,
+            listing_id=listing_id,
+            source_id=src.get("id"),
+            scrape_run_id=run_id,
+            observed_url=chunk_url,
+            observed_label=chunk_label,
+            content_hash=None,
+        )
+        if queue_extraction(
+            src, source.name, chunk_url, chunk_text,
+            listing_id=listing_id, resolver_result=None,
+        ):
+            queued_any = True
+    return queued_any
 
 
 # ─── JSON-API adapter pass ────────────────────────────────────────────────

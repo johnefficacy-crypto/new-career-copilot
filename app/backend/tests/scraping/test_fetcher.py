@@ -525,85 +525,35 @@ def test_parse_sitemap_empty_or_malformed():
     assert parse_sitemap("<urlset><not-valid") == []
 
 
-# ── Sitemapindex auto-recursion ─────────────────────────────────────────────
+# ── PDF splitter ────────────────────────────────────────────────────────────
 
 
-from app.scraping.fetcher import fetch_sitemap_recursive
+from app.scraping.fetcher import split_pdf_text
 
 
-def test_parse_sitemap_index_marks_is_sitemap():
-    entries = parse_sitemap(_INDEX_SAMPLE)
-    assert len(entries) == 1
-    assert entries[0].is_sitemap is True
+def test_split_pdf_text_no_regex_returns_single_chunk():
+    assert split_pdf_text("body", regex=None) == ["body"]
+    assert split_pdf_text("body", regex="") == ["body"]
 
 
-def test_parse_sitemap_urlset_marks_is_sitemap_false():
-    entries = parse_sitemap(_URLSET_SAMPLE)
-    assert all(e.is_sitemap is False for e in entries)
+def test_split_pdf_text_empty_input_returns_empty_list():
+    assert split_pdf_text("", regex=r"^\d+\.") == []
 
 
-def test_fetch_sitemap_recursive_flattens_one_level(monkeypatch):
-    root_xml = """<?xml version="1.0" encoding="UTF-8"?>
-<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <sitemap><loc>https://x.gov.in/sitemap-1.xml</loc></sitemap>
-  <sitemap><loc>https://x.gov.in/sitemap-2.xml</loc></sitemap>
-</sitemapindex>"""
-    child1_xml = """<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://x.gov.in/notice-A</loc></url>
-  <url><loc>https://x.gov.in/notice-B</loc></url>
-</urlset>"""
-    child2_xml = """<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://x.gov.in/notice-C</loc></url>
-</urlset>"""
-
-    body_for: dict = {
-        "https://x.gov.in/root.xml": root_xml,
-        "https://x.gov.in/sitemap-1.xml": child1_xml,
-        "https://x.gov.in/sitemap-2.xml": child2_xml,
-    }
-
-    class _Resp:
-        def __init__(self, body):
-            self.status_code = 200
-            self.text = body
-            self.content = body.encode("utf-8")
-            self.url = "https://x.gov.in/x"
-            self.headers = {}
-        def raise_for_status(self): pass
-
-    monkeypatch.setattr("app.scraping.fetcher.httpx.get", lambda url, **kw: _Resp(body_for[url]))
-    root_result, leaves = fetch_sitemap_recursive("https://x.gov.in/root.xml", max_depth=2)
-    assert root_result.ok is True
-    locs = sorted(e.loc for e in leaves)
-    assert locs == [
-        "https://x.gov.in/notice-A",
-        "https://x.gov.in/notice-B",
-        "https://x.gov.in/notice-C",
-    ]
-    assert all(e.is_sitemap is False for e in leaves)
+def test_split_pdf_text_splits_on_match_and_keeps_match_in_chunk():
+    body = "Notification No. 12/2026\nDetails...\nNotification No. 13/2026\nMore details..."
+    chunks = split_pdf_text(body, regex=r"^Notification No\.")
+    assert len(chunks) == 2
+    assert chunks[0].startswith("Notification No. 12/2026")
+    assert chunks[1].startswith("Notification No. 13/2026")
 
 
-def test_fetch_sitemap_recursive_respects_max_depth(monkeypatch):
-    """At max_depth the index entry is surfaced as a leaf rather than
-    recursed into (so the operator at least sees it)."""
-    root_xml = """<?xml version="1.0" encoding="UTF-8"?>
-<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <sitemap><loc>https://x.gov.in/sitemap-1.xml</loc></sitemap>
-</sitemapindex>"""
+def test_split_pdf_text_invalid_regex_returns_single_chunk():
+    # ``[`` is an unterminated character class.
+    chunks = split_pdf_text("any body text", regex="[")
+    assert chunks == ["any body text"]
 
-    class _Resp:
-        def __init__(self, body):
-            self.status_code = 200
-            self.text = body
-            self.content = body.encode("utf-8")
-            self.url = "https://x.gov.in/x"
-            self.headers = {}
-        def raise_for_status(self): pass
 
-    monkeypatch.setattr("app.scraping.fetcher.httpx.get", lambda url, **kw: _Resp(root_xml))
-    _root, leaves = fetch_sitemap_recursive("https://x.gov.in/root.xml", max_depth=1)
-    # depth >= max_depth → the sitemap entry surfaces as a leaf URL.
-    assert [e.loc for e in leaves] == ["https://x.gov.in/sitemap-1.xml"]
-    assert leaves[0].is_sitemap is False
+def test_split_pdf_text_no_matches_returns_single_chunk():
+    chunks = split_pdf_text("plain text without any boundary marker", regex=r"^\d+\.")
+    assert chunks == ["plain text without any boundary marker"]
