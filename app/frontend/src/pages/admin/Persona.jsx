@@ -9,7 +9,7 @@ import PersonaUserInspector from "../../features/admin/persona/PersonaUserInspec
 import PersonaQueueTable from "../../features/admin/persona/PersonaQueueTable";
 import PersonaSignalEventsTable from "../../features/admin/persona/PersonaSignalEventsTable";
 import { AdminSafetyBanner } from "../../shared/ui";
-import { StatusDot } from "../../shared/ui/studyos";
+import { PageHeader, StatusDot } from "../../shared/ui/studyos";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -178,20 +178,16 @@ export default function AdminPersona() {
 
   return (
     <div className="space-y-6" data-testid="admin-persona-page">
-      <header className="flex items-end justify-between gap-6 flex-wrap">
-        <div>
-          <div className="eyebrow inline-flex items-center gap-2">
+      <PageHeader
+        eyebrow={
+          <span className="inline-flex items-center gap-2">
             <Compass className="h-3.5 w-3.5" /> Persona controls · internal
-          </div>
-          <h1 className="font-heading text-[34px] leading-[1.05] mt-2">Persona Controls</h1>
-          <p className="text-[14px] text-clay-700 mt-2 max-w-[72ch]">
-            Inspect progressive questions, persona snapshots, and Study OS policy outputs.
-            Persona is internal personalization metadata — not identity, diagnosis, eligibility
-            truth, or recruitment truth.
-          </p>
-        </div>
-        <StatusDot state="live" label="Live · /api/admin/persona" />
-      </header>
+          </span>
+        }
+        title="Persona Controls"
+        sub="Inspect progressive questions, persona snapshots, and Study OS policy outputs. Persona is internal personalization metadata — not identity, diagnosis, eligibility truth, or recruitment truth."
+        right={<StatusDot state="live" label="Live · /api/admin/persona" />}
+      />
 
       <AdminSafetyBanner
         title="Internal personalization metadata"
