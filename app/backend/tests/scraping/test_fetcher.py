@@ -516,7 +516,7 @@ def test_parse_sitemap_urlset():
 
 def test_parse_sitemap_index_returns_inner_locs():
     entries = parse_sitemap(_INDEX_SAMPLE)
-    assert entries == [SitemapEntry(loc="https://ssc.nic.in/sitemap-recruitments.xml", lastmod="2026-02-01")]
+    assert entries == [SitemapEntry(loc="https://ssc.nic.in/sitemap-recruitments.xml", lastmod="2026-02-01", is_sitemap=True)]
 
 
 def test_parse_sitemap_empty_or_malformed():

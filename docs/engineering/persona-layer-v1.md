@@ -195,12 +195,98 @@ handlers — only the API path emits today.
 - Changes to recruitment publishing or scraper approval flow.
 - Shame-based productivity copy.
 
+## PR2 Progressive Tiny Questions
+
+PR2 (migration `085_progressive_persona_questions.sql`) layered a small
+question registry on top of PR1:
+
+- `persona_question_bank` — registry of tiny questions; seeded with 8
+  safe, non-sensitive questions targeting `preparation_stage`,
+  `time_constraint`, `learning_behavior`, `execution_risk`, and
+  `study_policy`.
+- `persona_question_answers` — append-only answers (one row per submit;
+  classifier reads latest per `question_key`).
+- `persona_question_dismissals` — per-user "not now" suppression with an
+  expiry timestamp.
+
+API surface added in PR2 (mounted under `/api/persona/questions`):
+
+- `GET /api/persona/questions/next` — selector returns one tiny question
+  + a short reason. Skips already-answered + currently-dismissed
+  questions. Boosts questions whose `target_dimension` is unknown /
+  `insufficient_data` in the latest snapshot.
+- `POST /api/persona/questions/answer` — strict validation against the
+  question's `data_type`/options, then save → safe profile mapping
+  (allowlisted) → emit `user_signal_events` → enqueue persona recompute.
+- `POST /api/persona/questions/skip` — record a skip audit row and
+  upsert a `persona_question_dismissals` row.
+- `GET /api/persona/questions/history` — last 50 rows for the caller.
+
+Classifier integration (deterministic, no AI):
+
+- `preparation_stage_self_assessment` answers override the inferred
+  `preparation_stage` (`just_starting` → `beginner`,
+  `studied_before_restarting` → `restarting_aspirant`,
+  `already_attempted_exam` → `repeater`, `final_revision_phase` →
+  `final_window_aspirant`).
+- `weekday_study_availability` answers override `time_constraint`
+  unless the user is already classified as `working_professional`.
+- `mock_behavior` answers set `learning_behavior` to `mock_avoider` or
+  `high_mock_low_review`.
+- `revision_behavior = rarely` sets `revision_backlog_heavy` only if
+  there is no stronger learning-behaviour signal.
+- `study_consistency_blocker` answers (phone/unclear plan) raise
+  `execution_risk` to at least `medium`; job/family answers flip
+  `study_policy.constraints.weekend_catchup_enabled` on.
+- `preferred_plan_style` answers shape `study_policy`:
+  `short_focus_blocks` → smaller task size + avoid long theory;
+  `weekly_targets_only` → cap on max tasks per day;
+  `strict_daily_schedule` → new `constraints.strict_daily_schedule`
+  flag for the future scheduler.
+
+Safety constraints reinforced in PR2:
+
+- One tiny question at a time. No chat thread, no AI follow-ups.
+- Persona labels are never shown in the card. The reason text uses
+  plain language ("Improves Study OS personalization").
+- Tiny questions never block app usage; any API failure simply hides
+  the card.
+- The profile adapter allowlist is intentionally tiny — only safely
+  fillable, non-overwriting fields. Caste / category / financial /
+  family answers are deliberately not in the seed.
+
+See `docs/engineering/progressive-persona-questions.md` for the full
+PR2 design.
+
+## Consumed by Study OS Mission Control (PR3)
+
+`GET /api/study/mission-control` reads the latest persona snapshot via
+`app.persona.snapshots.get_latest_persona_snapshot` (auto-computing one
+via `compute_persona_snapshot` if absent), and forwards
+`dimensions`, `scores`, and `study_policy` into the response. The
+frontend `/app/today` page renders them through `EngineTrace`,
+`StudyPolicyPreview`, `StudyTaskCard` (with per-task `reasoning`), and
+`NextBestActionCard`. The internal `primary_persona` label is **never**
+shown as user-facing identity copy.
+
+See `docs/engineering/study-os-mission-control-v1.md` for the full
+contract.
+
+## Admin visibility (PR4)
+
+`PR4 adds admin visibility/control for persona question bank,
+snapshots, queue, and signal events` via `/admin/persona` and the
+`/api/admin/persona/*` endpoints. Snapshots remain immutable; admins
+can only trigger a recompute through the queue. See
+`docs/engineering/admin-persona-controls-v1.md`.
+
 ## Future PR path
 
-- **PR2** — progressive tiny-question onboarding nudges. Backend-emit
-  `user_signal_events` from onboarding handler; surfaces non-blocking
-  prompts to fill in missing high-signal fields.
-- **PR3** — Study OS mission-control endpoint that reads the latest
-  persona snapshot and returns a today-view shaped by `study_policy`.
-- **PR4** — admin persona rules viewer (read-only): expose the rule
-  catalog + a single user's evidence trail to operators for debugging.
+- **PR2 — shipped.** Progressive tiny-question card + classifier
+  integration.
+- **PR3 — shipped.** Study OS Mission Control endpoint + `/app/today`
+  page upgrade.
+- **PR4 — shipped.** Admin persona controls (read-light) for question
+  bank, snapshots, queue, and signal events.
+- **PR5+** — exam intelligence admin design begins only after the
+  persona admin surface is stable.

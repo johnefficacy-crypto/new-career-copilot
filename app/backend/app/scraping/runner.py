@@ -445,7 +445,7 @@ def _run_sitemap_pass(
     while still queuing recruitment-shaped paths.
     """
     from .aggregator import classify_aggregator_link
-    from .fetcher import fetch_sitemap
+    from .fetcher import fetch_sitemap, fetch_sitemap_recursive
 
     if mock:
         entries = [
@@ -487,6 +487,34 @@ def _run_sitemap_pass(
                 "at": utc_now_iso(),
             })
             return False
+        # Sitemapindex auto-recursion. If the root sitemap actually
+        # listed child sitemaps (every entry is_sitemap=True is the
+        # most common shape) flatten one level of children inline so
+        # the runner doesn't need an operator to wire each child as a
+        # separate source.
+        if any(getattr(e, "is_sitemap", False) for e in entries):
+            expanded: list[Any] = []
+            for e in entries:
+                if getattr(e, "is_sitemap", False):
+                    _child_result, children = fetch_sitemap(e.loc)
+                    if not _child_result.ok:
+                        logger.warning(
+                            "sitemap.child_fetch_failed source_id=%s child_url=%s error=%s",
+                            src.get("id"), e.loc, _child_result.error,
+                        )
+                        continue
+                    # Only keep leaf <url> entries from the child; deeper
+                    # nesting (sitemapindex pointing at sitemapindex) is
+                    # rare enough to leave to the operator to wire as a
+                    # separate source.
+                    expanded.extend([c for c in children if not getattr(c, "is_sitemap", False)])
+                else:
+                    expanded.append(e)
+            entries = expanded
+            logger.info(
+                "sitemap.recursed source_id=%s root_url=%s leaf_count=%s",
+                src.get("id"), target_url, len(entries),
+            )
 
     queued_any = False
     entries = entries[:run_limit]
