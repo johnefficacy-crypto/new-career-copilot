@@ -4,17 +4,20 @@ import {
   ArrowRight,
   ArrowUpRight,
   CheckCircle2,
-  Clock,
   Compass,
   ShieldCheck,
-  // Sparkles,
   Users,
   BookOpenCheck,
   LineChart,
-  // BotMessageSquare,
-  GraduationCap,
 } from "lucide-react";
 import { useAuth } from "../lib/authContext";
+import {
+  LandingHowItWorksFlow,
+  LandingMissionControlPreview,
+  LandingStudyFlowPreview,
+  LandingExamTrustPreview,
+  LandingTruthPanelPreview,
+} from "../features/landing/components";
 
 function TopBar() {
   const auth = useAuth();
@@ -213,6 +216,17 @@ function Pillars() {
             body="Moderated forums, accountability partners, study groups and mentors who've actually cracked the exam."
           />
         </div>
+
+        <div className="mt-16">
+          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
+            The quiet workflow
+          </div>
+          <p className="mt-1 text-foreground/70 max-w-2xl">
+            Study OS turns verified exam signals and your weekly progress into the
+            next correct action — official-first, review-gated, explainable.
+          </p>
+          <LandingHowItWorksFlow />
+        </div>
       </div>
     </section>
   );
@@ -246,35 +260,15 @@ function StudyStrip() {
           </ul>
         </div>
         <div className="lg:col-span-6">
-          <div className="soft-card rounded-3xl p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Day 41 · 90-day plan</div>
-                <div className="font-heading text-2xl font-semibold mt-1">Arithmetic Sprint</div>
-              </div>
-              <span className="pill pill-sage">89% adherence</span>
-            </div>
-            <div className="mt-6 grid grid-cols-7 gap-2">
-              {[4.5, 5.2, 3.2, 6.1, 4.8, 7.0, 0.5].map((h, i) => (
-                <div key={i} className="flex flex-col items-center gap-2">
-                  <div className="w-full h-28 bg-clay-100 rounded-md relative overflow-hidden">
-                    <div
-                      className="absolute bottom-0 left-0 right-0 bg-clay-500 rounded-md"
-                      style={{ height: `${(h / 7) * 100}%` }}
-                    />
-                  </div>
-                  <span className="text-[11px] font-mono text-muted-foreground">{h}h</span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-6 pt-5 border-t border-border flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <GraduationCap className="h-4 w-4 text-clay-600" />
-                <span className="text-sm">Next correction · Polity Ch.4 backlog, 2h Thursday</span>
-              </div>
-              <span className="text-[12px] text-muted-foreground inline-flex items-center gap-1"><Clock className="h-3 w-3" /> 10 June Tier I</span>
-            </div>
-          </div>
+          <LandingMissionControlPreview />
+        </div>
+      </div>
+
+      <div className="container px-6 mt-10 space-y-6">
+        <LandingStudyFlowPreview />
+        <div className="grid lg:grid-cols-2 gap-6">
+          <LandingExamTrustPreview />
+          <LandingTruthPanelPreview />
         </div>
       </div>
     </section>
