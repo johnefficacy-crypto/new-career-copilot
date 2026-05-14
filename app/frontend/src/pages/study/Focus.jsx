@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Pause, Play, RotateCcw, StopCircle } from "lucide-react";
+import { Pause, Play, RotateCcw, StopCircle, Link2 } from "lucide-react";
 import { api } from "../../lib/api";
+import FocusReflectionPanel from "../../features/study/components/FocusReflectionPanel";
 
 const PRESETS = [25, 50, 90];
 
@@ -12,10 +13,23 @@ export default function Focus() {
   const [running, setRunning] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const [summary, setSummary] = useState({ total_hours_7d: 0, week: [] });
+  // Today's tasks — best-effort, used only to offer a "linked task" selector.
+  const [todayTasks, setTodayTasks] = useState([]);
+  const [linkedTaskId, setLinkedTaskId] = useState("");
+  // Holds the just-finished session so the reflection panel can render.
+  const [reflectionSession, setReflectionSession] = useState(null);
   const tickRef = useRef(null);
 
   useEffect(() => {
     api.get("/api/study/focus/summary").then(setSummary).catch(() => {});
+    // Linked-task selector is optional: if the plan endpoint is unavailable
+    // we simply do not show it.
+    api
+      .get("/api/study/plan")
+      .then((res) => {
+        setTodayTasks(Array.isArray(res?.tasks) ? res.tasks : []);
+      })
+      .catch(() => setTodayTasks([]));
   }, []);
 
   useEffect(() => {
@@ -38,6 +52,16 @@ export default function Focus() {
     // eslint-disable-next-line
   }, [running]);
 
+  function pickLinkedTask(id) {
+    setLinkedTaskId(id);
+    const t = todayTasks.find((x) => String(x.id) === String(id));
+    if (t) {
+      if (t.subject) setSubject(t.subject);
+      if (t.topic) setTopic(t.topic);
+      else if (t.title) setTopic(t.title);
+    }
+  }
+
   async function start() {
     const s = await api.post("/api/study/focus/start", {
       subject,
@@ -46,6 +70,7 @@ export default function Focus() {
     });
     setSessionId(s.id);
     setRunning(true);
+    setReflectionSession(null);
   }
   function pause() {
     setRunning(false);
@@ -56,9 +81,18 @@ export default function Focus() {
     setRemaining(duration * 60);
   }
   async function finish(auto = false) {
+    const completedMin = Math.round((duration * 60 - remaining) / 60);
     if (sessionId) {
-      const completed = Math.round((duration * 60 - remaining) / 60);
-      await api.post("/api/study/focus/stop", { id: sessionId, completed_min: auto ? duration : completed });
+      await api.post("/api/study/focus/stop", {
+        id: sessionId,
+        completed_min: auto ? duration : completedMin,
+      });
+      // Offer a post-session reflection (kept local — see FocusReflectionPanel).
+      setReflectionSession({
+        subject,
+        topic,
+        completedMin: auto ? duration : completedMin,
+      });
     }
     setRunning(false);
     setSessionId(null);
@@ -118,6 +152,26 @@ export default function Focus() {
           <div>
             <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Session</div>
             <div className="mt-2 space-y-3">
+              {todayTasks.length > 0 ? (
+                <label className="block">
+                  <div className="text-[11px] text-muted-foreground inline-flex items-center gap-1">
+                    <Link2 className="h-3 w-3" aria-hidden="true" /> Linked task (optional)
+                  </div>
+                  <select
+                    value={linkedTaskId}
+                    onChange={(e) => pickLinkedTask(e.target.value)}
+                    data-testid="focus-linked-task"
+                    className="mt-1 w-full px-3 py-2 rounded-lg border border-border bg-white/80 text-sm"
+                  >
+                    <option value="">No linked task</option>
+                    {todayTasks.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.title || t.topic || `Task ${t.id}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <label className="block">
                 <div className="text-[11px] text-muted-foreground">Subject</div>
                 <input value={subject} onChange={(e) => setSubject(e.target.value)} className="mt-1 w-full px-3 py-2 rounded-lg border border-border bg-white/80 text-sm" />
@@ -145,6 +199,13 @@ export default function Focus() {
           </div>
         </div>
       </div>
+
+      {reflectionSession ? (
+        <FocusReflectionPanel
+          session={reflectionSession}
+          onDismiss={() => setReflectionSession(null)}
+        />
+      ) : null}
     </div>
   );
 }
