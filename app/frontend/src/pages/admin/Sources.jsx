@@ -194,10 +194,20 @@ function SourceDetailsDialog({ source, result, onEdit, onClose }) {
         </div>
         <div className="mt-4 space-y-3 text-sm">
           <Detail label="Type" value={source.source_type || source.kind} />
+          <Detail label="Adapter" value={source.adapter_type || "html"} />
+          <Detail label="Fetch URL (used by runner)" value={primaryFetchUrl(source)} />
           <Detail label="Official URL" value={source.official_url} />
           <Detail label="Notification URL" value={source.notification_url} />
           <Detail label="Trust policy" value={source.source_type === "aggregator" ? "Discovery only / official confirmation required / cannot publish from this source alone" : "Official source candidate"} />
-          <Detail label="Last error" value={source.last_error} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Detail label="Last error class" value={source.last_error_class} />
+            <Detail label="Last error" value={source.last_error_detail || source.last_error} />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Detail label="Currently scraping" value={source.currently_scraping_at ? `since ${source.currently_scraping_at}` : "no"} />
+            <Detail label="Listing cache" value={source.has_listing_cache ? "active (304 short-circuit)" : "cold"} />
+            <Detail label="Listing last-modified" value={source.last_listing_modified} />
+          </div>
           <Detail label="Notes" value={source.notes} />
           <div className="grid gap-3 sm:grid-cols-3">
             <Detail label="Max items" value={source.scrape_config?.max_items_per_run} />
@@ -394,6 +404,9 @@ function SourceCard({ source, busyKey, onDetails, onEdit, onVerify, onToggle, on
             <StatusBadge status={sourceType || "unknown"} label={sourceTypeLabel(sourceType)} />
             <StatusBadge status={source.is_active ? "active" : "disabled"} label={source.is_active ? "Active" : "Inactive"} />
             {isAggregator ? <span className="pill pill-amber">Discovery only</span> : <span className="pill pill-sage">{source.is_verified ? "Verified official source" : "Official candidate"}</span>}
+            {source.currently_scraping_at ? <span className="pill pill-amber" title={`Lock held since ${source.currently_scraping_at}`}>Scraping in flight</span> : null}
+            {source.has_listing_cache ? <span className="pill pill-sage" title="Listing fetch will use If-None-Match / If-Modified-Since">Cached</span> : null}
+            {source.adapter_type && source.adapter_type !== "html" ? <span className="pill">{String(source.adapter_type).toUpperCase()}</span> : null}
           </div>
           <h2 className="mt-3 truncate font-heading text-xl">{source.org || source.source_name}</h2>
           <p className="mt-1 truncate text-xs text-muted-foreground">{source.official_url || source.url || "-"}</p>
@@ -403,7 +416,7 @@ function SourceCard({ source, busyKey, onDetails, onEdit, onVerify, onToggle, on
       <div className="mt-4 grid gap-2 text-xs sm:grid-cols-3">
         <Mini label="Health" value={<SourceHealthBadge source={source} />} />
         <Mini label="Last success" value={source.last_success_at || "-"} />
-        <Mini label="Fails" value={source.consecutive_fails || 0} tone={failed ? "bad" : undefined} />
+        <Mini label={source.last_error_class ? `Fails (${source.last_error_class})` : "Fails"} value={source.consecutive_fails || 0} tone={failed ? "bad" : undefined} />
       </div>
       {isAggregator ? (
         <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
@@ -429,4 +442,23 @@ function Mini({ label, value, tone }) {
 
 function sourceTypeLabel(value) {
   return SOURCE_TYPES.find((type) => type.value === value)?.label || value || "Unknown";
+}
+
+function primaryFetchUrl(source) {
+  // Mirrors ScrapeSource.primary_fetch_url() in app/backend/app/scraping/sources.py
+  // so the admin sees exactly which URL the runner will hit for this adapter.
+  const adapter = (source?.adapter_type || "").toLowerCase();
+  if (adapter === "rss") return source?.rss_url || null;
+  if (adapter === "api") return source?.api_url || null;
+  if (adapter === "pdf") return source?.pdf_bulletin_url || null;
+  if (adapter === "sitemap") {
+    const cfg = source?.adapter_config?.sitemap_url;
+    if (cfg) return cfg;
+    const base = (source?.crawl_url || source?.official_url || "").replace(/\/$/, "");
+    return base ? `${base}/sitemap.xml` : null;
+  }
+  if (source?.discovery_only || (source?.source_type || "").toLowerCase() === "aggregator") {
+    return source?.crawl_url || source?.notification_url || source?.official_url || null;
+  }
+  return source?.notification_url || source?.crawl_url || source?.official_url || null;
 }
