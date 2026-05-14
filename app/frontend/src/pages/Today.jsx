@@ -15,6 +15,7 @@ import SafeExplanationCard from "../features/study/components/SafeExplanationCar
 import PlanReasoningCard from "../features/study/components/PlanReasoningCard";
 import ExamContextCard from "../features/study/components/ExamContextCard";
 import CompetitionContextCard from "../features/study/components/CompetitionContextCard";
+import PlanPreferencesCard from "../features/study/components/PlanPreferencesCard";
 
 const EMPTY_MC = {
   user_context: { dimensions: {}, scores: {}, safe_user_explanation: [] },
@@ -55,6 +56,9 @@ export default function Today() {
   // Fallback shape if mission-control fails entirely — keeps the legacy
   // /api/study/plan path working so the page never goes blank.
   const [fallbackPlan, setFallbackPlan] = useState(null);
+  // Bumped when the plan is regenerated (e.g. from the preferences card) so
+  // mission control is refetched.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,7 +94,7 @@ export default function Today() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadKey]);
 
   async function toggleTask(t) {
     if (!t || !t.id) return;
@@ -293,6 +297,8 @@ export default function Today() {
       </section>
 
       <PlanReasoningCard reasoning={planReasoning} />
+
+      <PlanPreferencesCard onRegenerated={() => setReloadKey((k) => k + 1)} />
 
       <StudyPolicyPreview policy={policy} />
 

@@ -27,6 +27,7 @@ from typing import Any, Callable
 from app.exam_intelligence.coverage import verified_pyq_topic_counts
 from app.exam_intelligence.lookup import resolve_exam_by_id, resolve_exam_by_slug
 from app.study_os.competition_context import competition_context
+from app.study_os.plan_preferences import focus_weights, get_plan_preferences
 from app.study_os.update_context import policy_update_context
 
 logger = logging.getLogger("career_copilot.study_os.planner")
@@ -320,29 +321,40 @@ def _load_user_signals(
 
 
 # ─── Scoring + task shaping ───────────────────────────────────────────────
+# A pinned topic is boosted hard so it reliably earns a slot in the plan.
+_PIN_BONUS = 30.0
+
+
 def _score_topic(
     cov: dict[str, Any],
     pyq_count: int,
     mastery: float | None,
     has_errors: bool,
+    *,
+    weights: dict[str, float],
+    pinned: bool,
 ) -> tuple[float, float]:
     """Return ``(priority_score, mastery_gap)`` for one coverage row.
 
     Transparent linear blend — see module docstring for the input groups.
-    A topic with no mastery row is treated as a moderate-high gap (55) so
-    never-practised topics still earn attention without dominating.
+    ``weights`` (coverage_w / mastery_w / high_yield_bonus) come from the
+    user's chosen weighting ``focus``; a topic with no mastery row is
+    treated as a moderate-high gap (55) so never-practised topics still
+    earn attention without dominating. Pinned topics get a flat boost.
     """
     coverage_priority = cov["coverage_priority"]
     mastery_gap = (100.0 - mastery) if mastery is not None else 55.0
     pyq_factor = min(20.0, pyq_count * 5.0)
-    high_yield_bonus = 10.0 if cov["is_high_yield"] else 0.0
+    high_yield_bonus = weights["high_yield_bonus"] if cov["is_high_yield"] else 0.0
     error_signal = 10.0 if has_errors else 0.0
+    pin_bonus = _PIN_BONUS if pinned else 0.0
     score = (
-        0.50 * coverage_priority
-        + 0.25 * mastery_gap
+        weights["coverage_w"] * coverage_priority
+        + weights["mastery_w"] * mastery_gap
         + pyq_factor
         + high_yield_bonus
         + error_signal
+        + pin_bonus
     )
     return round(_clamp(score), 2), round(mastery_gap, 2)
 
@@ -392,10 +404,13 @@ def _why_summary(
     pyq_count: int,
     mastery: float | None,
     pressure_level: str,
+    pinned: bool,
 ) -> str:
     topic = cov["topic_name"]
     exam_bits = "a verified high-yield topic" if cov["is_high_yield"] else "a verified topic"
     bits = [f"{topic} is {exam_bits} for your exam"]
+    if pinned:
+        bits.append("you pinned it")
     if pyq_count:
         bits.append(f"{pyq_count} verified PYQ appearance(s)")
     if mastery is None:
@@ -428,10 +443,16 @@ def _build_tasks(
             "mastery_gap": cov["_mastery_gap"],
             "high_yield": cov["is_high_yield"],
             "has_error_patterns": cov["_has_errors"],
+            "pinned": cov["_pinned"],
             "competition_pressure": pressure_level,
             "priority_score": cov["_priority_score"],
             "summary": _why_summary(
-                cov, task_type, cov["_pyq_count"], cov["_mastery"], pressure_level
+                cov,
+                task_type,
+                cov["_pyq_count"],
+                cov["_mastery"],
+                pressure_level,
+                cov["_pinned"],
             ),
         }
         tasks.append(
@@ -508,6 +529,7 @@ def _persist(
     plan_phase_id: str | None,
     tasks: list[dict[str, Any]],
     input_context: dict[str, Any],
+    event_type: str,
 ) -> dict[str, Any]:
     exam_id = exam.get("id")
     today = _today_iso()
@@ -610,7 +632,7 @@ def _persist(
                     "user_id": user_id,
                     "plan_id": plan_id,
                     "plan_version_id": plan_version_id,
-                    "event_type": "manual_regeneration",
+                    "event_type": event_type,
                     "trigger_source": PLANNER_VERSION,
                     "trigger_payload": {"reason": input_context.get("reason")},
                     "change_summary": {
@@ -633,13 +655,23 @@ def _persist(
 
 # ─── Public entrypoint ────────────────────────────────────────────────────
 def generate_plan(
-    supabase: Any, user_id: str, *, reason: str = "manual_generation"
+    supabase: Any,
+    user_id: str,
+    *,
+    reason: str = "manual_generation",
+    event_type: str = "manual_regeneration",
 ) -> dict[str, Any]:
     """Generate and persist today's study plan for ``user_id``.
 
+    Honours the user's ``user_study_plan_preferences`` — the weighting
+    ``focus``, plan-shape overrides and pinned / muted topics — on top of
+    the persona study policy. ``event_type`` is recorded on the
+    ``study_adaptation_events`` row so a scheduled or mock-triggered
+    regeneration is distinguishable from a manual one.
+
     Returns a summary dict. ``generated=False`` (with a ``reason``) when the
-    plan cannot be built — no target exam, or no locked exam intelligence.
-    Never raises.
+    plan cannot be built — no target exam, no locked exam intelligence, or
+    every candidate topic muted. Never raises.
     """
     try:
         if not user_id:
@@ -650,11 +682,24 @@ def generate_plan(
             return {"generated": False, "reason": "no_target_exam"}
         exam_id = exam["id"]
 
+        # User autonomy: weighting focus, plan-shape overrides, pin / mute.
+        prefs = get_plan_preferences(supabase, user_id)
+        muted = set(prefs.get("muted_topic_ids") or [])
+        pinned = set(prefs.get("pinned_topic_ids") or [])
+        weights = focus_weights(prefs.get("focus"))
+
         coverage = _load_locked_coverage(supabase, exam_id)
         if not coverage:
             return {
                 "generated": False,
                 "reason": "no_locked_coverage",
+                "exam": exam.get("slug"),
+            }
+        coverage = [c for c in coverage if c["topic_id"] not in muted]
+        if not coverage:
+            return {
+                "generated": False,
+                "reason": "all_topics_muted",
                 "exam": exam.get("slug"),
             }
 
@@ -668,7 +713,7 @@ def generate_plan(
         pressure_level = (comp.get("cycle_pressure") or {}).get("pressure_level", "unknown")
         policy_updates = policy_update_context(supabase, exam_id)
 
-        # persona study policy → task count + sizing
+        # Task count + sizing: a user preference overrides the persona policy.
         snapshot = (
             _safe(
                 lambda: (
@@ -685,12 +730,20 @@ def generate_plan(
             or []
         )
         study_policy = (snapshot[0] if snapshot else {}).get("study_policy") or {}
-        try:
-            max_tasks = int(study_policy.get("max_tasks_per_day") or _DEFAULT_MAX_TASKS)
-        except (TypeError, ValueError):
-            max_tasks = _DEFAULT_MAX_TASKS
-        max_tasks = max(1, min(8, max_tasks))
-        size = study_policy.get("preferred_task_size") or _DEFAULT_SIZE
+        pref_max = prefs.get("max_tasks_per_day")
+        if pref_max:
+            max_tasks = max(1, min(8, int(pref_max)))
+        else:
+            try:
+                max_tasks = int(study_policy.get("max_tasks_per_day") or _DEFAULT_MAX_TASKS)
+            except (TypeError, ValueError):
+                max_tasks = _DEFAULT_MAX_TASKS
+            max_tasks = max(1, min(8, max_tasks))
+        size = (
+            prefs.get("preferred_task_size")
+            or study_policy.get("preferred_task_size")
+            or _DEFAULT_SIZE
+        )
         minutes = _SIZE_MINUTES.get(size, _SIZE_MINUTES[_DEFAULT_SIZE])
 
         # score every locked-coverage topic
@@ -699,11 +752,16 @@ def generate_plan(
             pyq_count = int(pyq_counts.get(tid, 0))
             topic_mastery = mastery.get(tid)
             has_errors = tid in error_topics
-            score, gap = _score_topic(cov, pyq_count, topic_mastery, has_errors)
+            is_pinned = tid in pinned
+            score, gap = _score_topic(
+                cov, pyq_count, topic_mastery, has_errors,
+                weights=weights, pinned=is_pinned,
+            )
             cov["_pyq_count"] = pyq_count
             cov["_mastery"] = topic_mastery
             cov["_mastery_gap"] = gap
             cov["_has_errors"] = has_errors
+            cov["_pinned"] = is_pinned
             cov["_priority_score"] = score
             cov["_task_type"] = _task_type(topic_mastery, has_errors)
 
@@ -738,10 +796,15 @@ def generate_plan(
             "competition_pressure": pressure_level,
             "policy_affects_syllabus": bool(policy_updates.get("affects_syllabus")),
             "study_policy": {"max_tasks_per_day": max_tasks, "preferred_task_size": size},
+            "preferences": {
+                "focus": prefs.get("focus"),
+                "pinned_count": len(pinned),
+                "muted_count": len(muted),
+            },
         }
 
         persisted = _persist(
-            supabase, user_id, exam, plan_phase_id, tasks, input_context
+            supabase, user_id, exam, plan_phase_id, tasks, input_context, event_type
         )
         if not persisted.get("generated"):
             return persisted
@@ -751,6 +814,7 @@ def generate_plan(
             "exam": exam.get("slug"),
             "exam_name": exam.get("name"),
             "task_count": len(tasks),
+            "focus": prefs.get("focus"),
             "competition_pressure": pressure_level,
             "tasks": [
                 {

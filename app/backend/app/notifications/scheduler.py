@@ -62,11 +62,20 @@ def _job_recompute() -> dict[str, Any]:
     return drain_recompute_queue(get_supabase_admin())
 
 
+def _job_plan_regen() -> dict[str, Any]:
+    # Imported lazily — the planner pulls in a chunk of the study_os
+    # package, and the scheduler module is imported early in startup.
+    from app.study_os.regen import regenerate_stale_plans
+
+    return regenerate_stale_plans(get_supabase_admin())
+
+
 # Public registry — also used by the manual-trigger admin endpoint.
 JOBS: dict[str, callable] = {  # type: ignore[type-arg]
     "notif:dispatch": _job_dispatch,
     "notif:deadline_sweep": _job_deadline_sweep,
     "elig:recompute": _job_recompute,
+    "study:plan_regen": _job_plan_regen,
 }
 
 
@@ -102,6 +111,15 @@ def start_scheduler() -> BackgroundScheduler | None:
         _wrap("elig:recompute", _job_recompute),
         IntervalTrigger(minutes=5),
         id="elig:recompute",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # Daily 03:00 UTC — refresh active study plans not regenerated today.
+    sched.add_job(
+        _wrap("study:plan_regen", _job_plan_regen),
+        CronTrigger(hour=3, minute=0, timezone="UTC"),
+        id="study:plan_regen",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
