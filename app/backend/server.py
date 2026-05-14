@@ -26,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app.api.admin_persona import router as admin_persona_router
 from app.api.admin_scrape import router as admin_scrape_router
 from app.api.auth import router as auth_router
 from app.api.admin_trust import router as admin_trust_router
@@ -158,6 +159,7 @@ api.include_router(eligibility_router)
 api.include_router(notifications_router)
 api.include_router(admin_scrape_router)  # admin scraper trust-gate routes
 api.include_router(admin_trust_router)
+api.include_router(admin_persona_router)  # PR4 admin persona controls
 api.include_router(payments_router)  # razorpay + plans
 api.include_router(persona_router)  # internal aspirant persona v1
 api.include_router(persona_questions_router)  # PR2 progressive tiny questions

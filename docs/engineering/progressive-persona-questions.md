@@ -148,6 +148,16 @@ reads to populate `today's policy`:
 See `docs/engineering/study-os-mission-control-v1.md` for the full
 contract.
 
+## Admin visibility (PR4)
+
+`PR4 adds admin visibility/control for persona question bank,
+snapshots, queue, and signal events`. Operators can list/search/patch
+question rows (text, help_text, options, priority, is_active,
+trigger_rules, applies_when) and inspect a single user's recent
+answers and queue items at `/admin/persona`. `question_key` and
+`data_type` remain immutable. See
+`docs/engineering/admin-persona-controls-v1.md`.
+
 ## Non-goals (must not appear in PR2)
 
 - No free-form AI chatbot.

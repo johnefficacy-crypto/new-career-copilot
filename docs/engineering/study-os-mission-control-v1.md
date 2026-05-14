@@ -181,16 +181,23 @@ shows the data pipeline status without naming the user.
 - **Exam intelligence** — `engine_trace` includes a step explicitly
   marked `not_connected`. No PYQ / update / verified-exam claims appear
   anywhere in the response.
-- **Admin persona rules viewer** — deferred to PR4.
 - **Plan generation / task creation** — PR3 only reads. Writes still
   go through existing `/api/study/plan/toggle` and `/api/study/tasks/...`
   routes; mission-control composes around them.
 
+## Admin visibility (PR4)
+
+`PR4 adds admin visibility/control for persona question bank,
+snapshots, queue, and signal events`. The same `study_policy` block
+that mission-control returns to `/app/today` is also surfaced (via
+`PersonaStudyPolicyPreview`) inside the admin User Inspector tab so
+operators can verify what a user actually sees. See
+`docs/engineering/admin-persona-controls-v1.md`.
+
 ## Future PRs
 
-- **PR4 — Admin persona rules / question-bank / study-policy preview viewer (read-only).**
-  Internal-facing surface that exposes the deterministic rule catalog
-  and a single user's evidence trail for debugging.
+- **PR4 — shipped.** Admin persona controls (read-light) for question
+  bank, snapshots, queue, and signal events.
 - **PR5 (or later) — Exam intelligence integration.** Once an
   admin-reviewed source exists, mission-control adds a new
   `engine_trace` step transitioning from `not_connected` to

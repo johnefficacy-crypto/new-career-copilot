@@ -272,11 +272,21 @@ shown as user-facing identity copy.
 See `docs/engineering/study-os-mission-control-v1.md` for the full
 contract.
 
+## Admin visibility (PR4)
+
+`PR4 adds admin visibility/control for persona question bank,
+snapshots, queue, and signal events` via `/admin/persona` and the
+`/api/admin/persona/*` endpoints. Snapshots remain immutable; admins
+can only trigger a recompute through the queue. See
+`docs/engineering/admin-persona-controls-v1.md`.
+
 ## Future PR path
 
 - **PR2 — shipped.** Progressive tiny-question card + classifier
   integration.
 - **PR3 — shipped.** Study OS Mission Control endpoint + `/app/today`
   page upgrade.
-- **PR4** — admin persona rules viewer (read-only): expose the rule
-  catalog + a single user's evidence trail to operators for debugging.
+- **PR4 — shipped.** Admin persona controls (read-light) for question
+  bank, snapshots, queue, and signal events.
+- **PR5+** — exam intelligence admin design begins only after the
+  persona admin surface is stable.
