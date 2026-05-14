@@ -1,67 +1,284 @@
 import React, { useEffect, useState } from "react";
-import { CheckCircle2, Circle, /* Clock, */ Target, Zap } from "lucide-react";
+import { Target } from "lucide-react";
 import { api } from "../lib/api";
 import PersonaQuestionCard from "../features/persona-questions/PersonaQuestionCard";
+import StudyMetricCard from "../features/study/components/StudyMetricCard";
+import StudyTaskCard from "../features/study/components/StudyTaskCard";
+import TruthPanelCard from "../features/study/components/TruthPanelCard";
+import EngineTrace from "../features/study/components/EngineTrace";
+import NextBestActionCard from "../features/study/components/NextBestActionCard";
+import MissionControlSkeleton from "../features/study/components/MissionControlSkeleton";
+import StudyPolicyPreview from "../features/study/components/StudyPolicyPreview";
+
+const EMPTY_MC = {
+  user_context: { dimensions: {}, scores: {} },
+  study_policy: {},
+  plan: null,
+  today_tasks: [],
+  metrics: {
+    tasks_total: 0,
+    tasks_completed: 0,
+    task_completion_rate: 0,
+    hours_studied_7d: 0,
+    hours_planned_week: 0,
+    adherence: null,
+    backlog_count: 0,
+    mocks_taken: 0,
+  },
+  next_best_action: null,
+  truth_panel: { summary: "", warnings: [], corrections: [] },
+  progressive_question: null,
+  engine_trace: [],
+  meta: {},
+};
+
+function formatPercent(v) {
+  if (v === null || v === undefined) return "—";
+  return `${Math.round(Number(v) * 100)}%`;
+}
 
 export default function Today() {
-  const [plan, setPlan] = useState({ tasks: [], plan: null, date: "" });
-  const [err, setErr] = useState("");
+  const [mc, setMc] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  // Fallback shape if mission-control fails entirely — keeps the legacy
+  // /api/study/plan path working so the page never goes blank.
+  const [fallbackPlan, setFallbackPlan] = useState(null);
 
   useEffect(() => {
-    api.get("/api/study/plan").then((d) => setPlan({ date: d?.date || "", plan: d?.plan || null, tasks: Array.isArray(d?.tasks) ? d.tasks : [] })).catch((e) => { setErr("Could not load today's plan."); if (process.env.NODE_ENV !== "production") console.error(e); });
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      try {
+        const data = await api.get("/api/study/mission-control");
+        if (!cancelled) {
+          setMc({ ...EMPTY_MC, ...(data || {}) });
+          setError("");
+        }
+      } catch (e) {
+        if (process.env.NODE_ENV !== "production") console.warn("mission-control failed, falling back", e);
+        try {
+          const legacy = await api.get("/api/study/plan");
+          if (!cancelled) {
+            setFallbackPlan({
+              date: legacy?.date || "",
+              plan: legacy?.plan || null,
+              tasks: Array.isArray(legacy?.tasks) ? legacy.tasks : [],
+            });
+            setError("Showing a simplified plan view — mission control is unavailable right now.");
+          }
+        } catch (e2) {
+          if (!cancelled) setError("Could not load today's plan.");
+          if (process.env.NODE_ENV !== "production") console.error(e2);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  async function toggle(t) {
-    const next = !t.done;
-    setPlan((p) => ({ ...p, tasks: p.tasks.map((x) => (x.id === t.id ? { ...x, done: next } : x)) }));
+  async function toggleTask(t) {
+    if (!t || !t.id) return;
+    // Optimistic flip + reuse existing PUT /api/study/tasks/:id contract.
+    const nextDone = !t.done;
+    const nextStatus = nextDone ? "completed" : "planned";
+    setMc((prev) =>
+      prev
+        ? {
+            ...prev,
+            today_tasks: prev.today_tasks.map((x) =>
+              x.id === t.id ? { ...x, done: nextDone, status: nextStatus } : x,
+            ),
+          }
+        : prev,
+    );
+    setFallbackPlan((prev) =>
+      prev
+        ? {
+            ...prev,
+            tasks: prev.tasks.map((x) =>
+              x.id === t.id ? { ...x, done: nextDone } : x,
+            ),
+          }
+        : prev,
+    );
     try {
-      await api.post("/api/study/plan/toggle", { task_id: t.id, done: next });
+      await api.post("/api/study/plan/toggle", { task_id: t.id });
     } catch (e) {
       if (process.env.NODE_ENV !== "production") console.error(e);
     }
   }
 
-  const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
-  const done = tasks.filter((t) => t.done).length;
+  if (loading) {
+    return <MissionControlSkeleton />;
+  }
+
+  // ── Fallback path (mission-control unavailable) ────────────────────────
+  if (!mc && fallbackPlan) {
+    const tasks = fallbackPlan.tasks || [];
+    const done = tasks.filter((t) => t.done).length;
+    return (
+      <div className="space-y-6" data-testid="today-page">
+        {error ? (
+          <div className="rounded-xl bg-clay-50 text-clay-800 text-xs px-3 py-2">
+            {error}
+          </div>
+        ) : null}
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
+            Today · {fallbackPlan.date}
+          </div>
+          <h1 className="font-heading text-4xl font-semibold tracking-tight mt-1">
+            Today's plan
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            {done} of {tasks.length} tasks complete
+          </p>
+        </div>
+        <div className="soft-card rounded-2xl p-6">
+          <div className="flex items-center gap-3 text-sm">
+            <Target className="h-4 w-4 text-clay-600" />
+            <span className="font-semibold">{fallbackPlan.plan?.theme}</span>
+            <span className="text-muted-foreground">·</span>
+            <span className="text-muted-foreground">
+              {fallbackPlan.plan?.target}
+            </span>
+          </div>
+          <ul className="mt-5 space-y-2">
+            {tasks.map((t) => (
+              <StudyTaskCard key={t.id} task={t} onToggle={toggleTask} />
+            ))}
+          </ul>
+        </div>
+        <PersonaQuestionCard />
+      </div>
+    );
+  }
+
+  // ── Mission Control path ───────────────────────────────────────────────
+  if (!mc) {
+    return (
+      <div className="space-y-6" data-testid="today-page">
+        <div className="rounded-xl bg-clay-50 text-clay-800 text-xs px-3 py-2">
+          {error || "Could not load today's plan."}
+        </div>
+      </div>
+    );
+  }
+
+  const tasks = mc.today_tasks || [];
+  const metrics = mc.metrics || {};
+  const policy = mc.study_policy || {};
+  const plan = mc.plan;
+  const truth = mc.truth_panel;
+  const engine = mc.engine_trace || [];
+  const nextBest = mc.next_best_action;
+  // Render the question card unless it would duplicate the existing
+  // PersonaQuestionCard. We always use PersonaQuestionCard so the skip
+  // and save behaviour stays single-sourced in PR2.
 
   return (
     <div className="space-y-6" data-testid="today-page">
-      {err && <div className="text-xs text-clay-700">{err}</div>}
-      <div>
-        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Today · {plan.date}</div>
-        <h1 className="font-heading text-4xl font-semibold tracking-tight mt-1">Today's plan</h1>
-        <p className="text-muted-foreground mt-1">{done} of {tasks.length} tasks complete</p>
-      </div>
-
-      <div className="soft-card rounded-2xl p-6">
-        <div className="flex items-center gap-3 text-sm">
-          <Target className="h-4 w-4 text-clay-600" />
-          <span className="font-semibold">{plan.plan?.theme}</span>
-          <span className="text-muted-foreground">·</span>
-          <span className="text-muted-foreground">{plan.plan?.target}</span>
+      {error ? (
+        <div className="rounded-xl bg-clay-50 text-clay-800 text-xs px-3 py-2">
+          {error}
         </div>
-        <ul className="mt-5 space-y-2">
-          {tasks.map((t) => (
-            <li key={t.id} className="flex items-start gap-3 rounded-xl p-3 hover:bg-clay-50 transition">
-              <button onClick={() => toggle(t)} data-testid={`toggle-${t.id}`} className="mt-0.5">
-                {t.done ? <CheckCircle2 className="h-5 w-5 text-sage-500" /> : <Circle className="h-5 w-5 text-muted-foreground" />}
-              </button>
-              <div className="flex-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">{t.time}</div>
-                <div className={`text-[15px] ${t.done ? "line-through text-muted-foreground" : "font-medium"}`}>{t.title}</div>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </div>
+      ) : null}
 
-      <div className="soft-card rounded-2xl p-5 flex items-start gap-4">
-        <Zap className="h-5 w-5 text-clay-500 mt-0.5" />
-        <div>
-          <div className="font-heading font-semibold">One thing today</div>
-          <p className="text-sm text-muted-foreground mt-1">Close Polity Ch. 4 revision before 9pm. It's been carried forward twice.</p>
+      <header>
+        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
+          Today · Study OS Mission Control
         </div>
-      </div>
+        <h1 className="font-heading text-4xl font-semibold tracking-tight mt-1">
+          Your plan, adapted
+        </h1>
+        <p className="text-muted-foreground mt-1">
+          Your plan adapts from your study signals and recent progress.
+        </p>
+      </header>
+
+      {plan ? (
+        <section className="soft-card rounded-2xl p-6" data-testid="active-plan">
+          <div className="flex items-center gap-3 text-sm">
+            <Target className="h-4 w-4 text-clay-600" />
+            <span className="font-semibold">{plan.theme}</span>
+            <span className="text-muted-foreground">·</span>
+            <span className="text-muted-foreground">{plan.target}</span>
+          </div>
+        </section>
+      ) : (
+        <section className="soft-card rounded-2xl p-6" data-testid="active-plan-empty">
+          <div className="text-sm text-muted-foreground">
+            No active study plan yet. You can still set one up from{" "}
+            <a className="text-clay-700 underline" href="/app/study-plan">
+              Study Plan
+            </a>
+            .
+          </div>
+        </section>
+      )}
+
+      <section
+        className="grid grid-cols-2 md:grid-cols-4 gap-3"
+        data-testid="metrics-row"
+      >
+        <StudyMetricCard
+          label="Today"
+          value={`${metrics.tasks_completed || 0}/${metrics.tasks_total || 0}`}
+          hint={`${formatPercent(metrics.task_completion_rate)} complete`}
+        />
+        <StudyMetricCard
+          label="Adherence"
+          value={
+            metrics.adherence === null || metrics.adherence === undefined
+              ? "—"
+              : formatPercent(metrics.adherence)
+          }
+          hint={`${metrics.hours_studied_7d || 0}h studied this week`}
+          accent="sage"
+        />
+        <StudyMetricCard
+          label="Backlog"
+          value={metrics.backlog_count ?? 0}
+          hint="Tasks to catch up"
+          accent={metrics.backlog_count && metrics.backlog_count >= 5 ? "dusk" : "clay"}
+        />
+        <StudyMetricCard
+          label="Mocks · week"
+          value={metrics.mocks_taken ?? 0}
+          hint="Logged this week"
+        />
+      </section>
+
+      {nextBest ? <NextBestActionCard action={nextBest} /> : null}
+
+      <section className="soft-card rounded-2xl p-6" data-testid="today-tasks">
+        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
+          Today's tasks
+        </div>
+        {tasks.length ? (
+          <ul className="mt-3 space-y-2">
+            {tasks.map((t) => (
+              <StudyTaskCard key={t.id} task={t} onToggle={toggleTask} />
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-sm text-muted-foreground">
+            No tasks scheduled for today. The next-best action above will get
+            you moving.
+          </p>
+        )}
+      </section>
+
+      <StudyPolicyPreview policy={policy} />
+
+      <TruthPanelCard panel={truth} />
+
+      <EngineTrace steps={engine} />
 
       <PersonaQuestionCard />
     </div>

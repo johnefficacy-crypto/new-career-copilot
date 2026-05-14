@@ -36,6 +36,7 @@ from app.api.payments import router as payments_router
 from app.api.persona import router as persona_router
 from app.api.persona_questions import router as persona_questions_router
 from app.api.placeholders import router as placeholders_router
+from app.api.study_os import router as study_os_router
 from app.notifications.scheduler import start_scheduler, stop_scheduler
 from app.core.config import get_settings
 from app.db.postgres import close_pool, get_pool
@@ -160,6 +161,7 @@ api.include_router(admin_trust_router)
 api.include_router(payments_router)  # razorpay + plans
 api.include_router(persona_router)  # internal aspirant persona v1
 api.include_router(persona_questions_router)  # PR2 progressive tiny questions
+api.include_router(study_os_router)  # PR3 Study OS Mission Control — before canonical so /study/mission-control wins
 api.include_router(canonical_router)  # canonical Supabase routes — must precede placeholders
 api.include_router(placeholders_router)
 app.include_router(api)

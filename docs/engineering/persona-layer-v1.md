@@ -258,11 +258,25 @@ Safety constraints reinforced in PR2:
 See `docs/engineering/progressive-persona-questions.md` for the full
 PR2 design.
 
+## Consumed by Study OS Mission Control (PR3)
+
+`GET /api/study/mission-control` reads the latest persona snapshot via
+`app.persona.snapshots.get_latest_persona_snapshot` (auto-computing one
+via `compute_persona_snapshot` if absent), and forwards
+`dimensions`, `scores`, and `study_policy` into the response. The
+frontend `/app/today` page renders them through `EngineTrace`,
+`StudyPolicyPreview`, `StudyTaskCard` (with per-task `reasoning`), and
+`NextBestActionCard`. The internal `primary_persona` label is **never**
+shown as user-facing identity copy.
+
+See `docs/engineering/study-os-mission-control-v1.md` for the full
+contract.
+
 ## Future PR path
 
-- **PR2 — shipped here.** Progressive tiny-question card + classifier
+- **PR2 — shipped.** Progressive tiny-question card + classifier
   integration.
-- **PR3** — Study OS mission-control endpoint that reads the latest
-  persona snapshot and returns a today-view shaped by `study_policy`.
+- **PR3 — shipped.** Study OS Mission Control endpoint + `/app/today`
+  page upgrade.
 - **PR4** — admin persona rules viewer (read-only): expose the rule
   catalog + a single user's evidence trail to operators for debugging.
