@@ -1,21 +1,30 @@
 import React from "react";
+import { Eyebrow, StatusDot } from "../../../shared/ui/studyos";
 
-function Card({ label, value, hint, accent = "clay" }) {
-  const accentClass =
-    accent === "sage"
-      ? "text-sage-600"
-      : accent === "dusk"
-        ? "text-dusk-600"
-        : "text-clay-600";
+const TONE_TEXT = {
+  sage: "text-sage-700",
+  clay: "text-clay-700",
+  dusk: "text-dusk-700",
+  ink: "text-clay-900",
+};
+
+function KpiCard({ label, value, hint, tone = "ink", state, testId }) {
+  const display = value === null || value === undefined ? "—" : value;
   return (
-    <div className="soft-card rounded-2xl p-4" data-testid={`admin-persona-card-${label}`}>
-      <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
-        {label}
+    <div
+      className="soft-card grain relative overflow-hidden rounded-[14px] px-4 py-3.5"
+      data-testid={testId || `admin-persona-card-${label}`}
+    >
+      <Eyebrow>{label}</Eyebrow>
+      <div className={`font-heading text-[22px] mt-1.5 leading-none ${TONE_TEXT[tone] || TONE_TEXT.ink}`}>
+        {display}
       </div>
-      <div className={`mt-1 font-heading text-2xl font-semibold ${accentClass}`}>
-        {value === null || value === undefined ? "—" : value}
-      </div>
-      {hint ? <div className="mt-1 text-xs text-muted-foreground">{hint}</div> : null}
+      {hint ? <div className="text-[11px] text-clay-700 mt-2">{hint}</div> : null}
+      {state ? (
+        <div className="absolute top-3 right-3">
+          <StatusDot state={state} label="" />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -31,27 +40,28 @@ function DimensionDistribution({ distribution }) {
   const entries = Object.entries(distribution || {});
   if (!entries.length) {
     return (
-      <div className="soft-card rounded-2xl p-4 text-xs text-muted-foreground">
+      <div className="soft-card grain relative overflow-hidden rounded-[18px] p-4 text-[12px] text-clay-700">
         No persona dimensions computed yet.
       </div>
     );
   }
   return (
-    <div className="soft-card rounded-2xl p-4" data-testid="admin-persona-dimension-distribution">
-      <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
-        Top persona dimensions
-      </div>
+    <div
+      className="soft-card grain relative overflow-hidden rounded-[18px] p-5"
+      data-testid="admin-persona-dimension-distribution"
+    >
+      <Eyebrow>Top persona dimensions</Eyebrow>
       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {entries.map(([dimension, values]) => (
-          <div key={dimension}>
-            <div className="text-xs font-medium text-clay-800">
+          <div key={dimension} className="rounded-xl border border-[#E7DECB] bg-[#FBF8F2] p-3">
+            <div className="text-[12px] font-medium text-clay-900 capitalize">
               {dimension.replaceAll("_", " ")}
             </div>
-            <div className="mt-1 flex flex-wrap gap-1">
+            <div className="mt-2 flex flex-wrap gap-1">
               {Object.entries(values).map(([value, count]) => (
                 <span
                   key={value}
-                  className="pill text-[10px] uppercase tracking-wider bg-clay-50 text-clay-700 px-2 py-0.5 rounded-full"
+                  className="pill pill-clay text-[10px]"
                 >
                   {value.replaceAll("_", " ")} · {count}
                 </span>
@@ -76,42 +86,81 @@ export default function PersonaOverviewCards({ overview }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <Card label="Active Qs" value={questions.active ?? 0} hint={`${questions.inactive ?? 0} inactive`} />
-        <Card label="Answers · 24h" value={questions.answers_24h ?? 0} hint="Saved by users" />
-        <Card label="Snapshots · 24h" value={snapshots.computed_24h ?? 0} hint={`${snapshots.total ?? 0} total`} accent="sage" />
-        <Card label="Pending recompute" value={queue.pending ?? 0} hint={`${queue.completed_24h ?? 0} completed 24h`} />
-        <Card label="Failed recompute" value={queue.failed ?? 0} accent={queue.failed ? "dusk" : "clay"} />
-        <Card label="Signals · 24h" value={signals.events_24h ?? 0} hint={`${signals.unprocessed ?? 0} unprocessed`} />
+        <KpiCard
+          label="Active Qs"
+          value={questions.active ?? 0}
+          hint={`${questions.inactive ?? 0} inactive`}
+          tone="sage"
+        />
+        <KpiCard
+          label="Answers · 24h"
+          value={questions.answers_24h ?? 0}
+          hint="Saved by users"
+          tone="ink"
+        />
+        <KpiCard
+          label="Snapshots · 24h"
+          value={snapshots.computed_24h ?? 0}
+          hint={`${snapshots.total ?? 0} total`}
+          tone="sage"
+          state="live"
+        />
+        <KpiCard
+          label="Pending recompute"
+          value={queue.pending ?? 0}
+          hint={`${queue.completed_24h ?? 0} done 24h`}
+          tone={queue.pending ? "clay" : "ink"}
+          state={queue.pending ? "partial" : "live"}
+        />
+        <KpiCard
+          label="Failed recompute"
+          value={queue.failed ?? 0}
+          tone={queue.failed ? "dusk" : "clay"}
+          state={queue.failed ? "partial" : "live"}
+        />
+        <KpiCard
+          label="Signals · 24h"
+          value={signals.events_24h ?? 0}
+          hint={`${signals.unprocessed ?? 0} unprocessed`}
+          tone="ink"
+        />
       </div>
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-        <Card
+        <KpiCard
           label="High study-risk"
           value={risk.high_study_risk ?? 0}
           hint={`Score ≥ ${risk.threshold ?? 0.6}`}
-          accent={risk.high_study_risk ? "dusk" : "clay"}
+          tone={risk.high_study_risk ? "dusk" : "clay"}
         />
-        <Card
+        <KpiCard
           label="High dropoff-risk"
           value={risk.high_dropoff_risk ?? 0}
           hint={`Score ≥ ${risk.threshold ?? 0.6}`}
-          accent={risk.high_dropoff_risk ? "dusk" : "clay"}
+          tone={risk.high_dropoff_risk ? "dusk" : "clay"}
         />
-        <Card
+        <KpiCard
           label="Stale snapshots"
           value={snapshots.stale ?? 0}
           hint="Older than 14 days"
-          accent={snapshots.stale ? "dusk" : "clay"}
+          tone={snapshots.stale ? "dusk" : "clay"}
         />
-        <Card
+        <KpiCard
           label="Policy generation"
           value={policy.generation_status ? policy.generation_status.replaceAll("_", " ") : "—"}
           hint={POLICY_HINT[policy.generation_status] || "Derived from snapshots"}
-          accent={
+          tone={
             policy.generation_status === "ok"
               ? "sage"
               : policy.generation_status === "partial"
                 ? "clay"
                 : "dusk"
+          }
+          state={
+            policy.generation_status === "ok"
+              ? "live"
+              : policy.generation_status === "partial"
+                ? "partial"
+                : "preview"
           }
         />
       </div>

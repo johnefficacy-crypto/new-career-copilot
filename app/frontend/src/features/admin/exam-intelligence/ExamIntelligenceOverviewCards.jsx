@@ -1,21 +1,32 @@
 import React from "react";
+import { Eyebrow, StatusDot } from "../../../shared/ui/studyos";
 
-function Card({ label, value, hint, accent = "clay" }) {
-  const accentClass =
-    accent === "sage"
-      ? "text-sage-600"
-      : accent === "dusk"
-        ? "text-dusk-600"
-        : "text-clay-600";
+// Prototype-style KPI card — grained 14-px soft-card, eyebrow label,
+// serif value, small delta hint, optional status dot top-right.
+const TONE_TEXT = {
+  sage: "text-sage-700",
+  clay: "text-clay-700",
+  dusk: "text-dusk-700",
+  ink: "text-clay-900",
+};
+
+function KpiCard({ label, value, hint, tone = "ink", state, testId }) {
+  const display = value === null || value === undefined ? "—" : value;
   return (
-    <div className="soft-card rounded-2xl p-4" data-testid={`exam-intel-card-${label}`}>
-      <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
-        {label}
+    <div
+      className="soft-card grain relative overflow-hidden rounded-[14px] px-4 py-3.5"
+      data-testid={testId || `exam-intel-card-${label}`}
+    >
+      <Eyebrow>{label}</Eyebrow>
+      <div className={`font-heading text-[22px] mt-1.5 leading-none ${TONE_TEXT[tone] || TONE_TEXT.ink}`}>
+        {display}
       </div>
-      <div className={`mt-1 font-heading text-2xl font-semibold ${accentClass}`}>
-        {value === null || value === undefined ? "—" : value}
-      </div>
-      {hint ? <div className="mt-1 text-xs text-muted-foreground">{hint}</div> : null}
+      {hint ? <div className="text-[11px] text-clay-700 mt-2">{hint}</div> : null}
+      {state ? (
+        <div className="absolute top-3 right-3">
+          <StatusDot state={state} label="" />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -24,6 +35,12 @@ const READINESS_HINT = {
   ready: "Locked intelligence is reaching aspirants",
   partial: "Verified data exists, review work outstanding",
   not_ready: "No verified intelligence yet",
+};
+
+const READINESS_STATE = {
+  ready: "live",
+  partial: "partial",
+  not_ready: "not-connected",
 };
 
 export default function ExamIntelligenceOverviewCards({ overview }) {
@@ -37,43 +54,81 @@ export default function ExamIntelligenceOverviewCards({ overview }) {
   const readiness = o.user_facing_readiness || {};
   const lowConfidence = o.low_confidence_mappings;
   const staleItems = o.stale_review_items;
+
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <Card label="Active exams" value={exams.active ?? 0} hint={`${exams.total ?? 0} total`} accent="sage" />
-        <Card label="Syllabus · verified" value={syl.verified ?? 0} hint={`${syl.pending ?? 0} pending`} accent="sage" />
-        <Card label="Syllabus · pending" value={syl.pending ?? 0} accent={syl.pending ? "dusk" : "clay"} />
-        <Card label="PYQ tags · verified" value={pyqTags.verified ?? 0} hint={`${pyqTags.pending ?? 0} pending`} accent="sage" />
-        <Card label="PYQ tags · pending" value={pyqTags.pending ?? 0} accent={pyqTags.pending ? "dusk" : "clay"} />
-        <Card label="PYQ Qs · verified" value={pyqQ.verified ?? 0} hint={`${pyqQ.pending ?? 0} pending`} accent="sage" />
+        <KpiCard
+          label="Active exams"
+          value={exams.active ?? 0}
+          hint={`${exams.total ?? 0} total`}
+          tone="sage"
+          state="live"
+        />
+        <KpiCard
+          label="Syllabus · verified"
+          value={syl.verified ?? 0}
+          hint={`${syl.pending ?? 0} pending`}
+          tone="sage"
+        />
+        <KpiCard
+          label="Syllabus · pending"
+          value={syl.pending ?? 0}
+          tone={syl.pending ? "dusk" : "clay"}
+          state={syl.pending ? "partial" : "live"}
+        />
+        <KpiCard
+          label="PYQ tags · verified"
+          value={pyqTags.verified ?? 0}
+          hint={`${pyqTags.pending ?? 0} pending`}
+          tone="sage"
+        />
+        <KpiCard
+          label="PYQ tags · pending"
+          value={pyqTags.pending ?? 0}
+          tone={pyqTags.pending ? "dusk" : "clay"}
+          state={pyqTags.pending ? "partial" : "live"}
+        />
+        <KpiCard
+          label="PYQ Qs · verified"
+          value={pyqQ.verified ?? 0}
+          hint={`${pyqQ.pending ?? 0} pending`}
+          tone="sage"
+        />
       </div>
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-        <Card
+        <KpiCard
           label="Topic coverage · locked"
           value={coverage.locked ?? 0}
           hint={`${coverage.total ?? 0} total`}
-          accent={coverage.locked ? "sage" : "clay"}
+          tone={coverage.locked ? "sage" : "clay"}
         />
-        <Card label="Coverage · high-yield" value={coverage.high_yield ?? 0} hint="Flagged high-yield" />
-        <Card
-          label="Low-confidence mappings"
+        <KpiCard
+          label="Coverage · high-yield"
+          value={coverage.high_yield ?? 0}
+          hint="Flagged high-yield"
+          tone="ink"
+        />
+        <KpiCard
+          label="Low-confidence"
           value={lowConfidence ?? 0}
           hint="Confidence below 0.5"
-          accent={lowConfidence ? "dusk" : "clay"}
+          tone={lowConfidence ? "dusk" : "clay"}
+          state={lowConfidence ? "partial" : "live"}
         />
-        <Card
+        <KpiCard
           label="Stale review items"
           value={staleItems ?? 0}
           hint="Pending 14+ days"
-          accent={staleItems ? "dusk" : "clay"}
+          tone={staleItems ? "dusk" : "clay"}
+          state={staleItems ? "partial" : "live"}
         />
-        <Card
+        <KpiCard
           label="User-facing readiness"
           value={readiness.level ? readiness.level.replaceAll("_", " ") : "—"}
           hint={READINESS_HINT[readiness.level] || "Verified-only contract"}
-          accent={
-            readiness.level === "ready" ? "sage" : readiness.level === "partial" ? "clay" : "dusk"
-          }
+          tone={readiness.level === "ready" ? "sage" : readiness.level === "partial" ? "clay" : "dusk"}
+          state={READINESS_STATE[readiness.level] || "preview"}
         />
       </div>
     </div>
