@@ -64,9 +64,10 @@ export default function EligibilityReviewDrawer({ item, open, onClose, busy, onP
               <FieldReviewGroup
                 extracted={item.raw_extracted_item}
                 evidence={item.field_evidence_status || {}}
+                evidenceDetails={item.field_evidence_details || []}
                 requiredFields={HIGH_RISK_QUEUE_FIELDS}
                 recommendedFields={RECOMMENDED_REVIEW_FIELDS}
-                onFieldAction={(field, action, correctedValue) => onFieldAction?.(item.id, field, action, correctedValue)}
+                onFieldAction={(field, action, correctedValue, scope) => onFieldAction?.(item.id, field, action, correctedValue, scope)}
               />
             </div>
           </section>

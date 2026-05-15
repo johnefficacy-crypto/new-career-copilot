@@ -55,12 +55,17 @@ export default function AdminEligibilityQueue() {
     });
   }
 
-  async function fieldAct(id, field, action, correctedValue) {
+  async function fieldAct(id, field, action, correctedValue, scope) {
     await runAction({
-      key: `field-${id}-${field}-${action}`,
+      key: `field-${id}-${field}-${action}-${scope?.entity_key || ""}`,
       successMessage: `${field} ${action} saved.`,
       action: async () => {
-        await api.post(`/api/admin/scrape/items/${id}/fields/${field}/${action}`, { notes: "field review", corrected_value: correctedValue });
+        await api.post(`/api/admin/scrape/items/${id}/fields/${field}/${action}`, {
+          notes: scope?.notes || "field review",
+          corrected_value: correctedValue,
+          entity_type: scope?.entity_type || null,
+          entity_key: scope?.entity_key || null,
+        });
         await load();
         const status = action === "correct" ? "corrected" : action === "verify" ? "verified" : "rejected";
         setSelected((current) => current && current.id === id ? {

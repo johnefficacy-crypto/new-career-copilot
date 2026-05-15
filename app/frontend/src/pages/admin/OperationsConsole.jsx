@@ -153,12 +153,17 @@ export default function OperationsConsole() {
   }, [updateParams]);
 
   // ── Actions ─────────────────────────────────────────────────────────
-  const queueFieldAction = useCallback(async (id, field, action, correctedValue) => {
+  const queueFieldAction = useCallback(async (id, field, action, correctedValue, scope) => {
     await runAction({
-      key: `field-${id}-${field}-${action}`,
+      key: `field-${id}-${field}-${action}-${scope?.entity_key || ""}`,
       successMessage: `${field} ${action} saved.`,
       action: async () => {
-        await api.post(`/api/admin/scrape/items/${id}/fields/${field}/${action}`, { notes: "operations console", corrected_value: correctedValue });
+        await api.post(`/api/admin/scrape/items/${id}/fields/${field}/${action}`, {
+          notes: scope?.notes || "operations console",
+          corrected_value: correctedValue,
+          entity_type: scope?.entity_type || null,
+          entity_key: scope?.entity_key || null,
+        });
         await loadAll();
       },
     });
