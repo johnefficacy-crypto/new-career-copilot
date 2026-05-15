@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { Bell, Bookmark, Bot, CalendarRange, Compass, GraduationCap, HandHeart, LayoutDashboard, LineChart, ListChecks, Menu, MessagesSquare, Search, Settings, Shield, ShoppingBag, Timer, Trophy, BookOpenCheck } from "lucide-react";
+import { Activity, Bell, Bookmark, Bot, CalendarRange, Compass, GraduationCap, HandHeart, LayoutDashboard, LineChart, ListChecks, Menu, MessagesSquare, Search, Settings, Shield, ShoppingBag, Timer, Trophy, BookOpenCheck } from "lucide-react";
 import { useAuth } from "../lib/authContext";
 import { api } from "../lib/api";
 import AppSidebar from "../shared/layouts/AppSidebar";
@@ -10,7 +10,7 @@ import UserMenu from "../shared/layouts/UserMenu";
 const SECTIONS = [
   { label: "Today", items: [{ to: "/app", label: "Mission control", icon: LayoutDashboard, end: true, testId: "sidebar-mission-control" }, { to: "/app/today", label: "Today", icon: CalendarRange, testId: "sidebar-today" }] },
   { label: "Recruitments", items: [{ to: "/app/exams", label: "Exams", icon: BookOpenCheck, testId: "sidebar-exams" }, { to: "/app/saved", label: "Saved", icon: Bookmark, testId: "sidebar-saved" }, { to: "/app/tracker", label: "Application tracker", icon: ListChecks, testId: "sidebar-application-tracker" }, { to: "/app/notifications", label: "Notifications", icon: Bell, testId: "sidebar-notifications" }] },
-  { label: "Study OS", items: [{ to: "/app/study-plan", label: "Plan", icon: BookOpenCheck, testId: "sidebar-plan" }, { to: "/app/study/focus", label: "Focus timer", icon: Timer, testId: "sidebar-focus-timer" }, { to: "/app/study/mocks", label: "Mock tests", icon: Trophy, testId: "sidebar-mock-tests" }, { to: "/app/study/subjects", label: "Subjects", icon: LineChart, testId: "sidebar-subjects" }, { to: "/app/study/review", label: "Weekly review", icon: LineChart, testId: "sidebar-weekly-review" }] },
+  { label: "Study OS", items: [{ to: "/app/study-plan", label: "Plan", icon: BookOpenCheck, testId: "sidebar-plan" }, { to: "/app/study/focus", label: "Focus timer", icon: Timer, testId: "sidebar-focus-timer" }, { to: "/app/study/mocks", label: "Mock tests", icon: Trophy, testId: "sidebar-mock-tests" }, { to: "/app/study/subjects", label: "Subjects", icon: LineChart, testId: "sidebar-subjects" }, { to: "/app/study/review", label: "Weekly review", icon: LineChart, testId: "sidebar-weekly-review" }, { to: "/app/study/compare", label: "Compare", icon: Activity, testId: "sidebar-compare" }] },
   { label: "People", items: [{ to: "/app/community", label: "Community", icon: MessagesSquare, testId: "sidebar-community" }, { to: "/app/marketplace", label: "Marketplace", icon: ShoppingBag, testId: "sidebar-marketplace" }, { to: "/app/mentors", label: "Mentors", icon: GraduationCap, testId: "sidebar-mentors" }, { to: "/app/accountability", label: "Accountability", icon: HandHeart, testId: "sidebar-accountability" }] },
   { label: "AI", items: [{ to: "/app/ai", label: "Copilot AI", icon: Bot, testId: "sidebar-copilot-ai" }] },
 ];
@@ -25,7 +25,7 @@ export default function DashShell() {
   useEffect(() => { api.get("/api/notifications/me/unread-count").then((d) => setUnreadCount(Number(d?.count || 0))).catch(() => setUnreadCount(0)); }, [pathname]);
 
   return (
-    <div className="min-h-screen flex paper-bg">
+    <div className="min-h-screen flex linen-bg">
       <div className="hidden lg:block"><AppSidebar brandIcon={Compass} brandTitle="Career Copilot" brandSubtitle="Aspirant OS" sections={SECTIONS} user={auth.user} footer={{ adminLink: <Link to="/admin" data-testid="sidebar-admin" className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm bg-dusk-100 text-dusk-700 hover:bg-dusk-200"><Shield className="h-4 w-4" strokeWidth={1.8} /> Admin console</Link>, bottom: <div className="rounded-xl bg-clay-100/70 border border-clay-200 p-4"><div className="text-[10px] uppercase tracking-[0.22em] text-clay-700">Upgrade</div><div className="font-heading font-semibold mt-1 text-clay-800">Unlock the full study OS</div><Link to="/app/pricing" data-testid="sidebar-upgrade" className="mt-3 w-full bg-clay-500 text-white rounded-lg py-2 text-xs font-semibold inline-block text-center">See plans</Link></div> }} /></div>
       {sidebarOpen && <div className="lg:hidden fixed inset-0 z-40 flex"><div className="absolute inset-0 bg-black/30" onClick={() => setSidebarOpen(false)} /><div className="relative z-10"><AppSidebar brandIcon={Compass} brandTitle="Career Copilot" brandSubtitle="Aspirant OS" sections={SECTIONS} user={auth.user} onClose={() => setSidebarOpen(false)} footer={{ adminLink: <Link to="/admin" onClick={() => setSidebarOpen(false)} data-testid="sidebar-admin" className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm bg-dusk-100 text-dusk-700 hover:bg-dusk-200"><Shield className="h-4 w-4" strokeWidth={1.8} /> Admin console</Link> }} /></div></div>}
 

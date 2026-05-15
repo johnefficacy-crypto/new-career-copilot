@@ -9,6 +9,7 @@ class Q:
     def eq(self,k,v):
         if k=='id': self.id=v
         return self
+    def is_(self,k,v): return self
     def limit(self,*a,**k): return self
     def update(self,p): self.payload=p; return self
     def insert(self,p): self.payload=p; return self
@@ -23,8 +24,16 @@ class Q:
             return R([row])
         return R([])
 class SB:
-    def __init__(self): self.state={'queue':[{'id':'q1','status':'approved','source_id':'src-1','notification_document_id':'doc-1','extracted_data':{'title':'t','organization_name':'Org','org_type':'central','year':2026,'official_notification_url':'https://x.gov/n'}}],'audits':[]}
+    def __init__(self): self.state={'queue':[{'id':'q1','status':'approved','source_id':'src-1','notification_document_id':'doc-1','extracted_data':{'title':'t','organization_name':'Org','org_type':'central','year':2026,'official_notification_url':'https://x.gov/n','apply_end_date':'2026-06-30','posts':[{'post_name':'Clerk'}]}}],'audits':[]}
     def table(self,t): return Q(t,self.state)
+    def rpc(self, fn, params):
+        # `enqueue_eligibility_recompute` (PR #132) calls supabase.rpc first.
+        # Raise PGRST202 so the helper falls back to the legacy Python path
+        # (table/select/eq/is_/limit/insert), which this mock supports.
+        raise RuntimeError(
+            "PGRST202 Could not find the function "
+            "public.enqueue_eligibility_recompute in the schema cache"
+        )
 
 def test_list_sources_uses_source_registry_only(monkeypatch):
     class SourceQ:
@@ -112,7 +121,8 @@ def test_promote_never_publishes(monkeypatch):
     import app.scraping.runner as runner
     import app.scraping.schemas as schemas
     monkeypatch.setattr(runner, 'promote_to_recruitments', lambda extracted, supabase, **kwargs: 'r1')
-    monkeypatch.setattr(admin_scrape, 'alert_users_for_new_recruitment', lambda *a, **k: 0)
+    # admin_scrape no longer imports alert_users_for_new_recruitment — the
+    # promote endpoint never fans out alerts, so there is nothing to patch.
     # ensure pending accepted
     sb.state['queue'][0]['status']='pending'
     import pytest
@@ -244,8 +254,11 @@ def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
         def table(self,t):
             if t=='extracted_field_evidence':
                 class FQ:
+                    def __init__(self, *a, **k): pass
                     def select(self,*a,**k): return self
                     def eq(self,*a,**k): return self
+                    def order(self,*a,**k): return self
+                    def limit(self,*a,**k): return self
                     def execute(self):
                         return R([
                             {'field_name':'apply_end_date','reviewer_status':'verified'},
@@ -253,6 +266,13 @@ def test_promote_sets_status_promoted_when_high_risk_verified(monkeypatch):
                             {'field_name':'official_apply_url','reviewer_status':'verified'},
                             {'field_name':'organization_name','reviewer_status':'verified'},
                             {'field_name':'total_vacancies','reviewer_status':'verified'},
+                            # requires_domicile is a post-scoped HIGH_RISK
+                            # field (PR #135). The shared SB queue item now
+                            # carries one post ("Clerk"), so the gate's
+                            # post-scoped check needs a verified row scoped
+                            # to that post.
+                            {'field_name':'requires_domicile','reviewer_status':'verified',
+                             'entity_type':'post','entity_key':'clerk'},
                         ])
                 return FQ(self)
             return super().table(t)
@@ -276,8 +296,11 @@ def test_promote_failure_keeps_queue_item_pending(monkeypatch):
         def table(self,t):
             if t=='extracted_field_evidence':
                 class FQ:
+                    def __init__(self, *a, **k): pass
                     def select(self,*a,**k): return self
                     def eq(self,*a,**k): return self
+                    def order(self,*a,**k): return self
+                    def limit(self,*a,**k): return self
                     def execute(self):
                         return R([
                             {'field_name':'apply_end_date','reviewer_status':'verified'},

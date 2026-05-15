@@ -1,0 +1,209 @@
+import React, { useState } from "react";
+import { Check } from "lucide-react";
+
+// Post-session reflection. The current /api/study/focus/stop contract does
+// not accept these fields, so values stay local and the panel is clearly
+// labelled "reflection preview". When the planner endpoint gains support,
+// the collected `reflection` object can be passed through `onSave`.
+const COMPLETION = [
+  { value: "completed", label: "Completed" },
+  { value: "partial", label: "Partial" },
+  { value: "not_done", label: "Not done" },
+];
+const DIFFICULTY = [
+  { value: "easy", label: "Easy" },
+  { value: "ok", label: "OK" },
+  { value: "hard", label: "Hard" },
+];
+const REVISE = [
+  { value: "yes", label: "Yes, soon" },
+  { value: "not_yet", label: "Not yet" },
+];
+
+function ToggleGroup({ legend, options, value, onChange, name }) {
+  return (
+    <fieldset>
+      <legend className="text-[11px] uppercase tracking-widest text-muted-foreground mb-1.5">
+        {legend}
+      </legend>
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label={legend}>
+        {options.map((o) => {
+          const active = value === o.value;
+          return (
+            <button
+              key={o.value}
+              type="button"
+              name={name}
+              aria-pressed={active}
+              onClick={() => onChange(active ? null : o.value)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition border ${
+                active
+                  ? "bg-dusk-900 text-white border-dusk-900"
+                  : "bg-white/70 text-foreground/80 border-border hover:bg-clay-50"
+              }`}
+            >
+              {active ? <Check className="h-3 w-3 inline mr-1" aria-hidden="true" /> : null}
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+export default function FocusReflectionPanel({ session, onDismiss, onSave, bare = false }) {
+  const [completion, setCompletion] = useState(null);
+  const [difficulty, setDifficulty] = useState(null);
+  const [distractions, setDistractions] = useState(0);
+  const [confidence, setConfidence] = useState(60);
+  const [revise, setRevise] = useState(null);
+  const [saved, setSaved] = useState(false);
+
+  function handleSave() {
+    const reflection = {
+      subject: session?.subject || "",
+      topic: session?.topic || "",
+      completed_min: session?.completedMin ?? null,
+      completion_quality: completion,
+      perceived_difficulty: difficulty,
+      distraction_count: distractions,
+      confidence_after: confidence,
+      should_revise: revise,
+    };
+    if (typeof onSave === "function") onSave(reflection);
+    setSaved(true);
+  }
+
+  return (
+    <section
+      className={
+        bare
+          ? "space-y-4"
+          : "soft-card rounded-2xl p-6 space-y-4"
+      }
+      data-testid="focus-reflection-panel"
+      aria-labelledby="focus-reflection-heading"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
+            Post-session reflection
+          </div>
+          <h2 id="focus-reflection-heading" className="font-heading text-lg font-semibold mt-0.5">
+            How did that block go?
+          </h2>
+          {session?.subject || session?.topic ? (
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {[session?.subject, session?.topic].filter(Boolean).join(" · ")}
+              {session?.completedMin ? ` · ${session.completedMin} min` : ""}
+            </p>
+          ) : null}
+        </div>
+        <span className="pill pill-dusk text-[10px]">Reflection preview</span>
+      </div>
+
+      {saved ? (
+        <div
+          className="rounded-xl bg-sage-50 text-sage-700 text-sm px-4 py-3"
+          role="status"
+        >
+          Reflection noted for this session. It is kept on this device for now — the
+          planner endpoint does not yet store reflection fields.
+        </div>
+      ) : (
+        <>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <ToggleGroup
+              legend="Completion quality"
+              options={COMPLETION}
+              value={completion}
+              onChange={setCompletion}
+              name="completion"
+            />
+            <ToggleGroup
+              legend="Perceived difficulty"
+              options={DIFFICULTY}
+              value={difficulty}
+              onChange={setDifficulty}
+              name="difficulty"
+            />
+          </div>
+
+          <div>
+            <div className="text-[11px] uppercase tracking-widest text-muted-foreground mb-1.5">
+              Distractions
+            </div>
+            <div className="flex gap-1.5" role="group" aria-label="Distraction count">
+              {[0, 1, 2, 3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  aria-pressed={distractions === n}
+                  aria-label={`${n} distraction${n === 1 ? "" : "s"}`}
+                  onClick={() => setDistractions(n)}
+                  className={`h-8 w-8 rounded-full text-xs font-semibold transition border ${
+                    distractions === n
+                      ? "bg-dusk-900 text-white border-dusk-900"
+                      : "bg-white/70 text-foreground/80 border-border hover:bg-clay-50"
+                  }`}
+                >
+                  {n === 5 ? "5+" : n}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label
+              htmlFor="focus-confidence"
+              className="text-[11px] uppercase tracking-widest text-muted-foreground"
+            >
+              Confidence after session
+            </label>
+            <div className="flex items-center gap-3 mt-1.5">
+              <input
+                id="focus-confidence"
+                type="range"
+                min="0"
+                max="100"
+                step="5"
+                value={confidence}
+                onChange={(e) => setConfidence(Number(e.target.value))}
+                className="flex-1 accent-clay-500"
+              />
+              <span className="font-heading text-lg font-semibold w-12 text-right tabular-nums">
+                {confidence}%
+              </span>
+            </div>
+          </div>
+
+          <ToggleGroup
+            legend="Should this topic be revised soon?"
+            options={REVISE}
+            value={revise}
+            onChange={setRevise}
+            name="revise"
+          />
+
+          <div className="flex items-center gap-2 pt-1">
+            <button type="button" className="btn btn-primary" onClick={handleSave}>
+              Save reflection
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={onDismiss}>
+              Skip
+            </button>
+          </div>
+        </>
+      )}
+
+      {saved ? (
+        <div className="flex items-center gap-2">
+          <button type="button" className="btn btn-ghost" onClick={onDismiss}>
+            Done
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}

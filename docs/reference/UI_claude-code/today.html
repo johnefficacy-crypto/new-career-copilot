@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1440" />
+<title>Today · Study OS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['Inter', 'ui-sans-serif', 'system-ui'],
+          serif: ['Fraunces', 'Georgia', 'serif'],
+          mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+        },
+        colors: {
+          clay:  { 50:'#FBF6EF',100:'#F3EADB',200:'#E7D6BA',300:'#D6BC93',400:'#BE9C6B',500:'#A68057',600:'#8A6846',700:'#6C5038',800:'#4E3A29',900:'#2E2218'},
+          sage:  { 50:'#F0F5EF',100:'#DAE7D6',200:'#B9CFAF',300:'#94B28A',400:'#719468',500:'#54794E',600:'#41603D',700:'#33482F',800:'#263623',900:'#172017'},
+          dusk:  { 50:'#F2F1F4',100:'#DDDAE3',200:'#B7B0C4',300:'#8F86A1',400:'#6D637F',500:'#524864',600:'#40384E',700:'#31293B',800:'#221D2A',900:'#141018'},
+          ink:   '#2E2218',
+          paper: '#FBF6EF',
+        }
+      }
+    }
+  }
+</script>
+<style>
+  html, body { background: #FBF6EF; color: #2E2218; }
+  body { font-family: 'Inter', sans-serif; letter-spacing: -0.005em; }
+  h1,h2,h3,h4 { font-family: 'Fraunces', Georgia, serif; letter-spacing: -0.02em; font-weight: 600; }
+
+  .linen-bg {
+    background:
+      radial-gradient(55% 45% at 12% 8%, rgba(214,188,147,0.18), transparent 65%),
+      radial-gradient(45% 45% at 88% 12%, rgba(113,148,104,0.12), transparent 60%),
+      radial-gradient(50% 45% at 90% 88%, rgba(190,156,107,0.08), transparent 65%),
+      linear-gradient(180deg,#FBF6EF 0%,#F8F3EA 60%,#F4EEE1 100%);
+  }
+  .paper-grid {
+    background-color: #FBF6EF;
+    background-image:
+      linear-gradient(rgba(46,34,24,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(46,34,24,0.025) 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+  .soft-card {
+    background: rgba(255, 253, 248, 0.92);
+    border: 1px solid #E7DECB;
+    border-radius: 18px;
+    box-shadow: 0 1px 2px rgba(46,34,24,0.04), 0 10px 28px -20px rgba(46,34,24,0.10);
+  }
+  .grain::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    opacity: 0.05; mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }
+  .eyebrow {
+    font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase;
+    font-weight: 600; color: rgba(46,34,24,0.55);
+  }
+  .pill {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    padding: 3px 9px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .pill-sage { background:#E4EDE0; color:#33482F; }
+  .pill-clay { background:#F1E1CD; color:#6C5038; }
+  .pill-dusk { background:#E3DFEA; color:#40384E; }
+  .pill-amber{ background:#F3E9CF; color:#6F5A22; }
+  .pill-ink  { background:#2E2218; color:#FBF6EF; }
+  .pill-outline { background: transparent; border:1px solid #DCD0B6; color:#4E3A29; }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 7px; border-radius: 6px;
+    font-size: 10.5px; font-weight: 500; letter-spacing: 0.01em;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  .chip-user   { background: #ECE7F2; color:#31293B; }
+  .chip-exam   { background: #E4EDE0; color:#33482F; }
+  .chip-update { background: #F1E1CD; color:#6C5038; }
+  .chip-engine { background: #2E2218; color: #F3EADB; }
+
+  .rule { border-top: 1px solid #E7DECB; }
+  .hairline { height:1px; background: linear-gradient(90deg, transparent, #D6C9AC, transparent); }
+
+  /* Verified seal — sage */
+  .seal-verified {
+    background:
+      radial-gradient(circle at 30% 30%, #B9CFAF 0%, #54794E 70%);
+    box-shadow: inset 0 0 0 2px #F0F5EF, 0 1px 0 rgba(0,0,0,0.05);
+  }
+  /* Needs-verification — dashed dusk */
+  .needs-verify-card {
+    border: 1px dashed #8F86A1;
+    background: repeating-linear-gradient(
+      135deg,
+      rgba(143,134,161,0.045) 0 8px,
+      transparent 8px 16px
+    ), #FBF8F2;
+  }
+  .verified-card {
+    border: 1px solid #94B28A;
+    background:
+      linear-gradient(0deg, rgba(218,231,214,0.35), rgba(218,231,214,0.10)),
+      #F8FAF6;
+    box-shadow: 0 1px 0 rgba(84,121,78,0.08), 0 10px 24px -22px rgba(84,121,78,0.35);
+  }
+
+  .stamp {
+    font-family:'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 2px 6px; border-radius: 4px;
+  }
+  .stamp-official   { background:#33482F; color:#F0F5EF; }
+  .stamp-aggregator { background:#FBF8F2; color:#524864; border:1px dashed #8F86A1; }
+  .stamp-research   { background:#F1E1CD; color:#6C5038; }
+  .stamp-opportunity{ background:#2E2218; color:#F3EADB; }
+
+  .layer-card { border:1px solid #E7DECB; border-radius: 14px; padding: 14px 14px 12px; background: rgba(255,253,248,0.85); }
+  .layer-card.user   { background: linear-gradient(180deg, #F7F5FB 0%, rgba(255,253,248,0.9)); }
+  .layer-card.exam   { background: linear-gradient(180deg, #F1F6EF 0%, rgba(255,253,248,0.9)); }
+  .layer-card.update { background: linear-gradient(180deg, #FBF1E3 0%, rgba(255,253,248,0.9)); }
+  .layer-card.engine { background: linear-gradient(180deg, #2E2218 0%, #4E3A29 100%); color:#F3EADB; border-color:#2E2218; }
+  .layer-card.engine .eyebrow { color: rgba(243,234,219,0.55); }
+
+  .tick { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid #C9B68F; display:inline-block; }
+  .tick.done { background:#54794E; border-color:#54794E; }
+
+  .task-row { display:grid; grid-template-columns: 22px 60px 1fr auto; gap: 14px; padding: 14px 4px; align-items: start; border-top: 1px solid #EFE7D4; }
+  .task-row:first-of-type { border-top: 0; }
+
+  .feeds-into { position: relative; }
+  .feeds-into::before, .feeds-into::after {
+    content:""; position:absolute; background:#D6C9AC;
+  }
+
+  .tabline { position: relative; }
+  .tabline > .active { position: relative; }
+  .tabline > .active::after {
+    content:""; position:absolute; left:0; right:0; bottom:-9px; height:2px; background:#2E2218;
+  }
+
+  /* engine animated trace */
+  @keyframes flow {
+    0% { stroke-dashoffset: 220; }
+    100% { stroke-dashoffset: 0; }
+  }
+  .flow-line {
+    stroke-dasharray: 4 6;
+    animation: flow 6s linear infinite;
+  }
+
+  .key-line { display:flex; align-items:center; gap:8px; font-size:11.5px; }
+  .key-dot { width:8px; height:8px; border-radius:2px; }
+
+  .src-row { display:grid; grid-template-columns: 14px 1fr auto; gap: 10px; align-items:start; padding:8px 0; border-top:1px solid #EFE7D4; }
+  .src-row:first-child { border-top: 0; }
+
+  details > summary { list-style: none; cursor: pointer; }
+  details > summary::-webkit-details-marker { display:none; }
+
+  .num-mono { font-variant-numeric: tabular-nums; font-family:'JetBrains Mono', monospace; }
+
+  /* compact mode handled via [data-density] */
+  [data-density="compact"] .soft-card { border-radius: 14px; }
+  [data-density="compact"] .task-row { padding: 9px 4px; }
+  [data-density="compact"] .layer-card { padding: 10px 12px 9px; }
+
+</style>
+</head>
+<body class="linen-bg">
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <script type="text/babel" src="tweaks-panel.jsx"></script>
+  <script type="text/babel" src="app.jsx"></script>
+</body>
+</html>

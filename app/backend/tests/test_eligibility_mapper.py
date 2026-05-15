@@ -17,7 +17,7 @@ class _Q:
 class _SB:
     def __init__(self):
         self.db={
-            "profiles":[{"id":"u1","full_name":"A","domicile_state":"x","category":"OBC","pwbd_status":"visual","ex_serviceman":False,"govt_employee":True,"date_of_birth":"2000-01-01","nationality":"Indian"}],
+            "profiles":[{"id":"u1","full_name":"A","domicile_state":"x","category":"OBC","pwbd_status":"visual","ex_serviceman":False,"service_years":7,"govt_employee":True,"date_of_birth":"2000-01-01","nationality":"Indian"}],
             "aspirant_location":[{"user_id":"u1","state":"y","district":"d"}],
             "aspirant_reservations":[{"user_id":"u1","category":"sc","is_pwd":True,"pwd_type":"visual","disability_code":"blindness","is_ex_serviceman":True,"family_income_annual":100000,"ews_assets":{"land": False},"ews_certificate_available":True}],
             "aspirant_education":[{"user_id":"u1","level":"graduation","degree":"BA","stream":"arts","percentage":70,"cgpa":8.0,"is_completed":True}],
@@ -99,3 +99,52 @@ def test_invalid_numeric_rows_skipped():
     out = build_user_eligibility_profile(sb, "u1").model_dump()
     assert all((e.get("percentage") or 0) <= 100 for e in out["education"])
     assert all(a["attempts_used"] >= 0 for a in out["attempts"])
+
+
+def test_mapper_propagates_service_years_from_profiles():
+    out = build_user_eligibility_profile(_SB(), "u1").model_dump()
+    assert out["reservations"]["service_years"] == 7
+
+
+def test_mapper_default_pwbd_status_none_is_not_treated_as_pwd():
+    # The `profiles.pwbd_status` column defaults to the *string* "none". Plain
+    # truthiness on that string is True (non-empty string), so the old mapper
+    # classified every default user as PwD. Verify the reconciled view does
+    # not.
+    sb = _SB()
+    sb.db["profiles"][0]["pwbd_status"] = "none"
+    sb.db["aspirant_reservations"][0]["is_pwd"] = False
+    sb.db["aspirant_reservations"][0]["pwd_type"] = None
+    sb.db["aspirant_reservations"][0]["disability_code"] = None
+    out = build_user_eligibility_profile(sb, "u1").model_dump()
+    assert out["reservations"]["is_pwd"] is False
+    assert out["reservations"]["pwd_type"] is None
+    assert out["reservations"]["disability_code"] is None
+
+
+def test_mapper_pwbd_status_in_profiles_only_still_recognised():
+    # If the legacy `profiles.pwbd_status` carries a real value but the
+    # newer `aspirant_reservations.is_pwd` is False, treat the user as PwD.
+    sb = _SB()
+    sb.db["profiles"][0]["pwbd_status"] = "orthopedic"
+    sb.db["aspirant_reservations"][0]["is_pwd"] = False
+    sb.db["aspirant_reservations"][0]["pwd_type"] = None
+    sb.db["aspirant_reservations"][0]["disability_code"] = None
+    out = build_user_eligibility_profile(sb, "u1").model_dump()
+    assert out["reservations"]["is_pwd"] is True
+    assert out["reservations"]["pwd_type"] == "orthopedic"
+    assert out["reservations"]["disability_code"] == "orthopedic"
+
+
+def test_mapper_service_years_validator_handles_garbage():
+    sb = _SB()
+    sb.db["profiles"][0]["service_years"] = "not-a-number"
+    out = build_user_eligibility_profile(sb, "u1").model_dump()
+    assert out["reservations"]["service_years"] is None
+
+
+def test_mapper_service_years_validator_rejects_negative():
+    sb = _SB()
+    sb.db["profiles"][0]["service_years"] = -3
+    out = build_user_eligibility_profile(sb, "u1").model_dump()
+    assert out["reservations"]["service_years"] is None

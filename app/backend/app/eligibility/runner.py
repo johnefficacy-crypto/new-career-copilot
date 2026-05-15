@@ -27,7 +27,7 @@ from supabase import AsyncClient, Client
 from app.core.error_utils import log_warning_with_context
 from app.core.errors import DatabaseError
 from app.db.utils import require_select, safe_select
-from .engine import check_eligibility_batch
+from .engine import RULES_VERSION, check_eligibility_batch
 from app.profile.eligibility_mapper import build_user_eligibility_profile
 from .schemas import (
     AgeCriteria,
@@ -63,17 +63,53 @@ def _stable_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
-def _profile_hash(mapped_profile: dict[str, Any]) -> str:
+def _profile_hash(
+    mapped_profile: dict[str, Any],
+    recruitment_attempts: list[dict[str, Any]] | None = None,
+) -> str:
     payload = {
         "identity": mapped_profile.get("identity") or {},
         "reservations": mapped_profile.get("reservations") or {},
         "location": mapped_profile.get("location") or {},
         "education": sorted(mapped_profile.get("education") or [], key=lambda r: _stable_json(r)),
         "certifications": sorted(mapped_profile.get("certifications") or [], key=lambda r: _stable_json(r)),
+        # Exam-family attempts (aspirant_exam_attempts), via the mapper.
         "attempts": sorted(mapped_profile.get("attempts") or [], key=lambda r: _stable_json(r)),
+        # Recruitment- and post-scoped attempts live in a separate table
+        # (aspirant_recruitment_attempts, migration 049). They MUST be in
+        # the cache key: otherwise a change to a cycle/post attempt count
+        # leaves profile_hash unchanged and the runner skips recompute,
+        # serving a stale verdict against scope-aware attempt limits.
+        "recruitment_attempts": sorted(
+            recruitment_attempts or [], key=lambda r: _stable_json(r)
+        ),
         "credentials": sorted(mapped_profile.get("credentials") or [], key=lambda r: _stable_json(r)),
     }
     return hashlib.sha256(_stable_json(payload).encode("utf-8")).hexdigest()
+
+
+def _deep_sort_lists(value: Any) -> Any:
+    """Recursively sort list elements by their stable JSON so hashing is
+    insensitive to row order. Dict keys are sorted at serialise time by
+    `_stable_json`'s ``sort_keys=True``.
+    """
+    if isinstance(value, list):
+        return sorted((_deep_sort_lists(v) for v in value), key=_stable_json)
+    if isinstance(value, dict):
+        return {k: _deep_sort_lists(v) for k, v in value.items()}
+    return value
+
+
+def _criteria_hash(pc: PostCriteria) -> str:
+    """Hash the rule inputs that define a post's eligibility verdict.
+
+    The post identity (`post_id`, `recruitment_id`) is excluded — those are
+    the lookup key for the cache row, not part of the rule definition. Any
+    edit to age/education/attempts/disability/cert/language/domicile criteria
+    will change the hash and invalidate stale cached results for every user.
+    """
+    payload = pc.model_dump(exclude={"post_id", "recruitment_id"})
+    return hashlib.sha256(_stable_json(_deep_sort_lists(payload)).encode("utf-8")).hexdigest()
 
 
 def _looks_like_missing_embed(exc: Exception) -> bool:
@@ -81,6 +117,25 @@ def _looks_like_missing_embed(exc: Exception) -> bool:
     return (
         "PGRST200" in text
         or "Could not find a relationship" in text
+        or "schema cache" in text
+    )
+
+
+def _looks_like_missing_relation(exc: Exception) -> bool:
+    """True only when the error means the table genuinely does not exist
+    in this deployment — as opposed to a transient/unexpected DB failure.
+
+    Used by the criteria-fallback loader to decide whether an empty result
+    is *safe* (old deployment without that optional table) or *dangerous*
+    (a real table failed to load, and silently dropping its criteria would
+    produce a falsely-permissive verdict). Genuine "missing relation" →
+    degrade to empty; anything else → re-raise so the recompute fails loud.
+    """
+    text = str(exc)
+    return (
+        "PGRST205" in text                       # PostgREST: table not in schema cache
+        or "Could not find the table" in text
+        or ("relation" in text and "does not exist" in text)  # bare Postgres 42P01
         or "schema cache" in text
     )
 
@@ -101,13 +156,14 @@ def _load_active_posts_with_criteria(supabase: Client) -> list[dict[str, Any]]:
                 id,
                 recruitment_id,
                 language_requirements,
-                recruitments!inner ( status, publish_status, organizations ( state ) ),
+                requires_domicile,
+                recruitments!inner ( status, publish_status, exam_id, organizations ( state ) ),
                 age_criteria ( min_age, max_age, cutoff_date ),
                 age_relaxation_rules ( reservation_category, condition_key, additional_years, max_age_cap, cumulative, source_note ),
                 education_criteria ( min_qualification_level, min_percentage, allowed_disciplines, allow_higher_qualification, accepted_equivalent_qualifications, raw_requirement_text ),
                 post_disability_requirements ( disability_code, physical_requirement_code, suitable, source_note ),
                 certification_criteria ( mandatory, certifications ( name, issuer ) ),
-                attempt_limits ( category, max_attempts )
+                attempt_limits ( category, max_attempts, attempt_scope )
                 """
     try:
         return (
@@ -126,7 +182,7 @@ def _load_active_posts_with_criteria(supabase: Client) -> list[dict[str, Any]]:
 
     posts = (
         supabase.table("posts")
-        .select("id, recruitment_id, language_requirements, recruitments!inner ( status, publish_status, organizations ( state ) )")
+        .select("id, recruitment_id, language_requirements, requires_domicile, recruitments!inner ( status, publish_status, exam_id, organizations ( state ) )")
         .in_("recruitments.status", ["open", "upcoming"])
         .in_("recruitments.publish_status", ["verified", "published"])
         .execute()
@@ -142,12 +198,18 @@ def _load_active_posts_with_criteria(supabase: Client) -> list[dict[str, Any]]:
         ("age_relaxation_rules", "post_id, reservation_category, condition_key, additional_years, max_age_cap, cumulative, source_note"),
         ("education_criteria", "post_id, min_qualification_level, min_percentage, allowed_disciplines, allow_higher_qualification, accepted_equivalent_qualifications, raw_requirement_text"),
         ("post_disability_requirements", "post_id, disability_code, physical_requirement_code, suitable, source_note"),
-        ("attempt_limits", "post_id, category, max_attempts"),
+        ("attempt_limits", "post_id, category, max_attempts, attempt_scope"),
     ):
         try:
             rows = supabase.table(table).select(select_cols).in_("post_id", post_ids).execute().data or []
         except Exception as exc:  # noqa: BLE001
-            logger.info("eligibility.%s fallback skipped: %s", table, exc)
+            # Fail closed: only treat a *genuinely missing table* as "no
+            # criteria". A transient/unexpected failure must re-raise —
+            # silently dropping e.g. attempt_limits would produce an
+            # overly-permissive verdict.
+            if not _looks_like_missing_relation(exc):
+                raise
+            logger.info("eligibility.%s table absent; treating as no rows: %s", table, exc)
             rows = []
         _attach_rows_by_post(posts, table, rows)
 
@@ -161,7 +223,9 @@ def _load_active_posts_with_criteria(supabase: Client) -> list[dict[str, Any]]:
             or []
         )
     except Exception as exc:  # noqa: BLE001
-        logger.info("eligibility.certification_criteria fallback skipped: %s", exc)
+        if not _looks_like_missing_relation(exc):
+            raise
+        logger.info("eligibility.certification_criteria table absent; treating as no rows: %s", exc)
         cert_rows = []
     _attach_rows_by_post(posts, "certification_criteria", cert_rows)
     return posts
@@ -181,7 +245,16 @@ def run_eligibility_for_user(
     # ── 1. Load user data ──────────────────────────────────────────────────
     mapped_model = build_user_eligibility_profile(supabase, user_id)
     mapped = mapped_model.model_dump()
-    profile_hash = _profile_hash(mapped)
+    # Read recruitment/post-scoped attempts up front: they're a second
+    # attempt source the mapper doesn't cover, and they have to be folded
+    # into the cache key *before* the skip decision below.
+    recruitment_attempt_rows = safe_select(
+        supabase,
+        "aspirant_recruitment_attempts",
+        "recruitment_id, post_id, attempts_used",
+        user_id=user_id,
+    )
+    profile_hash = _profile_hash(mapped, recruitment_attempt_rows)
     if not mapped.get("identity"):
         return {
             "processed": 0,
@@ -192,29 +265,75 @@ def run_eligibility_for_user(
         }
     profile_rows = require_select(supabase, "profiles", "*", id=user_id)
     profile_payload = profile_rows[0] if profile_rows else {"id": user_id}
+    reservations_view = mapped.get("reservations") or {}
+    # The engine needs `pwbd_status` to be a truthy non-"none" value for the
+    # PwBD relaxation paths. The mapper's Reservations is the reconciled view
+    # across `profiles` and `aspirant_reservations`; derive the engine-shaped
+    # pwbd_status from it so a user who set is_pwd in aspirant_reservations
+    # but never touched legacy `profiles.pwbd_status` still gets relaxation.
+    if reservations_view.get("is_pwd"):
+        pwbd_status = (
+            reservations_view.get("pwd_type")
+            or reservations_view.get("disability_code")
+            or profile_payload.get("pwbd_status")
+            or "yes"
+        )
+    else:
+        pwbd_status = profile_payload.get("pwbd_status")
     profile_payload = {
         **profile_payload,
-        "category": profile_payload.get("category") or mapped.get("reservations", {}).get("category"),
+        "category": profile_payload.get("category") or reservations_view.get("category"),
         "domicile_state": profile_payload.get("domicile_state") or mapped.get("location", {}).get("state"),
         "date_of_birth": profile_payload.get("date_of_birth") or mapped.get("identity", {}).get("dob"),
         "nationality": profile_payload.get("nationality") or mapped.get("identity", {}).get("nationality"),
-        "disability_code": mapped.get("reservations", {}).get("disability_code"),
+        "pwbd_status": pwbd_status,
+        "ex_serviceman": bool(
+            reservations_view.get("is_ex_serviceman") or profile_payload.get("ex_serviceman")
+        ),
+        "service_years": (
+            reservations_view.get("service_years")
+            if reservations_view.get("service_years") is not None
+            else profile_payload.get("service_years")
+        ),
+        "disability_code": reservations_view.get("disability_code"),
         "languages_known": mapped.get("preferences", {}).get("languages_known") or [],
-        "family_income_annual": mapped.get("reservations", {}).get("family_income_annual"),
-        "ews_certificate_available": mapped.get("reservations", {}).get("ews_certificate_available"),
+        "family_income_annual": reservations_view.get("family_income_annual"),
+        "ews_certificate_available": reservations_view.get("ews_certificate_available"),
     }
     profile = UserProfile(**profile_payload)
 
     education = [UserEducation(**row) for row in (mapped.get("education") or [])]
-    attempt_rows = mapped.get("attempts") or []
-    exam_attempts = []
-    for row in attempt_rows:
-        mapped = {
-            "recruitment_id": row.get("recruitment_id") or row.get("exam_id"),
-            "attempts_used": row.get("attempts_used") or 0,
-        }
-        if mapped["recruitment_id"]:
-            exam_attempts.append(UserExamAttempts(**mapped))
+
+    # Attempts come from two tables (migration 049):
+    #   * aspirant_exam_attempts — exam-family scope (career-wide, e.g.
+    #     SSC-CGL). The mapper already reads this. exam_ref_id is the
+    #     canonical FK to public.exams; legacy exam_id is the fallback.
+    #   * aspirant_recruitment_attempts — recruitment/post scope. Already
+    #     fetched above (recruitment_attempt_rows) so it can feed the
+    #     cache key; reused here to build the engine-shaped records.
+    exam_attempts: list[UserExamAttempts] = []
+    for row in mapped.get("attempts") or []:
+        exam_attempts.append(
+            UserExamAttempts(
+                attempt_scope="exam_family",
+                exam_id=row.get("exam_ref_id") or row.get("exam_id") or None,
+                attempts_used=row.get("attempts_used") or 0,
+            )
+        )
+    # Recruitment- and post-scoped counts.
+    for row in recruitment_attempt_rows:
+        rec_id = row.get("recruitment_id")
+        if not rec_id:
+            continue
+        post_id = row.get("post_id")
+        exam_attempts.append(
+            UserExamAttempts(
+                attempt_scope="post" if post_id else "recruitment",
+                recruitment_id=rec_id,
+                post_id=post_id,
+                attempts_used=row.get("attempts_used") or 0,
+            )
+        )
     exam_credentials = [
         UserExamCredential(**row)
         for row in safe_select(
@@ -260,6 +379,10 @@ def run_eligibility_for_user(
             PostCriteria(
                 post_id=row["id"],
                 recruitment_id=row["recruitment_id"],
+                # recruitments.exam_id (migration 050) is the back-link the
+                # engine uses to route exam-family-scoped attempt caps.
+                # Nullable for recruitments that haven't been linked yet.
+                recruitment_exam_id=(recruitment or {}).get("exam_id"),
                 age_criteria=AgeCriteria(**ac) if ac else None,
                 education_criteria=EducationCriteria(**ec) if ec else None,
                 attempt_limits=[AttemptLimit(**a) for a in attempts],
@@ -268,6 +391,9 @@ def run_eligibility_for_user(
                 certification_criteria=cert_criteria,
                 language_requirements=row.get("language_requirements") or [],
                 org_state=(org or {}).get("state") if org else None,
+                # bool() guards against None from older posts that pre-date
+                # migration 042 — those rows return null until backfilled.
+                requires_domicile=bool(row.get("requires_domicile")),
             )
         )
 
@@ -296,17 +422,27 @@ def run_eligibility_for_user(
     # ── 5. Run batch engine ────────────────────────────────────────────────
     existing_rows = (
         supabase.table("eligibility_results")
-        .select("post_id, recruitment_id, profile_hash, computed_at")
+        .select("post_id, recruitment_id, profile_hash, criteria_hash, rules_version, computed_at")
         .eq("user_id", user_id)
         .execute()
         .data
         or []
     )
     existing_by_post = {row.get("post_id"): row for row in existing_rows if row.get("post_id")}
+    # Pre-compute per-post criteria hashes so the skip check and the upsert
+    # write below agree exactly. The skip cache is a 3-way match: profile,
+    # criteria, and engine rules version must all be identical to the row we
+    # wrote last time. Any mismatch — including legacy NULL columns from
+    # rows written before this migration — forces a recompute.
+    criteria_hash_by_post = {pc.post_id: _criteria_hash(pc) for pc in post_criteria_list}
     skip_ids = {
         pc.post_id
         for pc in post_criteria_list
-        if (existing_by_post.get(pc.post_id) or {}).get("profile_hash") == profile_hash
+        if (
+            (existing_by_post.get(pc.post_id) or {}).get("profile_hash") == profile_hash
+            and (existing_by_post.get(pc.post_id) or {}).get("criteria_hash") == criteria_hash_by_post[pc.post_id]
+            and (existing_by_post.get(pc.post_id) or {}).get("rules_version") == RULES_VERSION
+        )
     }
     to_compute = [pc for pc in post_criteria_list if pc.post_id not in skip_ids]
     results = check_eligibility_batch(
@@ -328,8 +464,14 @@ def run_eligibility_for_user(
             "is_eligible": r.result.is_eligible,
             "is_conditional": r.result.is_conditional,
             "fail_reasons": r.result.fail_reasons,
+            # Full rule-by-rule verdict, JSONB. Lets admins audit *why* a
+            # candidate fell into eligible / conditional / ineligible without
+            # re-running the engine.
+            "checks": [c.model_dump() for c in r.result.checks],
             "computed_at": now,
             "profile_hash": profile_hash,
+            "criteria_hash": criteria_hash_by_post[r.post_id],
+            "rules_version": RULES_VERSION,
         }
         for r in results
     ]
@@ -446,8 +588,12 @@ async def run_eligibility_for_user_async(
 # ─── Read helpers (used by /api/eligibility/results/me[/all]) ────────────────
 
 
+# The `checks` JSONB column is persisted on every recompute (see #129) — it
+# carries the full rule-by-rule verdict including `is_unverifiable` per
+# rule. Surfacing it here unlocks admin/audit UI without changing endpoint
+# code: the API handlers just return whatever these helpers produce.
 _RESULT_SELECT = (
-    "post_id, recruitment_id, is_eligible, is_conditional, fail_reasons, computed_at, "
+    "post_id, recruitment_id, is_eligible, is_conditional, fail_reasons, checks, computed_at, "
     "posts ( "
     "post_name, group_type, pay_level, "
     "salary_details ( pay_level, basic_pay_min, basic_pay_max, in_hand_estimate ), "
@@ -458,7 +604,7 @@ _RESULT_SELECT = (
 )
 
 _RESULT_SELECT_ALL = (
-    "post_id, recruitment_id, is_eligible, is_conditional, fail_reasons, computed_at, "
+    "post_id, recruitment_id, is_eligible, is_conditional, fail_reasons, checks, computed_at, "
     "posts ( "
     "post_name, group_type, pay_level, "
     "recruitments ( name, year, apply_end_date, status, organizations ( name, type ) ) )"

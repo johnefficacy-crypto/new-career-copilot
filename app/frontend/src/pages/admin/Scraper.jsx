@@ -9,6 +9,7 @@ import ScrapeRunDetailDrawer from "../../features/admin/scraping/ScrapeRunDetail
 import { HIGH_RISK_QUEUE_FIELDS, NEXT_ACTION_MESSAGES, RECOMMENDED_REVIEW_FIELDS, SOURCE_TYPE_LABELS } from "../../features/admin/workflow/adminWorkflowContract";
 import { useFocusTrap } from "../../shared/a11y/useFocusTrap";
 import { EmptyState, ErrorState, LoadingSkeleton, StatusBadge, useToast } from "../../shared/ui";
+import { formatScorePct } from "../../features/admin/workflow/scoreUtils";
 
 function shortId(value) {
   return value ? String(value).slice(0, 8) : "-";
@@ -47,6 +48,7 @@ function QueueDetailDrawer({ item, onClose, onAction, onFieldAction, onMerge }) 
   if (!item) return null;
   const extracted = item.extracted_data || {};
   const evidence = item.field_evidence_status || item.field_evidence || {};
+  const evidenceDetails = item.field_evidence_details || [];
   const state = reviewState(item);
   const primaryDuplicate = (item.duplicate_candidates || [])[0];
 
@@ -69,7 +71,8 @@ function QueueDetailDrawer({ item, onClose, onAction, onFieldAction, onMerge }) 
           <Info label="Organization" value={extracted.organization_name || extracted.organization} />
           <Info label="Dates" value={`${extracted.apply_start_date || "-"} to ${extracted.apply_end_date || "-"}`} />
           <Info label="Duplicate" value={item.duplicate_of || "No canonical duplicate linked"} />
-          <Info label="Official provenance" value={item.official_source_resolved ? "Resolved" : "Required / unresolved"} />
+          <Info label="Official provenance" value={item.official_source_resolved ? `Resolved${item.official_source_host ? ` · ${item.official_source_host}` : ""}` : "Required / unresolved"} />
+          <Info label="Resolver reason" value={(extracted._meta && extracted._meta.resolver_reason) || (item.official_source_resolved ? "matched" : null)} />
         </section>
 
         {primaryDuplicate ? (
@@ -121,6 +124,7 @@ function QueueDetailDrawer({ item, onClose, onAction, onFieldAction, onMerge }) 
             <FieldReviewGroup
               extracted={extracted}
               evidence={evidence}
+              evidenceDetails={evidenceDetails}
               requiredFields={HIGH_RISK_QUEUE_FIELDS}
               recommendedFields={RECOMMENDED_REVIEW_FIELDS}
               onFieldAction={(field, action, correctedValue) => handleFieldAction(item.id, field, action, correctedValue)}
@@ -333,9 +337,15 @@ export default function AdminScraper() {
     }
   };
 
-  const fieldAct = async (id, field, action, correctedValue) => {
+  const fieldAct = async (id, field, action, correctedValue, scope) => {
+    const body = {
+      notes: scope?.notes || "field review",
+      corrected_value: correctedValue,
+      entity_type: scope?.entity_type || null,
+      entity_key: scope?.entity_key || null,
+    };
     try {
-      await api.post(`/api/admin/scrape/items/${id}/fields/${field}/${action}`, { notes: "field review", corrected_value: correctedValue });
+      await api.post(`/api/admin/scrape/items/${id}/fields/${field}/${action}`, body);
       toast.success(`${field} ${action} saved.`);
       await load();
     } catch (e) {
@@ -471,7 +481,7 @@ export default function AdminScraper() {
                   <td className="px-3 py-3"><div className="truncate font-medium">{e.title || e.name || "-"}</div><div className="truncate text-[10px] text-muted-foreground">Queue {shortId(q.id)} · {q.source_name || "-"}</div></td>
                   <td className="px-3 py-3"><div className="truncate">{typeLabel(q.source_type)}</div><div className="truncate text-[10px] text-muted-foreground">{q.source_url}</div></td>
                   <td className="px-3 py-3"><StatusBadge status={state.key} label={state.label} /><div className="mt-1 truncate text-[10px] text-muted-foreground">{state.reason}</div></td>
-                  <td className="px-3 py-3"><div>conf {q.confidence_score ?? "-"}</div><div className="text-[10px] text-muted-foreground">quality {q.data_quality_score ?? "-"}</div></td>
+                  <td className="px-3 py-3"><div>conf {formatScorePct(q.confidence_score)}</div><div className="text-[10px] text-muted-foreground">quality {formatScorePct(q.data_quality_score)}</div></td>
                   <td className="px-3 py-3"><QueueRowAction item={q} state={state} onOpen={() => setSelected(q)} onPromote={() => act(q.id, "promote")} /></td>
                 </tr>
               );

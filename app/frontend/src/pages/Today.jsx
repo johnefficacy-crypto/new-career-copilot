@@ -1,66 +1,413 @@
 import React, { useEffect, useState } from "react";
-import { CheckCircle2, Circle, /* Clock, */ Target, Zap } from "lucide-react";
 import { api } from "../lib/api";
+import PersonaQuestionCard from "../features/persona-questions/PersonaQuestionCard";
+import StudyMetricCard from "../features/study/components/StudyMetricCard";
+import StudyTaskCard from "../features/study/components/StudyTaskCard";
+import TruthPanelCard from "../features/study/components/TruthPanelCard";
+import EngineTrace from "../features/study/components/EngineTrace";
+import NextBestActionCard from "../features/study/components/NextBestActionCard";
+import MissionControlSkeleton from "../features/study/components/MissionControlSkeleton";
+import StudyPolicyPreview from "../features/study/components/StudyPolicyPreview";
+import IntelligenceLayersPanel from "../features/study/components/IntelligenceLayersPanel";
+import UpdateIntelligencePanel from "../features/study/components/UpdateIntelligencePanel";
+import SafeExplanationCard from "../features/study/components/SafeExplanationCard";
+import PlanReasoningCard from "../features/study/components/PlanReasoningCard";
+import ExamContextCard from "../features/study/components/ExamContextCard";
+import CompetitionContextCard from "../features/study/components/CompetitionContextCard";
+import PlanPreferencesCard from "../features/study/components/PlanPreferencesCard";
+import { Eyebrow, Pill, StatusDot, StudyCard, TrustStamp } from "../shared/ui/studyos";
+
+const EMPTY_MC = {
+  user_context: { dimensions: {}, scores: {}, safe_user_explanation: [] },
+  study_policy: {},
+  plan: null,
+  exam_context: null,
+  competition_context: null,
+  policy_update_context: null,
+  update_context: null,
+  today_tasks: [],
+  plan_reasoning: [],
+  metrics: {
+    tasks_total: 0,
+    tasks_completed: 0,
+    task_completion_rate: 0,
+    hours_studied_7d: 0,
+    hours_planned_week: 0,
+    adherence: null,
+    backlog_count: 0,
+    mocks_taken: 0,
+  },
+  next_best_action: null,
+  truth_panel: { summary: "", warnings: [], corrections: [] },
+  progressive_question: null,
+  engine_trace: [],
+  meta: {},
+};
+
+function formatPercent(v) {
+  if (v === null || v === undefined) return "—";
+  return `${Math.round(Number(v) * 100)}%`;
+}
 
 export default function Today() {
-  const [plan, setPlan] = useState({ tasks: [], plan: null, date: "" });
-  const [err, setErr] = useState("");
+  const [mc, setMc] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  // Fallback shape if mission-control fails entirely — keeps the legacy
+  // /api/study/plan path working so the page never goes blank.
+  const [fallbackPlan, setFallbackPlan] = useState(null);
+  // Bumped when the plan is regenerated (e.g. from the preferences card) so
+  // mission control is refetched.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    api.get("/api/study/plan").then((d) => setPlan({ date: d?.date || "", plan: d?.plan || null, tasks: Array.isArray(d?.tasks) ? d.tasks : [] })).catch((e) => { setErr("Could not load today's plan."); if (process.env.NODE_ENV !== "production") console.error(e); });
-  }, []);
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      try {
+        const data = await api.get("/api/study/mission-control");
+        if (!cancelled) {
+          setMc({ ...EMPTY_MC, ...(data || {}) });
+          setError("");
+        }
+      } catch (e) {
+        if (process.env.NODE_ENV !== "production") console.warn("mission-control failed, falling back", e);
+        try {
+          const legacy = await api.get("/api/study/plan");
+          if (!cancelled) {
+            setFallbackPlan({
+              date: legacy?.date || "",
+              plan: legacy?.plan || null,
+              tasks: Array.isArray(legacy?.tasks) ? legacy.tasks : [],
+            });
+            setError("Showing a simplified plan view — mission control is unavailable right now.");
+          }
+        } catch (e2) {
+          if (!cancelled) setError("Could not load today's plan.");
+          if (process.env.NODE_ENV !== "production") console.error(e2);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
 
-  async function toggle(t) {
-    const next = !t.done;
-    setPlan((p) => ({ ...p, tasks: p.tasks.map((x) => (x.id === t.id ? { ...x, done: next } : x)) }));
+  async function toggleTask(t) {
+    if (!t || !t.id) return;
+    // Optimistic flip + reuse existing PUT /api/study/tasks/:id contract.
+    const nextDone = !t.done;
+    const nextStatus = nextDone ? "completed" : "planned";
+    setMc((prev) =>
+      prev
+        ? {
+            ...prev,
+            today_tasks: prev.today_tasks.map((x) =>
+              x.id === t.id ? { ...x, done: nextDone, status: nextStatus } : x,
+            ),
+          }
+        : prev,
+    );
+    setFallbackPlan((prev) =>
+      prev
+        ? {
+            ...prev,
+            tasks: prev.tasks.map((x) =>
+              x.id === t.id ? { ...x, done: nextDone } : x,
+            ),
+          }
+        : prev,
+    );
     try {
-      await api.post("/api/study/plan/toggle", { task_id: t.id, done: next });
+      await api.post("/api/study/plan/toggle", { task_id: t.id });
     } catch (e) {
       if (process.env.NODE_ENV !== "production") console.error(e);
     }
   }
 
-  const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
-  const done = tasks.filter((t) => t.done).length;
+  if (loading) {
+    return <MissionControlSkeleton />;
+  }
+
+  // ── Fallback path (mission-control unavailable) ────────────────────────
+  if (!mc && fallbackPlan) {
+    const tasks = fallbackPlan.tasks || [];
+    const done = tasks.filter((t) => t.done).length;
+    return (
+      <div className="space-y-6" data-testid="today-page">
+        {error ? (
+          <div className="rounded-xl bg-clay-50 text-clay-800 text-xs px-3 py-2">
+            {error}
+          </div>
+        ) : null}
+        <header>
+          <Eyebrow>Today · Study OS Mission Control{fallbackPlan.date ? ` · ${fallbackPlan.date}` : ""}</Eyebrow>
+          <h1 className="font-heading text-[40px] leading-[1.05] mt-2">Today's plan</h1>
+          <p className="text-clay-700 mt-2">
+            {done} of {tasks.length} tasks complete
+          </p>
+        </header>
+        <StudyCard>
+          <Eyebrow>Active plan</Eyebrow>
+          <h2 className="font-heading text-[22px] mt-1">{fallbackPlan.plan?.theme || "Your study plan"}</h2>
+          {fallbackPlan.plan?.target ? (
+            <p className="text-[13px] text-clay-700 mt-1.5">{fallbackPlan.plan.target}</p>
+          ) : null}
+        </StudyCard>
+        <StudyCard padded={false}>
+          <div className="px-7 pt-6 pb-3">
+            <Eyebrow>Today's tasks</Eyebrow>
+          </div>
+          <div className="hairline mx-7" />
+          <div className="px-7 pb-6 pt-2">
+            <ul>
+              {tasks.map((t) => (
+                <StudyTaskCard key={t.id} task={t} onToggle={toggleTask} />
+              ))}
+            </ul>
+          </div>
+        </StudyCard>
+        <PersonaQuestionCard />
+      </div>
+    );
+  }
+
+  // ── Mission Control path ───────────────────────────────────────────────
+  if (!mc) {
+    return (
+      <div className="space-y-6" data-testid="today-page">
+        <div className="rounded-xl bg-clay-50 text-clay-800 text-xs px-3 py-2">
+          {error || "Could not load today's plan."}
+        </div>
+      </div>
+    );
+  }
+
+  const tasks = mc.today_tasks || [];
+  const metrics = mc.metrics || {};
+  const policy = mc.study_policy || {};
+  const plan = mc.plan;
+  const truth = mc.truth_panel;
+  const engine = mc.engine_trace || [];
+  const nextBest = mc.next_best_action;
+  const safeExplanation = mc.user_context?.safe_user_explanation || [];
+  const planReasoning = mc.plan_reasoning || [];
+  const examContext = mc.exam_context;
+  const competitionContext = mc.competition_context;
+  const updateContext = mc.update_context || {};
+  const meta = mc.meta || {};
+
+  const done = tasks.filter((t) => t.done || t.status === "completed").length;
+  const pct = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
 
   return (
     <div className="space-y-6" data-testid="today-page">
-      {err && <div className="text-xs text-clay-700">{err}</div>}
-      <div>
-        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Today · {plan.date}</div>
-        <h1 className="font-heading text-4xl font-semibold tracking-tight mt-1">Today's plan</h1>
-        <p className="text-muted-foreground mt-1">{done} of {tasks.length} tasks complete</p>
-      </div>
-
-      <div className="soft-card rounded-2xl p-6">
-        <div className="flex items-center gap-3 text-sm">
-          <Target className="h-4 w-4 text-clay-600" />
-          <span className="font-semibold">{plan.plan?.theme}</span>
-          <span className="text-muted-foreground">·</span>
-          <span className="text-muted-foreground">{plan.plan?.target}</span>
+      {error ? (
+        <div className="rounded-xl bg-clay-50 text-clay-800 text-xs px-3 py-2">
+          {error}
         </div>
-        <ul className="mt-5 space-y-2">
-          {tasks.map((t) => (
-            <li key={t.id} className="flex items-start gap-3 rounded-xl p-3 hover:bg-clay-50 transition">
-              <button onClick={() => toggle(t)} data-testid={`toggle-${t.id}`} className="mt-0.5">
-                {t.done ? <CheckCircle2 className="h-5 w-5 text-sage-500" /> : <Circle className="h-5 w-5 text-muted-foreground" />}
-              </button>
-              <div className="flex-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">{t.time}</div>
-                <div className={`text-[15px] ${t.done ? "line-through text-muted-foreground" : "font-medium"}`}>{t.title}</div>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </div>
+      ) : null}
 
-      <div className="soft-card rounded-2xl p-5 flex items-start gap-4">
-        <Zap className="h-5 w-5 text-clay-500 mt-0.5" />
+      {/* Header */}
+      <header className="flex items-end justify-between gap-6 flex-wrap">
         <div>
-          <div className="font-heading font-semibold">One thing today</div>
-          <p className="text-sm text-muted-foreground mt-1">Close Polity Ch. 4 revision before 9pm. It's been carried forward twice.</p>
+          <Eyebrow>
+            Today · Study OS Mission Control{meta.generated_at ? ` · ${meta.generated_at}` : ""}
+          </Eyebrow>
+          <h1 className="font-heading text-[40px] leading-[1.05] mt-2 max-w-[22ch]">
+            Your plan, adapted from verified signals and recent progress.
+          </h1>
+          <p className="text-[15px] text-clay-700 mt-2 max-w-[64ch]">
+            {tasks.length} task{tasks.length === 1 ? "" : "s"} today · compiled from your study
+            signals, exam intelligence and recent progress. Each task is traceable.
+          </p>
+        </div>
+        <div className="text-right shrink-0">
+          <Eyebrow>Status</Eyebrow>
+          <div className="font-heading text-[20px] mt-1">
+            {examContext?.exam || plan?.target || "Study OS"}
+          </div>
+          <div className="mt-2 flex justify-end">
+            <StatusDot state="live" label="Live · /api/study/mission-control" />
+          </div>
+        </div>
+      </header>
+
+      {/* Active plan */}
+      {plan ? (
+        <StudyCard data-testid="active-plan">
+          <div className="flex items-start justify-between gap-6 flex-wrap">
+            <div>
+              <Eyebrow>Active plan</Eyebrow>
+              <h2 className="font-heading text-[22px] mt-1">{plan.theme || "Your study plan"}</h2>
+              {plan.target ? (
+                <p className="text-[13px] text-clay-700 mt-1.5 max-w-[60ch]">{plan.target}</p>
+              ) : null}
+              <div className="mt-3 flex flex-wrap gap-2 items-center">
+                {examContext?.exam ? <Pill tone="ink">{examContext.exam}</Pill> : null}
+                {examContext?.phase ? <Pill tone="sage">{examContext.phase}</Pill> : null}
+                {examContext?.days_remaining != null ? (
+                  <Pill tone="clay">{examContext.days_remaining}d to D-day</Pill>
+                ) : null}
+              </div>
+            </div>
+            <div className="text-right shrink-0">
+              {meta.plan_version ? (
+                <div className="num-mono text-[10.5px] text-clay-700">{meta.plan_version}</div>
+              ) : null}
+              <div className="mt-3 flex justify-end">
+                <StatusDot state="live" label="" />
+              </div>
+            </div>
+          </div>
+        </StudyCard>
+      ) : (
+        <StudyCard data-testid="active-plan-empty">
+          <Eyebrow>Active plan</Eyebrow>
+          <p className="text-sm text-clay-700 mt-2">
+            No active study plan yet. You can set one up from{" "}
+            <a className="text-clay-800 underline underline-offset-2" href="/app/study-plan">
+              Study Plan
+            </a>
+            .
+          </p>
+        </StudyCard>
+      )}
+
+      <SafeExplanationCard explanations={safeExplanation} />
+
+      {/* Metrics row */}
+      <section
+        className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3"
+        data-testid="metrics-row"
+      >
+        <StudyMetricCard
+          label="Today"
+          value={`${metrics.tasks_completed || 0}/${metrics.tasks_total || 0}`}
+          delta={`${formatPercent(metrics.task_completion_rate)} complete`}
+          state="live"
+        />
+        <StudyMetricCard
+          label="Adherence"
+          value={
+            metrics.adherence === null || metrics.adherence === undefined
+              ? "—"
+              : formatPercent(metrics.adherence)
+          }
+          delta="7-day"
+          tone="sage"
+          state={metrics.adherence == null ? "preview" : "live"}
+        />
+        <StudyMetricCard
+          label="Hours · 7d"
+          value={`${metrics.hours_studied_7d || 0}h`}
+          delta={`of ${metrics.hours_planned_week || 0}h planned`}
+          state="live"
+        />
+        <StudyMetricCard
+          label="Backlog"
+          value={metrics.backlog_count ?? 0}
+          delta="Tasks to catch up"
+          tone={metrics.backlog_count && metrics.backlog_count >= 5 ? "amber" : "clay"}
+          state="live"
+        />
+        <StudyMetricCard
+          label="Mocks · week"
+          value={metrics.mocks_taken ?? 0}
+          delta="Logged this week"
+          state="live"
+        />
+        <StudyMetricCard
+          label="Plan progress"
+          value={`${pct}%`}
+          delta={`${done}/${tasks.length} done`}
+          tone="sage"
+          state="live"
+        />
+      </section>
+
+      {nextBest ? <NextBestActionCard action={nextBest} /> : null}
+
+      {/* Tasks + reasoning sidebar */}
+      <div className="grid lg:grid-cols-[1fr_360px] gap-6 items-start">
+        <StudyCard padded={false} data-testid="today-tasks">
+          <div className="px-7 pt-6 pb-4 flex items-end justify-between gap-4">
+            <div>
+              <Eyebrow>Today's tasks</Eyebrow>
+              <h2 className="font-heading text-[22px] mt-1 leading-tight">
+                Each task carries its reasoning.
+              </h2>
+              <p className="text-[12.5px] text-clay-700 mt-1">
+                Tap "Why this task" to open the reasoning drawer.
+              </p>
+            </div>
+            <div className="text-right shrink-0">
+              <div className="num-mono text-[11.5px] text-clay-700">
+                {done}/{tasks.length} done · {pct}%
+              </div>
+              <div className="mt-1.5 w-[160px] h-[6px] bg-[#EFE2C9] rounded-full overflow-hidden">
+                <div className="h-full bg-sage-500" style={{ width: `${pct}%` }} />
+              </div>
+            </div>
+          </div>
+          <div className="hairline mx-7" />
+          <div className="px-7 pb-6 pt-2">
+            {tasks.length ? (
+              <ul>
+                {tasks.map((t) => (
+                  <StudyTaskCard key={t.id} task={t} onToggle={toggleTask} />
+                ))}
+              </ul>
+            ) : (
+              <p className="py-6 text-sm text-clay-700">
+                No tasks scheduled for today. The next-best action above will get you moving.
+              </p>
+            )}
+          </div>
+        </StudyCard>
+        <div className="space-y-6">
+          <PersonaQuestionCard />
+          <PlanReasoningCard reasoning={planReasoning} />
         </div>
       </div>
+
+      <PlanPreferencesCard onRegenerated={() => setReloadKey((k) => k + 1)} />
+
+      <StudyPolicyPreview policy={policy} />
+
+      <TruthPanelCard panel={truth} />
+
+      <div className="grid lg:grid-cols-2 gap-6">
+        <ExamContextCard examContext={examContext} />
+        <CompetitionContextCard competitionContext={competitionContext} />
+      </div>
+
+      <EngineTrace steps={engine} />
+
+      <IntelligenceLayersPanel />
+
+      <UpdateIntelligencePanel
+        official={updateContext.official_updates}
+        unverified={updateContext.needs_verification}
+        isPreview={false}
+      />
+
+      {/* Trust policy footer */}
+      <footer className="pt-2 pb-6 flex items-center justify-between flex-wrap gap-3">
+        <div className="num-mono text-[10.5px] text-clay-700">
+          Career Copilot · Study OS{meta.plan_version ? ` · ${meta.plan_version}` : ""}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="num-mono text-[10.5px] text-clay-700">Trust policy:</span>
+          <TrustStamp kind="official" label="Auto-apply after review" />
+          <TrustStamp kind="aggregator" label="Discovery only" />
+          <TrustStamp kind="research" label="Hint only" />
+          <TrustStamp kind="opportunity" label="Adjacent" />
+        </div>
+      </footer>
     </div>
   );
 }

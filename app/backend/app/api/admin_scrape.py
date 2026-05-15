@@ -23,6 +23,7 @@ import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -32,9 +33,9 @@ from app.core.auth import get_current_user, require_permission
 from app.core.errors import PromotionError
 from app.common.indexing import group_by
 from app.db.supabase_client import get_supabase_admin
-from app.scraping.alerts import alert_users_for_new_recruitment
 from app.scraping.runner import promote_run, run_scraping_pass
 from app.scraping.intelligence import classify_item, duplicate_candidates, BLOCKED
+from app.scraping.promotion_gate import HIGH_RISK_FIELDS as _HIGH_RISK_FIELDS_SHARED, evaluate_promotion_gate
 
 logger = logging.getLogger("career_copilot.api.admin_scrape")
 
@@ -87,7 +88,7 @@ def _audit(supabase, actor: dict, action: str, *, entity_type: str | None = None
 
 router = APIRouter(tags=["admin-scrape"])
 
-_HIGH_RISK_FIELDS={"apply_end_date","official_notification_url","official_apply_url","organization_name","total_vacancies"}
+_HIGH_RISK_FIELDS = _HIGH_RISK_FIELDS_SHARED
 
 
 class ScrapeRunBody(BaseModel):
@@ -99,6 +100,12 @@ class ScrapeRunBody(BaseModel):
 class ReviewBody(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
     corrected_value: str | int | float | bool | None = None
+    # Entity scoping for post-scoped high-risk fields (e.g. requires_domicile
+    # per post). When omitted the row is recruitment-scoped (entity_type=other).
+    # Reject reason is the only "required" semantic and is enforced at the
+    # router level so verify/correct can stay terse.
+    entity_type: str | None = Field(default=None, max_length=32)
+    entity_key: str | None = Field(default=None, max_length=200)
 
 
 def _validate_queue_id(queue_id: str) -> None:
@@ -106,8 +113,146 @@ def _validate_queue_id(queue_id: str) -> None:
     if len(qid) < 2:
         raise HTTPException(status_code=422, detail="Invalid queue_id format")
 
-def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, admin: dict, notes: str | None=None, corrected_value=None):
-    existing = (supabase.table("extracted_field_evidence").select("id, document_id").eq("scrape_queue_id", queue_id).eq("field_name", field_name).order("reviewed_at", desc=True, nullsfirst=False).order("created_at", desc=True).limit(1).execute().data or [])
+
+_NESTED_PATH_KEY = __import__("re").compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _parse_field_path(field_name: str) -> list[str | int]:
+    """Parse a dotted field path like ``posts.0.min_age`` into segments.
+
+    Each segment is either a safe key (``[A-Za-z_][A-Za-z0-9_]*``) or a
+    non-negative integer for list indexing. Anything else raises 422 so
+    we never let arbitrary strings drive a deep mutation. Returns a list
+    of segments; a single-segment path is the legacy flat-key behaviour.
+    """
+    if not field_name or len(field_name) > 200:
+        raise HTTPException(status_code=422, detail="Invalid field name")
+    parts = field_name.split(".")
+    out: list[str | int] = []
+    for part in parts:
+        if part == "":
+            raise HTTPException(status_code=422, detail="Invalid field path")
+        if part.isdigit():
+            out.append(int(part))
+        elif _NESTED_PATH_KEY.match(part):
+            out.append(part)
+        else:
+            raise HTTPException(status_code=422, detail="Invalid field path segment")
+    return out
+
+
+def _nested_get(data, path: list[str | int]):
+    cur = data
+    for seg in path:
+        if isinstance(seg, int):
+            if not isinstance(cur, list) or seg < 0 or seg >= len(cur):
+                return None
+            cur = cur[seg]
+        else:
+            if not isinstance(cur, dict):
+                return None
+            cur = cur.get(seg)
+    return cur
+
+
+def _nested_set(data, path: list[str | int], value) -> None:
+    """Set a value at a nested path, creating intermediate dicts as needed.
+
+    Refuses to grow lists or create list indexes that don't already
+    exist — the queue extractor controls list shape, the admin only
+    edits values inside it.
+    """
+    if not path:
+        return
+    cur = data
+    for seg in path[:-1]:
+        if isinstance(seg, int):
+            if not isinstance(cur, list) or seg < 0 or seg >= len(cur):
+                raise HTTPException(status_code=422, detail="Field path index out of range")
+            cur = cur[seg]
+        else:
+            if not isinstance(cur, dict):
+                raise HTTPException(status_code=422, detail="Field path expected dict")
+            nxt = cur.get(seg)
+            if nxt is None:
+                nxt = {}
+                cur[seg] = nxt
+            cur = nxt
+    last = path[-1]
+    if isinstance(last, int):
+        if not isinstance(cur, list) or last < 0 or last >= len(cur):
+            raise HTTPException(status_code=422, detail="Field path index out of range")
+        cur[last] = value
+    else:
+        if not isinstance(cur, dict):
+            raise HTTPException(status_code=422, detail="Field path expected dict")
+        cur[last] = value
+
+_VALID_ENTITY_TYPES = frozenset({
+    "recruitment", "post", "age_criteria", "education_criteria",
+    "fee", "date", "vacancy", "other",
+})
+
+
+def _normalize_entity(entity_type: str | None, entity_key: str | None) -> tuple[str, str | None]:
+    """Sanitise (entity_type, entity_key); defaults to recruitment-scoped row."""
+    et = (entity_type or "other").strip().lower()
+    if et not in _VALID_ENTITY_TYPES:
+        raise HTTPException(status_code=422, detail=f"Invalid entity_type: {entity_type!r}")
+    ek = (entity_key or "").strip() or None
+    return et, ek
+
+
+def _resolve_entity_path(extracted_data: Any, field_name: str, entity_type: str, entity_key: str | None) -> str | None:
+    """Map (entity_type, entity_key, field_name) into a dotted path inside
+    ``extracted_data`` that ``_parse_field_path`` understands.
+
+    Returns ``None`` when the scope cannot be resolved (e.g. post entity
+    referencing a post_name not present in the payload) — callers must
+    treat that as "no value to read, no value to patch".
+    """
+    if entity_type == "post" and entity_key:
+        posts = (extracted_data or {}).get("posts") if isinstance(extracted_data, dict) else None
+        if not isinstance(posts, list):
+            return None
+        needle = entity_key.strip().lower()
+        for idx, post in enumerate(posts):
+            if not isinstance(post, dict):
+                continue
+            name = (post.get("post_name") or "").strip().lower()
+            if name == needle:
+                return f"posts.{idx}.{field_name}"
+        return None
+    return field_name
+
+
+def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, admin: dict, notes: str | None=None, corrected_value=None, entity_type: str | None = None, entity_key: str | None = None):
+    et, ek = _normalize_entity(entity_type, entity_key)
+    # Pull a small page of recent evidence rows for this (queue, field) and
+    # filter on (entity_type, entity_key) in Python. Doing the entity-scope
+    # match server-side would need ``is_("entity_key", "null")`` for the
+    # default recruitment-scoped case, which our test mocks don't all
+    # implement. The unique index ``uq_evidence_entity_scoped`` keeps
+    # production from holding >1 matching row anyway.
+    candidates = (
+        supabase.table("extracted_field_evidence")
+        .select("id, document_id, entity_type, entity_key")
+        .eq("scrape_queue_id", queue_id)
+        .eq("field_name", field_name)
+        .order("reviewed_at", desc=True, nullsfirst=False)
+        .order("created_at", desc=True)
+        .limit(20)
+        .execute()
+        .data
+        or []
+    )
+    def _ekey(row: dict) -> str | None:
+        v = row.get("entity_key")
+        return v.strip() if isinstance(v, str) and v.strip() else None
+    existing = [
+        r for r in candidates
+        if (r.get("entity_type") or "other") == et and _ekey(r) == ek
+    ][:1]
     doc_id = (existing[0] or {}).get("document_id") if existing else None
     if not existing:
         qrows = (supabase.table("scrape_queue").select("id, source_id, source_url, scrape_run_id, extracted_data, notification_document_id").eq("id", queue_id).limit(1).execute().data or [])
@@ -152,13 +297,19 @@ def _upsert_field_review(supabase, queue_id: str, field_name: str, status: str, 
                 doc_id = nd_rows[0]["id"]
                 supabase.table("scrape_queue").update({"notification_document_id": doc_id}).eq("id", queue_id).execute()
         extracted_data = qrow.get("extracted_data") if qrow else {}
-        extracted_value = corrected_value if corrected_value is not None else ((extracted_data or {}).get(field_name) if isinstance(extracted_data, dict) else None)
+        path_str = _resolve_entity_path(extracted_data, field_name, et, ek)
+        extracted_value = corrected_value if corrected_value is not None else (
+            _nested_get(extracted_data, _parse_field_path(path_str)) if path_str else None
+        )
     else:
         qrows = (supabase.table("scrape_queue").select("id, extracted_data, notification_document_id").eq("id", queue_id).limit(1).execute().data or [])
         qrow = (qrows[0] or {}) if qrows else {}
         extracted_data = qrow.get("extracted_data") if qrow else {}
-        extracted_value = corrected_value if corrected_value is not None else ((extracted_data or {}).get(field_name) if isinstance(extracted_data, dict) else None)
-    payload={"scrape_queue_id": queue_id, "field_name": field_name, "document_id": doc_id, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat(), "entity_type":"other","extraction_method":"manual","extracted_value":extracted_value}
+        path_str = _resolve_entity_path(extracted_data, field_name, et, ek)
+        extracted_value = corrected_value if corrected_value is not None else (
+            _nested_get(extracted_data, _parse_field_path(path_str)) if path_str else None
+        )
+    payload={"scrape_queue_id": queue_id, "field_name": field_name, "document_id": doc_id, "reviewer_status": status, "reviewer_notes": notes, "reviewed_by": admin.get("id"), "reviewed_at": datetime.now(timezone.utc).isoformat(), "entity_type": et, "entity_key": ek, "extraction_method":"manual","extracted_value":extracted_value}
     if corrected_value is not None:
         payload["corrected_value"]=corrected_value
     try:
@@ -194,19 +345,38 @@ def build_effective_extracted_data(supabase, queue_id: str) -> dict:
     data = dict(rows[0].get("extracted_data") or {})
     evidence = (
         supabase.table("extracted_field_evidence")
-        .select("field_name, reviewer_status, corrected_value")
+        .select("field_name, reviewer_status, corrected_value, entity_type, entity_key")
         .eq("scrape_queue_id", queue_id)
         .execute()
         .data
         or []
     )
     for row in evidence:
-        if row.get("reviewer_status") == "corrected" and row.get("corrected_value") is not None:
-            data[row.get("field_name")] = row.get("corrected_value")
+        if row.get("reviewer_status") != "corrected" or row.get("corrected_value") is None:
+            continue
+        field_name = row.get("field_name") or ""
+        path_str = _resolve_entity_path(data, field_name, (row.get("entity_type") or "other"), row.get("entity_key"))
+        if not path_str:
+            # Post entity referenced a post_name not present in current
+            # extracted_data — old correction is stale, skip it.
+            continue
+        try:
+            path = _parse_field_path(path_str)
+        except HTTPException:
+            # Skip rows with malformed field names — never crash the
+            # promote/merge flow because of bad history.
+            continue
+        if len(path) == 1:
+            data[path[0]] = row.get("corrected_value")
+        else:
+            try:
+                _nested_set(data, path, row.get("corrected_value"))
+            except HTTPException:
+                continue
     return data
 
 
-def patch_scrape_queue_extracted_field(supabase, queue_id: str, field_name: str, value):
+def patch_scrape_queue_extracted_field(supabase, queue_id: str, field_name: str, value, entity_type: str | None = None, entity_key: str | None = None):
     rows = (
         supabase.table("scrape_queue")
         .select("extracted_data")
@@ -219,7 +389,18 @@ def patch_scrape_queue_extracted_field(supabase, queue_id: str, field_name: str,
     if not rows:
         raise HTTPException(status_code=404, detail="Queue item not found")
     data = dict(rows[0].get("extracted_data") or {})
-    data[field_name] = value
+    et, ek = _normalize_entity(entity_type, entity_key)
+    path_str = _resolve_entity_path(data, field_name, et, ek)
+    if not path_str:
+        # Post entity referenced an unknown post_name — surface as 422 so
+        # the UI can prompt the admin to refresh; silently skipping would
+        # let a "Correct" click look successful but write nothing.
+        raise HTTPException(status_code=422, detail="Entity not found in extracted data")
+    path = _parse_field_path(path_str)
+    if len(path) == 1:
+        data[path[0]] = value
+    else:
+        _nested_set(data, path, value)
     supabase.table("scrape_queue").update({"extracted_data": data}).eq("id", queue_id).execute()
     return data
 
@@ -229,9 +410,9 @@ def verify_field(queue_id: str, field_name: str, body: ReviewBody | None = None,
     if isinstance(body, dict):
         body = ReviewBody(**body)
     body=body or ReviewBody()
-    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "verified", admin, notes=body.notes, corrected_value=body.corrected_value)
+    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "verified", admin, notes=body.notes, corrected_value=body.corrected_value, entity_type=body.entity_type, entity_key=body.entity_key)
     if body.corrected_value is not None:
-        patch_scrape_queue_extracted_field(sb, queue_id, field_name, body.corrected_value)
+        patch_scrape_queue_extracted_field(sb, queue_id, field_name, body.corrected_value, entity_type=body.entity_type, entity_key=body.entity_key)
     _audit(sb, admin, "scrape.field.verify", entity_type="scrape_field", entity_id=f"{queue_id}:{field_name}", new_value=data)
     return {"ok": True, "field_name": field_name, "reviewer_status": "verified", **data, "effective_extracted_data": build_effective_extracted_data(sb, queue_id)}
 
@@ -241,7 +422,12 @@ def reject_field(queue_id: str, field_name: str, body: ReviewBody | None = None,
     if isinstance(body, dict):
         body = ReviewBody(**body)
     body=body or ReviewBody()
-    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "rejected", admin, notes=body.notes)
+    # Field-level rejects must carry an explanation. Without one the audit
+    # trail can't answer "why was this evidence dismissed?" and a misclick
+    # silently undoes verification work.
+    if not (body.notes or "").strip():
+        raise HTTPException(status_code=422, detail="Rejection reason is required.")
+    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "rejected", admin, notes=body.notes, entity_type=body.entity_type, entity_key=body.entity_key)
     _audit(sb, admin, "scrape.field.reject", entity_type="scrape_field", entity_id=f"{queue_id}:{field_name}", new_value=data)
     return {"ok": True, **data}
 
@@ -251,9 +437,9 @@ def correct_field(queue_id: str, field_name: str, body: ReviewBody | None = None
     if isinstance(body, dict):
         body = ReviewBody(**body)
     body=body or ReviewBody()
-    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "corrected", admin, notes=body.notes, corrected_value=body.corrected_value)
+    sb=get_supabase_admin(); data=_upsert_field_review(sb, queue_id, field_name, "corrected", admin, notes=body.notes, corrected_value=body.corrected_value, entity_type=body.entity_type, entity_key=body.entity_key)
     if body.corrected_value is not None:
-        patch_scrape_queue_extracted_field(sb, queue_id, field_name, body.corrected_value)
+        patch_scrape_queue_extracted_field(sb, queue_id, field_name, body.corrected_value, entity_type=body.entity_type, entity_key=body.entity_key)
     _audit(sb, admin, "scrape.field.correct", entity_type="scrape_field", entity_id=f"{queue_id}:{field_name}", new_value=data)
     return {"ok": True, "field_name": field_name, "reviewer_status": "corrected", "corrected_value": body.corrected_value, **data, "effective_extracted_data": build_effective_extracted_data(sb, queue_id)}
 
@@ -281,12 +467,30 @@ def _shape_source(row: dict[str, Any]) -> dict[str, Any]:
         "notes": row.get("notes"),
         "last_success_at": row.get("last_success_at"),
         "last_error": row.get("last_error"),
+        # Typed failure detail (migration 037) — surfaced so the admin can
+        # filter "401 vs 5xx vs parser_error" instead of grepping `last_error`.
+        "last_error_class": row.get("last_error_class"),
+        "last_error_detail": row.get("last_error_detail"),
         "last_run": row.get("last_scraped_at"),
         "status": "ok" if (row.get("consecutive_fails") or 0) == 0 else "degraded",
         "is_active": row.get("is_active"),
         "is_official_source": row.get("is_official_source"),
         "discovery_only": row.get("discovery_only"),
         "requires_official_confirmation": row.get("requires_official_confirmation"),
+        # Adapter routing (migration 022): expose every typed URL column so
+        # the UI can show which URL the runner will actually hit.
+        "adapter_type": row.get("adapter_type"),
+        "crawl_url": row.get("crawl_url"),
+        "rss_url": row.get("rss_url"),
+        "api_url": row.get("api_url"),
+        "pdf_bulletin_url": row.get("pdf_bulletin_url"),
+        # Conditional-fetch state (migration 044): "has cached headers" is
+        # what operators actually want to know — exact ETag is too noisy.
+        "has_listing_cache": bool(row.get("last_listing_etag") or row.get("last_listing_modified")),
+        "last_listing_modified": row.get("last_listing_modified"),
+        # Concurrency lock (migration 052): non-null means a worker is
+        # currently scraping this source (or the lock is stale).
+        "currently_scraping_at": row.get("currently_scraping_at"),
         "parser_config": row.get("parser_config") or {},
         "scrape_config": row.get("scrape_config") or {},
         "trust_config": row.get("trust_config") or {},
@@ -611,22 +815,54 @@ def list_scrape_queue(
     supabase2 = get_supabase_admin()
     existing = (supabase2.table("recruitments").select("id,name,year,official_notification_url").limit(400).execute().data or [])
     queue_ids = [r["id"] for r in rows if r.get("id")]
+    # ``evidence_by_queue`` is the legacy flat status map kept for callers
+    # that only need "is the field reviewed?". ``evidence_details_by_queue``
+    # carries the per-evidence-row payload (text snippet, page ref,
+    # entity scope, corrected value, reviewer notes) so the UI can render
+    # evidence inline without a follow-up request.
     evidence_by_queue: dict[str, dict[str, str]] = {qid: {} for qid in queue_ids}
+    evidence_details_by_queue: dict[str, list[dict[str, Any]]] = {qid: [] for qid in queue_ids}
     if queue_ids:
         try:
             frows = (
                 supabase.table("extracted_field_evidence")
-                .select("scrape_queue_id, field_name, reviewer_status")
+                .select("scrape_queue_id, field_name, reviewer_status, entity_type, entity_key, evidence_text, page_number, char_start, char_end, confidence, corrected_value, reviewer_notes, reviewed_at, reviewed_by, source_page, alignment_status, document_id")
                 .in_("scrape_queue_id", queue_ids)
                 .execute()
                 .data
                 or []
             )
             for qid, group in group_by(frows, "scrape_queue_id").items():
-                if qid in evidence_by_queue:
-                    evidence_by_queue[qid] = {fr.get("field_name"): fr.get("reviewer_status") for fr in group}
+                if qid not in evidence_by_queue:
+                    continue
+                # Flat status map keeps the legacy contract; post-scoped
+                # rows collapse into the last-seen status, which is fine
+                # because promotability comes from the gate (not this map).
+                evidence_by_queue[qid] = {fr.get("field_name"): fr.get("reviewer_status") for fr in group}
+                evidence_details_by_queue[qid] = [
+                    {
+                        "field_name": fr.get("field_name"),
+                        "reviewer_status": fr.get("reviewer_status"),
+                        "entity_type": fr.get("entity_type") or "other",
+                        "entity_key": fr.get("entity_key"),
+                        "evidence_text": fr.get("evidence_text"),
+                        "page_number": fr.get("page_number"),
+                        "char_start": fr.get("char_start"),
+                        "char_end": fr.get("char_end"),
+                        "confidence": fr.get("confidence"),
+                        "corrected_value": fr.get("corrected_value"),
+                        "reviewer_notes": fr.get("reviewer_notes"),
+                        "reviewed_at": fr.get("reviewed_at"),
+                        "reviewed_by": fr.get("reviewed_by"),
+                        "source_page": fr.get("source_page"),
+                        "alignment_status": fr.get("alignment_status"),
+                        "document_id": fr.get("document_id"),
+                    }
+                    for fr in group
+                ]
         except Exception:
             evidence_by_queue = {qid: {} for qid in queue_ids}
+            evidence_details_by_queue = {qid: [] for qid in queue_ids}
     for r in rows:
         cls = classify_item(r)
         r["relevance_category"] = r.get("relevance_category") or cls["relevance_category"]
@@ -640,6 +876,10 @@ def list_scrape_queue(
         r["duplicate_candidates"] = dups
         r["multiple_posts_detected"] = bool((ext.get("posts") if isinstance(ext, dict) else None))
         r["high_risk_fields"] = sorted(list(_HIGH_RISK_FIELDS))
+        # Flat per-field map is kept for the review UI to show evidence
+        # status at a glance, but it must NOT decide promotability — it
+        # collapses post-scoped fields (a per-post field verified for one
+        # post would look globally verified).
         reviewed = evidence_by_queue.get(r.get("id"), {})
         r["field_evidence_status"] = reviewed
         missing = [f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified", "corrected"}]
@@ -863,8 +1103,10 @@ def promote_queue_item(
     queue_id: str,
     admin: dict = Depends(require_permission("recruitments.manage")),
 ) -> dict[str, Any]:
+    from pydantic import ValidationError
+
     from app.scraping.runner import DuplicatePromotionError, promote_to_recruitments
-    from app.scraping.schemas import ExtractedRecruitment
+    from app.scraping.schemas import VerifiedRecruitmentForPromotion
 
     supabase = get_supabase_admin()
     rows = (
@@ -882,20 +1124,44 @@ def promote_queue_item(
     if item["status"] not in {"approved", "pending", "needs_review"}:
         raise HTTPException(status_code=409, detail=f"Item is already {item['status']}")
     try:
-        # High-risk fields should be reviewed before promotion where evidence table exists.
-        warnings=[]
-        try:
-            frows=(supabase.table("extracted_field_evidence").select("field_name, reviewer_status").eq("scrape_queue_id", queue_id).execute().data or [])
-            reviewed={r.get("field_name"):r.get("reviewer_status") for r in frows}
-            missing=[f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified","corrected"}]
-            if missing:
-                raise HTTPException(status_code=409, detail={"message":"High-risk fields unverified","unverified_fields":missing})
-        except HTTPException:
-            raise
-        except Exception:
-            warnings.append("field_evidence_table_unavailable")
+        gate = evaluate_promotion_gate(supabase, item)
+        if not gate.ok:
+            if gate.reason == "unverified_official_source":
+                raise HTTPException(
+                    status_code=409,
+                    detail={"message": "Official source not resolved", "reason": gate.reason},
+                )
+            if gate.reason == "data_contradictions":
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "Data contradictions must be corrected before promotion",
+                        "reason": gate.reason,
+                        "contradictions": gate.unverified_fields,
+                    },
+                )
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "High-risk fields unverified", "unverified_fields": gate.unverified_fields},
+            )
+        warnings = list(gate.warnings)
         effective_data = build_effective_extracted_data(supabase, queue_id)
-        extracted = ExtractedRecruitment(**effective_data)
+        # Strict shape: the gate verifies the high-risk *values*, but core
+        # structural fields (title / org_type / year / at least one post)
+        # are enforced here so a structurally-incomplete row fails with a
+        # clear 422 instead of a half-written recruitment or a 500.
+        try:
+            extracted = VerifiedRecruitmentForPromotion(**effective_data)
+        except ValidationError as exc:
+            missing = sorted({str(e.get("loc", ["?"])[0]) for e in exc.errors()})
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "Extracted data is missing fields required for promotion",
+                    "reason": "incomplete_for_promotion",
+                    "invalid_fields": missing,
+                },
+            ) from exc
         rec_id = promote_to_recruitments(extracted, supabase, source_id=item.get("source_id"))
     except HTTPException:
         raise
@@ -945,6 +1211,223 @@ def promote_run_endpoint(
     return result
 
 
+
+
+class ResolveOfficialSourceBody(BaseModel):
+    source_id: str = Field(..., min_length=1, max_length=64)
+    official_notification_url: str | None = Field(default=None, max_length=2048)
+    official_apply_url: str | None = Field(default=None, max_length=2048)
+    source_pdf_url: str | None = Field(default=None, max_length=2048)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/admin/scrape/items/{queue_id}/resolve-official-source")
+def resolve_official_source_for_queue_item(
+    queue_id: str,
+    body: ResolveOfficialSourceBody,
+    admin: dict = Depends(require_permission("recruitments.manage")),
+) -> dict[str, Any]:
+    """Mark a queue item as backed by a verified official source.
+
+    Promotion is gated by ``official_source_resolved``; aggregator
+    candidates fail the gate by default. This endpoint lets an admin
+    attach a verified, non-aggregator source to the queue row, patch the
+    aggregator-paraphrased official URLs with the values the admin has
+    confirmed, and flip the gate flag on. Promotion is *not* triggered;
+    the admin still has to click Promote after the gate passes.
+    """
+    _validate_queue_id(queue_id)
+    supabase = get_supabase_admin()
+
+    qrows = (
+        supabase.table("scrape_queue")
+        .select("id, source_id, extracted_data, status")
+        .eq("id", queue_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not qrows:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+    queue_row = qrows[0]
+
+    src_rows = (
+        supabase.table("source_registry")
+        .select("id, source_name, source_type, is_verified, discovery_only, is_active, official_url")
+        .eq("id", body.source_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not src_rows:
+        raise HTTPException(status_code=404, detail="Source not found")
+    source = src_rows[0]
+
+    if not source.get("is_verified"):
+        raise HTTPException(status_code=409, detail={"message": "Selected source is not verified", "reason": "source_unverified"})
+    if source.get("source_type") == "aggregator" or source.get("discovery_only"):
+        raise HTTPException(status_code=409, detail={"message": "Aggregator/discovery-only sources cannot be used as official proof", "reason": "source_discovery_only"})
+    if source.get("is_active") is False:
+        raise HTTPException(status_code=409, detail={"message": "Selected source is inactive", "reason": "source_inactive"})
+
+    # Patch official URLs into extracted_data so promote_to_recruitments
+    # writes the admin-confirmed values into the canonical recruitment row.
+    extracted = dict(queue_row.get("extracted_data") or {})
+    if body.official_notification_url:
+        extracted["official_notification_url"] = body.official_notification_url
+    if body.official_apply_url:
+        extracted["official_apply_url"] = body.official_apply_url
+    if body.source_pdf_url:
+        extracted["source_pdf_url"] = body.source_pdf_url
+
+    primary_url = body.official_notification_url or body.official_apply_url or source.get("official_url") or ""
+    official_host = (urlparse(primary_url).hostname or "").lower() if primary_url else None
+
+    update: dict[str, Any] = {
+        "source_id": body.source_id,
+        "official_source_resolved": True,
+        "official_source_host": official_host,
+        "evidence_required": False,
+        "extracted_data": extracted,
+    }
+    supabase.table("scrape_queue").update(update).eq("id", queue_id).execute()
+
+    _audit(
+        supabase,
+        admin,
+        "scrape.queue.resolve_official_source",
+        entity_type="scrape_queue",
+        entity_id=queue_id,
+        new_value={
+            "source_id": body.source_id,
+            "official_source_host": official_host,
+            "official_notification_url": body.official_notification_url,
+            "official_apply_url": body.official_apply_url,
+            "source_pdf_url": body.source_pdf_url,
+            "notes": body.notes,
+        },
+    )
+    return {
+        "ok": True,
+        "queue_id": queue_id,
+        "source_id": body.source_id,
+        "official_source_resolved": True,
+        "official_source_host": official_host,
+    }
+
+
+_MERGE_PREVIEW_FIELDS = [
+    "official_notification_url",
+    "official_apply_url",
+    "apply_start_date",
+    "apply_end_date",
+    "notification_date",
+    "total_vacancies",
+    "source_pdf_url",
+]
+
+
+@router.get("/admin/scrape/items/{queue_id}/merge-preview/{recruitment_id}")
+def merge_preview(
+    queue_id: str,
+    recruitment_id: str,
+    _admin: dict = Depends(require_permission("recruitments.manage")),
+) -> dict[str, Any]:
+    """Show what merging this queue item into the recruitment would do.
+
+    Returns one row per safe field with current/queue/corrected values
+    and the decision the merge endpoint would take. ``force_available``
+    means the field has a non-empty existing value, so the merge skips
+    it unless the admin forces it. ``update`` means the queue value
+    wins (existing is empty, or the queue value is admin-corrected).
+    """
+    _validate_queue_id(queue_id)
+    supabase = get_supabase_admin()
+    qrows = (
+        supabase.table("scrape_queue")
+        .select("id, source_id, extracted_data")
+        .eq("id", queue_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not qrows:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+    rec_rows = (
+        supabase.table("recruitments")
+        .select("*")
+        .eq("id", recruitment_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rec_rows:
+        raise HTTPException(status_code=404, detail="Recruitment not found")
+    existing = rec_rows[0]
+    queue_extracted = qrows[0].get("extracted_data") or {}
+    effective = build_effective_extracted_data(supabase, queue_id)
+    evidence = (
+        supabase.table("extracted_field_evidence")
+        .select("field_name, reviewer_status, corrected_value")
+        .eq("scrape_queue_id", queue_id)
+        .execute()
+        .data
+        or []
+    )
+    corrected_lookup = {
+        r.get("field_name"): r.get("corrected_value")
+        for r in evidence
+        if r.get("reviewer_status") == "corrected"
+    }
+
+    fields: list[dict[str, Any]] = []
+    for field in _MERGE_PREVIEW_FIELDS:
+        queue_value = queue_extracted.get(field) if isinstance(queue_extracted, dict) else None
+        corrected = corrected_lookup.get(field)
+        effective_value = effective.get(field) if isinstance(effective, dict) else None
+        current = existing.get(field)
+        row = {
+            "field": field,
+            "current_value": current,
+            "queue_value": queue_value,
+            "corrected_value": corrected,
+            "effective_value": effective_value,
+        }
+        if effective_value in (None, ""):
+            row["decision"] = "skip"
+            row["reason"] = "no_queue_value"
+        elif corrected is not None or current in (None, ""):
+            row["decision"] = "update"
+            row["reason"] = "corrected" if corrected is not None else "existing_empty"
+        else:
+            row["decision"] = "force_available"
+            row["reason"] = "existing_value_present"
+        fields.append(row)
+
+    # source_id row gives admins a separate signal for provenance reassignment.
+    queue_source = qrows[0].get("source_id")
+    fields.append({
+        "field": "source_id",
+        "current_value": existing.get("source_id"),
+        "queue_value": queue_source,
+        "corrected_value": None,
+        "effective_value": queue_source,
+        "decision": "skip" if queue_source in (None, "") else (
+            "update" if existing.get("source_id") in (None, "") else "force_available"
+        ),
+        "reason": "existing_value_present" if existing.get("source_id") and queue_source else None,
+    })
+
+    return {
+        "ok": True,
+        "queue_id": queue_id,
+        "recruitment_id": recruitment_id,
+        "fields": fields,
+    }
 
 
 @router.post("/admin/scrape/items/{queue_id}/merge-into/{recruitment_id}")
@@ -1102,11 +1585,12 @@ def eligibility_queue(_admin: dict = Depends(require_permission("scraper.manage"
     )
     queue_ids = [p["id"] for p in pending_rows if p.get("id")]
     evidence_by_queue: dict[str, dict[str, str]] = {qid: {} for qid in queue_ids}
+    evidence_details_by_queue: dict[str, list[dict[str, Any]]] = {qid: [] for qid in queue_ids}
     if queue_ids:
         try:
             frows = (
                 supabase.table("extracted_field_evidence")
-                .select("scrape_queue_id, field_name, reviewer_status")
+                .select("scrape_queue_id, field_name, reviewer_status, entity_type, entity_key, evidence_text, page_number, char_start, char_end, confidence, corrected_value, reviewer_notes, reviewed_at, reviewed_by, source_page, alignment_status, document_id")
                 .in_("scrape_queue_id", queue_ids)
                 .execute()
                 .data
@@ -1114,8 +1598,30 @@ def eligibility_queue(_admin: dict = Depends(require_permission("scraper.manage"
             )
             for qid, group in group_by(frows, "scrape_queue_id").items():
                 evidence_by_queue[qid] = {fr.get("field_name"): fr.get("reviewer_status") for fr in group}
+                evidence_details_by_queue[qid] = [
+                    {
+                        "field_name": fr.get("field_name"),
+                        "reviewer_status": fr.get("reviewer_status"),
+                        "entity_type": fr.get("entity_type") or "other",
+                        "entity_key": fr.get("entity_key"),
+                        "evidence_text": fr.get("evidence_text"),
+                        "page_number": fr.get("page_number"),
+                        "char_start": fr.get("char_start"),
+                        "char_end": fr.get("char_end"),
+                        "confidence": fr.get("confidence"),
+                        "corrected_value": fr.get("corrected_value"),
+                        "reviewer_notes": fr.get("reviewer_notes"),
+                        "reviewed_at": fr.get("reviewed_at"),
+                        "reviewed_by": fr.get("reviewed_by"),
+                        "source_page": fr.get("source_page"),
+                        "alignment_status": fr.get("alignment_status"),
+                        "document_id": fr.get("document_id"),
+                    }
+                    for fr in group
+                ]
         except Exception:
             evidence_by_queue = {qid: {} for qid in queue_ids}
+            evidence_details_by_queue = {qid: [] for qid in queue_ids}
 
     def _shape(p: dict[str, Any]) -> dict[str, Any]:
         d = p.get("extracted_data") or {}
@@ -1138,6 +1644,7 @@ def eligibility_queue(_admin: dict = Depends(require_permission("scraper.manage"
             "normalized_item": normalized if isinstance(normalized, dict) else (d if isinstance(d, dict) else {}),
             "previous_extraction": p.get("raw_payload") if isinstance(p.get("raw_payload"), dict) else None,
             "field_evidence_status": reviewed,
+            "field_evidence_details": evidence_details_by_queue.get(p["id"], []),
             "high_risk_fields": sorted(list(_HIGH_RISK_FIELDS)),
             "unverified_fields": sorted(missing),
             "promotable": len(missing) == 0,

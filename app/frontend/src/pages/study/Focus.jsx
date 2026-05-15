@@ -1,8 +1,18 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Pause, Play, RotateCcw, StopCircle } from "lucide-react";
+import { Link2 } from "lucide-react";
 import { api } from "../../lib/api";
+import FocusReflectionPanel from "../../features/study/components/FocusReflectionPanel";
+import {
+  Eyebrow,
+  StatusDot,
+  StudyCard,
+  SectionHeader,
+  PageHeader,
+  Drawer,
+} from "../../shared/ui/studyos";
 
 const PRESETS = [25, 50, 90];
+const RING_CIRCUMFERENCE = 540; // 2·π·r, r = 86
 
 export default function Focus() {
   const [subject, setSubject] = useState("Quant");
@@ -12,10 +22,23 @@ export default function Focus() {
   const [running, setRunning] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const [summary, setSummary] = useState({ total_hours_7d: 0, week: [] });
+  // Today's tasks — best-effort, used only to offer a "linked task" selector.
+  const [todayTasks, setTodayTasks] = useState([]);
+  const [linkedTaskId, setLinkedTaskId] = useState("");
+  // Holds the just-finished session so the reflection drawer can render.
+  const [reflectionSession, setReflectionSession] = useState(null);
   const tickRef = useRef(null);
 
   useEffect(() => {
     api.get("/api/study/focus/summary").then(setSummary).catch(() => {});
+    // Linked-task selector is optional: if the plan endpoint is unavailable
+    // we simply do not show it.
+    api
+      .get("/api/study/plan")
+      .then((res) => {
+        setTodayTasks(Array.isArray(res?.tasks) ? res.tasks : []);
+      })
+      .catch(() => setTodayTasks([]));
   }, []);
 
   useEffect(() => {
@@ -23,7 +46,7 @@ export default function Focus() {
   }, [duration]);
 
   useEffect(() => {
-    if (!running) return;
+    if (!running) return undefined;
     tickRef.current = setInterval(() => {
       setRemaining((r) => {
         if (r <= 1) {
@@ -38,6 +61,16 @@ export default function Focus() {
     // eslint-disable-next-line
   }, [running]);
 
+  function pickLinkedTask(id) {
+    setLinkedTaskId(id);
+    const t = todayTasks.find((x) => String(x.id) === String(id));
+    if (t) {
+      if (t.subject) setSubject(t.subject);
+      if (t.topic) setTopic(t.topic);
+      else if (t.title) setTopic(t.title);
+    }
+  }
+
   async function start() {
     const s = await api.post("/api/study/focus/start", {
       subject,
@@ -46,19 +79,24 @@ export default function Focus() {
     });
     setSessionId(s.id);
     setRunning(true);
+    setReflectionSession(null);
   }
   function pause() {
     setRunning(false);
   }
-  function reset() {
-    setRunning(false);
-    setSessionId(null);
-    setRemaining(duration * 60);
-  }
   async function finish(auto = false) {
+    const completedMin = Math.round((duration * 60 - remaining) / 60);
     if (sessionId) {
-      const completed = Math.round((duration * 60 - remaining) / 60);
-      await api.post("/api/study/focus/stop", { id: sessionId, completed_min: auto ? duration : completed });
+      await api.post("/api/study/focus/stop", {
+        id: sessionId,
+        completed_min: auto ? duration : completedMin,
+      });
+      // Offer a post-session reflection (kept local — see FocusReflectionPanel).
+      setReflectionSession({
+        subject,
+        topic,
+        completedMin: auto ? duration : completedMin,
+      });
     }
     setRunning(false);
     setSessionId(null);
@@ -68,83 +106,248 @@ export default function Focus() {
 
   const mins = String(Math.floor(remaining / 60)).padStart(2, "0");
   const secs = String(remaining % 60).padStart(2, "0");
-  const pct = ((duration * 60 - remaining) / (duration * 60)) * 100;
+  const progress = duration > 0 ? (duration * 60 - remaining) / (duration * 60) : 0;
+  const dashOffset = RING_CIRCUMFERENCE * (1 - progress);
+  const phase = running ? "FOCUSING" : remaining === 0 ? "COMPLETE" : "READY";
+  const linkedTask = todayTasks.find((x) => String(x.id) === String(linkedTaskId));
+
+  const weekDays = Array.isArray(summary.week) ? summary.week : [];
+  const recent = weekDays.filter((w) => (w.h ?? w.hours ?? 0) > 0).slice(-7);
 
   return (
     <div className="space-y-6" data-testid="focus-page">
-      <div>
-        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Focus timer</div>
-        <h1 className="font-heading text-4xl font-semibold tracking-tight mt-1">Deep work, one block at a time.</h1>
-      </div>
+      <PageHeader
+        eyebrow="Focus · session"
+        title="One task. Timed. With a reflection at the end."
+        sub="The reflection feeds focus consistency back into your study policy — never used for diagnosis, eligibility or recruitment decisions."
+        right={<StatusDot state="live" label="Live · /api/study/focus" />}
+      />
 
-      <div className="grid lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 rounded-3xl bg-dusk-900 text-white p-10 relative overflow-hidden">
-          <div className="absolute -top-20 -right-20 h-64 w-64 rounded-full blur-3xl bg-clay-500/30" />
-          <div className="relative">
-            <div className="text-[11px] uppercase tracking-widest text-white/60">{subject} · {topic}</div>
-            <div className="mt-10 font-heading text-[140px] leading-none font-semibold tracking-tight text-center" data-testid="focus-clock">
-              {mins}:{secs}
+      <div className="grid lg:grid-cols-[1fr_380px] gap-6 items-start">
+        {/* Timer card */}
+        <StudyCard>
+          <div className="flex items-start justify-between gap-6 flex-wrap">
+            <div className="min-w-0">
+              <Eyebrow>Linked task</Eyebrow>
+              <div className="font-heading text-[22px] mt-1.5">
+                {linkedTask?.title || topic || "Focus block"}
+              </div>
+              <div className="text-[12.5px] text-clay-700 mt-1">
+                {[subject, linkedTask ? null : topic].filter(Boolean).join(" · ") || "Set a subject below"}
+              </div>
+              {todayTasks.length > 0 ? (
+                <label className="mt-3 inline-flex items-center gap-2">
+                  <span className="eyebrow inline-flex items-center gap-1">
+                    <Link2 className="h-3 w-3" aria-hidden="true" /> Link a task
+                  </span>
+                  <select
+                    value={linkedTaskId}
+                    onChange={(e) => pickLinkedTask(e.target.value)}
+                    data-testid="focus-linked-task"
+                    className="px-3 py-1.5 rounded-full border border-[#E7DECB] bg-white/70 text-[12px]"
+                  >
+                    <option value="">No linked task</option>
+                    {todayTasks.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.title || t.topic || `Task ${t.id}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
             </div>
-            <div className="mt-6 h-2 rounded-full bg-white/10 overflow-hidden">
-              <div className="h-full bg-clay-500 transition-all" style={{ width: `${pct}%` }} />
+            <div className="text-right shrink-0">
+              <Eyebrow>Preset</Eyebrow>
+              <div className="mt-2 flex gap-1.5 justify-end">
+                {PRESETS.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setDuration(p)}
+                    data-testid={`focus-preset-${p}`}
+                    className={`text-[12px] px-3 py-1.5 rounded-full font-semibold transition ${
+                      duration === p
+                        ? "bg-[#2E2218] text-[#F3EADB]"
+                        : "border border-[#E7DECB] text-clay-700 hover:bg-clay-50"
+                    }`}
+                  >
+                    {p}m
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="mt-8 flex items-center justify-center gap-3 flex-wrap">
-              {!running ? (
-                <button onClick={start} className="btn btn-primary" data-testid="focus-start"><Play className="h-4 w-4" /> Start</button>
-              ) : (
-                <button onClick={pause} className="btn btn-primary" data-testid="focus-pause"><Pause className="h-4 w-4" /> Pause</button>
-              )}
-              <button onClick={reset} className="btn btn-ghost border-white/30 text-white" data-testid="focus-reset"><RotateCcw className="h-4 w-4" /> Reset</button>
-              <button onClick={() => finish(false)} className="btn btn-ghost border-white/30 text-white" data-testid="focus-end"><StopCircle className="h-4 w-4" /> End session</button>
-            </div>
-            <div className="mt-8 flex items-center justify-center gap-2">
-              {PRESETS.map((p) => (
+          </div>
+
+          {/* Timer ring */}
+          <div className="mt-7 flex flex-col items-center">
+            <svg
+              width="240"
+              height="240"
+              viewBox="0 0 200 200"
+              role="img"
+              aria-label={`${mins} minutes ${secs} seconds remaining — ${phase.toLowerCase()}`}
+              data-testid="focus-clock"
+            >
+              <circle cx="100" cy="100" r="86" fill="none" className="ring-bg" strokeWidth="6" />
+              <circle
+                cx="100"
+                cy="100"
+                r="86"
+                fill="none"
+                className="ring-fg"
+                strokeWidth="6"
+                strokeLinecap="round"
+                strokeDasharray={RING_CIRCUMFERENCE}
+                strokeDashoffset={dashOffset}
+                transform="rotate(-90 100 100)"
+              />
+              <text
+                x="100"
+                y="100"
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontFamily="Fraunces, Georgia, serif"
+                fontSize="42"
+                fontWeight="600"
+                fill="#2E2218"
+              >
+                {mins}:{secs}
+              </text>
+              <text
+                x="100"
+                y="135"
+                textAnchor="middle"
+                fontFamily="'JetBrains Mono', monospace"
+                fontSize="10"
+                letterSpacing="2"
+                fill="#6C5038"
+              >
+                {phase}
+              </text>
+            </svg>
+            <div className="mt-4 flex gap-2 flex-wrap justify-center">
+              {!running && remaining > 0 ? (
                 <button
-                  key={p}
-                  onClick={() => setDuration(p)}
-                  data-testid={`focus-preset-${p}`}
-                  className={`px-4 py-1.5 rounded-full text-xs font-semibold transition ${
-                    duration === p ? "bg-white text-dusk-900" : "bg-white/10 text-white/80 hover:bg-white/20"
-                  }`}
+                  onClick={start}
+                  data-testid="focus-start"
+                  className="px-5 py-2.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold text-[13px]"
                 >
-                  {p} min
+                  Start
                 </button>
-              ))}
+              ) : null}
+              {running ? (
+                <button
+                  onClick={pause}
+                  data-testid="focus-pause"
+                  className="px-5 py-2.5 rounded-full bg-[#FBF6EF] border border-[#E7DECB] text-[#2E2218] font-semibold text-[13px]"
+                >
+                  Pause
+                </button>
+              ) : null}
+              <button
+                onClick={() => finish(false)}
+                data-testid="focus-end"
+                className="px-5 py-2.5 rounded-full border border-[#E7DECB] text-clay-700 font-semibold text-[13px]"
+              >
+                End session
+              </button>
+            </div>
+            <div className="mt-3 text-[11px] text-clay-700">
+              Subject and topic feed the session log:
+            </div>
+            <div className="mt-2 flex gap-2 flex-wrap justify-center">
+              <input
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                aria-label="Subject"
+                placeholder="Subject"
+                className="px-3 py-1.5 rounded-full border border-[#E7DECB] bg-white/70 text-[12px] w-40"
+              />
+              <input
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                aria-label="Topic"
+                placeholder="Topic (optional)"
+                className="px-3 py-1.5 rounded-full border border-[#E7DECB] bg-white/70 text-[12px] w-48"
+              />
             </div>
           </div>
-        </div>
+        </StudyCard>
 
-        <div className="soft-card rounded-2xl p-6 space-y-4">
-          <div>
-            <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Session</div>
-            <div className="mt-2 space-y-3">
-              <label className="block">
-                <div className="text-[11px] text-muted-foreground">Subject</div>
-                <input value={subject} onChange={(e) => setSubject(e.target.value)} className="mt-1 w-full px-3 py-2 rounded-lg border border-border bg-white/80 text-sm" />
-              </label>
-              <label className="block">
-                <div className="text-[11px] text-muted-foreground">Topic (optional)</div>
-                <input value={topic} onChange={(e) => setTopic(e.target.value)} className="mt-1 w-full px-3 py-2 rounded-lg border border-border bg-white/80 text-sm" />
-              </label>
+        {/* Right rail */}
+        <div className="space-y-6">
+          <StudyCard>
+            <SectionHeader
+              eyebrow="Recent sessions"
+              title="Last 7 days."
+              right={<StatusDot state="live" label="" />}
+            />
+            <div className="font-heading text-[28px] leading-none">
+              {summary.total_hours_7d || 0}
+              <span className="text-[15px] text-clay-700"> h</span>
             </div>
-          </div>
+            {recent.length ? (
+              <ul className="mt-3 space-y-1">
+                {recent.map((w, i) => {
+                  const hrs = w.h ?? w.hours ?? 0;
+                  return (
+                    <li
+                      key={w.date || w.d || `w-${i}`}
+                      className="grid grid-cols-[1fr_60px] gap-3 items-center text-[12.5px] py-1.5 border-b border-[#EFE7D4] last:border-0"
+                    >
+                      <span className="num-mono text-clay-700">{w.d || w.date}</span>
+                      <span className="num-mono text-clay-700 text-right">{hrs}h</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="mt-3 text-[12.5px] text-clay-700">
+                No focus sessions logged in the last 7 days. Start a block to build your curve.
+              </p>
+            )}
+          </StudyCard>
 
-          <div className="pt-4 border-t border-border">
-            <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Last 7 days</div>
-            <div className="mt-3 font-heading text-3xl font-semibold">{summary.total_hours_7d} <span className="text-base text-muted-foreground">h</span></div>
-            <div className="mt-3 flex items-end h-16 gap-2">
-              {(summary.week || []).map((w, idx) => (
-                <div key={w.date || w.d || `week-${idx}`} className="flex-1 flex flex-col items-center gap-1">
-                  <div className="w-full rounded-md bg-clay-100 flex items-end h-full">
-                    <div className="w-full bg-clay-500 rounded-md" style={{ height: `${Math.min(w.h * 14, 100)}%` }} />
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">{w.d}</div>
-                </div>
-              ))}
+          <StudyCard className="!bg-[#F7F5FB] !border-[#DDDAE3]">
+            <Eyebrow>After-session signal</Eyebrow>
+            <h3 className="font-heading text-[18px] mt-1.5 text-[#31293B]">
+              What this session affects
+            </h3>
+            <ul className="mt-3 space-y-1.5 text-[12.5px] text-[#31293B]">
+              <li className="flex gap-2 items-center">
+                <span className="chip chip-user">u· focus-consistency</span>
+                <span>updates focus consistency score</span>
+              </li>
+              <li className="flex gap-2 items-center">
+                <span className="chip chip-engine">⚙ persona-recompute</span>
+                <span>may trigger a persona snapshot recompute</span>
+              </li>
+              <li className="flex gap-2 items-center">
+                <span className="chip chip-engine">⚙ task-size</span>
+                <span>may shrink or expand future task size</span>
+              </li>
+            </ul>
+            <div className="rule mt-4 pt-3 text-[11px] text-[#524864]">
+              Used anonymously inside Study OS only — never for diagnosis, eligibility, or
+              recruitment decisions.
             </div>
-          </div>
+          </StudyCard>
         </div>
       </div>
+
+      <Drawer
+        open={!!reflectionSession}
+        onClose={() => setReflectionSession(null)}
+        title="Session reflection · 30 seconds"
+      >
+        {reflectionSession ? (
+          <FocusReflectionPanel
+            bare
+            session={reflectionSession}
+            onDismiss={() => setReflectionSession(null)}
+          />
+        ) : null}
+      </Drawer>
     </div>
   );
 }

@@ -24,6 +24,7 @@ class Reservations(_Base):
     pwd_type: str | None = None
     disability_code: str | None = None
     is_ex_serviceman: bool = False
+    service_years: int | None = None
     govt_employee: bool = False
     family_income_annual: float | None = None
     ews_assets: dict = Field(default_factory=dict)
@@ -34,6 +35,17 @@ class Reservations(_Base):
     def _norm_cat(cls, v):
         return (str(v).strip().lower() or None) if v is not None else None
 
+    @field_validator("service_years", mode="before")
+    @classmethod
+    def _norm_service_years(cls, v):
+        if v is None or v == "":
+            return None
+        try:
+            iv = int(v)
+        except (TypeError, ValueError):
+            return None
+        return iv if iv >= 0 else None
+
 
 class EducationRow(_Base):
     level: str
@@ -42,6 +54,10 @@ class EducationRow(_Base):
     graduation_year: int | None = None
     percentage: float | None = None
     cgpa: float | None = None
+    # Maximum value on the candidate's CGPA scale (migration 051). Nullable;
+    # the engine falls back to 10.0 when not set, preserving today's
+    # behaviour for rows that pre-date this column.
+    cgpa_basis: float | None = None
     is_completed: bool = False
 
     @field_validator("percentage")
@@ -58,8 +74,17 @@ class EducationRow(_Base):
     def _cgpa(cls, v):
         if v is None:
             return v
-        if not (0 <= float(v) <= 10):
-            raise ValueError("cgpa out of range")
+        if float(v) < 0:
+            raise ValueError("cgpa must be non-negative")
+        return float(v)
+
+    @field_validator("cgpa_basis")
+    @classmethod
+    def _cgpa_basis(cls, v):
+        if v is None:
+            return None
+        if float(v) <= 0:
+            raise ValueError("cgpa_basis must be positive")
         return float(v)
 
 
@@ -93,7 +118,11 @@ class Preferences(_Base):
 
 
 class AttemptRow(_Base):
+    # Engine-side identity for an exam-family attempt count. Prefer the
+    # canonical FK to ``public.exams`` (``exam_ref_id``) when available;
+    # legacy ``exam_id`` is the free-form text the older UI wrote.
     exam_id: str
+    exam_ref_id: str | None = None
     attempts_used: int = 0
 
     @field_validator("attempts_used")

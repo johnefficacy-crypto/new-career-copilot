@@ -12,9 +12,10 @@ Rules covered (matching the reference repo, no additions):
        allowed-disciplines match. Final-year ⇒ ``is_conditional``.
     3. Attempts — per-category attempt limit with null fallback.
     4. Required exam credentials — set membership.
-    5. Nationality — Indian only (matches reference behaviour).
-    6. Domicile — only enforced when ``org_state`` is non-null
-       (state PSC posts).
+    5. Nationality — Indian only. Missing nationality is treated as
+       unverifiable (conditional), not as a silent pass.
+    6. Domicile — only enforced when the canonical criteria explicitly
+       set ``requires_domicile=True`` (in conjunction with ``org_state``).
 
 This module is pure — no I/O, no Supabase imports — so it is fully
 testable and reusable from server actions, API routes, or workers.
@@ -23,8 +24,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from .discipline_aliases import disciplines_intersect, word_boundary_match
+from .education_taxonomy import level_rank
 from .schemas import (
-    AttemptLimit,
     BatchEligibilityResult,
     EligibilityCheck,
     EligibilityCheckResult,
@@ -36,20 +38,37 @@ from .schemas import (
     UserProfile,
 )
 
+# Bump whenever rule semantics change so cached eligibility_results rows are
+# treated as stale and recomputed on the next runner pass. Persisted to
+# `eligibility_results.rules_version` by the runner; compared on read for the
+# skip-cache decision.
+#
+# CONTRIBUTOR NOTE: any PR that changes how a verdict is computed — a new
+# rule, a changed comparison, a new field the engine reads — MUST bump this
+# constant in the same PR. Otherwise cached rows written under the old
+# semantics keep being served.
+#
+# History:
+#   "2026.05" — first versioned cut: exact-age, strict cutoff, explicit
+#               domicile flag, normalized OBC attempt matching, unverifiable
+#               propagation, unknown-category guard.
+#   "2026.06" — scope-aware attempt limits (exam_family/recruitment/post),
+#               issuer-aware certification matching, per-row CGPA conversion
+#               basis, discipline alias registry, education-level taxonomy.
+#               (These landed across separate PRs without a version bump;
+#               this catches the cache up in one pass.)
+RULES_VERSION = "2026.06"
+
 # ─── Education level ordering ────────────────────────────────────────────────
-
-_EDU_LEVEL_ORDER: dict[str, int] = {
-    "10th": 1,
-    "12th": 2,
-    "diploma": 3,
-    "graduate": 4,
-    "postgraduate": 5,
-    "phd": 6,
-}
+#
+# The taxonomy module owns alias normalisation (e.g. "B.Tech" / "Bachelor's"
+# / "BSc" all resolve to the canonical "graduate" slug) and ranks. The
+# engine keeps a thin alias `_edu_level_rank` so the existing call sites
+# read the same way.
 
 
-def _edu_level_rank(level: str) -> int:
-    return _EDU_LEVEL_ORDER.get((level or "").lower(), 0)
+def _edu_level_rank(level: str | None) -> int:
+    return level_rank(level)
 
 
 # ─── Category normalisation (state OBC variants → "obc", PwBD compounds) ─────
@@ -73,17 +92,37 @@ _OBC_VARIANTS: set[str] = {
 }
 
 
+_CATEGORY_BUCKETS: dict[str, str] = {
+    **{token: "obc" for token in _OBC_VARIANTS},
+    "sc": "sc",
+    "pwd_sc_st": "sc",
+    "st": "st",
+    "ews": "ews",
+    "general": "general",
+}
+
+
+def _canonical_category(raw: str | None) -> str | None:
+    """Map a known category token to its canonical bucket, or ``None`` if unrecognised.
+
+    Use this when matching canonical criteria against a user — an unknown
+    spelling must NOT silently collapse to ``"general"``, otherwise a
+    category-specific rule with an unexpected token (typo, new state variant,
+    bad scraper value) would wrongly apply to general candidates.
+    """
+    if raw is None:
+        return None
+    cat = raw.lower().strip()
+    if not cat:
+        return None
+    return _CATEGORY_BUCKETS.get(cat)
+
+
 def _normalize_category(raw: str | None) -> str:
-    cat = (raw or "general").lower().strip()
-    if cat in _OBC_VARIANTS:
-        return "obc"
-    if cat in ("sc", "pwd_sc_st"):
-        return "sc"
-    if cat == "st":
-        return "st"
-    if cat == "ews":
-        return "ews"
-    return "general"
+    # Collapse to "general" for relaxation-side defaults: an unrecognised
+    # user category should get the most conservative (no extra) relaxation,
+    # not a free pass. Matching code should use _canonical_category instead.
+    return _canonical_category(raw) or "general"
 
 
 def _category_relaxation_years(profile: UserProfile) -> int:
@@ -113,6 +152,16 @@ def _parse_iso_date(value: str) -> datetime:
     if "T" in value:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
     return datetime.fromisoformat(value + "T00:00:00+00:00")
+
+
+def _exact_age_years(dob: datetime, cutoff: datetime) -> int:
+    # Calendar age "as on cutoff date": full-year difference, minus one if
+    # the birthday has not yet occurred by the cutoff. Handles leap-year DOB
+    # (Feb 29) by comparing (month, day) directly against the cutoff.
+    age = cutoff.year - dob.year
+    if (cutoff.month, cutoff.day) < (dob.month, dob.day):
+        age -= 1
+    return age
 
 
 def _normalise_token(value: str | None) -> str:
@@ -160,6 +209,79 @@ def _notice_age_relaxation(profile: UserProfile, criteria: PostCriteria) -> tupl
 # ─── Core engine ─────────────────────────────────────────────────────────────
 
 
+def _attempts_used_for_limit(
+    limit: AttemptLimit,
+    criteria: PostCriteria,
+    exam_attempts: list[UserExamAttempts],
+) -> int | None:
+    """Look up the ``attempts_used`` count for a given limit row.
+
+    Returns the count, or ``None`` when the count cannot be determined
+    unambiguously — the caller treats ``None`` as an *unverifiable*
+    attempt rule rather than guessing.
+
+    Routing by `limit.attempt_scope`:
+      * ``"post"``: strict match on
+        ``(attempt_scope, recruitment_id, post_id)``. No match → 0.
+      * ``"recruitment"``: strict match on
+        ``(attempt_scope, recruitment_id)``. No match → 0.
+      * ``"exam_family"``:
+          - When the recruitment carries a canonical ``exam_id``: strict
+            match on ``a.exam_id == recruitment_exam_id``. No match → 0.
+          - When the recruitment has no ``exam_id`` (not backfilled):
+            fall back ONLY if the candidate has at most one exam-family
+            attempt row — then it is unambiguous which family applies.
+            With two or more rows the engine cannot tell which family
+            this recruitment belongs to, so it returns ``None``
+            (unverifiable) instead of borrowing an arbitrary count.
+    """
+    scope = limit.attempt_scope
+    if scope == "post":
+        match = next(
+            (
+                a for a in exam_attempts
+                if a.attempt_scope == "post"
+                and a.recruitment_id == criteria.recruitment_id
+                and a.post_id == criteria.post_id
+            ),
+            None,
+        )
+        return match.attempts_used if match is not None else 0
+
+    if scope == "recruitment":
+        match = next(
+            (
+                a for a in exam_attempts
+                if a.attempt_scope == "recruitment"
+                and a.recruitment_id == criteria.recruitment_id
+            ),
+            None,
+        )
+        return match.attempts_used if match is not None else 0
+
+    # exam_family
+    rec_exam_id = criteria.recruitment_exam_id
+    family_attempts = [a for a in exam_attempts if a.attempt_scope == "exam_family"]
+
+    if rec_exam_id is not None:
+        # Strict: the recruitment knows its exam family. Match exactly;
+        # an attempt row in a *different* family contributes 0 here.
+        match = next(
+            (a for a in family_attempts if a.exam_id == rec_exam_id),
+            None,
+        )
+        return match.attempts_used if match is not None else 0
+
+    # Recruitment has no exam_id. Lenient fallback is only safe when it
+    # cannot be ambiguous.
+    if not family_attempts:
+        return 0
+    if len(family_attempts) == 1:
+        return family_attempts[0].attempts_used
+    # Two or more candidate rows and nothing to disambiguate on.
+    return None
+
+
 def check_eligibility(
     profile: UserProfile,
     education: list[UserEducation],
@@ -170,22 +292,59 @@ def check_eligibility(
 ) -> EligibilityCheckResult:
     checks: list[EligibilityCheck] = []
     is_conditional = False
+    # Each unverifiable failure carries `is_unverifiable=True` on the
+    # EligibilityCheck itself (see schemas.py). The aggregation below uses
+    # that structured flag rather than a side-channel rule-name set, so
+    # downstream consumers reading the persisted `checks` JSON see the
+    # same conditional/hard distinction the engine made.
     user_certs: list[UserCertification] = user_certifications or []
 
     # ── 1. Age ──────────────────────────────────────────────────────────────
     if criteria.age_criteria is not None:
         ac = criteria.age_criteria
         dob_str = profile.dob or profile.date_of_birth
-        try:
-            cutoff = _parse_iso_date(ac.cutoff_date) if ac.cutoff_date else datetime.now(timezone.utc)
-        except Exception:
-            cutoff = datetime.now(timezone.utc)
 
-        if not dob_str:
+        cutoff: datetime | None = None
+        cutoff_invalid = False
+        if ac.cutoff_date:
+            try:
+                cutoff = _parse_iso_date(ac.cutoff_date)
+            except Exception:
+                cutoff_invalid = True
+
+        if cutoff_invalid:
+            is_conditional = True
             checks.append(
                 EligibilityCheck(
                     rule="age",
                     passed=False,
+                    is_unverifiable=True,
+                    detail=(
+                        f"Age criterion is unverifiable: cutoff_date "
+                        f"{ac.cutoff_date!r} is not a valid date."
+                    ),
+                )
+            )
+        elif cutoff is None:
+            is_conditional = True
+            checks.append(
+                EligibilityCheck(
+                    rule="age",
+                    passed=False,
+                    is_unverifiable=True,
+                    detail=(
+                        "Age criterion is unverifiable: no cutoff_date provided "
+                        "in canonical criteria."
+                    ),
+                )
+            )
+        elif not dob_str:
+            is_conditional = True
+            checks.append(
+                EligibilityCheck(
+                    rule="age",
+                    passed=False,
+                    is_unverifiable=True,
                     detail="Date of birth not provided — cannot verify age eligibility.",
                 )
             )
@@ -193,15 +352,20 @@ def check_eligibility(
             try:
                 dob = _parse_iso_date(dob_str)
             except Exception:
+                is_conditional = True
                 checks.append(
-                    EligibilityCheck(rule="age", passed=False, detail="Invalid date of birth.")
+                    EligibilityCheck(
+                        rule="age",
+                        passed=False,
+                        is_unverifiable=True,
+                        detail="Invalid date of birth.",
+                    )
                 )
             else:
-                age_at_cutoff = int(
-                    (cutoff - dob).total_seconds() // (365.25 * 24 * 60 * 60)
-                )
+                age_at_cutoff = _exact_age_years(dob, cutoff)
 
                 notice_relaxation = _notice_age_relaxation(profile, criteria)
+                age_unverifiable_note: str | None = None
                 if notice_relaxation is None and profile.ex_serviceman and profile.service_years is not None:
                     cat_relax = _category_relaxation_years(profile)
                     age_for_max = age_at_cutoff - profile.service_years - 3
@@ -211,6 +375,16 @@ def check_eligibility(
                         + (f" + {cat_relax} yr category relaxation" if cat_relax > 0 else "")
                     )
                     age_for_max -= cat_relax
+                elif notice_relaxation is None and profile.ex_serviceman and profile.service_years is None:
+                    # Ex-serviceman relaxation depends on rendered service. Without
+                    # service_years we cannot apply or deny the relaxation — mark
+                    # the rule unverifiable rather than silently falling back.
+                    age_unverifiable_note = (
+                        "Ex-serviceman status set but service_years is missing — "
+                        "cannot verify ex-serviceman age relaxation."
+                    )
+                    age_for_max = age_at_cutoff
+                    relax_note = "ex-serviceman service_years missing"
                 else:
                     relaxation = _category_relaxation_years(profile)
                     total_relaxation = (
@@ -232,10 +406,17 @@ def check_eligibility(
                     elif max_age_cap is not None:
                         effective_max_age = max_age_cap
 
-                min_ok = ac.min_age is None or age_at_cutoff >= ac.min_age
-                max_ok = effective_max_age is None or age_for_max <= effective_max_age
-
-                if not min_ok:
+                if age_unverifiable_note is not None:
+                    is_conditional = True
+                    checks.append(
+                        EligibilityCheck(
+                            rule="age",
+                            passed=False,
+                            is_unverifiable=True,
+                            detail=age_unverifiable_note,
+                        )
+                    )
+                elif not (ac.min_age is None or age_at_cutoff >= ac.min_age):
                     checks.append(
                         EligibilityCheck(
                             rule="age",
@@ -246,7 +427,7 @@ def check_eligibility(
                             ),
                         )
                     )
-                elif not max_ok:
+                elif not (effective_max_age is None or age_for_max <= effective_max_age):
                     checks.append(
                         EligibilityCheck(
                             rule="age",
@@ -370,11 +551,16 @@ def check_eligibility(
                 marks_ok = True
                 marks_detail = ""
                 if ec.min_percentage is not None:
-                    user_pct = (
-                        edu.percentage
-                        if edu.percentage is not None
-                        else (edu.cgpa * 10 if edu.cgpa is not None else None)
-                    )
+                    # Convert CGPA → percentage using the candidate's actual
+                    # transcript scale. Legacy default is 10.0 (most Indian
+                    # universities) for rows without an explicit basis.
+                    if edu.percentage is not None:
+                        user_pct = edu.percentage
+                    elif edu.cgpa is not None:
+                        cgpa_basis = edu.cgpa_basis if edu.cgpa_basis is not None else 10.0
+                        user_pct = (edu.cgpa / cgpa_basis) * 100.0
+                    else:
+                        user_pct = None
                     if user_pct is None:
                         marks_ok = False
                         marks_detail = (
@@ -393,15 +579,22 @@ def check_eligibility(
                 discipline_ok = True
                 discipline_detail = ""
                 if ec.allowed_disciplines and len(ec.allowed_disciplines) > 0:
-                    user_stream = (edu.stream or "").lower()
-                    user_degree = (edu.degree or "").lower()
                     flat: list[str] = []
                     for v in ec.allowed_disciplines.values():
                         if isinstance(v, list):
-                            flat.extend(str(x).lower() for x in v)
+                            flat.extend(str(x) for x in v)
                         elif isinstance(v, str):
-                            flat.append(v.lower())
-                    matched = any(d in user_stream or d in user_degree for d in flat)
+                            flat.append(v)
+                    user_forms = [edu.stream, edu.degree]
+                    # Two-step match: prefer the alias registry (canonical
+                    # buckets) and fall back to a whole-word match when
+                    # either side has no canonical mapping. Legacy raw
+                    # substring matching had clear false positives
+                    # ("cs" ⊂ "physics", "me" ⊂ "medicine") which the
+                    # registry + word-boundary fallback eliminates.
+                    matched = disciplines_intersect(user_forms, flat)
+                    if not matched:
+                        matched = word_boundary_match(user_forms, flat)
                     if not matched:
                         discipline_ok = False
                         discipline_detail = (
@@ -483,36 +676,60 @@ def check_eligibility(
 
     # ── 3. Attempt limit ────────────────────────────────────────────────────
     if criteria.attempt_limits:
-        user_category = (profile.category or "general").lower()
-        record = next(
-            (a for a in exam_attempts if a.recruitment_id == criteria.recruitment_id), None
-        )
-        attempts_used = record.attempts_used if record else 0
+        user_bucket = _canonical_category(profile.category)
+        user_category = user_bucket or "general"
 
+        # Only match a category-specific limit when BOTH sides canonicalise to
+        # the same known bucket. An unrecognised limit category must not
+        # silently collapse to "general" and apply to general candidates.
         applicable = next(
             (
                 limit
                 for limit in criteria.attempt_limits
-                if (limit.category or "").lower() == user_category
+                if user_bucket is not None
+                and _canonical_category(limit.category) == user_bucket
             ),
             None,
         ) or next((limit for limit in criteria.attempt_limits if limit.category is None), None)
 
         if applicable is not None and applicable.max_attempts is not None:
-            max_attempts = applicable.max_attempts
-            passed = attempts_used < max_attempts
-            checks.append(
-                EligibilityCheck(
-                    rule="attempts",
-                    passed=passed,
-                    detail=(
-                        f"{attempts_used} of {max_attempts} attempts used."
-                        if passed
-                        else f"Attempt limit reached: {attempts_used}/{max_attempts} "
-                        f"for category {user_category}."
-                    ),
-                )
+            attempts_used = _attempts_used_for_limit(
+                applicable, criteria, exam_attempts
             )
+            max_attempts = applicable.max_attempts
+            if attempts_used is None:
+                # Exam-family scope, recruitment has no canonical exam_id,
+                # and the candidate has multiple exam-family attempt rows —
+                # the engine can't tell which family this limit applies to.
+                # Surface as unverifiable rather than guessing a count.
+                is_conditional = True
+                checks.append(
+                    EligibilityCheck(
+                        rule="attempts",
+                        passed=False,
+                        is_unverifiable=True,
+                        detail=(
+                            "Attempt limit is unverifiable: this recruitment "
+                            "has no exam-family link and the candidate has "
+                            "multiple exam-family attempt records — cannot "
+                            "determine which applies."
+                        ),
+                    )
+                )
+            else:
+                passed = attempts_used < max_attempts
+                checks.append(
+                    EligibilityCheck(
+                        rule="attempts",
+                        passed=passed,
+                        detail=(
+                            f"{attempts_used} of {max_attempts} attempts used."
+                            if passed
+                            else f"Attempt limit reached: {attempts_used}/{max_attempts} "
+                            f"for category {user_category}."
+                        ),
+                    )
+                )
 
     # ── 4. Required exam credentials ────────────────────────────────────────
     if criteria.required_exam_keys:
@@ -535,36 +752,114 @@ def check_eligibility(
 
     # ── 5. Certification criteria ──────────────────────────────────────────
     if criteria.certification_criteria:
-        user_names = {((c.get("certification_name") if isinstance(c, dict) else getattr(c, "certification_name", None)) or "").strip().lower() for c in user_certs}
+        # Carry full (name, issuer) pairs from the user side so we can gate
+        # on issuer when canonical criteria declares one. The previous
+        # implementation collapsed user certs to a names-only set, so a
+        # criterion like {"name": "PMP", "issuer": "PMI"} would pass even
+        # when the user's PMP was from an unrelated body.
+        user_pairs: list[tuple[str, str]] = []
+        for c in user_certs:
+            if isinstance(c, dict):
+                name = (c.get("certification_name") or "").strip().lower()
+                issuer = (c.get("issuing_body") or "").strip().lower()
+            else:
+                name = (getattr(c, "certification_name", None) or "").strip().lower()
+                issuer = (getattr(c, "issuing_body", None) or "").strip().lower()
+            if name:
+                user_pairs.append((name, issuer))
+
         for cc in criteria.certification_criteria:
             target = (cc.name or "").strip().lower()
             aliases = {(a or "").strip().lower() for a in (cc.aliases or [])}
-            matched = bool(target and target in user_names) or bool(aliases.intersection(user_names))
-            if cc.mandatory:
-                checks.append(EligibilityCheck(rule="certification", passed=matched, detail=(f"Required certification matched: {cc.name}." if matched else f"Missing required certification: {cc.name or 'unspecified'}.")))
+            required_issuer = (cc.issuer or "").strip().lower()
+
+            name_match_pairs = [
+                (uname, uissuer)
+                for (uname, uissuer) in user_pairs
+                if (target and uname == target) or uname in aliases
+            ]
+
+            if required_issuer:
+                # Both name AND issuer must match. Empty/missing user
+                # issuing_body never satisfies a required issuer.
+                if not name_match_pairs:
+                    matched = False
+                    detail = (
+                        f"Missing required certification: "
+                        f"{cc.name or 'unspecified'} (issued by {cc.issuer})."
+                    )
+                elif any(uissuer == required_issuer for (_, uissuer) in name_match_pairs):
+                    matched = True
+                    detail = (
+                        f"Required certification matched: "
+                        f"{cc.name} issued by {cc.issuer}."
+                    )
+                else:
+                    matched = False
+                    detail = (
+                        f"Certification {cc.name!r} present but must be "
+                        f"issued by {cc.issuer}."
+                    )
             else:
-                checks.append(EligibilityCheck(rule="certification_optional", passed=True, detail=f"Optional certification: {cc.name or 'unspecified'}."))
+                matched = bool(name_match_pairs)
+                detail = (
+                    f"Required certification matched: {cc.name}."
+                    if matched
+                    else f"Missing required certification: {cc.name or 'unspecified'}."
+                )
+
+            if cc.mandatory:
+                checks.append(
+                    EligibilityCheck(
+                        rule="certification", passed=matched, detail=detail
+                    )
+                )
+            else:
+                checks.append(
+                    EligibilityCheck(
+                        rule="certification_optional",
+                        passed=True,
+                        detail=f"Optional certification: {cc.name or 'unspecified'}.",
+                    )
+                )
 
     # ── 5. Nationality ──────────────────────────────────────────────────────
-    nationality = (profile.nationality or "indian").lower()
-    nationality_ok = nationality == "indian"
-    checks.append(
-        EligibilityCheck(
-            rule="nationality",
-            passed=nationality_ok,
-            detail=(
-                "Indian nationality confirmed."
-                if nationality_ok
-                else "Only Indian nationals are eligible."
-            ),
+    if profile.nationality is None or not profile.nationality.strip():
+        is_conditional = True
+        checks.append(
+            EligibilityCheck(
+                rule="nationality",
+                passed=False,
+                is_unverifiable=True,
+                detail=(
+                    "Nationality not provided — cannot verify eligibility. "
+                    "Indian nationality is required."
+                ),
+            )
         )
-    )
+    else:
+        nationality = profile.nationality.lower().strip()
+        nationality_ok = nationality == "indian"
+        checks.append(
+            EligibilityCheck(
+                rule="nationality",
+                passed=nationality_ok,
+                detail=(
+                    "Indian nationality confirmed."
+                    if nationality_ok
+                    else "Only Indian nationals are eligible."
+                ),
+            )
+        )
 
     # ── 6. Domicile / state PSC ─────────────────────────────────────────────
-    if criteria.org_state:
+    # Domicile is only enforced when the canonical criteria explicitly say so
+    # (`requires_domicile=True`). `org_state` alone is organisational metadata
+    # — many state-organisation posts are open to all-India candidates.
+    if criteria.requires_domicile and criteria.org_state:
         user_state = (profile.domicile_state or "").lower().strip()
         post_state = criteria.org_state.lower().strip()
-        domicile_ok = user_state == post_state
+        domicile_ok = bool(user_state) and user_state == post_state
         checks.append(
             EligibilityCheck(
                 rule="domicile",
@@ -583,8 +878,15 @@ def check_eligibility(
     # ── Aggregate ───────────────────────────────────────────────────────────
     failed_checks = [c for c in checks if not c.passed]
     is_eligible = len(failed_checks) == 0
+    # Conditional eligibility means: the candidate is not currently eligible,
+    # but no rule has actually disqualified them — every failure is either
+    # education/exam/language (recoverable on completion) or an unverifiable
+    # input gap (recoverable on data correction). A hard rule failure (age
+    # too high, wrong domicile, etc.) must NOT surface as conditional.
     non_edu_failures = [
-        c for c in failed_checks if c.rule not in ("education", "exam_credential", "language")
+        c for c in failed_checks
+        if c.rule not in ("education", "exam_credential", "language")
+        and not c.is_unverifiable
     ]
     final_conditional = is_conditional and not non_edu_failures and not is_eligible
 
@@ -612,4 +914,3 @@ def check_eligibility_batch(
         )
         for pc in post_criteria_list
     ]
-    user_certs: list[UserCertification] = getattr(profile, "_user_certifications", []) or []

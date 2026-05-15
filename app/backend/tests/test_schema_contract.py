@@ -53,6 +53,9 @@ REQUIRED_COLUMNS = {
         "published_by",
         "published_at",
         "review_notes",
+        # Migration 050: back-link to public.exams for exam-family attempt
+        # matching.
+        "exam_id",
     },
     "organizations": {
         "id",
@@ -91,6 +94,11 @@ REQUIRED_COLUMNS = {
         "discovery_only",
         "verification_status",
         "last_error",
+        "last_error_class",
+        "last_error_message",
+        "last_error_at",
+        "last_error_http_status",
+        "last_error_url",
         "last_success_at",
         "last_scraped_at",
         "last_changed_at",
@@ -101,6 +109,7 @@ REQUIRED_COLUMNS = {
         "added_by",
         "insecure_tls",
         "updated_at",
+        "currently_scraping_at",
     },
     "scrape_runs": {
         "id",
@@ -129,6 +138,7 @@ REQUIRED_COLUMNS = {
         "pay_level",
         "job_type",
         "language_requirements",
+        "requires_domicile",
     },
     "age_criteria": {
         "id",
@@ -143,10 +153,13 @@ REQUIRED_COLUMNS = {
         "recruitment_id",
         "post_id",
         "profile_hash",
+        "criteria_hash",
+        "rules_version",
         "is_eligible",
         "is_conditional",
         "fail_reasons",
         "pass_reasons",
+        "checks",
         "computed_at",
     },
     "eligibility_recompute_queue": {
@@ -177,6 +190,7 @@ REQUIRED_COLUMNS = {
         "data_quality_score",
         "status",
         "duplicate_of",
+        "duplicate_recruitment_id",
         "reviewer_id",
         "reviewer_notes",
         "reviewed_at",

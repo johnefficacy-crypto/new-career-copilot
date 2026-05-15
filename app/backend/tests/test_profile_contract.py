@@ -107,6 +107,17 @@ class _SB:
     def table(self, name):
         return _Q(name, self.db)
 
+    def rpc(self, fn, params):
+        # `enqueue_eligibility_recompute` (PR #132) calls supabase.rpc first.
+        # This mock has no RPC engine; raise the PGRST202 "function not
+        # found" signal so the helper falls through to its legacy Python
+        # path, which only needs the table()/select()/insert() calls this
+        # mock already supports.
+        raise RuntimeError(
+            "PGRST202 Could not find the function "
+            "public.enqueue_eligibility_recompute in the schema cache"
+        )
+
 
 def _user():
     return {"id": "u1", "email": "u1@example.com", "name": "User"}

@@ -1,0 +1,1052 @@
+"""Network fetch boundary for the scraper.
+
+Phase 4 of the scraper audit pulled the HTTP fetch primitives out of
+``extractor.py`` so that:
+
+* extraction stays focused on parsing/AI calls
+* the runner can use a structured ``FetchResult`` (status, final URL,
+  content hash, etc.) instead of just a bare string
+
+Every adapter is implemented here: HTML via :func:`fetch`, plus
+:func:`fetch_rss`, :func:`fetch_api`, :func:`fetch_pdf`,
+:func:`fetch_sitemap`, and :func:`fetch_sitemap_recursive`. The
+``fetch_*`` variants return ``(FetchResult, parsed_entries)`` because
+their callers need the parsed list; :func:`fetch` is the single
+dispatch point that returns just a ``FetchResult`` — it delegates to
+the right adapter based on ``adapter_type`` and drops the parsed
+entries (callers that need them call the specialised function
+directly).
+"""
+from __future__ import annotations
+
+import hashlib
+import logging
+import re
+from dataclasses import dataclass
+from typing import Any, Final
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+import httpx
+
+
+logger = logging.getLogger("career_copilot.scraping.fetcher")
+
+
+_DEFAULT_HEADERS: Final[dict[str, str]] = {
+    "User-Agent": "Mozilla/5.0 (compatible; CareerCopilot-Scraper/1.0; +https://careercopilot.in/bot)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-IN,en;q=0.9",
+}
+
+
+@dataclass
+class FetchResult:
+    ok: bool
+    url: str
+    status_code: int | None = None
+    final_url: str | None = None
+    content_type: str | None = None
+    etag: str | None = None
+    last_modified: str | None = None
+    content_hash: str | None = None
+    text: str | None = None
+    raw_bytes: bytes | None = None
+    error: str | None = None
+
+
+def fetch(
+    url: str,
+    *,
+    adapter_type: str | None = None,
+    timeout: float = 15.0,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
+) -> FetchResult:
+    """Fetch ``url`` and return a structured result.
+
+    Single dispatch point: ``adapter_type`` routes to the matching
+    adapter (``rss`` / ``api`` / ``pdf`` / ``sitemap``, defaulting to
+    HTML). For the feed-shaped adapters this returns only the
+    ``FetchResult`` and drops the parsed entries — callers that need
+    the entries should call :func:`fetch_rss` / :func:`fetch_api` /
+    :func:`fetch_sitemap` directly.
+
+    Conditional fetch: pass ``if_none_match`` (an ETag value) and/or
+    ``if_modified_since`` (an HTTP-date string) to send the standard
+    ``If-None-Match`` / ``If-Modified-Since`` request headers. When the
+    server returns ``304 Not Modified`` the result is ``ok=False`` with
+    ``error="not_modified"`` and ``status_code=304`` — the runner uses
+    that to skip extraction for unchanged pages.
+    """
+    if not url:
+        return FetchResult(ok=False, url="", error="empty_url")
+
+    adapter = (adapter_type or "html").lower()
+    if adapter == "rss":
+        result, _ = fetch_rss(
+            url, timeout=timeout,
+            if_none_match=if_none_match, if_modified_since=if_modified_since,
+        )
+        return result
+    if adapter == "api":
+        result, _ = fetch_api(
+            url, timeout=timeout,
+            if_none_match=if_none_match, if_modified_since=if_modified_since,
+        )
+        return result
+    if adapter == "pdf":
+        return fetch_pdf(
+            url, timeout=timeout,
+            if_none_match=if_none_match, if_modified_since=if_modified_since,
+        )
+    if adapter == "sitemap":
+        result, _ = fetch_sitemap(
+            url, timeout=timeout,
+            if_none_match=if_none_match, if_modified_since=if_modified_since,
+        )
+        return result
+
+    return _fetch_html(
+        url,
+        timeout=timeout,
+        if_none_match=if_none_match,
+        if_modified_since=if_modified_since,
+    )
+
+
+def _fetch_html(
+    url: str,
+    *,
+    timeout: float,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
+) -> FetchResult:
+    headers = dict(_DEFAULT_HEADERS)
+    if if_none_match:
+        headers["If-None-Match"] = if_none_match
+    if if_modified_since:
+        headers["If-Modified-Since"] = if_modified_since
+
+    try:
+        resp = httpx.get(url, headers=headers, timeout=timeout, follow_redirects=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] request failed url=%s error=%s", url, exc)
+        return FetchResult(ok=False, url=url, error=str(exc))
+
+    # 304 Not Modified short-circuit: the server confirms our cached
+    # copy is still current. Skip body parsing and let the runner reuse
+    # the existing notification_documents row.
+    if resp.status_code == 304:
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=304,
+            final_url=str(resp.url),
+            etag=resp.headers.get("etag") or if_none_match,
+            last_modified=resp.headers.get("last-modified") or if_modified_since,
+            error="not_modified",
+        )
+
+    try:
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] http error url=%s status=%s error=%s", url, resp.status_code, exc)
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=resp.status_code,
+            final_url=str(resp.url),
+            error=f"http_{resp.status_code}",
+        )
+
+    raw_bytes = resp.content
+    content_hash = hashlib.sha256(raw_bytes).hexdigest() if raw_bytes else None
+    text = _strip_html(resp.text) if resp.text else ""
+    return FetchResult(
+        ok=True,
+        url=url,
+        status_code=resp.status_code,
+        final_url=str(resp.url),
+        content_type=resp.headers.get("content-type"),
+        etag=resp.headers.get("etag"),
+        last_modified=resp.headers.get("last-modified"),
+        content_hash=content_hash,
+        text=text,
+        raw_bytes=raw_bytes,
+    )
+
+
+def strip_html(html: str) -> str:
+    """Public alias of the HTML→plain-text reducer used inside fetch().
+
+    Exposed so callers that already have raw HTML in hand (the aggregator
+    runner fetches HTML once for the resolver and reuses the stripped
+    text for extraction) don't have to round-trip through ``fetch()``.
+    """
+    return _strip_html(html)
+
+
+def _strip_html(html: str) -> str:
+    text = re.sub(r"<script[^>]*>[\s\S]*?</script>", " ", html, flags=re.IGNORECASE)
+    text = re.sub(r"<style[^>]*>[\s\S]*?</style>", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = (
+        text.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+    )
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
+# ─── Backward-compatible thin wrappers ──────────────────────────────────────
+#
+# ``extractor.fetch_page_text`` and ``extractor.fetch_page_html`` are the
+# previous public API. They live here now; ``extractor.py`` re-exports them
+# so the existing callers keep working while we migrate the runner over to
+# ``fetch()`` and ``FetchResult``.
+
+
+def fetch_page_text(url: str, *, timeout: float = 15.0) -> str | None:
+    result = _fetch_html(url, timeout=timeout)
+    return result.text if result.ok else None
+
+
+def fetch_page_html(url: str, *, timeout: float = 15.0) -> str | None:
+    """Return the raw HTML body. Used by the aggregator listing discoverer."""
+    if not url:
+        return None
+    try:
+        resp = httpx.get(url, headers=_DEFAULT_HEADERS, timeout=timeout, follow_redirects=True)
+        resp.raise_for_status()
+        return resp.text
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] failed %s: %s", url, exc)
+        return None
+
+
+# ─── RSS / Atom adapter ─────────────────────────────────────────────────────
+
+
+@dataclass
+class RssEntry:
+    title: str
+    link: str
+    summary: str = ""
+    published: str | None = None  # ISO-ish date string when parseable
+
+
+def parse_rss_feed(xml_text: str | None) -> list[RssEntry]:
+    """Parse an RSS 2.0 or Atom feed into a flat list of entries.
+
+    Uses stdlib ``xml.etree`` so we don't pull in feedparser just for two
+    feed shapes. Both ``<rss><channel><item>`` and ``<feed><entry>`` are
+    accepted; namespaced Atom tags are stripped before tag-name compare.
+    Malformed XML returns ``[]`` rather than raising — the runner treats
+    that as an empty feed and bumps source failure.
+    """
+    if not xml_text:
+        return []
+    try:
+        import xml.etree.ElementTree as ET  # local import keeps cold path cheap
+        root = ET.fromstring(xml_text)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] rss parse failed: %s", exc)
+        return []
+
+    def _localname(tag: str) -> str:
+        return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+    def _text_of(node, tag: str) -> str:
+        for child in node:
+            if _localname(child.tag) == tag:
+                return (child.text or "").strip()
+        return ""
+
+    def _link_of(node) -> str:
+        # RSS: <link>url</link>. Atom: <link href="url" rel="alternate"/>.
+        for child in node:
+            if _localname(child.tag) != "link":
+                continue
+            if child.text and child.text.strip():
+                return child.text.strip()
+            href = child.attrib.get("href")
+            if href and child.attrib.get("rel", "alternate") == "alternate":
+                return href.strip()
+        return ""
+
+    entries: list[RssEntry] = []
+    # RSS 2.0
+    for item in root.iter():
+        if _localname(item.tag) not in {"item", "entry"}:
+            continue
+        title = _text_of(item, "title")
+        link = _link_of(item)
+        summary = _text_of(item, "description") or _text_of(item, "summary") or _text_of(item, "content")
+        published = _text_of(item, "pubDate") or _text_of(item, "published") or _text_of(item, "updated") or None
+        if not link and not title:
+            continue
+        entries.append(RssEntry(
+            title=title,
+            link=link,
+            summary=summary,
+            published=published or None,
+        ))
+    return entries
+
+
+def fetch_rss(
+    url: str,
+    *,
+    timeout: float = 15.0,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
+) -> tuple[FetchResult, list[RssEntry]]:
+    """Fetch an RSS / Atom feed and return both the raw FetchResult and
+    the parsed entries.
+
+    The FetchResult's ``text`` is the raw XML body (not stripped) so
+    callers that want the underlying document for hashing /
+    notification_documents storage still get it. Entries come back as a
+    list — empty when parsing fails.
+
+    Conditional fetch: pass ``if_none_match`` / ``if_modified_since``
+    to send standard caching headers. A 304 response yields
+    ``FetchResult(ok=False, status_code=304, error="not_modified")``
+    with an empty entries list so the caller can short-circuit
+    re-discovery for unchanged feeds.
+    """
+    if not url:
+        return FetchResult(ok=False, url="", error="empty_url"), []
+
+    headers = dict(_DEFAULT_HEADERS)
+    if if_none_match:
+        headers["If-None-Match"] = if_none_match
+    if if_modified_since:
+        headers["If-Modified-Since"] = if_modified_since
+
+    try:
+        resp = httpx.get(url, headers=headers, timeout=timeout, follow_redirects=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] rss request failed url=%s error=%s", url, exc)
+        return FetchResult(ok=False, url=url, error=str(exc)), []
+
+    if resp.status_code == 304:
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=304,
+            final_url=str(resp.url),
+            etag=resp.headers.get("etag") or if_none_match,
+            last_modified=resp.headers.get("last-modified") or if_modified_since,
+            error="not_modified",
+        ), []
+
+    try:
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] rss http error url=%s status=%s error=%s", url, resp.status_code, exc)
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=resp.status_code,
+            final_url=str(resp.url),
+            error=f"http_{resp.status_code}",
+        ), []
+
+    raw_bytes = resp.content
+    content_hash = hashlib.sha256(raw_bytes).hexdigest() if raw_bytes else None
+    xml_text = resp.text or ""
+    result = FetchResult(
+        ok=True,
+        url=url,
+        status_code=resp.status_code,
+        final_url=str(resp.url),
+        content_type=resp.headers.get("content-type"),
+        etag=resp.headers.get("etag"),
+        last_modified=resp.headers.get("last-modified"),
+        content_hash=content_hash,
+        text=xml_text,
+        raw_bytes=raw_bytes,
+    )
+    entries = parse_rss_feed(xml_text)
+    return result, entries
+
+
+# ─── JSON-API adapter ───────────────────────────────────────────────────────
+
+
+@dataclass
+class ApiEntry:
+    title: str
+    link: str
+    summary: str = ""
+    published: str | None = None
+
+
+def _drill(obj: Any, path: str) -> Any:
+    """Walk a dotted path through a JSON object. Returns ``None`` when
+    any intermediate key is missing. Lists are returned as-is so callers
+    can detect them; numeric indices in the path are also supported.
+    """
+    cur: Any = obj
+    if not path:
+        return obj
+    for part in path.split("."):
+        if cur is None:
+            return None
+        if isinstance(cur, list):
+            try:
+                cur = cur[int(part)]
+            except (ValueError, IndexError, TypeError):
+                return None
+        elif isinstance(cur, dict):
+            cur = cur.get(part)
+        else:
+            return None
+    return cur
+
+
+def _first_field(entry: Any, candidates: list[str]) -> str:
+    """Return the first non-empty string value among ``candidates`` keys
+    on ``entry``. Candidates may be dotted paths."""
+    if not isinstance(entry, (dict, list)):
+        return ""
+    for key in candidates:
+        value = _drill(entry, key) if "." in key else (
+            entry.get(key) if isinstance(entry, dict) else None
+        )
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if value is not None and not isinstance(value, (dict, list)):
+            text = str(value).strip()
+            if text:
+                return text
+    return ""
+
+
+def parse_json_feed(
+    payload: Any,
+    *,
+    adapter_config: dict[str, Any] | None = None,
+) -> list[ApiEntry]:
+    """Parse a decoded JSON payload into a flat list of entries.
+
+    ``adapter_config`` controls how we drill into the payload and map
+    fields:
+      * ``entries_path``: dotted path to the list of entries
+        (e.g. ``"data.items"``). When empty / unset the function picks
+        the payload itself if it's a list, otherwise the first list
+        value found one level deep.
+      * ``title_field`` / ``link_field`` / ``summary_field`` /
+        ``date_field``: each is either a string or a list of fallback
+        keys (dotted paths allowed). Sensible defaults match
+        WordPress-style REST shapes (``rendered.title``, ``link``,
+        ``excerpt.rendered``, ``date``).
+    """
+    cfg = adapter_config or {}
+
+    entries_obj: Any = None
+    entries_path = (cfg.get("entries_path") or "").strip()
+    if entries_path:
+        entries_obj = _drill(payload, entries_path)
+    elif isinstance(payload, list):
+        entries_obj = payload
+    elif isinstance(payload, dict):
+        # Heuristic: pick the first list-valued field one level deep.
+        for v in payload.values():
+            if isinstance(v, list):
+                entries_obj = v
+                break
+
+    if not isinstance(entries_obj, list):
+        return []
+
+    def _as_keys(value: Any, default: list[str]) -> list[str]:
+        if isinstance(value, str) and value:
+            return [value]
+        if isinstance(value, list) and value:
+            return [str(x) for x in value if x]
+        return default
+
+    title_keys = _as_keys(cfg.get("title_field"), ["title.rendered", "title", "name", "subject"])
+    link_keys = _as_keys(cfg.get("link_field"), ["link", "url", "guid"])
+    summary_keys = _as_keys(cfg.get("summary_field"), ["excerpt.rendered", "summary", "description", "content"])
+    date_keys = _as_keys(cfg.get("date_field"), ["date", "published", "pubDate", "updated"])
+
+    out: list[ApiEntry] = []
+    for entry in entries_obj:
+        if not isinstance(entry, (dict, list)):
+            continue
+        title = _first_field(entry, title_keys)
+        link = _first_field(entry, link_keys)
+        if not link and not title:
+            continue
+        out.append(ApiEntry(
+            title=title,
+            link=link,
+            summary=_first_field(entry, summary_keys),
+            published=_first_field(entry, date_keys) or None,
+        ))
+    return out
+
+
+def fetch_api(
+    url: str,
+    *,
+    adapter_config: dict[str, Any] | None = None,
+    timeout: float = 15.0,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
+) -> tuple[FetchResult, list[ApiEntry]]:
+    """Fetch a JSON endpoint and return a FetchResult plus parsed entries.
+
+    Network and HTTP errors collapse into ``FetchResult(ok=False, error=...)``
+    so callers handle them the same way as RSS / HTML.
+
+    Conditional fetch: ``if_none_match`` / ``if_modified_since`` send
+    standard caching headers; a 304 response yields ``ok=False`` /
+    ``error="not_modified"`` with an empty entries list.
+    """
+    if not url:
+        return FetchResult(ok=False, url="", error="empty_url"), []
+
+    api_headers = dict(_DEFAULT_HEADERS)
+    api_headers["Accept"] = "application/json, */*;q=0.9"
+    if if_none_match:
+        api_headers["If-None-Match"] = if_none_match
+    if if_modified_since:
+        api_headers["If-Modified-Since"] = if_modified_since
+
+    try:
+        resp = httpx.get(url, headers=api_headers, timeout=timeout, follow_redirects=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] api request failed url=%s error=%s", url, exc)
+        return FetchResult(ok=False, url=url, error=str(exc)), []
+
+    if resp.status_code == 304:
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=304,
+            final_url=str(resp.url),
+            etag=resp.headers.get("etag") or if_none_match,
+            last_modified=resp.headers.get("last-modified") or if_modified_since,
+            error="not_modified",
+        ), []
+
+    try:
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] api http error url=%s status=%s error=%s", url, resp.status_code, exc)
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=resp.status_code,
+            final_url=str(resp.url),
+            error=f"http_{resp.status_code}",
+        ), []
+
+    raw_bytes = resp.content
+    content_hash = hashlib.sha256(raw_bytes).hexdigest() if raw_bytes else None
+    try:
+        import json as _json
+        payload = _json.loads(resp.text) if resp.text else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] api invalid json url=%s error=%s", url, exc)
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=resp.status_code,
+            final_url=str(resp.url),
+            content_hash=content_hash,
+            text=resp.text,
+            raw_bytes=raw_bytes,
+            error="invalid_json",
+        ), []
+
+    result = FetchResult(
+        ok=True,
+        url=url,
+        status_code=resp.status_code,
+        final_url=str(resp.url),
+        content_type=resp.headers.get("content-type"),
+        etag=resp.headers.get("etag"),
+        last_modified=resp.headers.get("last-modified"),
+        content_hash=content_hash,
+        text=resp.text,
+        raw_bytes=raw_bytes,
+    )
+    entries = parse_json_feed(payload, adapter_config=adapter_config)
+    return result, entries
+
+
+def _with_query(url: str, params: dict[str, Any]) -> str:
+    """Return ``url`` with ``params`` merged into its query string."""
+    parts = urlparse(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query.update({k: str(v) for k, v in params.items()})
+    return urlunparse(parts._replace(query=urlencode(query)))
+
+
+def fetch_api_paginated(
+    url: str,
+    *,
+    adapter_config: dict[str, Any] | None = None,
+    timeout: float = 15.0,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
+) -> tuple[FetchResult, list[ApiEntry]]:
+    """Fetch a JSON endpoint across multiple pages and return the first
+    page's ``FetchResult`` plus the flattened entries from every page.
+
+    Pagination is opt-in via ``adapter_config["pagination"]``:
+
+      * ``{"type": "page", "page_param": "page", "start_page": 1,
+         "max_pages": 10}`` — increments a page-number query param.
+      * ``{"type": "offset", "offset_param": "offset",
+         "limit_param": "limit", "page_size": 50, "max_pages": 10}`` —
+        walks an offset/limit window.
+      * ``{"type": "cursor", "next_path": "meta.next", "max_pages": 10}``
+        — follows a next-page URL found at a dotted path in each
+        response body.
+
+    When ``pagination`` is unset this behaves exactly like
+    :func:`fetch_api` (single request). Traversal stops on the first
+    empty page, when ``max_pages`` is reached, or (cursor mode) when
+    there's no next link. Conditional-fetch headers apply to the first
+    request only — a 304 there short-circuits the whole walk.
+    """
+    cfg = adapter_config or {}
+    pagination = cfg.get("pagination")
+    if not isinstance(pagination, dict) or not pagination:
+        return fetch_api(
+            url, adapter_config=cfg, timeout=timeout,
+            if_none_match=if_none_match, if_modified_since=if_modified_since,
+        )
+
+    ptype = str(pagination.get("type") or "").lower()
+    try:
+        max_pages = max(1, min(int(pagination.get("max_pages", 10)), 100))
+    except (TypeError, ValueError):
+        max_pages = 10
+
+    first_result, first_entries = fetch_api(
+        url, adapter_config=cfg, timeout=timeout,
+        if_none_match=if_none_match, if_modified_since=if_modified_since,
+    )
+    # 304 / error / empty first page: nothing to paginate.
+    if not first_result.ok or not first_entries:
+        return first_result, first_entries
+
+    all_entries: list[ApiEntry] = list(first_entries)
+    seen_urls: set[str] = {url}
+
+    if ptype == "cursor":
+        next_path = str(pagination.get("next_path") or "").strip()
+        next_url: Any = None
+        try:
+            import json as _json
+            next_url = _drill(_json.loads(first_result.text or "null"), next_path) if next_path else None
+        except Exception:  # noqa: BLE001
+            next_url = None
+        pages = 1
+        while next_url and isinstance(next_url, str) and next_url not in seen_urls and pages < max_pages:
+            seen_urls.add(next_url)
+            page_result, page_entries = fetch_api(next_url, adapter_config=cfg, timeout=timeout)
+            if not page_result.ok or not page_entries:
+                break
+            all_entries.extend(page_entries)
+            pages += 1
+            try:
+                import json as _json
+                next_url = _drill(_json.loads(page_result.text or "null"), next_path) if next_path else None
+            except Exception:  # noqa: BLE001
+                next_url = None
+        return first_result, all_entries
+
+    # page / offset modes: synthesise the next request URL by query param.
+    if ptype == "offset":
+        offset_param = str(pagination.get("offset_param") or "offset")
+        limit_param = str(pagination.get("limit_param") or "limit")
+        try:
+            page_size = max(1, int(pagination.get("page_size", 50)))
+        except (TypeError, ValueError):
+            page_size = 50
+        for page_idx in range(1, max_pages):
+            params = {offset_param: page_idx * page_size, limit_param: page_size}
+            page_url = _with_query(url, params)
+            if page_url in seen_urls:
+                break
+            seen_urls.add(page_url)
+            page_result, page_entries = fetch_api(page_url, adapter_config=cfg, timeout=timeout)
+            if not page_result.ok or not page_entries:
+                break
+            all_entries.extend(page_entries)
+        return first_result, all_entries
+
+    # default: page-number mode.
+    page_param = str(pagination.get("page_param") or "page")
+    try:
+        start_page = int(pagination.get("start_page", 1))
+    except (TypeError, ValueError):
+        start_page = 1
+    for offset in range(1, max_pages):
+        page_url = _with_query(url, {page_param: start_page + offset})
+        if page_url in seen_urls:
+            break
+        seen_urls.add(page_url)
+        page_result, page_entries = fetch_api(page_url, adapter_config=cfg, timeout=timeout)
+        if not page_result.ok or not page_entries:
+            break
+        all_entries.extend(page_entries)
+    return first_result, all_entries
+
+
+# ─── PDF adapter ────────────────────────────────────────────────────────────
+
+
+def parse_pdf_bytes(raw_bytes: bytes | None) -> str:
+    """Extract text from a PDF byte string using pypdf.
+
+    Returns an empty string on any parse failure — callers (the runner)
+    treat empty text as "extract failed for this source" and surface a
+    typed error. Whitespace between extracted page-fragments is
+    collapsed so the downstream extractor's 16k truncation buys more
+    real content.
+    """
+    pages = parse_pdf_pages(raw_bytes)
+    if not pages:
+        return ""
+    return re.sub(r"\s{2,}", " ", "\n".join(pages)).strip()
+
+
+def parse_pdf_pages(raw_bytes: bytes | None) -> list[str]:
+    """Like ``parse_pdf_bytes`` but returns one stripped string per page.
+
+    Empty pages are dropped from the result. Used by the runner's
+    PDF splitter when ``adapter_config.split_per_page`` is set on a
+    multi-recruitment bulletin.
+    """
+    if not raw_bytes:
+        return []
+    try:
+        import io
+        from pypdf import PdfReader  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] pypdf import failed: %s", exc)
+        return []
+    try:
+        reader = PdfReader(io.BytesIO(raw_bytes))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] pdf open failed: %s", exc)
+        return []
+    pages: list[str] = []
+    for page in reader.pages:
+        try:
+            text = page.extract_text() or ""
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[fetcher] pdf page extract failed: %s", exc)
+            continue
+        if text.strip():
+            pages.append(re.sub(r"\s{2,}", " ", text).strip())
+    return pages
+
+
+def split_pdf_text(text: str, *, regex: str | None) -> list[str]:
+    """Split a PDF's full-text body at boundaries matching ``regex``.
+
+    Each match starts a new chunk; the matched text is preserved at the
+    start of its chunk so titles like ``"Notification No. 12/2026"`` stay
+    attached to the body that follows. ``None`` / empty regex / a regex
+    that matches nothing returns ``[text]`` (single chunk).
+    """
+    if not regex or not text:
+        return [text] if text else []
+    try:
+        pattern = re.compile(regex, re.MULTILINE)
+    except re.error as exc:
+        logger.warning("[fetcher] split_pdf_text invalid regex %r: %s", regex, exc)
+        return [text]
+    chunks: list[str] = []
+    last = 0
+    for match in pattern.finditer(text):
+        if match.start() > last:
+            prefix = text[last:match.start()].strip()
+            if prefix:
+                chunks.append(prefix)
+        last = match.start()
+    tail = text[last:].strip()
+    if tail:
+        chunks.append(tail)
+    return chunks if chunks else [text]
+
+
+def fetch_pdf(
+    url: str,
+    *,
+    timeout: float = 30.0,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
+) -> FetchResult:
+    """Fetch a PDF bulletin and return its extracted text in ``FetchResult.text``.
+
+    ``raw_bytes`` keeps the original PDF body so the runner can hash it
+    for ``notification_documents`` evidence storage. Empty / unreadable
+    PDFs surface as ``FetchResult(ok=False, error='empty_pdf')`` so the
+    runner can bump source-failure detail without spuriously queueing
+    blank rows.
+
+    Conditional fetch: ``if_none_match`` / ``if_modified_since`` send
+    standard caching headers; a 304 response yields
+    ``FetchResult(ok=False, status_code=304, error="not_modified")`` so
+    the runner can skip re-parsing an unchanged bulletin.
+    """
+    if not url:
+        return FetchResult(ok=False, url="", error="empty_url")
+
+    pdf_headers = dict(_DEFAULT_HEADERS)
+    pdf_headers["Accept"] = "application/pdf, */*;q=0.9"
+    if if_none_match:
+        pdf_headers["If-None-Match"] = if_none_match
+    if if_modified_since:
+        pdf_headers["If-Modified-Since"] = if_modified_since
+
+    try:
+        resp = httpx.get(url, headers=pdf_headers, timeout=timeout, follow_redirects=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] pdf request failed url=%s error=%s", url, exc)
+        return FetchResult(ok=False, url=url, error=str(exc))
+
+    if resp.status_code == 304:
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=304,
+            final_url=str(resp.url),
+            etag=resp.headers.get("etag") or if_none_match,
+            last_modified=resp.headers.get("last-modified") or if_modified_since,
+            error="not_modified",
+        )
+
+    try:
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] pdf http error url=%s status=%s error=%s", url, resp.status_code, exc)
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=resp.status_code,
+            final_url=str(resp.url),
+            error=f"http_{resp.status_code}",
+        )
+
+    raw_bytes = resp.content
+    content_hash = hashlib.sha256(raw_bytes).hexdigest() if raw_bytes else None
+    text = parse_pdf_bytes(raw_bytes)
+    if not text:
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=resp.status_code,
+            final_url=str(resp.url),
+            content_type=resp.headers.get("content-type"),
+            etag=resp.headers.get("etag"),
+            last_modified=resp.headers.get("last-modified"),
+            content_hash=content_hash,
+            raw_bytes=raw_bytes,
+            error="empty_pdf",
+        )
+    return FetchResult(
+        ok=True,
+        url=url,
+        status_code=resp.status_code,
+        final_url=str(resp.url),
+        content_type=resp.headers.get("content-type") or "application/pdf",
+        etag=resp.headers.get("etag"),
+        last_modified=resp.headers.get("last-modified"),
+        content_hash=content_hash,
+        text=text,
+        raw_bytes=raw_bytes,
+    )
+
+
+# ─── Sitemap adapter ────────────────────────────────────────────────────────
+
+
+@dataclass
+class SitemapEntry:
+    loc: str
+    lastmod: str | None = None
+    # True when this entry came from a ``<sitemap>`` element (child
+    # sitemap to recurse into); False for ``<url>`` leaf entries.
+    is_sitemap: bool = False
+
+
+def parse_sitemap(xml_text: str | None) -> list[SitemapEntry]:
+    """Parse a sitemap.xml (urlset) or sitemapindex into entries.
+
+    For ``sitemapindex`` documents we recurse one level: the runner is
+    expected to fetch the inner sitemap separately, so we just surface
+    the index entries' ``loc`` for now (lastmod preserved when present).
+    Malformed XML returns ``[]``.
+    """
+    if not xml_text:
+        return []
+    try:
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(xml_text)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] sitemap parse failed: %s", exc)
+        return []
+
+    def _localname(tag: str) -> str:
+        return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+    def _text_of(node, tag: str) -> str:
+        for child in node:
+            if _localname(child.tag) == tag:
+                return (child.text or "").strip()
+        return ""
+
+    entries: list[SitemapEntry] = []
+    for child in root.iter():
+        local = _localname(child.tag)
+        if local not in {"url", "sitemap"}:
+            continue
+        loc = _text_of(child, "loc")
+        if not loc:
+            continue
+        lastmod = _text_of(child, "lastmod") or None
+        entries.append(SitemapEntry(loc=loc, lastmod=lastmod, is_sitemap=(local == "sitemap")))
+    return entries
+
+
+def fetch_sitemap_recursive(
+    url: str,
+    *,
+    timeout: float = 15.0,
+    max_depth: int = 2,
+    max_total: int = 1000,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
+) -> tuple[FetchResult, list[SitemapEntry]]:
+    """Fetch a sitemap, recursing into child sitemaps up to ``max_depth``.
+
+    Returns the FetchResult of the *root* fetch (so caller can read its
+    ETag / Last-Modified for change-detection bookkeeping) and a flat
+    list of leaf URL entries (``is_sitemap=False``). Child sitemap
+    fetches whose status isn't 200 are skipped silently — partial
+    coverage is better than refusing the whole tree because one branch
+    failed.
+
+    ``max_total`` caps the flattened entry count so a runaway
+    sitemapindex (some sites publish thousands of children) can't
+    explode the run.
+
+    Conditional fetch applies to the *root* only: a 304 on the root
+    yields ``FetchResult(ok=False, status_code=304, ...)`` with an empty
+    entry list so the caller can short-circuit the whole tree. Child
+    sitemaps are always fetched fresh (they have their own lastmod the
+    caller doesn't track per-child).
+    """
+    root_result, top_entries = fetch_sitemap(
+        url, timeout=timeout,
+        if_none_match=if_none_match, if_modified_since=if_modified_since,
+    )
+    if not root_result.ok:
+        return root_result, []
+
+    leaves: list[SitemapEntry] = []
+    queue: list[tuple[SitemapEntry, int]] = [(e, 1) for e in top_entries]
+
+    while queue and len(leaves) < max_total:
+        entry, depth = queue.pop(0)
+        if not entry.is_sitemap:
+            leaves.append(entry)
+            continue
+        if depth >= max_depth:
+            # Beyond the recursion budget — treat the index entry as a
+            # leaf URL so the operator at least sees it in the queue.
+            leaves.append(SitemapEntry(loc=entry.loc, lastmod=entry.lastmod))
+            continue
+        child_result, child_entries = fetch_sitemap(entry.loc, timeout=timeout)
+        if not child_result.ok:
+            logger.warning(
+                "[fetcher] sitemap recurse failed url=%s status=%s error=%s",
+                entry.loc, child_result.status_code, child_result.error,
+            )
+            continue
+        for child in child_entries:
+            queue.append((child, depth + 1))
+    return root_result, leaves[:max_total]
+
+
+def fetch_sitemap(
+    url: str,
+    *,
+    timeout: float = 15.0,
+    if_none_match: str | None = None,
+    if_modified_since: str | None = None,
+) -> tuple[FetchResult, list[SitemapEntry]]:
+    """Fetch a sitemap.xml and return both the FetchResult and parsed
+    entries. Same conditional-fetch / 304 contract as ``fetch_rss`` /
+    ``fetch_api``.
+    """
+    if not url:
+        return FetchResult(ok=False, url="", error="empty_url"), []
+
+    headers = dict(_DEFAULT_HEADERS)
+    headers["Accept"] = "application/xml, text/xml, */*;q=0.9"
+    if if_none_match:
+        headers["If-None-Match"] = if_none_match
+    if if_modified_since:
+        headers["If-Modified-Since"] = if_modified_since
+
+    try:
+        resp = httpx.get(url, headers=headers, timeout=timeout, follow_redirects=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] sitemap request failed url=%s error=%s", url, exc)
+        return FetchResult(ok=False, url=url, error=str(exc)), []
+
+    if resp.status_code == 304:
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=304,
+            final_url=str(resp.url),
+            etag=resp.headers.get("etag") or if_none_match,
+            last_modified=resp.headers.get("last-modified") or if_modified_since,
+            error="not_modified",
+        ), []
+
+    try:
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[fetcher] sitemap http error url=%s status=%s error=%s", url, resp.status_code, exc)
+        return FetchResult(
+            ok=False,
+            url=url,
+            status_code=resp.status_code,
+            final_url=str(resp.url),
+            error=f"http_{resp.status_code}",
+        ), []
+
+    raw_bytes = resp.content
+    content_hash = hashlib.sha256(raw_bytes).hexdigest() if raw_bytes else None
+    xml_text = resp.text or ""
+    result = FetchResult(
+        ok=True,
+        url=url,
+        status_code=resp.status_code,
+        final_url=str(resp.url),
+        content_type=resp.headers.get("content-type"),
+        etag=resp.headers.get("etag"),
+        last_modified=resp.headers.get("last-modified"),
+        content_hash=content_hash,
+        text=xml_text,
+        raw_bytes=raw_bytes,
+    )
+    entries = parse_sitemap(xml_text)
+    return result, entries

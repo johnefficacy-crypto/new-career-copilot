@@ -20,15 +20,36 @@ from app.profile.eligibility_profile import (
 
 logger = logging.getLogger("career_copilot.profile.eligibility_mapper")
 
+
+def _meaningful_pwbd_value(raw) -> str | None:
+    """Return the PwBD value when it carries information, else ``None``.
+
+    The legacy ``profiles.pwbd_status`` column defaults to the string
+    ``'none'``, which is *truthy* in Python — so a plain ``bool(...)`` check
+    on it incorrectly classifies every default user as PwD. Treat the
+    common "absent" sentinels (`None`, empty, ``'none'``, ``'false'``,
+    ``'no'``) as missing.
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    if text.lower() in {"none", "false", "no"}:
+        return None
+    return text
+
+
 def build_user_eligibility_profile(supabase, user_id: str) -> EligibilityProfile:
     p = (require_select(supabase, "profiles", "*", id=user_id) or [{}])[0]
     loc = (require_select(supabase, "aspirant_location", "state,district,is_rural,domicile_certificate", user_id=user_id) or [{}])[0]
     res = (require_select(supabase, "aspirant_reservations", "category,sub_category,is_pwd,pwd_type,disability_code,is_ex_serviceman,family_income_annual,ews_assets,ews_certificate_available", user_id=user_id) or [{}])[0]
-    edu = require_select(supabase, "aspirant_education", "level,degree,stream,graduation_year,percentage,cgpa,is_completed", user_id=user_id)
+    profile_pwbd = _meaningful_pwbd_value(p.get("pwbd_status"))
+    edu = require_select(supabase, "aspirant_education", "level,degree,stream,graduation_year,percentage,cgpa,cgpa_basis,is_completed", user_id=user_id)
     certs = safe_select(supabase, "aspirant_certifications", "certification_name,issuing_body,year_completed,is_active", user_id=user_id)
     exp = safe_select(supabase, "aspirant_experience", "sector,role,organization,start_date,end_date,years_experience", user_id=user_id)
     prefs = (safe_select(supabase, "aspirant_preferences", "target_exams,preferred_states,preferred_sectors,willing_to_relocate,study_mode,study_hours_per_day,languages_known,preferred_language", user_id=user_id) or [{}])[0]
-    attempts = safe_select(supabase, "aspirant_exam_attempts", "exam_id,attempts_used", user_id=user_id)
+    attempts = safe_select(supabase, "aspirant_exam_attempts", "exam_id,exam_ref_id,attempts_used", user_id=user_id)
     creds = safe_select(supabase, "aspirant_exam_credentials", "exam_key,score,percentile,rank_text,exam_year", user_id=user_id)
     identity = Identity(full_name=p.get("full_name"), dob=p.get("dob") or p.get("date_of_birth"), nationality=p.get("nationality"))
     if not identity.dob:
@@ -36,10 +57,11 @@ def build_user_eligibility_profile(supabase, user_id: str) -> EligibilityProfile
     location = Location(state=loc.get("state") or p.get("domicile_state"), district=loc.get("district"))
     reservations = Reservations(
         category=res.get("category") or p.get("category"),
-        is_pwd=bool(res.get("is_pwd") or p.get("pwbd_status")),
-        pwd_type=res.get("pwd_type") or p.get("pwbd_status"),
-        disability_code=res.get("disability_code") or res.get("pwd_type") or p.get("pwbd_status"),
+        is_pwd=bool(res.get("is_pwd") or profile_pwbd),
+        pwd_type=res.get("pwd_type") or profile_pwbd,
+        disability_code=res.get("disability_code") or res.get("pwd_type") or profile_pwbd,
         is_ex_serviceman=bool(res.get("is_ex_serviceman") if res.get("is_ex_serviceman") is not None else p.get("ex_serviceman")),
+        service_years=p.get("service_years"),
         govt_employee=bool(p.get("govt_employee")),
         family_income_annual=res.get("family_income_annual"),
         ews_assets=res.get("ews_assets") or {},
@@ -69,11 +91,21 @@ def build_user_eligibility_profile(supabase, user_id: str) -> EligibilityProfile
             logger.warning("eligibility_mapper skip experience row for user=%s: %s", user_id, exc)
     attempt_rows, attempt_seen = [], set()
     for row in attempts:
-        key = str(row.get("exam_id") or "").strip().lower()
+        # Prefer the canonical FK to `exams.id` (added by migration 030).
+        # Fall back to the legacy free-form `exam_id` text the UI wrote in
+        # earlier deploys. The runner already de-prioritises the legacy
+        # value when constructing the engine-shaped UserExamAttempts.
+        key = str(row.get("exam_ref_id") or row.get("exam_id") or "").strip().lower()
         if not key or key in attempt_seen:
             continue
         try:
-            attempt_rows.append(AttemptRow(exam_id=key, attempts_used=row.get("attempts_used") or 0))
+            attempt_rows.append(
+                AttemptRow(
+                    exam_id=key,
+                    exam_ref_id=str(row.get("exam_ref_id") or "").strip().lower() or None,
+                    attempts_used=row.get("attempts_used") or 0,
+                )
+            )
             attempt_seen.add(key)
         except ValidationError as exc:
             logger.warning("eligibility_mapper skip attempt row for user=%s: %s", user_id, exc)

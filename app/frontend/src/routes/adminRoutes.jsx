@@ -5,6 +5,8 @@ import AdminShell from "../pages/admin/AdminShell";
 import AdminOverview from "../pages/admin/Overview";
 import AdminRecruitments from "../pages/admin/Recruitments";
 import AdminEligibility from "../pages/admin/EligibilityQueue";
+import AdminOperationsConsole from "../pages/admin/OperationsConsole";
+import AdminEligibilityOps from "../pages/admin/EligibilityOps";
 import AdminSources from "../pages/admin/Sources";
 import AdminOrganizations from "../pages/admin/Organizations";
 import AdminScraper from "../pages/admin/Scraper";
@@ -16,12 +18,17 @@ import AdminRBAC from "../pages/admin/RBAC";
 import AdminMentorsPg from "../pages/admin/Mentors";
 import AdminCommunity from "../pages/admin/Community";
 import AdminAIPolicy from "../pages/admin/AIPolicy";
+import AdminPersona from "../pages/admin/Persona";
+import AdminExamIntelligence from "../pages/admin/ExamIntelligence";
 
 export const adminRouteElements = (
   <Route element={<ProtectedRoute role={["admin", "super_admin"]}><AdminShell /></ProtectedRoute>}>
     <Route path="/admin" element={<AdminOverview />} />
+    <Route path="/admin/operations" element={<AdminOperationsConsole />} />
     <Route path="/admin/recruitments" element={<AdminRecruitments />} />
     <Route path="/admin/eligibility-queue" element={<AdminEligibility />} />
+    <Route path="/admin/promotion-queue" element={<AdminEligibility />} />
+    <Route path="/admin/eligibility-ops" element={<AdminEligibilityOps />} />
     <Route path="/admin/sources" element={<AdminSources />} />
     <Route path="/admin/organizations" element={<AdminOrganizations />} />
     <Route path="/admin/scraper" element={<AdminScraper />} />
@@ -33,5 +40,7 @@ export const adminRouteElements = (
     <Route path="/admin/mentors" element={<AdminMentorsPg />} />
     <Route path="/admin/community" element={<AdminCommunity />} />
     <Route path="/admin/ai-policy" element={<AdminAIPolicy />} />
+    <Route path="/admin/persona" element={<AdminPersona />} />
+    <Route path="/admin/exam-intelligence" element={<AdminExamIntelligence />} />
   </Route>
 );

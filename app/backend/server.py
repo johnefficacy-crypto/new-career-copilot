@@ -26,14 +26,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app.api.admin_exam_intelligence import router as admin_exam_intel_router
+from app.api.admin_persona import router as admin_persona_router
 from app.api.admin_scrape import router as admin_scrape_router
 from app.api.auth import router as auth_router
 from app.api.admin_trust import router as admin_trust_router
+from app.api.evidence import router as evidence_router
+from app.api.exam_intelligence import router as exam_intelligence_router
 from app.api.canonical import router as canonical_router
 from app.api.eligibility import router as eligibility_router
 from app.api.notifications import router as notifications_router
+from app.api.onboarding_unified import router as onboarding_unified_router
 from app.api.payments import router as payments_router
+from app.api.persona import router as persona_router
+from app.api.persona_questions import router as persona_questions_router
 from app.api.placeholders import router as placeholders_router
+from app.api.study_compare import router as study_compare_router
+from app.api.study_os import router as study_os_router
 from app.notifications.scheduler import start_scheduler, stop_scheduler
 from app.core.config import get_settings
 from app.db.postgres import close_pool, get_pool
@@ -155,7 +164,16 @@ api.include_router(eligibility_router)
 api.include_router(notifications_router)
 api.include_router(admin_scrape_router)  # admin scraper trust-gate routes
 api.include_router(admin_trust_router)
+api.include_router(admin_persona_router)  # PR4 admin persona controls
+api.include_router(admin_exam_intel_router)  # PR5 admin exam intelligence review
+api.include_router(exam_intelligence_router)  # PR5 verified-only exam intelligence reads
+api.include_router(evidence_router)  # universal evidence-drawer source endpoint
 api.include_router(payments_router)  # razorpay + plans
+api.include_router(persona_router)  # internal aspirant persona v1
+api.include_router(persona_questions_router)  # PR2 progressive tiny questions
+api.include_router(study_os_router)  # PR3 Study OS Mission Control — before canonical so /study/mission-control wins
+api.include_router(study_compare_router)  # Study OS comparison + social + verification
+api.include_router(onboarding_unified_router)  # unified guided onboarding — before placeholders
 api.include_router(canonical_router)  # canonical Supabase routes — must precede placeholders
 api.include_router(placeholders_router)
 app.include_router(api)

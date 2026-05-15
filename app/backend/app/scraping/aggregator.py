@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import re
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urldefrag, urljoin, urlparse
 
@@ -35,13 +36,59 @@ _LISTING_HINTS = (
 _BAD_SCHEMES = ("mailto:", "tel:", "javascript:")
 
 
+# ─── Lifecycle event classification ────────────────────────────────────────
+#
+# Aggregator listings mix new recruitment announcements with admit cards,
+# results, corrigenda, and date extensions. The runner needs to skip the
+# non-recruitment ones rather than route them through the recruitment
+# extractor — that's how "admit_card" links used to get queued as recruitments.
+
+_LIFECYCLE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("admit_card", ("admit-card", "admit card", "hall ticket", "hall-ticket", "call letter")),
+    ("result", ("result", "score card", "score-card", "merit list", "merit-list", "final selection")),
+    ("answer_key", ("answer key", "answer-key")),
+    ("corrigendum", ("corrigendum", "addendum", "errata")),
+    ("date_extended", ("date extended", "date-extended", "extension of last date", "last date extended", "deadline extended")),
+    ("syllabus", ("syllabus", "exam pattern", "exam-pattern")),
+    ("interview_schedule", ("interview schedule", "interview-schedule", "interview date")),
+    ("notification_revised", ("revised notification", "revised vacancy")),
+)
+
+
+def classify_aggregator_link(label: str | None, url: str | None) -> str:
+    """Return a lifecycle event type for a discovered aggregator link.
+
+    Returns ``"new_recruitment"`` when no lifecycle marker is present so
+    the caller still routes the link through extraction. Lifecycle events
+    flow into ``recruitment_events`` rather than ``scrape_queue`` once a
+    follow-up PR wires that up.
+    """
+    haystack = f"{(label or '').lower()} {(url or '').lower()}"
+    for event_type, patterns in _LIFECYCLE_PATTERNS:
+        for needle in patterns:
+            if needle in haystack:
+                return event_type
+    return "new_recruitment"
+
+
 def is_aggregator_source(row: dict[str, Any]) -> bool:
+    """Decide whether a source should run the discovery (listing→detail) path.
+
+    The decision is parsing-only: ``source_type='aggregator'``,
+    ``discovery_only=True``, or a category that includes "aggregator".
+
+    ``requires_official_confirmation`` used to live here too, but that
+    flag is a *trust* policy (do queue rows need verified evidence
+    before promotion?), not a parsing policy. PR 1 routed the trust
+    decision through the promotion gate; this PR keeps the parsing
+    decision pure so an official source that happens to require
+    confirmation isn't accidentally crawled like an aggregator.
+    """
     source_type = str(row.get("source_type") or "").lower()
     category = str(row.get("category") or "").lower()
     return bool(
         source_type == "aggregator"
         or row.get("discovery_only") is True
-        or row.get("requires_official_confirmation") is True
         or "aggregator" in category
     )
 
@@ -62,8 +109,35 @@ def aggregator_max_items(row: dict[str, Any], default: int = 25) -> int:
 
 
 def mock_aggregator_detail_urls(source: ScrapeSource, count: int = 3) -> list[str]:
-    base = source.target_url.rstrip("/") or "mock://aggregator"
+    base = (source.primary_fetch_url() or "").rstrip("/") or "mock://aggregator"
     return [f"{base}/mock-recruitment-{idx + 1}/" for idx in range(count)]
+
+
+@dataclass
+class DiscoveredLink:
+    url: str
+    label: str
+    event_type: str  # see ``classify_aggregator_link``
+
+
+@dataclass
+class DiscoveryResult:
+    """Structured return shape for aggregator listing discovery.
+
+    Replaces the previous pattern of mutating a function attribute
+    (``discover_aggregator_detail_urls.last_stats``), which was unsafe
+    under concurrent scrapes and awkward to test.
+    """
+    urls: list[str] = field(default_factory=list)
+    links: list[DiscoveredLink] = field(default_factory=list)
+    # Lifecycle events (admit_card / result / corrigendum / ...) that the
+    # caller filtered out of ``links``. Surfacing them here lets the
+    # runner persist them into ``recruitment_events`` instead of just
+    # dropping them on the floor.
+    lifecycle_links: list[DiscoveredLink] = field(default_factory=list)
+    stats: dict[str, int] = field(default_factory=lambda: {
+        "discovered": 0, "domain": 0, "include": 0, "exclude": 0, "lifecycle_skipped": 0,
+    })
 
 
 def discover_aggregator_detail_urls(
@@ -74,14 +148,22 @@ def discover_aggregator_detail_urls(
     include_patterns: list[str] | None = None,
     exclude_patterns: list[str] | None = None,
     allowed_domains: list[str] | None = None,
-) -> list[str]:
+    skip_lifecycle_events: bool = True,
+) -> DiscoveryResult:
+    """Walk an aggregator listing and return the recruitment-detail links.
+
+    ``skip_lifecycle_events`` filters out admit_card / result /
+    corrigendum / date_extended / etc. links so they don't get routed
+    through the recruitment extractor. The classification is attached to
+    every returned link (including ``new_recruitment``) so a future
+    follow-up can persist lifecycle events into ``recruitment_events``.
+    """
     base_host = _host(base_url)
     include = _normalise_patterns(include_patterns)
     exclude = _normalise_patterns(exclude_patterns)
     allowed = {_normalise_host(x) for x in (allowed_domains or []) if _normalise_host(x)}
     seen: set[str] = set()
-    urls: list[str] = []
-    stats = {"domain": 0, "include": 0, "exclude": 0}
+    result = DiscoveryResult()
 
     for href, label_html in _ANCHOR_RE.findall(html_text or ""):
         href = html.unescape(href or "").strip()
@@ -94,35 +176,50 @@ def discover_aggregator_detail_urls(
         target_host = _host(absolute)
         if allowed:
             if target_host not in allowed:
-                stats["domain"] += 1
+                result.stats["domain"] += 1
                 continue
         elif base_host and target_host != base_host:
-            stats["domain"] += 1
+            result.stats["domain"] += 1
             continue
 
         label = _clean_label(label_html)
         haystack = f"{absolute} {label}".lower()
+
+        # Lifecycle classification runs before the detail/listing heuristics
+        # so non-recruitment events (admit_card, result, corrigendum, ...)
+        # land in lifecycle_skipped instead of being silently dropped by the
+        # generic include filter.
+        event_type = classify_aggregator_link(label, absolute)
+        if skip_lifecycle_events and event_type != "new_recruitment":
+            result.stats["lifecycle_skipped"] += 1
+            # Retain the link so the runner can persist a
+            # ``recruitment_events`` row instead of losing the signal.
+            result.lifecycle_links.append(
+                DiscoveredLink(url=absolute, label=label, event_type=event_type)
+            )
+            continue
+
         if include:
             if not _matches_any(haystack, include):
-                stats["include"] += 1
+                result.stats["include"] += 1
                 continue
-        elif not _looks_like_detail(absolute, label):
-            stats["include"] += 1
+        elif not _looks_like_detail(absolute, label) and event_type == "new_recruitment":
+            result.stats["include"] += 1
             continue
         if exclude and _matches_any(haystack, exclude):
-            stats["exclude"] += 1
+            result.stats["exclude"] += 1
             continue
         if absolute in seen:
             continue
 
         seen.add(absolute)
-        urls.append(absolute)
-        if len(urls) >= max_items:
+        result.urls.append(absolute)
+        result.links.append(DiscoveredLink(url=absolute, label=label, event_type=event_type))
+        if len(result.urls) >= max_items:
             break
 
-    # Kept as a print-free return helper; runner logs these stats when it calls discovery.
-    discover_aggregator_detail_urls.last_stats = {"discovered": len(urls), **stats}  # type: ignore[attr-defined]
-    return urls
+    result.stats["discovered"] = len(result.urls)
+    return result
 
 
 def _clean_label(label_html: str) -> str:
