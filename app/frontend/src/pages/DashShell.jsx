@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { Activity, Bell, Bookmark, Bot, CalendarRange, Compass, GraduationCap, HandHeart, LayoutDashboard, LineChart, ListChecks, Menu, MessagesSquare, Search, Settings, Shield, ShoppingBag, Timer, Trophy, BookOpenCheck } from "lucide-react";
+import { Activity, Bell, Bookmark, Bot, CalendarRange, Compass, GraduationCap, HandHeart, LayoutDashboard, Library, LineChart, ListChecks, Menu, MessagesSquare, Search, Settings, Shield, ShoppingBag, Timer, Trophy, Users, BookOpenCheck } from "lucide-react";
 import { useAuth } from "../lib/authContext";
 import { api } from "../lib/api";
 import AppSidebar from "../shared/layouts/AppSidebar";
@@ -11,7 +11,7 @@ const SECTIONS = [
   { label: "Today", items: [{ to: "/app", label: "Mission control", icon: LayoutDashboard, end: true, testId: "sidebar-mission-control" }, { to: "/app/today", label: "Today", icon: CalendarRange, testId: "sidebar-today" }] },
   { label: "Recruitments", items: [{ to: "/app/exams", label: "Exams", icon: BookOpenCheck, testId: "sidebar-exams" }, { to: "/app/saved", label: "Saved", icon: Bookmark, testId: "sidebar-saved" }, { to: "/app/tracker", label: "Application tracker", icon: ListChecks, testId: "sidebar-application-tracker" }, { to: "/app/notifications", label: "Notifications", icon: Bell, testId: "sidebar-notifications" }] },
   { label: "Study OS", items: [{ to: "/app/study-plan", label: "Plan", icon: BookOpenCheck, testId: "sidebar-plan" }, { to: "/app/study/focus", label: "Focus timer", icon: Timer, testId: "sidebar-focus-timer" }, { to: "/app/study/mocks", label: "Mock tests", icon: Trophy, testId: "sidebar-mock-tests" }, { to: "/app/study/subjects", label: "Subjects", icon: LineChart, testId: "sidebar-subjects" }, { to: "/app/study/review", label: "Weekly review", icon: LineChart, testId: "sidebar-weekly-review" }, { to: "/app/study/compare", label: "Compare", icon: Activity, testId: "sidebar-compare" }] },
-  { label: "People", items: [{ to: "/app/community", label: "Community", icon: MessagesSquare, testId: "sidebar-community" }, { to: "/app/marketplace", label: "Marketplace", icon: ShoppingBag, testId: "sidebar-marketplace" }, { to: "/app/mentors", label: "Mentors", icon: GraduationCap, testId: "sidebar-mentors" }, { to: "/app/accountability", label: "Accountability", icon: HandHeart, testId: "sidebar-accountability" }] },
+  { label: "People", items: [{ to: "/app/community", label: "Community", icon: MessagesSquare, testId: "sidebar-community" }, { to: "/app/groups", label: "Study groups", icon: Users, testId: "sidebar-groups" }, { to: "/app/partners", label: "Partner", icon: HandHeart, testId: "sidebar-partners" }, { to: "/app/mentors", label: "Mentors", icon: GraduationCap, testId: "sidebar-mentors" }, { to: "/app/resources", label: "Resources", icon: Library, testId: "sidebar-resources" }, { to: "/app/marketplace", label: "Marketplace", icon: ShoppingBag, testId: "sidebar-marketplace" }] },
   { label: "AI", items: [{ to: "/app/ai", label: "Copilot AI", icon: Bot, testId: "sidebar-copilot-ai" }] },
 ];
 
