@@ -46,6 +46,7 @@ from .verification_report_schemas import (
     validate_conflicts,
     validate_evidence_summary,
     validate_risk_flags,
+    validate_suggested_official_urls,
 )
 
 
@@ -303,6 +304,98 @@ def update_lifecycle_status(
     return updated
 
 
+# ── PR2: resolver state setters ────────────────────────────────────────
+
+
+_OFFICIAL_RESOLUTION_STATUSES: frozenset[str] = frozenset({
+    "not_attempted",
+    "auto_resolved",
+    "suggested",
+    "unresolved",
+    "admin_attached",
+    "rejected",
+})
+
+
+def set_resolver_state(
+    supabase: Client,
+    report_id: str,
+    *,
+    status: str,
+    method: str | None,
+    confidence: float | None,
+    suggested_urls: list[dict[str, Any]] | None = None,
+    recommended_action: str | None = None,
+) -> dict[str, Any]:
+    """Write resolver outcome onto a verification report.
+
+    The resolver itself never mutates ``lifecycle_status``. That stays
+    on ``classified`` (or whatever PR3+ has elevated it to). The resolver
+    only writes the four resolver columns and may bump
+    ``recommended_action`` to ``confirm_suggested_proof`` /
+    ``await_official_proof`` when appropriate.
+    """
+    if status not in _OFFICIAL_RESOLUTION_STATUSES:
+        raise ValueError(f"unknown official_resolution_status: {status!r}")
+    if confidence is not None and not (0.0 <= confidence <= 1.0):
+        raise ValueError(f"confidence out of range: {confidence!r}")
+    payload: dict[str, Any] = {
+        "official_resolution_status": status,
+        "official_resolution_method": method,
+        "official_resolution_confidence": confidence,
+        "suggested_official_urls": validate_suggested_official_urls(suggested_urls or []),
+    }
+    if recommended_action is not None:
+        payload["recommended_action"] = recommended_action
+
+    updated = (
+        supabase.table(TABLE)
+        .update(payload)
+        .eq("id", report_id)
+        .execute()
+        .data
+        or [None]
+    )[0]
+    if not updated:
+        raise RuntimeError(f"verification_report {report_id} update returned no row")
+    return updated
+
+
+def attach_admin_official_url(
+    supabase: Client,
+    report_id: str,
+    *,
+    chosen_url: str,
+    original_method: str,
+) -> dict[str, Any]:
+    """Record an admin's manual confirmation of a suggested URL.
+
+    Audit-truthful: the new status is ``admin_attached`` (not
+    ``auto_resolved``), preserving the fact that a human made the
+    decision. The original suggestion's ``method`` is kept so we can
+    later answer "what kind of source ended up confirmed?".
+    """
+    payload = {
+        "official_resolution_status": "admin_attached",
+        "official_resolution_method": original_method,
+        # Confidence is preserved as-is on the row; the column already
+        # reflects the suggestion's confidence and the admin's attach
+        # doesn't invalidate that fact.
+        "recommended_action": "request_admin_review",
+    }
+    updated = (
+        supabase.table(TABLE)
+        .update(payload)
+        .eq("id", report_id)
+        .execute()
+        .data
+        or [None]
+    )[0]
+    if not updated:
+        raise RuntimeError(f"verification_report {report_id} update returned no row")
+    return updated
+
+
 def mark_superseded(supabase: Client, old_id: str, new_id: str) -> None:
     """Explicit supersession pointer write.
 
@@ -482,10 +575,12 @@ __all__ = [
     "PR1_LIFECYCLE_STATES",
     "PR1_TRIGGER_REASONS",
     "ALLOWED_REPORT_TRANSITIONS",
+    "attach_admin_official_url",
     "backfill_existing_recruitment",
     "get_active_report",
     "get_or_create_verification_report_for_queue",
     "get_or_create_verification_report_for_recruitment",
     "mark_superseded",
+    "set_resolver_state",
     "update_lifecycle_status",
 ]

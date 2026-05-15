@@ -201,3 +201,71 @@ def evaluate_promotion_gate(supabase: Client, queue_item: dict[str, Any]) -> Gat
         )
 
     return GateResult(ok=True, warnings=warnings)
+
+
+# ── PR2: Gateway promotion gate stub ─────────────────────────────────
+#
+# The pre-existing :func:`evaluate_promotion_gate` enforces the
+# high-risk-fields contract on a queue item. The *gateway* promotion
+# gate is a separate concern: it gates promotion based on the
+# verification report's resolver state.
+#
+# PR2 ships the *stub* version — Tier A blocks on unresolved/missing
+# official proof; Tier B and C pass unconditionally. PR3 adds the
+# consensus check; PR4 adds the eligibility-complexity check.
+#
+# Both gates run in sequence on the admin promotion path: a queue item
+# must pass :func:`evaluate_promotion_gate` AND
+# :func:`check_gateway_promotion`. They cover orthogonal risks and
+# neither replaces the other.
+
+@dataclass
+class GatewayGateResult:
+    """Outcome of the gateway promotion gate.
+
+    Mirrors :class:`GateResult` shape so callers can fold both results
+    into the same downstream "this is why we blocked" UI.
+    """
+
+    ok: bool
+    reason_code: str | None = None
+    message: str | None = None
+    blocking_level: str | None = None  # 'promotion_blocker' | 'publish_blocker' | 'warning'
+    tier: str | None = None
+
+
+def check_gateway_promotion(report: dict[str, Any] | None) -> GatewayGateResult:
+    """PR2 stub gateway promotion gate.
+
+    Behaviour:
+
+    * Tier A — blocks if no active verification report OR if
+      ``official_resolution_status`` is null / ``not_attempted`` /
+      ``unresolved``. ``admin_attached`` / ``auto_resolved`` pass.
+    * Tier B / Tier C — pass unconditionally. PR3 adds consensus
+      blockers, PR4 adds complexity blockers for Tier B.
+
+    The reason codes here are stable contract surfaces; the admin UI
+    matches on them to show the right blocker copy.
+    """
+    if report is None:
+        return GatewayGateResult(
+            ok=False,
+            reason_code="gateway_not_ready",
+            message="Verification report missing — gateway has not processed this item.",
+            blocking_level="promotion_blocker",
+        )
+
+    tier = report.get("criticality_tier")
+    if tier == "A_HIGH_STAKES":
+        status = report.get("official_resolution_status")
+        if status in (None, "not_attempted", "unresolved"):
+            return GatewayGateResult(
+                ok=False,
+                reason_code="official_proof_missing",
+                message="Tier A recruitment requires an official-source proof before promotion.",
+                blocking_level="promotion_blocker",
+                tier=tier,
+            )
+    # Tier B / Tier C — pass through. Real Tier B blockers land in PR4.
+    return GatewayGateResult(ok=True, tier=tier)
