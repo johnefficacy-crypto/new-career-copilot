@@ -74,7 +74,9 @@ REQUIRED_COLUMNS = {
         "id",
         "organization_id",
         "source_name",
-        "source_url",
+        # ``source_url`` removed by migration 074. ``scrape_queue.source_url``
+        # and ``notification_documents.source_url`` are unrelated — they're
+        # the URL each row was scraped from, not the source's identity.
         "short_code",
         "official_url",
         "notification_url",
@@ -194,7 +196,9 @@ REQUIRED_COLUMNS = {
         "reviewer_id",
         "reviewer_notes",
         "reviewed_at",
-        "field_evidence",
+        # ``field_evidence`` JSON column dropped by migration 074. The
+        # relational ``extracted_field_evidence`` table is the source of
+        # truth for field-level review records.
         "official_source_resolved",
         "official_source_host",
         "extraction_status",

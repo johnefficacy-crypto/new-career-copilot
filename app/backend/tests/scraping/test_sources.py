@@ -36,14 +36,17 @@ def test_normalize_legacy_source_emits_deprecation_warning():
 
 
 def test_aggregator_source_prefers_crawl_url():
+    # Migration 074 dropped ``source_registry.source_url``; ``official_url``
+    # is the canonical listing-page column for aggregators now. The test
+    # name is kept for grep-ability — the preference order between
+    # crawl_url / notification_url / official_url is still what's covered.
     src = normalize_source_registry(
         {
             "id": "s1",
             "source_name": "Free Job Alert",
             "source_type": "aggregator",
-            "source_url": "https://www.freejobalert.com/government-jobs/",
+            "official_url": "https://www.freejobalert.com/government-jobs/",
             "notification_url": "https://ignored.example/jobs",
-            "official_url": "https://ignored.example",
         }
     )
     assert src.id == "s1"
@@ -59,7 +62,7 @@ def test_discovery_only_flag_routes_to_crawl_url_even_without_source_type():
             "id": "s2",
             "source_name": "Discovery Site",
             "discovery_only": True,
-            "source_url": "https://discovery.example/list",
+            "official_url": "https://discovery.example/list",
             "notification_url": "https://ignored.example/post",
         }
     )
@@ -73,7 +76,6 @@ def test_direct_source_prefers_notification_url():
             "id": "s3",
             "source_name": "UPSC",
             "source_type": "official",
-            "source_url": "https://upsc.gov.in",
             "notification_url": "https://upsc.gov.in/notices/2026/cgl",
             "official_url": "https://upsc.gov.in",
         }

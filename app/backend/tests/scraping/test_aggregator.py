@@ -60,7 +60,9 @@ def test_aggregator_detection_and_mock_urls():
         "id": "s1",
         "source_name": "Free Job Alert",
         "source_type": "aggregator",
-        "source_url": "https://www.freejobalert.com/government-jobs/",
+        # Migration 074 dropped ``source_url`` — aggregators now carry
+        # their listing-page URL in ``official_url``.
+        "official_url": "https://www.freejobalert.com/government-jobs/",
     }
     assert is_aggregator_source(row)
     source = normalize_source_registry(row)

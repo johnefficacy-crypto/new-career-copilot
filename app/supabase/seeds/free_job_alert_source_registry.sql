@@ -32,8 +32,9 @@ insert into public.source_registry (
   is_official_source,
   can_publish_directly,
   discovery_only,
-  verification_status,
-  source_url
+  verification_status
+  -- ``source_url`` removed (dropped by migration 074). ``official_url``
+  -- is the canonical URL; the seed already populates it on line 7.
 )
 values (
   'a1d37c75-0e3c-4176-be3e-5f79755d2a60',
@@ -64,8 +65,7 @@ values (
   false,
   false,
   true,
-  'needs_review',
-  'https://www.freejobalert.com/government-jobs/'
+  'needs_review'
 )
 on conflict (id) do update set
   source_name = excluded.source_name,
@@ -96,5 +96,4 @@ on conflict (id) do update set
   can_publish_directly = false,
   discovery_only = true,
   verification_status = excluded.verification_status,
-  source_url = excluded.source_url,
   updated_at = now();

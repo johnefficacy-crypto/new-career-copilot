@@ -28,7 +28,7 @@ SOURCE_CONFIG_FIELDS = {
     "jurisdiction",
     "state",
     "parent_org",
-    "source_url",
+    # ``source_url`` removed by migration 074 — ``official_url`` is canonical.
     "official_url",
     "notification_url",
     "rss_url",
@@ -381,14 +381,9 @@ def _source_payload(body: dict, *, existing: dict | None = None, require_type: b
     payload = {k: v for k, v in body.items() if k in SOURCE_CONFIG_FIELDS}
     if source_type:
         payload["source_type"] = source_type
-    # Legacy ``source_url`` column predates ``official_url``. Existing readers
-    # may still consume either name; mirror server-side so the frontend only
-    # has to send ``official_url`` going forward. Existing rows already
-    # populated with just ``source_url`` are unaffected — the mirror runs
-    # only when official_url is the truth and source_url is blank.
-    official_url = payload.get("official_url")
-    if official_url and not payload.get("source_url"):
-        payload["source_url"] = official_url
+    # The legacy ``source_registry.source_url`` column was dropped by
+    # migration 074. ``official_url`` is now the only canonical URL field;
+    # the Sprint 5 server-side mirror is gone with the column.
 
     effective_type = source_type or (existing or {}).get("source_type")
     if effective_type == "aggregator":

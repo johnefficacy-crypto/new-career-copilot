@@ -455,7 +455,11 @@ def _shape_source(row: dict[str, Any]) -> dict[str, Any]:
         "url": row.get("notification_url") or row.get("base_url"),
         "kind": row.get("source_type") or row.get("adapter_type"),
         "source_type": row.get("source_type"),
-        "source_url": row.get("source_url"),
+        # ``source_url`` mirrors ``official_url`` for clients that still
+        # read the legacy key. The DB column was dropped by migration 074;
+        # this keeps Sources.jsx's defensive fallback chain working until
+        # the next frontend refactor retires the alias.
+        "source_url": row.get("official_url"),
         "category": row.get("category"),
         "tier": row.get("tier"),
         "verification_status": row.get("verification_status"),
