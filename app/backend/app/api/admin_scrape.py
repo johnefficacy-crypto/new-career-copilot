@@ -607,23 +607,211 @@ def list_scrape_runs(
     return {"items": items}
 
 
+@router.get("/admin/scrape/runs/{run_id}")
+def get_scrape_run_detail(
+    run_id: str,
+    _admin: dict = Depends(require_permission("scraper.manage")),
+) -> dict[str, Any]:
+    """Return one scrape_runs row plus a per-source breakdown.
+
+    The frontend "Recent runs" list shows aggregate counts only. Admins
+    need the per-source view (sources processed, items queued, errors)
+    to debug a partial or failed pass without dropping to SQL.
+
+    Per-source data is derived from ``scrape_queue`` rows linked back to
+    this run via ``scrape_run_id``. Errors are taken from
+    ``scrape_runs.error_log`` (the runner's structured per-source list).
+    """
+    if not run_id or len(run_id) < 2:
+        raise HTTPException(status_code=422, detail="Invalid run_id")
+    supabase = get_supabase_admin()
+    rows = (
+        supabase.table("scrape_runs")
+        .select("*")
+        .eq("id", run_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Scrape run not found")
+    run = rows[0]
+
+    # Per-source breakdown from scrape_queue rows produced by this run.
+    queue_rows = (
+        supabase.table("scrape_queue")
+        .select("source_id, source_name, status, promoted_recruitment_id, official_source_resolved, data_quality_score")
+        .eq("scrape_run_id", run_id)
+        .limit(1000)
+        .execute()
+        .data
+        or []
+    )
+
+    by_source: dict[str, dict[str, Any]] = {}
+    for row in queue_rows:
+        sid = row.get("source_id") or "__unknown__"
+        if sid not in by_source:
+            by_source[sid] = {
+                "source_id": row.get("source_id"),
+                "source_name": row.get("source_name") or "Unknown source",
+                "items_total": 0,
+                "items_pending": 0,
+                "items_approved": 0,
+                "items_rejected": 0,
+                "items_duplicate": 0,
+                "items_merged": 0,
+                "items_promoted": 0,
+                "items_official_unresolved": 0,
+                "quality_min": None,
+                "quality_max": None,
+            }
+        bucket = by_source[sid]
+        bucket["items_total"] += 1
+        st = (row.get("status") or "").lower()
+        if st == "pending":
+            bucket["items_pending"] += 1
+        elif st == "approved":
+            bucket["items_approved"] += 1
+        elif st == "rejected":
+            bucket["items_rejected"] += 1
+        elif st == "duplicate":
+            bucket["items_duplicate"] += 1
+        elif st == "merged":
+            bucket["items_merged"] += 1
+        if row.get("promoted_recruitment_id"):
+            bucket["items_promoted"] += 1
+        if row.get("official_source_resolved") is False:
+            bucket["items_official_unresolved"] += 1
+        q = row.get("data_quality_score")
+        if q is not None:
+            bucket["quality_min"] = q if bucket["quality_min"] is None else min(bucket["quality_min"], q)
+            bucket["quality_max"] = q if bucket["quality_max"] is None else max(bucket["quality_max"], q)
+
+    # Index errors by source so the UI can show them next to the
+    # per-source rows. error_log entries shape: {source, error, at}.
+    errors = run.get("error_log") or []
+    errors_by_source: dict[str, list[dict[str, Any]]] = {}
+    for err in errors:
+        if not isinstance(err, dict):
+            continue
+        key = (err.get("source") or "").strip()
+        errors_by_source.setdefault(key, []).append(err)
+
+    # Pull source_registry names so unknown / unscraped sources (errored
+    # before producing any queue rows) still show up by name.
+    src_ids = [s for s in by_source.keys() if s != "__unknown__"]
+    name_by_id: dict[str, str] = {}
+    if src_ids:
+        srows = (
+            supabase.table("source_registry")
+            .select("id, source_name")
+            .in_("id", src_ids)
+            .execute()
+            .data
+            or []
+        )
+        name_by_id = {s["id"]: s.get("source_name") or "" for s in srows}
+
+    per_source = []
+    for sid, bucket in sorted(by_source.items(), key=lambda kv: kv[1]["source_name"].lower()):
+        name = bucket["source_name"] or name_by_id.get(sid, "Unknown source")
+        bucket["source_name"] = name
+        bucket["errors"] = errors_by_source.get(name, [])
+        per_source.append(bucket)
+
+    return {
+        "id": run["id"],
+        "status": run.get("status"),
+        "triggered_by": run.get("triggered_by"),
+        "triggered_by_user": run.get("triggered_by_user"),
+        "started_at": run.get("started_at"),
+        "finished_at": run.get("finished_at"),
+        "sources_checked": run.get("sources_checked") or 0,
+        "items_found": run.get("items_found") or 0,
+        "items_new": run.get("items_new") or 0,
+        "items_duplicate": run.get("items_duplicate") or 0,
+        "error_log": errors,
+        "per_source": per_source,
+    }
+
+
 @router.get("/admin/scrape/queue")
 def list_scrape_queue(
     status: str | None = Query(default="pending"),
-    limit: int = Query(default=50, ge=1, le=50),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    q: str | None = Query(default=None, max_length=200),
+    source_type: str | None = Query(default=None, max_length=64),
+    risk: str | None = Query(
+        default=None,
+        description="Risk filter: official_unresolved | low_quality | needs_review",
+    ),
+    sort: str = Query(
+        default="risky_first",
+        description="risky_first | quality_asc | newest | oldest",
+    ),
     _admin: dict = Depends(require_permission("scraper.manage")),
 ) -> dict[str, Any]:
+    """List scrape queue items with server-side filter/search/sort.
+
+    The previous behaviour (status + limit) is preserved for callers that
+    only pass those. New params let the admin UI stop loading 50 rows and
+    filtering them in the browser, which was breaking past row 50.
+
+    ``q`` matches against ``source_name`` and ``source_url`` (ILIKE).
+    ``risk=official_unresolved`` enforces ``official_source_resolved=false``.
+    ``risk=low_quality`` selects rows with ``data_quality_score < 50`` or null.
+    """
     supabase = get_supabase_admin()
-    q = (
-        supabase.table("scrape_queue")
-        .select("id, source_id, source_url, source_name, raw_html, raw_payload, extracted_data, confidence_score, data_quality_score, status, duplicate_of, promoted_recruitment_id, reviewer_id, reviewer_notes, reviewed_at, field_evidence, official_source_resolved, official_source_host, extraction_status, evidence_required, scraped_at")
-        .order("data_quality_score", desc=False, nullsfirst=True)
-        .order("scraped_at", desc=True)
-        .limit(limit)
-    )
+    selection = "id, source_id, source_url, source_name, raw_html, raw_payload, extracted_data, confidence_score, data_quality_score, status, duplicate_of, promoted_recruitment_id, reviewer_id, reviewer_notes, reviewed_at, field_evidence, official_source_resolved, official_source_host, extraction_status, evidence_required, scraped_at"
+    base = supabase.table("scrape_queue").select(selection, count="exact")
     if status and status != "all":
-        q = q.eq("status", status)
-    rows = q.execute().data or []
+        base = base.eq("status", status)
+    if q:
+        # PostgREST .or_ expects comma-separated filter expressions; ILIKE
+        # gives case-insensitive search. The wildcard wrapping happens here
+        # so callers don't need to know the SQL form.
+        needle = f"%{q.strip()}%"
+        base = base.or_(f"source_name.ilike.{needle},source_url.ilike.{needle}")
+    if risk == "official_unresolved":
+        base = base.eq("official_source_resolved", False)
+    elif risk == "low_quality":
+        base = base.lt("data_quality_score", 50)
+    elif risk == "needs_review":
+        base = base.in_("status", ["pending", "needs_review"])
+    # Sort. ``risky_first`` puts unresolved-official rows ahead of the rest
+    # by sorting on ``official_source_resolved`` nulls/false first, then
+    # falling back to quality and recency.
+    if sort == "quality_asc":
+        base = base.order("data_quality_score", desc=False, nullsfirst=True).order("scraped_at", desc=True)
+    elif sort == "newest":
+        base = base.order("scraped_at", desc=True)
+    elif sort == "oldest":
+        base = base.order("scraped_at", desc=False)
+    else:  # risky_first (default)
+        base = base.order("official_source_resolved", desc=False, nullsfirst=True).order("data_quality_score", desc=False, nullsfirst=True).order("scraped_at", desc=True)
+    # PostgREST uses (offset, limit-1) ranges; .range() handles that math.
+    res = base.range(offset, offset + limit - 1).execute()
+    rows = res.data or []
+    total = getattr(res, "count", None)
+
+    # source_type lives in source_registry, not on scrape_queue. Filter in
+    # Python after the fetch — fine because the page size cap is 200.
+    if source_type:
+        wanted = source_type.strip().lower()
+        if wanted:
+            src_rows = (
+                supabase.table("source_registry")
+                .select("id, source_type")
+                .execute()
+                .data
+                or []
+            )
+            type_by_id = {s.get("id"): (s.get("source_type") or "").lower() for s in src_rows}
+            rows = [r for r in rows if type_by_id.get(r.get("source_id")) == wanted]
+
     supabase2 = get_supabase_admin()
     existing = (supabase2.table("recruitments").select("id,name,year,official_notification_url").limit(400).execute().data or [])
     queue_ids = [r["id"] for r in rows if r.get("id")]
@@ -694,20 +882,220 @@ def list_scrape_queue(
         # post would look globally verified).
         reviewed = evidence_by_queue.get(r.get("id"), {})
         r["field_evidence_status"] = reviewed
-        r["field_evidence_details"] = evidence_details_by_queue.get(r.get("id"), [])
-        # Promotability comes from the real promotion gate so the queue
-        # list and the promote endpoint can never disagree (post-scoped
-        # evidence + data-contradiction checks included).
-        gate = evaluate_promotion_gate(supabase, r)
-        r["unverified_fields"] = sorted(gate.unverified_fields)
-        r["promotable"] = gate.ok
-        r["gate_reason"] = gate.reason
-    return {"items": rows}
+        missing = [f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified", "corrected"}]
+        r["unverified_fields"] = sorted(missing)
+        r["promotable"] = len(missing) == 0
+    return {
+        "items": rows,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "filters": {
+            "status": status,
+            "q": q,
+            "source_type": source_type,
+            "risk": risk,
+            "sort": sort,
+        },
+    }
 
 
 # ════════════════════════════════════════════════════════════════════════════
 #  Promote / reject
 # ════════════════════════════════════════════════════════════════════════════
+
+
+@router.get("/admin/scrape/items/{queue_id}/promotion-preview")
+def promotion_preview(
+    queue_id: str,
+    _admin: dict = Depends(require_permission("recruitments.manage")),
+) -> dict[str, Any]:
+    """Return a dry-run preview of what promoting this queue item would create.
+
+    Reads the same effective extracted data + gate evidence the actual
+    promote endpoint reads, but writes nothing. Used by the Operations
+    Console "Promotion preview" panel so admins can confirm the
+    recruitment / organization / posts / blockers shape before clicking
+    Promote — which today gives them only a generic gate error toast.
+    """
+    from pydantic import ValidationError as _PydValidationError
+
+    from app.scraping.runner import compute_promotion_slug
+    from app.scraping.schemas import ExtractedRecruitment
+
+    _validate_queue_id(queue_id)
+    supabase = get_supabase_admin()
+    rows = (
+        supabase.table("scrape_queue")
+        .select("id, source_id, source_url, source_name, extracted_data, status, official_source_resolved, official_source_host, extraction_status")
+        .eq("id", queue_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+    item = rows[0]
+
+    blocking: list[dict[str, Any]] = []
+    warnings: list[str] = []
+
+    if item.get("status") not in {"approved", "pending", "needs_review"}:
+        blocking.append({
+            "code": "wrong_status",
+            "message": f"Queue item is {item.get('status')!r}; only pending/needs_review/approved items are promotable.",
+        })
+    if item.get("official_source_resolved") is False:
+        blocking.append({
+            "code": "unverified_official_source",
+            "message": "Resolve an official source before promotion.",
+        })
+
+    # Field-evidence gate (mirrors promote_queue_item).
+    reviewed: dict[str, str | None] = {}
+    try:
+        frows = (
+            supabase.table("extracted_field_evidence")
+            .select("field_name, reviewer_status")
+            .eq("scrape_queue_id", queue_id)
+            .execute()
+            .data
+            or []
+        )
+        reviewed = {r.get("field_name"): r.get("reviewer_status") for r in frows}
+        missing = [f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified", "corrected"}]
+        if missing:
+            blocking.append({
+                "code": "high_risk_fields_unverified",
+                "message": "Verify or correct required fields before promotion.",
+                "unverified_fields": sorted(missing),
+            })
+    except Exception:
+        warnings.append("field_evidence_table_unavailable")
+
+    # Effective data — re-run corrections so the preview mirrors what
+    # promote_to_recruitments would actually write.
+    try:
+        effective = build_effective_extracted_data(supabase, queue_id)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("promotion preview effective-data build failed queue_id=%s", queue_id)
+        effective = item.get("extracted_data") or {}
+        warnings.append("effective_data_unavailable")
+
+    extracted: ExtractedRecruitment | None = None
+    try:
+        extracted = ExtractedRecruitment(**effective)
+    except _PydValidationError as exc:
+        # Shape errors are blockers — promotion will hit the same wall.
+        # Surface them as a clickable checklist instead of a 500.
+        for err in exc.errors():
+            loc = ".".join(str(part) for part in err.get("loc", []))
+            blocking.append({
+                "code": "schema_violation",
+                "field": loc,
+                "message": err.get("msg") or "Invalid value",
+            })
+
+    # Organization preview: does the recruiting organization already exist?
+    org_name = (effective.get("organization_name") or "").strip()
+    org_state = "unknown"
+    org_existing_id = None
+    if org_name:
+        org_rows = (
+            supabase.table("organizations")
+            .select("id, name")
+            .ilike("name", org_name)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if org_rows:
+            org_existing_id = org_rows[0].get("id")
+            org_state = "link_existing"
+        else:
+            org_state = "create_new"
+
+    # Slug-duplicate preview: would the recruitment collide?
+    duplicate_recruitment_id = None
+    duplicate_slug = None
+    if extracted is not None:
+        try:
+            slug = compute_promotion_slug(extracted)
+            duplicate_slug = slug
+            dup_rows = (
+                supabase.table("recruitments")
+                .select("id, slug, name")
+                .eq("slug", slug)
+                .limit(1)
+                .execute()
+                .data
+                or []
+            )
+            if dup_rows:
+                duplicate_recruitment_id = dup_rows[0].get("id")
+                blocking.append({
+                    "code": "duplicate_slug",
+                    "message": "A recruitment with this slug already exists. Use merge-into instead of promote.",
+                    "existing_recruitment_id": duplicate_recruitment_id,
+                    "slug": slug,
+                })
+        except Exception:
+            warnings.append("slug_compute_failed")
+
+    posts_preview = []
+    for idx, post in enumerate((effective.get("posts") or [])):
+        if not isinstance(post, dict):
+            continue
+        posts_preview.append({
+            "index": idx,
+            "post_name": post.get("post_name"),
+            "vacancies": post.get("vacancies"),
+            "min_age": post.get("min_age"),
+            "max_age": post.get("max_age"),
+            "education_required": post.get("education_required"),
+            "unit_name": post.get("unit_name"),
+            "unit_location_state": post.get("unit_location_state"),
+        })
+
+    return {
+        "queue_id": queue_id,
+        "ok": len(blocking) == 0,
+        "blocking_issues": blocking,
+        "warnings": warnings,
+        "recruitment_preview": {
+            "title": effective.get("title"),
+            "year": effective.get("year"),
+            "organization_name": org_name or None,
+            "notification_date": effective.get("notification_date"),
+            "apply_start_date": effective.get("apply_start_date"),
+            "apply_end_date": effective.get("apply_end_date"),
+            "total_vacancies": effective.get("total_vacancies"),
+            "official_notification_url": effective.get("official_notification_url"),
+            "official_apply_url": effective.get("official_apply_url"),
+            "source_pdf_url": effective.get("source_pdf_url"),
+            "slug": duplicate_slug,
+            "publish_status_after": "needs_review",
+        },
+        "organization_preview": {
+            "state": org_state,
+            "existing_id": org_existing_id,
+            "name": org_name or None,
+        },
+        "posts_preview": posts_preview,
+        "duplicate_recruitment_id": duplicate_recruitment_id,
+        "official_source": {
+            "resolved": bool(item.get("official_source_resolved")),
+            "host": item.get("official_source_host"),
+        },
+        "evidence_summary": {
+            "required_fields": sorted(list(_HIGH_RISK_FIELDS)),
+            "reviewed": reviewed,
+        },
+    }
 
 
 @router.post("/admin/scrape/items/{queue_id}/promote")

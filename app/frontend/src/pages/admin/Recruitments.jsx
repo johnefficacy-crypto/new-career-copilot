@@ -7,6 +7,7 @@ import { api, getApiBlockingIssues } from "../../lib/api";
 import AdminWorkflowStepper from "../../features/admin/workflow/AdminWorkflowStepper";
 import NextActionCallout from "../../features/admin/workflow/NextActionCallout";
 import BlockerList from "../../features/admin/workflow/BlockerList";
+import InlineTrustFixes from "../../features/admin/workflow/InlineTrustFixes";
 import { getNextActionForRecruitment } from "../../features/admin/workflow/adminWorkflowContract";
 import { useFocusTrap } from "../../shared/a11y/useFocusTrap";
 import { EmptyState, ErrorState, LoadingSkeleton, StatusBadge } from "../../shared/ui";
@@ -39,7 +40,7 @@ function truncateUrl(url) {
   return url.replace(/^https?:\/\//, "").slice(0, 64);
 }
 
-function RecruitmentDrawer({ row, onClose, onAction, onSave, busyKey }) {
+function RecruitmentDrawer({ row, onClose, onAction, onSave, onReload, busyKey }) {
   const panelRef = useRef(null);
   const closeRef = useRef(null);
   useFocusTrap({ active: !!row, containerRef: panelRef, onEscape: onClose, initialFocusRef: closeRef });
@@ -103,6 +104,10 @@ function RecruitmentDrawer({ row, onClose, onAction, onSave, busyKey }) {
           <IssuePanel title="Blocking issues" items={row.blocking_issues} empty="No publish blockers reported." renderBlockers />
           <IssuePanel title="Warnings" tone="amber" items={row.warnings} empty="No warnings reported." />
         </section>
+
+        <div className="mt-5">
+          <InlineTrustFixes row={row} blockers={row.blocking_issues || []} onAfterFix={onReload} />
+        </div>
 
         <section className="mt-5 soft-card rounded-2xl p-4">
           <h3 className="font-semibold">Review notes and edits</h3>
@@ -273,7 +278,7 @@ export default function AdminRecruitments() {
         </div>
       ) : null}
 
-      <RecruitmentDrawer row={selected} onClose={() => setSelected(null)} onAction={act} onSave={save} busyKey={busyKey} />
+      <RecruitmentDrawer row={selected} onClose={() => setSelected(null)} onAction={act} onSave={save} onReload={load} busyKey={busyKey} />
     </div>
   );
 }
