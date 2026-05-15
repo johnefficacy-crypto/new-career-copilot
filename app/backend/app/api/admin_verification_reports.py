@@ -28,7 +28,7 @@ from app.core.auth import get_current_user
 from app.db.supabase_client import get_supabase_admin
 from app.scraping.verification_gateway import run_resolver_stage
 from app.scraping.verification_policy import RESOLVER_RERUN_LIMITS
-from app.scraping.verification_reports import attach_admin_official_url
+from app.scraping.verification_reports import attach_admin_official_url, record_override
 
 
 logger = logging.getLogger("career_copilot.api.admin_verification_reports")
@@ -43,6 +43,14 @@ _ALLOWED_RECOMMENDED = {
     "await_official_proof", "request_admin_review",
     "promote_eligible", "block_publish", "no_action",
     "confirm_suggested_proof",
+    # PR3 extension (migration 081):
+    "resolve_conflict",
+}
+
+
+_ALLOWED_LIFECYCLE = _ALLOWED_LIFECYCLE | {
+    # PR3 extension (migration 079):
+    "consensus_pending", "conflict", "admin_override_required",
 }
 
 
@@ -236,6 +244,85 @@ def run_resolver_for_report(
         resolver_confidence=result.resolver_confidence,
         suggested_count=result.suggested_count,
     )
+
+
+class OverrideConflictRequest(BaseModel):
+    conflict_id: str = Field(min_length=1)
+    prior_value: Any = None
+    chosen_value: Any
+    reason: str = Field(min_length=1)
+    evidence_url: str | None = None
+    override_scope: str = Field(default="field")
+
+
+@router.post("/admin/verification-reports/{report_id}/override-conflict")
+def override_conflict(
+    report_id: str,
+    payload: OverrideConflictRequest = Body(...),
+    admin: dict = Depends(_require_admin),
+) -> dict[str, Any]:
+    """Resolve one verification conflict with an explicit admin choice.
+
+    Permission: ``recruitments.manage`` AND role in (admin, super_admin).
+    ``override_scope`` is restricted to ``"field"`` or ``"recruitment"``
+    — the plan removed the ``"report"`` scope deliberately.
+
+    Side effects:
+
+    * Inserts a row into ``recruitment_verification_overrides`` with the
+      audit trail (prior_value, chosen_value, reason, evidence_url).
+    * Marks the matching conflict on the report's jsonb column as
+      ``resolved_by_admin`` (the gate uses this to unblock Tier A).
+    """
+    perms = set(admin.get("permissions") or [])
+    if "recruitments.manage" not in perms and admin.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="recruitments.manage required")
+    if payload.override_scope not in {"field", "recruitment"}:
+        raise HTTPException(
+            status_code=422,
+            detail="override_scope must be 'field' or 'recruitment'",
+        )
+
+    supabase = get_supabase_admin()
+    rows = (
+        supabase.table("recruitment_verification_reports")
+        .select("id, conflicts")
+        .eq("id", report_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="verification_report not found")
+    target = next(
+        (c for c in rows[0].get("conflicts") or [] if c.get("conflict_id") == payload.conflict_id),
+        None,
+    )
+    if not target:
+        raise HTTPException(
+            status_code=404,
+            detail="conflict_id not present on this report",
+        )
+    try:
+        override_row = record_override(
+            supabase,
+            verification_report_id=report_id,
+            conflict_id=payload.conflict_id,
+            conflict_key=target.get("conflict_key", ""),
+            field_path=target.get("field_path"),
+            prior_value=payload.prior_value,
+            chosen_value=payload.chosen_value,
+            reason=payload.reason,
+            evidence_url=payload.evidence_url,
+            override_scope=payload.override_scope,
+            created_by=admin["id"],
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return override_row
 
 
 class ConfirmSuggestedProofRequest(BaseModel):

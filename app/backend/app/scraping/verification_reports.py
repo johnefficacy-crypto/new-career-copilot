@@ -67,12 +67,50 @@ PR1_LIFECYCLE_STATES: frozenset[str] = frozenset({
 })
 
 
-ALLOWED_REPORT_TRANSITIONS: dict[str, frozenset[str]] = {
-    "classified":              frozenset({"superseded", "rejected"}),
-    "backfilled_needs_review": frozenset({"classified", "superseded", "rejected"}),
-    "rejected":                frozenset({"superseded"}),
-    "superseded":              frozenset(),   # terminal, immutable
+# Set of states the service-layer transition guard accepts. Each PR
+# widens this; the underlying DB constraint widens in lockstep via its
+# own migration.
+_KNOWN_LIFECYCLE_STATES: set[str] = set(PR1_LIFECYCLE_STATES) | {
+    # PR3 (migration 079):
+    "consensus_pending",
+    "conflict",
+    "admin_override_required",
 }
+
+
+ALLOWED_REPORT_TRANSITIONS: dict[str, set[str]] = {
+    "classified":              {"superseded", "rejected"},
+    "backfilled_needs_review": {"classified", "superseded", "rejected"},
+    "rejected":                {"superseded"},
+    "superseded":              set(),   # terminal, immutable
+}
+
+
+def extend_transitions(additions: dict[str, set[str]]) -> None:
+    """Per-key union extension. Use this in every later PR's amendment.
+
+    ``dict |=`` would *overwrite* existing keys rather than unioning,
+    silently dropping PR1's transitions. Per the PR plan §0.1 the
+    matrix is a single source of truth and every PR amends via this
+    helper.
+    """
+    for state, allowed in additions.items():
+        ALLOWED_REPORT_TRANSITIONS[state] = (
+            ALLOWED_REPORT_TRANSITIONS.get(state, set()) | allowed
+        )
+
+
+# ── PR3 lifecycle additions ───────────────────────────────────────────
+#
+# Migration 079 widens the DB ``chk_lifecycle_status`` constraint to
+# accept these three. The transition matrix is widened here.
+
+extend_transitions({
+    "classified":              {"consensus_pending"},
+    "consensus_pending":       {"classified", "conflict", "admin_override_required", "superseded", "rejected"},
+    "conflict":                {"admin_override_required", "classified", "superseded", "rejected"},
+    "admin_override_required": {"classified", "superseded", "rejected"},
+})
 
 
 # ── Trigger reasons emitted by PR1 ─────────────────────────────────────
@@ -264,7 +302,7 @@ def update_lifecycle_status(
     This is the ONLY choke point for ``lifecycle_status`` writes. Direct
     table updates bypass the transition matrix and are not supported.
     """
-    if new_status not in PR1_LIFECYCLE_STATES:
+    if new_status not in _KNOWN_LIFECYCLE_STATES:
         raise ValueError(f"unknown lifecycle_status: {new_status!r}")
 
     row = (
@@ -302,6 +340,121 @@ def update_lifecycle_status(
     if not updated:
         raise RuntimeError(f"verification_report {report_id} update returned no row")
     return updated
+
+
+# ── PR3: consensus state setters ──────────────────────────────────────
+
+
+def write_conflicts(
+    supabase: Client,
+    report_id: str,
+    *,
+    conflicts: list[dict[str, Any]],
+    lifecycle_status: str | None = None,
+    recommended_action: str | None = None,
+) -> dict[str, Any]:
+    """Persist conflict list onto a report and optionally flip lifecycle.
+
+    The consensus engine produces conflict dicts; this is the choke
+    point that validates them through Pydantic and writes them out.
+    Lifecycle flips go via :func:`update_lifecycle_status` so the
+    transition matrix is enforced.
+    """
+    payload: dict[str, Any] = {"conflicts": validate_conflicts(conflicts)}
+    if recommended_action is not None:
+        payload["recommended_action"] = recommended_action
+    updated = (
+        supabase.table(TABLE)
+        .update(payload)
+        .eq("id", report_id)
+        .execute()
+        .data
+        or [None]
+    )[0]
+    if not updated:
+        raise RuntimeError(f"verification_report {report_id} update returned no row")
+    if lifecycle_status is not None:
+        updated = update_lifecycle_status(supabase, report_id, lifecycle_status)
+    return updated
+
+
+def record_override(
+    supabase: Client,
+    *,
+    verification_report_id: str,
+    conflict_id: str,
+    conflict_key: str,
+    field_path: str | None,
+    prior_value: Any,
+    chosen_value: Any,
+    reason: str,
+    evidence_url: str | None,
+    override_scope: str,
+    created_by: str,
+) -> dict[str, Any]:
+    """Insert a row into ``recruitment_verification_overrides``.
+
+    Validates ``override_scope`` against the (post-plan-fix) two-value
+    set; ``'report'`` was removed deliberately and the value is no
+    longer accepted.
+
+    Marks the matching conflict on the report's jsonb column as
+    ``resolved_by_admin``. The conflict row is matched by
+    ``conflict_id``; if no match exists the call raises.
+    """
+    if override_scope not in {"field", "recruitment"}:
+        raise ValueError(f"override_scope must be 'field' or 'recruitment', got {override_scope!r}")
+
+    row = (
+        supabase.table(TABLE)
+        .select("id, conflicts")
+        .eq("id", verification_report_id)
+        .limit(1)
+        .execute()
+        .data
+        or [None]
+    )[0]
+    if not row:
+        raise LookupError(f"verification_report {verification_report_id} not found")
+
+    conflicts = list(row.get("conflicts") or [])
+    matched = False
+    for c in conflicts:
+        if c.get("conflict_id") == conflict_id:
+            c["status"] = "resolved_by_admin"
+            matched = True
+            break
+    if not matched:
+        raise LookupError(
+            f"conflict_id {conflict_id} not found on verification_report {verification_report_id}"
+        )
+
+    override_payload = {
+        "verification_report_id": verification_report_id,
+        "conflict_id": conflict_id,
+        "conflict_key": conflict_key,
+        "field_path": field_path,
+        "prior_value": prior_value,
+        "chosen_value": chosen_value,
+        "reason": reason,
+        "evidence_url": evidence_url,
+        "override_scope": override_scope,
+        "created_by": created_by,
+    }
+    inserted = (
+        supabase.table("recruitment_verification_overrides")
+        .insert(override_payload)
+        .execute()
+        .data
+        or [None]
+    )[0]
+
+    # Persist the resolved-status update on the report.
+    supabase.table(TABLE).update({"conflicts": validate_conflicts(conflicts)}).eq(
+        "id", verification_report_id
+    ).execute()
+
+    return inserted or override_payload
 
 
 # ── PR2: resolver state setters ────────────────────────────────────────
@@ -577,10 +730,13 @@ __all__ = [
     "ALLOWED_REPORT_TRANSITIONS",
     "attach_admin_official_url",
     "backfill_existing_recruitment",
+    "extend_transitions",
     "get_active_report",
     "get_or_create_verification_report_for_queue",
     "get_or_create_verification_report_for_recruitment",
     "mark_superseded",
+    "record_override",
     "set_resolver_state",
     "update_lifecycle_status",
+    "write_conflicts",
 ]

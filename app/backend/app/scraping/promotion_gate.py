@@ -267,5 +267,27 @@ def check_gateway_promotion(report: dict[str, Any] | None) -> GatewayGateResult:
                 blocking_level="promotion_blocker",
                 tier=tier,
             )
+        # PR3 strengthening: Tier A also blocks on unresolved consensus
+        # conflicts. ``resolved_by_admin`` and ``ignored`` pass.
+        if _has_unresolved_conflict(report):
+            return GatewayGateResult(
+                ok=False,
+                reason_code="consensus_conflict_unresolved",
+                message="Tier A recruitment has an unresolved consensus conflict — admin override required.",
+                blocking_level="promotion_blocker",
+                tier=tier,
+            )
     # Tier B / Tier C — pass through. Real Tier B blockers land in PR4.
     return GatewayGateResult(ok=True, tier=tier)
+
+
+def _has_unresolved_conflict(report: dict[str, Any]) -> bool:
+    """Inlined consensus check.
+
+    Avoids importing ``consensus_engine`` at module load so the gate's
+    dependency surface stays flat.
+    """
+    for c in report.get("conflicts") or []:
+        if (c or {}).get("status", "open") == "open":
+            return True
+    return False
