@@ -9,7 +9,7 @@ import CompetitionMetricsTable from "../../features/admin/exam-intelligence/Comp
 import PolicyUpdatesTable from "../../features/admin/exam-intelligence/PolicyUpdatesTable";
 import PlanImpactPreview from "../../features/admin/exam-intelligence/PlanImpactPreview";
 import { AdminSafetyBanner } from "../../shared/ui";
-import { PageHeader, StatusDot } from "../../shared/ui/studyos";
+import { Drawer, PageHeader, StatusDot } from "../../shared/ui/studyos";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -55,6 +55,9 @@ export default function AdminExamIntelligence() {
   const [coverageStatus, setCoverageStatus] = useState("all");
   const [coverageBusyRowId, setCoverageBusyRowId] = useState(null);
   const [coverageError, setCoverageError] = useState("");
+  const [coverageEditRow, setCoverageEditRow] = useState(null);
+  const [coverageEditForm, setCoverageEditForm] = useState({});
+  const [coverageEditBusy, setCoverageEditBusy] = useState(false);
 
   const [competition, setCompetition] = useState({ items: [], count: 0 });
   const [competitionLoading, setCompetitionLoading] = useState(false);
@@ -189,6 +192,50 @@ export default function AdminExamIntelligence() {
       setReviewError(e?.message || "Review failed");
     } finally {
       setBusyRowId(null);
+    }
+  }
+
+  function openCoverageEditor(row) {
+    setCoverageEditRow(row);
+    setCoverageEditForm({
+      coverage_depth: row.coverage_depth || "",
+      expected_difficulty: row.expected_difficulty || "",
+      exam_priority_score: row.priority_score ?? "",
+      is_high_yield: !!row.high_yield,
+      confidence_score: row.confidence_score ?? "",
+      source_basis: row.source_basis || "",
+      reviewer_notes: row.reviewer_notes || "",
+    });
+  }
+
+  async function saveCoverageEdit() {
+    if (!coverageEditRow) return;
+    setCoverageEditBusy(true);
+    setCoverageError("");
+    try {
+      const payload = { ...coverageEditForm };
+      if (payload.exam_priority_score === "") delete payload.exam_priority_score;
+      if (payload.confidence_score === "") delete payload.confidence_score;
+      if (payload.coverage_depth === "") delete payload.coverage_depth;
+      if (payload.expected_difficulty === "") delete payload.expected_difficulty;
+      if (payload.source_basis === "") delete payload.source_basis;
+      if (payload.reviewer_notes === "") delete payload.reviewer_notes;
+      if (payload.exam_priority_score !== undefined) {
+        payload.exam_priority_score = Number(payload.exam_priority_score);
+      }
+      if (payload.confidence_score !== undefined) {
+        payload.confidence_score = Number(payload.confidence_score);
+      }
+      await api.patch(
+        `/api/admin/exam-intelligence/topic-coverage/${encodeURIComponent(coverageEditRow.id)}`,
+        payload,
+      );
+      setCoverageEditRow(null);
+      await loadCoverage();
+    } catch (e) {
+      setCoverageError(e?.message || "Edit failed");
+    } finally {
+      setCoverageEditBusy(false);
     }
   }
 
@@ -428,8 +475,107 @@ export default function AdminExamIntelligence() {
           <TopicCoveragePreview
             items={coverage.items}
             onReview={reviewCoverageRow}
+            onEdit={openCoverageEditor}
             busyRowId={coverageBusyRowId}
           />
+          <Drawer
+            open={!!coverageEditRow}
+            onClose={() => setCoverageEditRow(null)}
+            title={coverageEditRow ? `Edit · ${coverageEditRow.topic || coverageEditRow.id}` : "Edit"}
+            width={480}
+          >
+            {coverageEditRow ? (
+              <div className="space-y-3 text-sm">
+                <p className="text-[12px] text-clay-700">
+                  Lock lifecycle is unchanged by edits here. Use the review action buttons to move
+                  the row to a different lifecycle state.
+                </p>
+                <Field label="Coverage depth">
+                  <input
+                    className="input-row"
+                    value={coverageEditForm.coverage_depth || ""}
+                    onChange={(e) => setCoverageEditForm((p) => ({ ...p, coverage_depth: e.target.value }))}
+                  />
+                </Field>
+                <Field label="Expected difficulty">
+                  <input
+                    className="input-row"
+                    value={coverageEditForm.expected_difficulty || ""}
+                    onChange={(e) => setCoverageEditForm((p) => ({ ...p, expected_difficulty: e.target.value }))}
+                  />
+                </Field>
+                <Field label="Exam priority score (0–100)">
+                  <input
+                    type="number"
+                    step="0.1"
+                    className="input-row"
+                    value={coverageEditForm.exam_priority_score ?? ""}
+                    onChange={(e) =>
+                      setCoverageEditForm((p) => ({ ...p, exam_priority_score: e.target.value }))
+                    }
+                  />
+                </Field>
+                <Field label="Confidence score (0–1)">
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="input-row"
+                    value={coverageEditForm.confidence_score ?? ""}
+                    onChange={(e) =>
+                      setCoverageEditForm((p) => ({ ...p, confidence_score: e.target.value }))
+                    }
+                  />
+                </Field>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={!!coverageEditForm.is_high_yield}
+                    onChange={(e) =>
+                      setCoverageEditForm((p) => ({ ...p, is_high_yield: e.target.checked }))
+                    }
+                  />
+                  High yield
+                </label>
+                <Field label="Source basis">
+                  <input
+                    className="input-row"
+                    value={coverageEditForm.source_basis || ""}
+                    onChange={(e) => setCoverageEditForm((p) => ({ ...p, source_basis: e.target.value }))}
+                  />
+                </Field>
+                <Field label="Reviewer notes">
+                  <textarea
+                    rows={3}
+                    className="input-row"
+                    value={coverageEditForm.reviewer_notes || ""}
+                    onChange={(e) =>
+                      setCoverageEditForm((p) => ({ ...p, reviewer_notes: e.target.value }))
+                    }
+                  />
+                </Field>
+                <div className="flex justify-end gap-2 pt-2 border-t border-clay-200">
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => setCoverageEditRow(null)}
+                    disabled={coverageEditBusy}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={saveCoverageEdit}
+                    disabled={coverageEditBusy}
+                    data-testid="coverage-edit-save"
+                  >
+                    {coverageEditBusy ? "Saving…" : "Save"}
+                  </button>
+                </div>
+                <style>{`.input-row{width:100%;padding:0.55rem 0.9rem;border-radius:0.75rem;background:rgba(255,255,255,0.85);border:1px solid #E7DECB;font-size:14px;}`}</style>
+              </div>
+            ) : null}
+          </Drawer>
         </section>
       ) : null}
 
@@ -540,5 +686,14 @@ export default function AdminExamIntelligence() {
         </section>
       ) : null}
     </div>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <label className="block">
+      <span className="text-[10.5px] uppercase tracking-wider text-clay-700">{label}</span>
+      <div className="mt-1">{children}</div>
+    </label>
   );
 }
