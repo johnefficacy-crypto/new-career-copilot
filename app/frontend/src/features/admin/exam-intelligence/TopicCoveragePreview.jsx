@@ -68,24 +68,22 @@ export default function TopicCoveragePreview({ items, onReview, onEdit, busyRowI
           description="Verified syllabus mentions and PYQ tags are aggregated into exam_topic_coverage. Rows appear here once that data exists for the selected exam."
         />
       ) : (
-        <div className="soft-card rounded-2xl overflow-hidden">
-          <table className="w-full text-sm" data-testid="topic-coverage-table">
-            <thead className="bg-clay-50 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+        <div className="soft-card grain relative overflow-hidden rounded-[18px]">
+          <table className="tbl" data-testid="topic-coverage-table">
+            <thead>
               <tr>
-                <th className="text-left px-4 py-2">Exam</th>
-                <th className="text-left px-4 py-2">Phase</th>
-                <th className="text-left px-4 py-2">Subject</th>
-                <th className="text-left px-4 py-2">Topic</th>
-                <th className="text-left px-4 py-2">Depth</th>
-                <th className="text-left px-4 py-2">Difficulty</th>
-                <th className="text-right px-4 py-2">Priority</th>
-                <th className="text-left px-4 py-2">High yield</th>
-                <th className="text-left px-4 py-2">Confidence</th>
-                <th className="text-right px-4 py-2">Evidence</th>
-                <th className="text-left px-4 py-2">Status</th>
-                {interactive ? (
-                  <th className="text-left px-4 py-2">Actions</th>
-                ) : null}
+                <th>Exam</th>
+                <th>Phase</th>
+                <th>Subject</th>
+                <th>Topic</th>
+                <th>Depth</th>
+                <th>Difficulty</th>
+                <th className="right">Priority</th>
+                <th>High yield</th>
+                <th>Confidence</th>
+                <th className="right">Evidence</th>
+                <th>Status</th>
+                {interactive ? <th>Actions</th> : null}
               </tr>
             </thead>
             <tbody>

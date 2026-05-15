@@ -78,17 +78,17 @@ export default function PolicyUpdatesTable({ items, onReview, busyRowId }) {
   }
 
   return (
-    <div className="soft-card rounded-2xl overflow-hidden" data-testid="policy-updates-table">
-      <table className="w-full text-sm">
-        <thead className="bg-clay-50 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+    <div className="soft-card grain relative overflow-hidden rounded-[18px]" data-testid="policy-updates-table">
+      <table className="tbl">
+        <thead>
           <tr>
-            <th className="text-left px-4 py-2">Exam</th>
-            <th className="text-left px-4 py-2">Type</th>
-            <th className="text-left px-4 py-2">Title</th>
-            <th className="text-left px-4 py-2">Source</th>
-            <th className="text-left px-4 py-2">Affects</th>
-            <th className="text-left px-4 py-2">Status</th>
-            {interactive ? <th className="text-left px-4 py-2">Actions</th> : null}
+            <th>Exam</th>
+            <th>Type</th>
+            <th>Title</th>
+            <th>Source</th>
+            <th>Affects</th>
+            <th>Status</th>
+            {interactive ? <th>Actions</th> : null}
           </tr>
         </thead>
         <tbody>

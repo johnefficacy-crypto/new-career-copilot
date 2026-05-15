@@ -16,7 +16,7 @@ export default function ReviewQueueTable({ items, kind, onReview, busyRowId }) {
 
   if (!rows.length) {
     return (
-      <div className="soft-card rounded-2xl p-5 text-sm text-muted-foreground">
+      <div className="soft-card grain relative overflow-hidden rounded-[18px] p-5 text-sm text-clay-700">
         No items match the current filter.
       </div>
     );
@@ -37,27 +37,27 @@ export default function ReviewQueueTable({ items, kind, onReview, busyRowId }) {
   const detailColSpan = 6 + (isMention ? 1 : 0) + (isTag ? 1 : 0);
 
   return (
-    <div className="soft-card rounded-2xl overflow-hidden">
-      <table className="w-full text-sm" data-testid={`exam-intel-review-${kind}`}>
-        <thead className="bg-clay-50 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+    <div className="soft-card grain relative overflow-hidden rounded-[18px]">
+      <table className="tbl" data-testid={`exam-intel-review-${kind}`}>
+        <thead>
           <tr>
-            <th className="text-left px-4 py-2">Row id</th>
+            <th>Row id</th>
             {isMention ? (
               <>
-                <th className="text-left px-4 py-2">Text</th>
-                <th className="text-left px-4 py-2">Mention</th>
+                <th>Text</th>
+                <th>Mention</th>
               </>
             ) : null}
             {isTag ? (
               <>
-                <th className="text-left px-4 py-2">Role</th>
-                <th className="text-right px-4 py-2">Weight</th>
+                <th>Role</th>
+                <th className="right">Weight</th>
               </>
             ) : null}
-            {!isMention && !isTag ? <th className="text-left px-4 py-2">Type</th> : null}
-            <th className="text-left px-4 py-2">Status</th>
-            <th className="text-left px-4 py-2">Confidence</th>
-            <th className="text-right px-4 py-2">Actions</th>
+            {!isMention && !isTag ? <th>Type</th> : null}
+            <th>Status</th>
+            <th>Confidence</th>
+            <th className="right">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -65,12 +65,12 @@ export default function ReviewQueueTable({ items, kind, onReview, busyRowId }) {
             const isOpen = expanded.has(r.id);
             return (
               <React.Fragment key={r.id}>
-                <tr className="border-t border-clay-100 align-top">
-                  <td className="px-4 py-2 font-mono text-[11px]">
+                <tr>
+                  <td className="num-mono">
                     <button
                       type="button"
                       onClick={() => toggle(r.id)}
-                      className="inline-flex items-center gap-1 text-muted-foreground hover:text-clay-700"
+                      className="inline-flex items-center gap-1 text-clay-700 hover:text-clay-900"
                       aria-expanded={isOpen}
                       data-testid={`exam-intel-review-${r.id}-expand`}
                     >
@@ -84,32 +84,28 @@ export default function ReviewQueueTable({ items, kind, onReview, busyRowId }) {
                   </td>
                   {isMention ? (
                     <>
-                      <td className="px-4 py-2 max-w-md">
-                        <div className="line-clamp-2 text-xs">
-                          {r.normalized_text || r.raw_text || "—"}
-                        </div>
+                      <td className="max-w-md">
+                        <div className="line-clamp-2">{r.normalized_text || r.raw_text || "—"}</div>
                       </td>
-                      <td className="px-4 py-2 text-xs text-muted-foreground">
-                        {r.mention_type || "—"}
-                      </td>
+                      <td className="text-clay-700">{r.mention_type || "—"}</td>
                     </>
                   ) : null}
                   {isTag ? (
                     <>
-                      <td className="px-4 py-2 text-xs">{r.tag_role || "—"}</td>
-                      <td className="px-4 py-2 text-right tabular-nums">{r.tag_weight ?? "—"}</td>
+                      <td>{r.tag_role || "—"}</td>
+                      <td className="right num-mono">{r.tag_weight ?? "—"}</td>
                     </>
                   ) : null}
                   {!isMention && !isTag ? (
-                    <td className="px-4 py-2 text-xs">{r.question_type || "—"}</td>
+                    <td>{r.question_type || "—"}</td>
                   ) : null}
-                  <td className="px-4 py-2">
+                  <td>
                     <StatusBadge status={r.reviewer_status} />
                   </td>
-                  <td className="px-4 py-2">
+                  <td>
                     <ConfidencePill value={r.confidence_score} />
                   </td>
-                  <td className="px-4 py-2 text-right">
+                  <td className="right">
                     <div className="inline-flex flex-wrap gap-1 justify-end">
                       {ACTIONS.filter((a) => a.value !== r.reviewer_status).map((a) => (
                         <button
@@ -117,12 +113,12 @@ export default function ReviewQueueTable({ items, kind, onReview, busyRowId }) {
                           type="button"
                           onClick={() => onReview && onReview(r, a.value)}
                           disabled={busyRowId === r.id}
-                          className={`btn btn-ghost text-[11px] ${
+                          className={`text-[11px] px-2.5 py-1 rounded-full border border-[#E7DECB] font-semibold ${
                             a.value === "verified"
                               ? "text-sage-700"
                               : a.value === "rejected"
                                 ? "text-dusk-700"
-                                : "text-muted-foreground"
+                                : "text-clay-700"
                           }`}
                           data-testid={`exam-intel-review-${r.id}-${a.value}`}
                         >
@@ -133,8 +129,8 @@ export default function ReviewQueueTable({ items, kind, onReview, busyRowId }) {
                   </td>
                 </tr>
                 {isOpen ? (
-                  <tr className="border-t border-clay-50 bg-clay-50/40">
-                    <td colSpan={detailColSpan} className="px-4 py-3">
+                  <tr>
+                    <td colSpan={detailColSpan} className="bg-[#FBF8F2]">
                       <ExamEvidenceDrawer row={r} defaultOpen />
                     </td>
                   </tr>

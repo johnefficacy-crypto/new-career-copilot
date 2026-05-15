@@ -24,16 +24,16 @@ export default function PersonaSnapshotTable({ items, onInspectUser }) {
     );
   }
   return (
-    <div className="soft-card rounded-2xl overflow-hidden">
-      <table className="w-full text-sm" data-testid="persona-snapshot-table">
-        <thead className="bg-clay-50 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+    <div className="soft-card grain relative overflow-hidden rounded-[18px]">
+      <table className="tbl" data-testid="persona-snapshot-table">
+        <thead>
           <tr>
-            <th className="text-left px-4 py-2">User</th>
-            <th className="text-left px-4 py-2">Primary</th>
-            <th className="text-left px-4 py-2">Dimensions</th>
-            <th className="text-right px-4 py-2">Confidence</th>
-            <th className="text-left px-4 py-2">Computed</th>
-            <th className="text-right px-4 py-2">Actions</th>
+            <th>User</th>
+            <th>Primary</th>
+            <th>Dimensions</th>
+            <th className="right">Confidence</th>
+            <th>Computed</th>
+            <th className="right">Actions</th>
           </tr>
         </thead>
         <tbody>

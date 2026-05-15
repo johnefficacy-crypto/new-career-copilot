@@ -29,16 +29,16 @@ export default function PersonaQueueTable({ items, onProcess, processing }) {
           No queue rows match the current filter.
         </div>
       ) : (
-        <div className="soft-card rounded-2xl overflow-hidden">
-          <table className="w-full text-sm" data-testid="persona-queue-table">
-            <thead className="bg-clay-50 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+        <div className="soft-card grain relative overflow-hidden rounded-[18px]">
+          <table className="tbl" data-testid="persona-queue-table">
+            <thead>
               <tr>
-                <th className="text-left px-4 py-2">User</th>
-                <th className="text-left px-4 py-2">Reason</th>
-                <th className="text-left px-4 py-2">Status</th>
-                <th className="text-right px-4 py-2">Attempts</th>
-                <th className="text-left px-4 py-2">Created</th>
-                <th className="text-left px-4 py-2">Error</th>
+                <th>User</th>
+                <th>Reason</th>
+                <th>Status</th>
+                <th className="right">Attempts</th>
+                <th>Created</th>
+                <th>Error</th>
               </tr>
             </thead>
             <tbody>

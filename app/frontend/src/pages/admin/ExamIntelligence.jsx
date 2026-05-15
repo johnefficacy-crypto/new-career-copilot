@@ -311,6 +311,7 @@ export default function AdminExamIntelligence() {
       <AdminSafetyBanner
         title="Verified-only contract"
         testId="admin-exam-intel-safety"
+        tone="clay"
       >
         User-facing exam intelligence (Study OS today view) reads only rows
         you've marked <span className="font-mono">verified</span> or{" "}

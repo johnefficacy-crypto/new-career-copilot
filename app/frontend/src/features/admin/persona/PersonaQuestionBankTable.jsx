@@ -11,17 +11,17 @@ export default function PersonaQuestionBankTable({ items, onEdit, onToggleActive
     );
   }
   return (
-    <div className="soft-card rounded-2xl overflow-hidden">
-      <table className="w-full text-sm" data-testid="persona-question-bank-table">
-        <thead className="bg-clay-50 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+    <div className="soft-card grain relative overflow-hidden rounded-[18px]">
+      <table className="tbl" data-testid="persona-question-bank-table">
+        <thead>
           <tr>
-            <th className="text-left px-4 py-2">Key</th>
-            <th className="text-left px-4 py-2">Question</th>
-            <th className="text-left px-4 py-2">Type</th>
-            <th className="text-left px-4 py-2">Dimension</th>
-            <th className="text-right px-4 py-2">Priority</th>
-            <th className="text-left px-4 py-2">Active</th>
-            <th className="text-right px-4 py-2">Actions</th>
+            <th>Key</th>
+            <th>Question</th>
+            <th>Type</th>
+            <th>Dimension</th>
+            <th className="right">Priority</th>
+            <th>Active</th>
+            <th className="right">Actions</th>
           </tr>
         </thead>
         <tbody>
