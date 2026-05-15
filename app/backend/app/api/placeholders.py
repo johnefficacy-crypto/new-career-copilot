@@ -711,34 +711,10 @@ async def focus_summary(user: dict = Depends(get_current_user)):
 # Mocks endpoints moved to app.api.study_os (production-grade, Supabase-backed).
 
 
-@router_study.get("/subjects")
-async def subjects(user: dict = Depends(get_current_user)):
-    return {
-        "items": [
-            {"subject": "Quantitative Aptitude", "progress": 62, "trend": "up"},
-            {"subject": "English Language", "progress": 48, "trend": "flat"},
-            {"subject": "Reasoning", "progress": 71, "trend": "up"},
-            {"subject": "General Awareness", "progress": 39, "trend": "down"},
-        ]
-    }
+# Subjects endpoint moved to app.api.study_os (production-grade, Supabase-backed).
 
 
-@router_study.get("/weekly-review")
-async def weekly_review(user: dict = Depends(get_current_user)):
-    return {
-        "week_of": (datetime.now(timezone.utc) - timedelta(days=datetime.now(timezone.utc).weekday())).date().isoformat(),
-        "kpis": {
-            "hours_studied": 22.5,
-            "mocks_taken": 3,
-            "focus_streak_days": 5,
-            "topics_closed": 7,
-        },
-        "insights": [
-            "Quant accuracy up 6 pts week-over-week.",
-            "GA freshness slipped — 2 missed days.",
-            "Mock 3 lost 18 min on a single DI set.",
-        ],
-    }
+# Weekly review moved to app.api.study_os (production-grade, Supabase-backed).
 
 
 # ───────────────────────── Accountability ──────────────────────────────────
