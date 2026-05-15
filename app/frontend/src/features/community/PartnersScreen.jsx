@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Avatar,
   Eyebrow,
@@ -9,12 +9,51 @@ import {
   StatusDot,
   StudyCard as Card,
 } from "../../shared/ui/studyos";
+import { api } from "../../lib/api";
 import { ACCOUNTABILITY, COMMUNITY_USERS } from "./data";
 
 // Production port of docs/reference/UI_claude-code/screen-partners.jsx.
 
+const SEED_STATE = {
+  you: COMMUNITY_USERS.u_aarav,
+  partner: COMMUNITY_USERS[ACCOUNTABILITY.partner.userId],
+  partnership: ACCOUNTABILITY.partner,
+  selfCommitment: ACCOUNTABILITY.selfCommitment,
+  partnerCommitment: ACCOUNTABILITY.partnerCommitment,
+  thisWeek: ACCOUNTABILITY.thisWeek,
+  recentCheckIns: ACCOUNTABILITY.recentCheckIns,
+  weeklyReviewQ: ACCOUNTABILITY.weeklyReviewQ,
+  candidates: ACCOUNTABILITY.candidates.map((c) => ({
+    ...c,
+    user: COMMUNITY_USERS[c.id],
+    invited: false,
+  })),
+};
+
 export default function PartnersScreen() {
-  const partner = COMMUNITY_USERS[ACCOUNTABILITY.partner.userId];
+  const [state, setState] = useState(SEED_STATE);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get("/api/community/partner")
+      .then((d) => {
+        if (cancelled || !d || !d.partner) return;
+        setState((prev) => ({ ...prev, ...d }));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function refresh() {
+    try {
+      const d = await api.get("/api/community/partner");
+      if (d?.partner) setState((prev) => ({ ...prev, ...d }));
+    } catch {}
+  }
+
   return (
     <div className="space-y-6" data-testid="partners-page">
       <PageHeader
@@ -23,7 +62,11 @@ export default function PartnersScreen() {
         sub="A structured bilateral commitment. We surface what both of you said you'd do, and what actually happened — calmly."
         right={
           <div className="flex gap-2">
-            <button type="button" className="text-[12px] px-3 py-1.5 rounded-full border border-[#E7DECB] text-clay-700 font-semibold">
+            <button
+              type="button"
+              onClick={() => api.post("/api/community/partner/end", {}).catch(() => {})}
+              className="text-[12px] px-3 py-1.5 rounded-full border border-[#E7DECB] text-clay-700 font-semibold"
+            >
               End partnership
             </button>
             <button type="button" className="text-[12px] px-3 py-1.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold">
@@ -33,27 +76,25 @@ export default function PartnersScreen() {
         }
       />
 
-      <PartnerHeroCard partner={partner} />
+      <PartnerHeroCard partner={state.partner} you={state.you} partnership={state.partnership} thisWeek={state.thisWeek} />
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
-        <ThisWeekComparison />
-        <DailyCheckinPartner />
+        <ThisWeekComparison state={state} />
+        <DailyCheckinPartner onPosted={refresh} />
       </div>
 
-      <CommitmentDiffCard />
-      <CheckinHistory />
+      <CommitmentDiffCard state={state} />
+      <CheckinHistory recentCheckIns={state.recentCheckIns} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <WeeklyReviewQuestionsCard />
-        <PartnerCandidatesCard />
+        <WeeklyReviewQuestionsCard questions={state.weeklyReviewQ} />
+        <PartnerCandidatesCard candidates={state.candidates} onInvited={refresh} />
       </div>
     </div>
   );
 }
 
-function PartnerHeroCard({ partner }) {
-  const A = ACCOUNTABILITY;
-  const you = COMMUNITY_USERS.u_aarav;
+function PartnerHeroCard({ partner, you, partnership, thisWeek }) {
   return (
     <Card className="!bg-[#2E2218] !border-[#2E2218]">
       <div className="flex items-center gap-6 flex-wrap" data-testid="partner-hero">
@@ -61,7 +102,7 @@ function PartnerHeroCard({ partner }) {
           <Avatar user={you} size={56} />
           <div>
             <div className="num-mono text-[10px] text-[#D6BC93] uppercase tracking-[0.18em]">You</div>
-            <div className="font-heading text-[18px] text-[#F3EADB] mt-0.5">{you.name}</div>
+            <div className="font-heading text-[18px] text-[#F3EADB] mt-0.5">{you?.name}</div>
             <div className="num-mono text-[10.5px] text-[#A68057] mt-0.5">UPSC CSE 2026</div>
           </div>
         </div>
@@ -81,7 +122,7 @@ function PartnerHeroCard({ partner }) {
               fill="#F3EADB"
               fontWeight="700"
             >
-              {A.partner.streakDays}d
+              {partnership.streakDays}d
             </text>
           </svg>
           <div className="num-mono text-[10px] text-[#D6BC93] uppercase tracking-[0.18em] mt-1">
@@ -92,9 +133,9 @@ function PartnerHeroCard({ partner }) {
         <div className="flex items-center gap-3 justify-end">
           <div className="text-right">
             <div className="num-mono text-[10px] text-[#D6BC93] uppercase tracking-[0.18em]">Partner</div>
-            <div className="font-heading text-[18px] text-[#F3EADB] mt-0.5">{partner.name}</div>
+            <div className="font-heading text-[18px] text-[#F3EADB] mt-0.5">{partner?.name}</div>
             <div className="num-mono text-[10.5px] text-[#A68057] mt-0.5">
-              UPSC CSE 2026 · since {A.partner.since}
+              UPSC CSE 2026 · since {partnership.since}
             </div>
           </div>
           <Avatar user={partner} size={56} />
@@ -103,8 +144,8 @@ function PartnerHeroCard({ partner }) {
 
       <div className="rule mt-5 pt-4 grid grid-cols-1 sm:grid-cols-3 gap-4 text-[12px] text-[#D6BC93] border-[#4E3A29]">
         <Stat k="Partnership age" v="64 days" />
-        <Stat k="Combined hours · week" v={`${A.thisWeek.self.hours + A.thisWeek.partner.hours}h`} />
-        <Stat k="Mocks taken · week" v={`${A.thisWeek.self.mocks + A.thisWeek.partner.mocks}`} />
+        <Stat k="Combined hours · week" v={`${thisWeek.self.hours + thisWeek.partner.hours}h`} />
+        <Stat k="Mocks taken · week" v={`${thisWeek.self.mocks + thisWeek.partner.mocks}`} />
       </div>
     </Card>
   );
@@ -119,8 +160,12 @@ function Stat({ k, v }) {
   );
 }
 
-function ThisWeekComparison() {
-  const A = ACCOUNTABILITY;
+function ThisWeekComparison({ state }) {
+  const A = {
+    selfCommitment: state.selfCommitment,
+    partnerCommitment: state.partnerCommitment,
+    thisWeek: state.thisWeek,
+  };
   return (
     <Card>
       <SectionHeader
@@ -222,9 +267,27 @@ function ThisWeekComparison() {
   );
 }
 
-function DailyCheckinPartner() {
+function DailyCheckinPartner({ onPosted }) {
   const [done, setDone] = useState(null);
   const [body, setBody] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [posted, setPosted] = useState(false);
+
+  async function submit() {
+    if (done == null) return;
+    setPosting(true);
+    try {
+      await api.post("/api/community/partner/checkins", { did_study: done, note: body });
+      setBody("");
+      setPosted(true);
+      onPosted && onPosted();
+    } catch {
+      setPosted(true);
+    } finally {
+      setPosting(false);
+    }
+  }
+
   return (
     <Card>
       <SectionHeader
@@ -270,8 +333,14 @@ function DailyCheckinPartner() {
           <span className="num-mono text-[10.5px] text-clay-700">
             Partner checks in by 22:00 IST · auto-prompt sent
           </span>
-          <button type="button" className="text-[11px] px-3 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold">
-            Post
+          <button
+            type="button"
+            onClick={submit}
+            disabled={posting || done == null}
+            data-testid="partner-checkin-post"
+            className="text-[11px] px-3 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold disabled:opacity-50"
+          >
+            {posted ? "Posted ✓" : posting ? "Posting…" : "Post"}
           </button>
         </div>
       </div>
@@ -290,7 +359,8 @@ function DailyCheckinPartner() {
   );
 }
 
-function CommitmentDiffCard() {
+function CommitmentDiffCard({ state }) {
+  void state;
   return (
     <Card>
       <SectionHeader
@@ -326,7 +396,7 @@ function CommitmentDiffCard() {
   );
 }
 
-function CheckinHistory() {
+function CheckinHistory({ recentCheckIns }) {
   return (
     <Card>
       <SectionHeader
@@ -349,7 +419,7 @@ function CheckinHistory() {
             </tr>
           </thead>
           <tbody>
-            {ACCOUNTABILITY.recentCheckIns.map((c, i) => (
+            {recentCheckIns.map((c, i) => (
               <tr key={i}>
                 <td className="num-mono">{c.date}</td>
                 <td>{c.self}</td>
@@ -370,7 +440,7 @@ function CheckinHistory() {
   );
 }
 
-function WeeklyReviewQuestionsCard() {
+function WeeklyReviewQuestionsCard({ questions }) {
   return (
     <Card>
       <SectionHeader
@@ -379,7 +449,7 @@ function WeeklyReviewQuestionsCard() {
         sub="No scoring. The conversation is the value."
       />
       <ol className="space-y-3">
-        {ACCOUNTABILITY.weeklyReviewQ.map((q, i) => (
+        {questions.map((q, i) => (
           <li key={i} className="flex items-start gap-3">
             <span className="num-mono text-[12px] text-[#A68057] pt-0.5">{String(i + 1).padStart(2, "0")}</span>
             <span className="text-[13.5px] flex-1">{q}</span>
@@ -393,7 +463,15 @@ function WeeklyReviewQuestionsCard() {
   );
 }
 
-function PartnerCandidatesCard() {
+function PartnerCandidatesCard({ candidates, onInvited }) {
+  async function invite(id) {
+    try {
+      await api.post("/api/community/partner/invite", { candidate_id: id });
+      onInvited && onInvited();
+    } catch {
+      onInvited && onInvited();
+    }
+  }
   return (
     <Card>
       <SectionHeader
@@ -402,10 +480,10 @@ function PartnerCandidatesCard() {
         sub="Match score from exam + phase + cadence + availability overlap."
       />
       <ul className="space-y-3">
-        {ACCOUNTABILITY.candidates.map((c) => {
-          const u = COMMUNITY_USERS[c.id];
+        {candidates.map((c) => {
+          const u = c.user || COMMUNITY_USERS[c.id] || { name: c.id };
           return (
-            <li key={c.id} className="grid grid-cols-[36px_1fr_100px] gap-3 items-center">
+            <li key={c.id} className="grid grid-cols-[36px_1fr_110px] gap-3 items-center">
               <Avatar user={u} size={32} />
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
@@ -416,8 +494,18 @@ function PartnerCandidatesCard() {
                 </div>
                 <div className="text-[11.5px] text-clay-700 mt-0.5">{c.why}</div>
               </div>
-              <button type="button" className="text-[11px] px-2.5 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold">
-                Invite
+              <button
+                type="button"
+                onClick={() => invite(c.id)}
+                data-testid={`invite-${c.id}`}
+                disabled={c.invited}
+                className={`text-[11px] px-2.5 py-1 rounded-full font-semibold ${
+                  c.invited
+                    ? "border border-[#54794E] bg-[#F0F5EF] text-[#33482F]"
+                    : "bg-[#2E2218] text-[#F3EADB]"
+                }`}
+              >
+                {c.invited ? "Invited" : "Invite"}
               </button>
             </li>
           );

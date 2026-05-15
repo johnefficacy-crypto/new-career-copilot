@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Avatar,
+  Drawer,
   Eyebrow,
   PageHeader,
   Pill,
@@ -11,6 +12,7 @@ import {
   VerifiedTopperBadge,
   VoteColumn,
 } from "../../shared/ui/studyos";
+import { api } from "../../lib/api";
 import { COMMUNITY_USERS, RESOURCES } from "./data";
 
 // Production port of docs/reference/UI_claude-code/screen-resources.jsx.
@@ -28,17 +30,44 @@ export default function ResourcesScreen() {
   const [type, setType] = useState("all");
   const [trust, setTrust] = useState("all");
   const [exam, setExam] = useState("UPSC CSE");
+  const [items, setItems] = useState(RESOURCES);
+  const [contributeOpen, setContributeOpen] = useState(false);
+
+  const reload = useCallback(async (params = {}) => {
+    try {
+      const qs = new URLSearchParams(params).toString();
+      const d = await api.get(`/api/community/resources${qs ? `?${qs}` : ""}`);
+      if (Array.isArray(d?.items) && d.items.length) setItems(d.items);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
 
   const filtered = useMemo(
     () =>
-      RESOURCES.filter((r) => {
+      items.filter((r) => {
         if (type !== "all" && r.type !== type) return false;
         if (trust !== "all" && r.sourceTrust !== trust) return false;
         if (exam !== "all" && r.exam !== exam) return false;
         return true;
       }),
-    [type, trust, exam],
+    [items, type, trust, exam],
   );
+
+  async function vote(id) {
+    try {
+      await api.post(`/api/community/resources/${id}/vote`, {});
+      reload();
+    } catch {}
+  }
+
+  async function report(id, reason) {
+    try {
+      await api.post(`/api/community/resources/${id}/report`, { reason });
+    } catch {}
+  }
 
   return (
     <div className="space-y-6" data-testid="resources-page">
@@ -47,11 +76,19 @@ export default function ResourcesScreen() {
         title="Free, source-tagged resources — never silently 'recommended'."
         sub="Every resource carries a source-trust label. Verified-by-Topper is admin-granted. Pirated material is removed, regardless of upvotes."
         right={
-          <button type="button" className="text-[12px] px-3 py-1.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold">
+          <button
+            type="button"
+            onClick={() => setContributeOpen(true)}
+            data-testid="resource-contribute-btn"
+            className="text-[12px] px-3 py-1.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold"
+          >
             + Contribute resource
           </button>
         }
       />
+      {contributeOpen ? (
+        <ContributeDrawer onClose={() => setContributeOpen(false)} onContributed={reload} />
+      ) : null}
 
       <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6">
         <FilterSidebar
@@ -69,7 +106,7 @@ export default function ResourcesScreen() {
               <div>
                 <Eyebrow>Showing</Eyebrow>
                 <div className="font-heading text-[19px] mt-1">
-                  {filtered.length} of {RESOURCES.length} resources
+                  {filtered.length} of {items.length} resources
                 </div>
               </div>
               <div className="flex gap-2 items-center">
@@ -90,7 +127,7 @@ export default function ResourcesScreen() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {filtered.map((r) => (
-                <ResourceCard key={r.id} r={r} />
+                <ResourceCard key={r.id} r={r} onVote={() => vote(r.id)} onReport={() => report(r.id, "user-reported via UI")} />
               ))}
             </div>
           )}
@@ -192,7 +229,7 @@ function FilterSidebar({ type, setType, trust, setTrust, exam, setExam }) {
   );
 }
 
-function ResourceCard({ r }) {
+function ResourceCard({ r, onVote, onReport }) {
   const u = COMMUNITY_USERS[r.contributedBy] || { name: r.contributedBy };
   const typeInfo = TYPE_ICONS[r.type] || { glyph: "·", label: r.type };
   return (
@@ -244,7 +281,12 @@ function ResourceCard({ r }) {
           </div>
         </div>
         <div className="flex items-center gap-3 text-[10.5px] text-clay-700 shrink-0">
-          <VoteColumn count={r.upvotes} vertical={false} />
+          <VoteColumn
+            count={r.upvotes}
+            vertical={false}
+            voted={r.youVoted ? 1 : null}
+            onVote={(d) => d === 1 && onVote && onVote()}
+          />
         </div>
       </div>
 
@@ -263,9 +305,11 @@ function ResourceCard({ r }) {
         </button>
         <button
           type="button"
+          onClick={() => onReport && onReport()}
+          data-testid={`resource-report-${r.id}`}
           className="text-[11.5px] px-2.5 py-1.5 rounded-full border border-[#E7DECB] text-clay-700 font-semibold"
         >
-          Report
+          Report{r.reportCount ? ` (${r.reportCount})` : ""}
         </button>
       </div>
     </article>
@@ -303,5 +347,114 @@ function FlaggedResourcesCard() {
         </div>
       </div>
     </Card>
+  );
+}
+
+function ContributeDrawer({ onClose, onContributed }) {
+  const [form, setForm] = useState({
+    title: "",
+    type: "notes",
+    exam: "UPSC CSE",
+    subject: "Meta",
+    sourceTrust: "community",
+    size: "link",
+  });
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submit() {
+    if (form.title.trim().length < 4) return;
+    setSubmitting(true);
+    try {
+      await api.post("/api/community/resources", form);
+      onContributed && onContributed();
+      onClose();
+    } catch {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Drawer open onClose={onClose} title="Contribute a resource" width={500}>
+      <div className="space-y-4" data-testid="contribute-drawer">
+        <div>
+          <Eyebrow>Title</Eyebrow>
+          <input
+            value={form.title}
+            onChange={(e) => setForm({ ...form, title: e.target.value })}
+            placeholder="A clear, specific title (4+ chars)"
+            className="mt-2 w-full px-3 py-2 rounded-lg border border-[#E7DECB] bg-white/70 text-[14px] outline-none"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Eyebrow>Type</Eyebrow>
+            <select
+              value={form.type}
+              onChange={(e) => setForm({ ...form, type: e.target.value })}
+              className="mt-2 w-full px-3 py-2 rounded-lg border border-[#E7DECB] bg-white/70 text-[13px]"
+            >
+              {Object.keys(TYPE_ICONS).map((k) => (
+                <option key={k} value={k}>
+                  {TYPE_ICONS[k].label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Eyebrow>Source trust</Eyebrow>
+            <select
+              value={form.sourceTrust}
+              onChange={(e) => setForm({ ...form, sourceTrust: e.target.value })}
+              className="mt-2 w-full px-3 py-2 rounded-lg border border-[#E7DECB] bg-white/70 text-[13px]"
+            >
+              {["official", "community", "coaching", "unknown"].map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Eyebrow>Exam</Eyebrow>
+            <input
+              value={form.exam}
+              onChange={(e) => setForm({ ...form, exam: e.target.value })}
+              className="mt-2 w-full px-3 py-2 rounded-lg border border-[#E7DECB] bg-white/70 text-[13px]"
+            />
+          </div>
+          <div>
+            <Eyebrow>Subject</Eyebrow>
+            <input
+              value={form.subject}
+              onChange={(e) => setForm({ ...form, subject: e.target.value })}
+              className="mt-2 w-full px-3 py-2 rounded-lg border border-[#E7DECB] bg-white/70 text-[13px]"
+            />
+          </div>
+        </div>
+        <div className="rounded-lg bg-[#F0F5EF] border border-[#B9CFAF] p-3 text-[11.5px] text-[#33482F]">
+          <strong>Before posting:</strong> attach the source or link in the title. Pirated paid material is removed regardless of upvotes.
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-full border border-[#E7DECB] text-clay-700 font-semibold text-[12px]"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={submitting || form.title.trim().length < 4}
+            data-testid="resource-contribute-submit"
+            className="px-4 py-2 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold text-[12px] disabled:opacity-50"
+          >
+            {submitting ? "Submitting…" : "Submit resource"}
+          </button>
+        </div>
+      </div>
+    </Drawer>
   );
 }
