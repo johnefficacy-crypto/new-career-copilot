@@ -4,6 +4,7 @@ import { api, getApiExistingRecruitmentId, getApiNextActions, getApiUnverifiedFi
 import AdminWorkflowStepper from "../../features/admin/workflow/AdminWorkflowStepper";
 import NextActionCallout from "../../features/admin/workflow/NextActionCallout";
 import FieldReviewGroup from "../../features/admin/workflow/FieldReviewGroup";
+import PromotionPreviewPanel from "../../features/admin/workflow/PromotionPreviewPanel";
 import { HIGH_RISK_QUEUE_FIELDS, NEXT_ACTION_MESSAGES, RECOMMENDED_REVIEW_FIELDS, SOURCE_TYPE_LABELS } from "../../features/admin/workflow/adminWorkflowContract";
 import { useFocusTrap } from "../../shared/a11y/useFocusTrap";
 import { EmptyState, ErrorState, LoadingSkeleton, StatusBadge, useToast } from "../../shared/ui";
@@ -34,6 +35,14 @@ function QueueDetailDrawer({ item, onClose, onAction, onFieldAction, onMerge }) 
   const panelRef = useRef(null);
   const closeRef = useRef(null);
   useFocusTrap({ active: !!item, containerRef: panelRef, onEscape: onClose, initialFocusRef: closeRef });
+  // Bumping previewKey forces PromotionPreviewPanel to refetch. We bump it
+  // after every field action so the preview reflects the latest evidence
+  // without the reviewer having to click Refresh.
+  const [previewKey, setPreviewKey] = useState(0);
+  const handleFieldAction = (id, field, action, correctedValue) => {
+    setPreviewKey((k) => k + 1);
+    return onFieldAction(id, field, action, correctedValue);
+  };
   if (!item) return null;
   const extracted = item.extracted_data || {};
   const evidence = item.field_evidence_status || item.field_evidence || {};
@@ -77,6 +86,20 @@ function QueueDetailDrawer({ item, onClose, onAction, onFieldAction, onMerge }) 
           </section>
         ) : null}
 
+        <div className="mt-5">
+          <PromotionPreviewPanel
+            queueId={item.id}
+            open={true}
+            refreshKey={previewKey}
+            onScrollToField={(field) => {
+              document.getElementById("queue-field-review")?.scrollIntoView({ block: "start" });
+              // Field-specific anchors are not stable across renders today;
+              // scrolling to the section is the most reliable next-step
+              // surface until FieldRow gets an id attribute.
+            }}
+          />
+        </div>
+
         <section className="mt-5 soft-card rounded-2xl p-4">
           <h3 className="font-semibold">Next action: {state.label}</h3>
           <p className="mt-1 text-sm text-muted-foreground">Promotion creates a canonical recruitment draft with publish_status=needs_review. It does not publish and does not send alerts.</p>
@@ -99,7 +122,7 @@ function QueueDetailDrawer({ item, onClose, onAction, onFieldAction, onMerge }) 
               evidence={evidence}
               requiredFields={HIGH_RISK_QUEUE_FIELDS}
               recommendedFields={RECOMMENDED_REVIEW_FIELDS}
-              onFieldAction={(field, action, correctedValue) => onFieldAction(item.id, field, action, correctedValue)}
+              onFieldAction={(field, action, correctedValue) => handleFieldAction(item.id, field, action, correctedValue)}
             />
           </div>
         </section>

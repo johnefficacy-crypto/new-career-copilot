@@ -535,6 +535,199 @@ def list_scrape_queue(
 # ════════════════════════════════════════════════════════════════════════════
 
 
+@router.get("/admin/scrape/items/{queue_id}/promotion-preview")
+def promotion_preview(
+    queue_id: str,
+    _admin: dict = Depends(require_permission("recruitments.manage")),
+) -> dict[str, Any]:
+    """Return a dry-run preview of what promoting this queue item would create.
+
+    Reads the same effective extracted data + gate evidence the actual
+    promote endpoint reads, but writes nothing. Used by the Operations
+    Console "Promotion preview" panel so admins can confirm the
+    recruitment / organization / posts / blockers shape before clicking
+    Promote — which today gives them only a generic gate error toast.
+    """
+    from pydantic import ValidationError as _PydValidationError
+
+    from app.scraping.runner import compute_promotion_slug
+    from app.scraping.schemas import ExtractedRecruitment
+
+    _validate_queue_id(queue_id)
+    supabase = get_supabase_admin()
+    rows = (
+        supabase.table("scrape_queue")
+        .select("id, source_id, source_url, source_name, extracted_data, status, official_source_resolved, official_source_host, extraction_status")
+        .eq("id", queue_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+    item = rows[0]
+
+    blocking: list[dict[str, Any]] = []
+    warnings: list[str] = []
+
+    if item.get("status") not in {"approved", "pending", "needs_review"}:
+        blocking.append({
+            "code": "wrong_status",
+            "message": f"Queue item is {item.get('status')!r}; only pending/needs_review/approved items are promotable.",
+        })
+    if item.get("official_source_resolved") is False:
+        blocking.append({
+            "code": "unverified_official_source",
+            "message": "Resolve an official source before promotion.",
+        })
+
+    # Field-evidence gate (mirrors promote_queue_item).
+    reviewed: dict[str, str | None] = {}
+    try:
+        frows = (
+            supabase.table("extracted_field_evidence")
+            .select("field_name, reviewer_status")
+            .eq("scrape_queue_id", queue_id)
+            .execute()
+            .data
+            or []
+        )
+        reviewed = {r.get("field_name"): r.get("reviewer_status") for r in frows}
+        missing = [f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified", "corrected"}]
+        if missing:
+            blocking.append({
+                "code": "high_risk_fields_unverified",
+                "message": "Verify or correct required fields before promotion.",
+                "unverified_fields": sorted(missing),
+            })
+    except Exception:
+        warnings.append("field_evidence_table_unavailable")
+
+    # Effective data — re-run corrections so the preview mirrors what
+    # promote_to_recruitments would actually write.
+    try:
+        effective = build_effective_extracted_data(supabase, queue_id)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("promotion preview effective-data build failed queue_id=%s", queue_id)
+        effective = item.get("extracted_data") or {}
+        warnings.append("effective_data_unavailable")
+
+    extracted: ExtractedRecruitment | None = None
+    try:
+        extracted = ExtractedRecruitment(**effective)
+    except _PydValidationError as exc:
+        # Shape errors are blockers — promotion will hit the same wall.
+        # Surface them as a clickable checklist instead of a 500.
+        for err in exc.errors():
+            loc = ".".join(str(part) for part in err.get("loc", []))
+            blocking.append({
+                "code": "schema_violation",
+                "field": loc,
+                "message": err.get("msg") or "Invalid value",
+            })
+
+    # Organization preview: does the recruiting organization already exist?
+    org_name = (effective.get("organization_name") or "").strip()
+    org_state = "unknown"
+    org_existing_id = None
+    if org_name:
+        org_rows = (
+            supabase.table("organizations")
+            .select("id, name")
+            .ilike("name", org_name)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if org_rows:
+            org_existing_id = org_rows[0].get("id")
+            org_state = "link_existing"
+        else:
+            org_state = "create_new"
+
+    # Slug-duplicate preview: would the recruitment collide?
+    duplicate_recruitment_id = None
+    duplicate_slug = None
+    if extracted is not None:
+        try:
+            slug = compute_promotion_slug(extracted)
+            duplicate_slug = slug
+            dup_rows = (
+                supabase.table("recruitments")
+                .select("id, slug, name")
+                .eq("slug", slug)
+                .limit(1)
+                .execute()
+                .data
+                or []
+            )
+            if dup_rows:
+                duplicate_recruitment_id = dup_rows[0].get("id")
+                blocking.append({
+                    "code": "duplicate_slug",
+                    "message": "A recruitment with this slug already exists. Use merge-into instead of promote.",
+                    "existing_recruitment_id": duplicate_recruitment_id,
+                    "slug": slug,
+                })
+        except Exception:
+            warnings.append("slug_compute_failed")
+
+    posts_preview = []
+    for idx, post in enumerate((effective.get("posts") or [])):
+        if not isinstance(post, dict):
+            continue
+        posts_preview.append({
+            "index": idx,
+            "post_name": post.get("post_name"),
+            "vacancies": post.get("vacancies"),
+            "min_age": post.get("min_age"),
+            "max_age": post.get("max_age"),
+            "education_required": post.get("education_required"),
+            "unit_name": post.get("unit_name"),
+            "unit_location_state": post.get("unit_location_state"),
+        })
+
+    return {
+        "queue_id": queue_id,
+        "ok": len(blocking) == 0,
+        "blocking_issues": blocking,
+        "warnings": warnings,
+        "recruitment_preview": {
+            "title": effective.get("title"),
+            "year": effective.get("year"),
+            "organization_name": org_name or None,
+            "notification_date": effective.get("notification_date"),
+            "apply_start_date": effective.get("apply_start_date"),
+            "apply_end_date": effective.get("apply_end_date"),
+            "total_vacancies": effective.get("total_vacancies"),
+            "official_notification_url": effective.get("official_notification_url"),
+            "official_apply_url": effective.get("official_apply_url"),
+            "source_pdf_url": effective.get("source_pdf_url"),
+            "slug": duplicate_slug,
+            "publish_status_after": "needs_review",
+        },
+        "organization_preview": {
+            "state": org_state,
+            "existing_id": org_existing_id,
+            "name": org_name or None,
+        },
+        "posts_preview": posts_preview,
+        "duplicate_recruitment_id": duplicate_recruitment_id,
+        "official_source": {
+            "resolved": bool(item.get("official_source_resolved")),
+            "host": item.get("official_source_host"),
+        },
+        "evidence_summary": {
+            "required_fields": sorted(list(_HIGH_RISK_FIELDS)),
+            "reviewed": reviewed,
+        },
+    }
+
+
 @router.post("/admin/scrape/items/{queue_id}/promote")
 def promote_queue_item(
     queue_id: str,

@@ -1,10 +1,11 @@
-import React, { useRef } from "react";
+import React, { useRef, useState } from "react";
 import DecisionBar from "./DecisionBar";
 import { StatusBadge } from "../../../shared/ui";
 import { useFocusTrap } from "../../../shared/a11y/useFocusTrap";
 import EvidenceDiffViewer from "./EvidenceDiffViewer";
 import FieldReviewGroup from "../workflow/FieldReviewGroup";
 import NextActionCallout from "../workflow/NextActionCallout";
+import PromotionPreviewPanel from "../workflow/PromotionPreviewPanel";
 import { HIGH_RISK_QUEUE_FIELDS, RECOMMENDED_REVIEW_FIELDS, getNextActionForQueueItem } from "../workflow/adminWorkflowContract";
 
 function Row({ label, value }) {
@@ -20,6 +21,10 @@ function Row({ label, value }) {
 export default function EligibilityReviewDrawer({ item, open, onClose, busy, onPromote, onReject, onFieldAction }) {
   const containerRef = useRef(null);
   const closeButtonRef = useRef(null);
+  // previewKey bumps after every field action so PromotionPreviewPanel
+  // refetches and reflects the latest evidence state without the reviewer
+  // needing to manually refresh.
+  const [previewKey, setPreviewKey] = useState(0);
   useFocusTrap({ active: open && !!item, containerRef, onEscape: onClose, initialFocusRef: closeButtonRef });
 
   if (!open || !item) return null;
@@ -66,10 +71,12 @@ export default function EligibilityReviewDrawer({ item, open, onClose, busy, onP
                 evidence={item.field_evidence_status || {}}
                 requiredFields={HIGH_RISK_QUEUE_FIELDS}
                 recommendedFields={RECOMMENDED_REVIEW_FIELDS}
-                onFieldAction={(field, action, correctedValue) => onFieldAction?.(item.id, field, action, correctedValue)}
+                onFieldAction={(field, action, correctedValue) => { setPreviewKey((k) => k + 1); onFieldAction?.(item.id, field, action, correctedValue); }}
               />
             </div>
           </section>
+
+          <PromotionPreviewPanel queueId={item.id} open={true} refreshKey={previewKey} />
 
           <EvidenceDiffViewer extracted={item.raw_extracted_item} normalized={item.normalized_item} previous={item.previous_extraction} />
 
