@@ -35,6 +35,7 @@ from app.api.admin_trust import router as admin_trust_router
 from app.api.evidence import router as evidence_router
 from app.api.exam_intelligence import router as exam_intelligence_router
 from app.api.canonical import router as canonical_router
+from app.api.community_people import router as community_people_router
 from app.api.eligibility import router as eligibility_router
 from app.api.notifications import router as notifications_router
 from app.api.onboarding_unified import router as onboarding_unified_router
@@ -177,6 +178,7 @@ api.include_router(study_os_router)  # PR3 Study OS Mission Control — before c
 api.include_router(study_compare_router)  # Study OS comparison + social + verification
 api.include_router(onboarding_unified_router)  # unified guided onboarding — before placeholders
 api.include_router(canonical_router)  # canonical Supabase routes — must precede placeholders
+api.include_router(community_people_router)  # community-people: groups, partner, mentors, resources
 api.include_router(placeholders_router)
 app.include_router(api)
 

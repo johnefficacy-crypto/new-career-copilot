@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   Avatar,
   Drawer,
@@ -12,6 +12,7 @@ import {
   VerifiedOfficerBadge,
   VerifiedTopperBadge,
 } from "../../shared/ui/studyos";
+import { api } from "../../lib/api";
 import { MENTORS, MENTOR_EARNINGS, MENTOR_SESSIONS } from "./data";
 
 // Production port of docs/reference/UI_claude-code/screen-mentors.jsx.
@@ -19,6 +20,41 @@ import { MENTORS, MENTOR_EARNINGS, MENTOR_SESSIONS } from "./data";
 export default function MentorsScreen() {
   const [view, setView] = useState("browse");
   const [activeMentor, setActiveMentor] = useState(null);
+  const [mentors, setMentors] = useState(MENTORS);
+  const [sessions, setSessions] = useState(MENTOR_SESSIONS);
+  const [earnings, setEarnings] = useState(MENTOR_EARNINGS);
+
+  const reloadSessions = useCallback(async () => {
+    try {
+      const d = await api.get("/api/community/mentor-sessions");
+      if (Array.isArray(d?.items) && d.items.length) setSessions(d.items);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get("/api/community/mentors")
+      .then((d) => {
+        if (cancelled || !Array.isArray(d?.items) || d.items.length === 0) return;
+        setMentors(d.items);
+      })
+      .catch(() => {});
+    reloadSessions();
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadSessions]);
+
+  useEffect(() => {
+    if (view !== "earnings") return;
+    api
+      .get("/api/community/mentor-earnings")
+      .then((d) => {
+        if (d && typeof d === "object") setEarnings({ ...MENTOR_EARNINGS, ...d });
+      })
+      .catch(() => {});
+  }, [view]);
 
   return (
     <div className="space-y-6" data-testid="mentors-page">
@@ -52,12 +88,12 @@ export default function MentorsScreen() {
 
       {view === "browse" ? (
         <>
-          <FeaturedSessionsCard />
-          <MentorsGrid onPick={(m) => setActiveMentor(m)} />
+          <FeaturedSessionsCard sessions={sessions} mentors={mentors} onBooked={reloadSessions} />
+          <MentorsGrid mentors={mentors} onPick={(m) => setActiveMentor(m)} />
           <BookingFlow />
         </>
       ) : (
-        <MentorEarningsView />
+        <MentorEarningsView earnings={earnings} />
       )}
 
       {activeMentor ? (
@@ -75,15 +111,21 @@ function MentorTopBadge({ mentor }) {
   return null;
 }
 
-function FeaturedSessionsCard() {
-  const totalBooked = MENTOR_SESSIONS.reduce((a, s) => a + s.booked, 0);
+function FeaturedSessionsCard({ sessions, mentors, onBooked }) {
+  const totalBooked = sessions.reduce((a, s) => a + s.booked, 0);
+  async function book(sessionId) {
+    try {
+      await api.post(`/api/community/mentor-sessions/${sessionId}/book`, {});
+      onBooked && onBooked();
+    } catch {}
+  }
   return (
     <Card padded={false}>
       <div className="px-7 pt-6 pb-3 flex items-end justify-between flex-wrap gap-3">
         <div>
           <Eyebrow>Upcoming sessions · this week</Eyebrow>
           <h2 className="font-heading text-[22px] mt-1">
-            {MENTOR_SESSIONS.length} sessions · {totalBooked} aspirants booked.
+            {sessions.length} sessions · {totalBooked} aspirants booked.
           </h2>
         </div>
         <div className="flex gap-2">
@@ -92,8 +134,8 @@ function FeaturedSessionsCard() {
         </div>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 px-7 pb-6">
-        {MENTOR_SESSIONS.map((s) => {
-          const m = MENTORS.find((x) => x.id === s.mentorId);
+        {sessions.map((s) => {
+          const m = (s.mentor && (s.mentor.user || s.mentor)) || mentors.find((x) => x.id === s.mentorId);
           if (!m) return null;
           const pct = s.booked / s.capacity;
           return (
@@ -132,9 +174,16 @@ function FeaturedSessionsCard() {
                   </div>
                   <button
                     type="button"
-                    className="text-[11.5px] px-3 py-1.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold whitespace-nowrap"
+                    onClick={() => book(s.id)}
+                    disabled={s.youBooked}
+                    data-testid={`book-${s.id}`}
+                    className={`text-[11.5px] px-3 py-1.5 rounded-full font-semibold whitespace-nowrap ${
+                      s.youBooked
+                        ? "border border-[#54794E] bg-[#F0F5EF] text-[#33482F]"
+                        : "bg-[#2E2218] text-[#F3EADB]"
+                    }`}
                   >
-                    Book · ₹{s.price}
+                    {s.youBooked ? "Booked ✓" : `Book · ₹${s.price}`}
                   </button>
                 </div>
               </div>
@@ -146,13 +195,13 @@ function FeaturedSessionsCard() {
   );
 }
 
-function MentorsGrid({ onPick }) {
+function MentorsGrid({ mentors, onPick }) {
   return (
     <Card padded={false}>
       <div className="px-7 pt-6 pb-3 flex items-end justify-between flex-wrap gap-3">
         <div>
           <Eyebrow>Mentor directory</Eyebrow>
-          <h2 className="font-heading text-[22px] mt-1">{MENTORS.length} verified mentors.</h2>
+          <h2 className="font-heading text-[22px] mt-1">{mentors.length} verified mentors.</h2>
         </div>
         <div className="flex gap-2 flex-wrap">
           <Pill tone="outline">All</Pill>
@@ -162,7 +211,7 @@ function MentorsGrid({ onPick }) {
         </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 px-7 pb-6">
-        {MENTORS.map((m) => (
+        {mentors.map((m) => (
           <button
             key={m.id}
             type="button"
@@ -316,8 +365,8 @@ function Mini({ k, v }) {
   );
 }
 
-function MentorEarningsView() {
-  const E = MENTOR_EARNINGS;
+function MentorEarningsView({ earnings = MENTOR_EARNINGS }) {
+  const E = earnings;
   return (
     <div className="space-y-6" data-testid="mentor-earnings">
       <Card>

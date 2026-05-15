@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Avatar,
   Eyebrow,
@@ -13,6 +13,7 @@ import {
   Tabs,
   UserBadge,
 } from "../../shared/ui/studyos";
+import { api } from "../../lib/api";
 import { COMMUNITY_USERS, STUDY_GROUPS, STUDY_ROOM_SESSIONS } from "./data";
 
 // Production port of docs/reference/UI_claude-code/screen-groups.jsx.
@@ -20,9 +21,33 @@ import { COMMUNITY_USERS, STUDY_GROUPS, STUDY_ROOM_SESSIONS } from "./data";
 export default function StudyGroupsScreen() {
   const [tab, setTab] = useState("mine");
   const [activeId, setActiveId] = useState("g1");
-  const active = STUDY_GROUPS.find((g) => g.id === activeId);
+  const [groups, setGroups] = useState(STUDY_GROUPS);
+  const [rooms, setRooms] = useState(STUDY_ROOM_SESSIONS);
 
-  const filtered = STUDY_GROUPS.filter((g) => {
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get("/api/community/groups")
+      .then((d) => {
+        if (cancelled || !Array.isArray(d?.items) || d.items.length === 0) return;
+        setGroups(d.items);
+      })
+      .catch(() => {});
+    api
+      .get("/api/community/study-rooms")
+      .then((d) => {
+        if (cancelled || !Array.isArray(d?.items) || d.items.length === 0) return;
+        setRooms(d.items);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const active = groups.find((g) => g.id === activeId);
+
+  const filtered = groups.filter((g) => {
     if (tab === "mine") return g.isMine;
     if (tab === "open") return g.visibility === "open";
     if (tab === "invite-only") return g.visibility === "invite-only";
@@ -54,7 +79,7 @@ export default function StudyGroupsScreen() {
             value={tab}
             onChange={setTab}
             options={[
-              { value: "mine", label: "My groups", badge: STUDY_GROUPS.filter((g) => g.isMine).length },
+              { value: "mine", label: "My groups", badge: groups.filter((g) => g.isMine).length },
               { value: "open", label: "Open" },
               { value: "invite-only", label: "Invite-only" },
               { value: "paused", label: "Paused" },
@@ -62,7 +87,7 @@ export default function StudyGroupsScreen() {
             ]}
           />
           <div className="num-mono text-[10.5px] text-clay-700">
-            {filtered.length} groups · {STUDY_ROOM_SESSIONS.length} study rooms this week
+            {filtered.length} groups · {rooms.length} study rooms this week
           </div>
         </div>
 
@@ -78,7 +103,7 @@ export default function StudyGroupsScreen() {
           {active ? <GroupDetail group={active} /> : null}
         </div>
 
-        <UpcomingStudyRooms />
+        <UpcomingStudyRooms rooms={rooms} groups={groups} />
         <FindPartnersStrip />
       </div>
     </div>
@@ -164,8 +189,17 @@ function GroupDetail({ group }) {
             {group.isMine ? (
               <Pill tone="ink">You're in</Pill>
             ) : (
-              <button type="button" className="text-[11.5px] px-3 py-1.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold">
-                Request to join
+              <button
+                type="button"
+                onClick={() => api.post(`/api/community/groups/${group.id}/join`, {}).catch(() => {})}
+                data-testid={`join-${group.id}`}
+                className={`text-[11.5px] px-3 py-1.5 rounded-full font-semibold ${
+                  group.youRequested
+                    ? "border border-[#54794E] bg-[#F0F5EF] text-[#33482F]"
+                    : "bg-[#2E2218] text-[#F3EADB]"
+                }`}
+              >
+                {group.youRequested ? "Request sent" : "Request to join"}
               </button>
             )}
           </div>
@@ -182,7 +216,7 @@ function GroupDetail({ group }) {
       {group.nextSession ? <NextSessionCard s={group.nextSession} /> : null}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <DailyCheckinCard />
+        <DailyCheckinCard groupId={group.id} />
         <MembersCard group={group} />
       </div>
 
@@ -240,8 +274,24 @@ function NextSessionCard({ s }) {
   );
 }
 
-function DailyCheckinCard() {
+function DailyCheckinCard({ groupId }) {
   const [body, setBody] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [posted, setPosted] = useState(false);
+
+  async function submit() {
+    if (!body.trim() || !groupId) return;
+    setPosting(true);
+    try {
+      await api.post(`/api/community/groups/${groupId}/checkins`, { body });
+      setBody("");
+      setPosted(true);
+    } catch {
+      setPosted(true);
+    } finally {
+      setPosting(false);
+    }
+  }
   return (
     <Card>
       <SectionHeader
@@ -271,8 +321,14 @@ function DailyCheckinCard() {
               + Topic
             </button>
           </div>
-          <button type="button" className="text-[11px] px-3 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold">
-            Post check-in
+          <button
+            type="button"
+            onClick={submit}
+            disabled={posting || !body.trim()}
+            data-testid="group-checkin-post"
+            className="text-[11px] px-3 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold disabled:opacity-50"
+          >
+            {posted ? "Posted ✓" : posting ? "Posting…" : "Post check-in"}
           </button>
         </div>
       </div>
@@ -440,13 +496,15 @@ function PostSessionLogCard() {
   );
 }
 
-function UpcomingStudyRooms() {
+function UpcomingStudyRooms({ rooms = STUDY_ROOM_SESSIONS, groups = STUDY_GROUPS }) {
   return (
     <Card padded={false}>
       <div className="px-7 pt-6 pb-3 flex items-end justify-between flex-wrap gap-3">
         <div>
           <Eyebrow>Study rooms · this week</Eyebrow>
-          <h2 className="font-heading text-[22px] mt-1">3 scheduled sessions across your groups.</h2>
+          <h2 className="font-heading text-[22px] mt-1">
+            {rooms.length} scheduled sessions across your groups.
+          </h2>
           <p className="text-[12px] text-clay-700 mt-1">
             Reminders 15 min before. Post-session hours feed your study analytics.
           </p>
@@ -469,8 +527,8 @@ function UpcomingStudyRooms() {
             </tr>
           </thead>
           <tbody>
-            {STUDY_ROOM_SESSIONS.map((s) => {
-              const g = STUDY_GROUPS.find((x) => x.id === s.groupId);
+            {rooms.map((s) => {
+              const g = s.groupName ? { name: s.groupName } : groups.find((x) => x.id === s.groupId);
               return (
                 <tr key={s.id}>
                   <td>
@@ -488,12 +546,28 @@ function UpcomingStudyRooms() {
                   </td>
                   <td className="right">
                     <div className="flex gap-1.5 justify-end">
-                      <button type="button" className="text-[11px] px-2.5 py-1 rounded-full border border-[#E7DECB] text-clay-700 font-semibold">
-                        RSVP
+                      <button
+                        type="button"
+                        onClick={() => api.post(`/api/community/study-rooms/${s.id}/rsvp`, {}).catch(() => {})}
+                        data-testid={`rsvp-${s.id}`}
+                        className={`text-[11px] px-2.5 py-1 rounded-full border font-semibold ${
+                          s.youRsvpd
+                            ? "border-[#54794E] bg-[#F0F5EF] text-[#33482F]"
+                            : "border-[#E7DECB] text-clay-700"
+                        }`}
+                      >
+                        {s.youRsvpd ? "RSVP'd" : "RSVP"}
                       </button>
-                      <button type="button" className="text-[11px] px-2.5 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold">
-                        Open link
-                      </button>
+                      {s.platformLink ? (
+                        <a
+                          href={`https://${s.platformLink}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11px] px-2.5 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold"
+                        >
+                          Open link
+                        </a>
+                      ) : null}
                     </div>
                   </td>
                 </tr>
