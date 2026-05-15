@@ -333,9 +333,9 @@ function CheckinHistory() {
         eyebrow="Check-in log · last 5 days"
         title="What both of you said."
         right={
-          <a href="#" className="text-[11.5px] text-clay-700 underline">
+          <button type="button" className="text-[11.5px] text-clay-700 underline bg-transparent">
             Full log →
-          </a>
+          </button>
         }
       />
       <div className="overflow-x-auto">

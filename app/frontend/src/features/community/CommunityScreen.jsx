@@ -620,9 +620,12 @@ function ThreadDetail({ thread, channel, users, onBack }) {
                   <div className="text-[11.5px] font-semibold text-[#33482F]">Official source</div>
                   <div className="num-mono text-[10.5px] text-[#33482F]">{thread.verifiedSource}</div>
                 </div>
-                <a href="#" className="text-[11px] text-[#33482F] font-semibold underline">
+                <button
+                  type="button"
+                  className="text-[11px] text-[#33482F] font-semibold underline bg-transparent"
+                >
                   Open →
-                </a>
+                </button>
               </div>
             ) : null}
 
@@ -669,15 +672,14 @@ function ThreadDetail({ thread, channel, users, onBack }) {
                 <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" stroke="#D6BC93" strokeWidth="1.4" />
               </svg>
               <div className="text-[12.5px]">
-                Replies are locked on official posts. Discuss in
-                {" "}
-                <a href="#" className="underline font-semibold">
+                Replies are locked on official posts. Discuss in{" "}
+                <button type="button" className="underline font-semibold bg-transparent">
                   #preparation
-                </a>{" "}
+                </button>{" "}
                 or{" "}
-                <a href="#" className="underline font-semibold">
+                <button type="button" className="underline font-semibold bg-transparent">
                   #form-help
-                </a>
+                </button>
                 .
               </div>
             </div>
@@ -868,21 +870,21 @@ function ThreadSidebar({ thread, channel, users }) {
           <Eyebrow>Related threads</Eyebrow>
           <ul className="mt-2 space-y-2 text-[12px]">
             <li>
-              <a href="#" className="hover:underline">
+              <button type="button" className="hover:underline bg-transparent text-left">
                 Mock 14 — 122/200 error breakdown
-              </a>
+              </button>
               <div className="num-mono text-[10px] text-clay-700">96 ↑ · 38 replies</div>
             </li>
             <li>
-              <a href="#" className="hover:underline">
+              <button type="button" className="hover:underline bg-transparent text-left">
                 How I balance CA with deep Polity
-              </a>
+              </button>
               <div className="num-mono text-[10px] text-clay-700">340 ↑ · 51 replies</div>
             </li>
             <li>
-              <a href="#" className="hover:underline">
+              <button type="button" className="hover:underline bg-transparent text-left">
                 2022 Q41 — Article 263 answer clash
-              </a>
+              </button>
               <div className="num-mono text-[10px] text-clay-700">642 ↑ · 48 replies</div>
             </li>
           </ul>
