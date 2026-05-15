@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowUp, Clock, MessageCircle, Pin, Plus, ShieldCheck, Users } from "lucide-react";
+import { Clock, MessageCircle, Pin, Plus, ShieldCheck, Users } from "lucide-react";
 import { api } from "../lib/api";
+import { Avatar, Card, Eyebrow, PageHeader, Pill } from "../shared/ui/studyos";
+
+const SORTS = ["hot", "new", "unanswered"];
 
 export default function Community() {
   const [categories, setCategories] = useState([]);
@@ -10,40 +13,48 @@ export default function Community() {
   const [sort, setSort] = useState("hot");
 
   useEffect(() => {
-    api.get("/api/community/categories").then((d) => setCategories(Array.isArray(d?.items) ? d.items : [])).catch(() => {});
+    api
+      .get("/api/community/categories")
+      .then((d) => setCategories(Array.isArray(d?.items) ? d.items : []))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
     const qs = new URLSearchParams({ sort });
     if (category) qs.set("category", category);
-    api.get(`/api/community/threads?${qs.toString()}`).then((d) => setThreads(Array.isArray(d?.items) ? d.items : [])).catch(() => {});
+    api
+      .get(`/api/community/threads?${qs.toString()}`)
+      .then((d) => setThreads(Array.isArray(d?.items) ? d.items : []))
+      .catch(() => {});
   }, [sort, category]);
 
   return (
     <div className="space-y-6" data-testid="community-page">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Community</div>
-          <h1 className="font-heading text-4xl font-semibold tracking-tight mt-1">Structured. Moderated. Actually useful.</h1>
-        </div>
-        <Link to="/app/community/new" className="btn btn-primary" data-testid="new-thread-btn">
-          <Plus className="h-4 w-4" /> New thread
-        </Link>
-      </div>
+      <PageHeader
+        eyebrow="Community"
+        title="Structured. Moderated. Actually useful."
+        sub="Telegram-style channels, Reddit-style threads. Verified Topper answers float to the top, and official channels are admin-write only."
+        right={
+          <Link to="/app/community/new" className="btn btn-primary" data-testid="new-thread-btn">
+            <Plus className="h-4 w-4" /> New thread
+          </Link>
+        }
+      />
 
-      <div className="grid lg:grid-cols-4 gap-4">
-        <aside className="soft-card rounded-2xl p-4 h-fit">
-          <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground font-semibold px-2">Channels</div>
-          <ul className="mt-2 space-y-0.5">
+      <div className="grid lg:grid-cols-4 gap-6 items-start">
+        {/* Channels rail */}
+        <Card className="h-fit">
+          <Eyebrow>Channels</Eyebrow>
+          <ul className="mt-3 space-y-0.5">
             <li>
               <button
                 onClick={() => setCategory(null)}
                 data-testid="cat-all"
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm ${
-                  !category ? "bg-clay-500 text-white font-semibold" : "hover:bg-clay-100"
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-mono transition ${
+                  !category ? "bg-[#2E2218] text-[#F3EADB] font-semibold" : "text-clay-700 hover:bg-[#F3EADB]"
                 }`}
               >
-                <span className="font-mono">#all</span>
+                <span>#all</span>
               </button>
             </li>
             {categories.map((c) => (
@@ -51,40 +62,53 @@ export default function Community() {
                 <button
                   onClick={() => setCategory(c.id)}
                   data-testid={`cat-${c.id}`}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm ${
-                    category === c.id ? "bg-clay-500 text-white font-semibold" : "hover:bg-clay-100"
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition ${
+                    category === c.id
+                      ? "bg-[#2E2218] text-[#F3EADB] font-semibold"
+                      : "text-clay-700 hover:bg-[#F3EADB]"
                   }`}
                 >
                   <span className="flex items-center gap-1.5 font-mono">
-                    {c.admin_only && <ShieldCheck className="h-3.5 w-3.5 text-sage-600" />}
+                    {c.admin_only && <ShieldCheck className="h-3.5 w-3.5 text-sage-600" aria-hidden="true" />}
                     #{c.id}
                   </span>
-                  <span className={`text-[10px] ${category === c.id ? "text-white/70" : "text-muted-foreground"}`}>{c.count}</span>
+                  <span
+                    className={`num-mono text-[10px] ${
+                      category === c.id ? "text-[#D6BC93]" : "text-clay-700"
+                    }`}
+                  >
+                    {c.count}
+                  </span>
                 </button>
               </li>
             ))}
           </ul>
-          <div className="mt-4 pt-4 border-t border-border px-2">
-            <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Your group</div>
+          <div className="rule mt-4 pt-4">
+            <Eyebrow>Your group</Eyebrow>
             <div className="mt-2 flex items-center gap-2">
-              <div className="h-8 w-8 rounded-lg bg-clay-500 text-white grid place-items-center font-semibold text-xs">MB</div>
+              <div className="h-8 w-8 rounded-lg bg-[#2E2218] text-[#F3EADB] grid place-items-center font-heading text-xs">
+                MB
+              </div>
               <div>
                 <div className="text-sm font-semibold">Morning Batch</div>
-                <div className="text-[11px] text-muted-foreground inline-flex items-center gap-1"><Users className="h-3 w-3" /> 4 members</div>
+                <div className="text-[11px] text-clay-700 inline-flex items-center gap-1">
+                  <Users className="h-3 w-3" aria-hidden="true" /> 4 members
+                </div>
               </div>
             </div>
           </div>
-        </aside>
+        </Card>
 
+        {/* Thread list */}
         <div className="lg:col-span-3 space-y-3">
-          <div className="flex gap-2 flex-wrap">
-            {["hot", "new", "unanswered"].map((s) => (
+          <div className="flex gap-1 bg-[#F3EADB] p-1 rounded-full border border-[#E7DECB] w-fit">
+            {SORTS.map((s) => (
               <button
                 key={s}
                 onClick={() => setSort(s)}
                 data-testid={`sort-${s}`}
-                className={`text-xs font-semibold px-3.5 py-1.5 rounded-full border ${
-                  sort === s ? "bg-clay-500 border-clay-500 text-white" : "border-border bg-white/70 hover:border-clay-300"
+                className={`text-[12px] font-semibold px-3.5 py-1.5 rounded-full transition ${
+                  sort === s ? "bg-[#2E2218] text-[#F3EADB]" : "text-clay-700 hover:bg-[#E7D6BA]"
                 }`}
               >
                 {s[0].toUpperCase() + s.slice(1)}
@@ -92,39 +116,69 @@ export default function Community() {
             ))}
           </div>
 
-          {threads.map((t) => (
-            <Link
-              key={t.id}
-              to={`/app/community/${t.slug}`}
-              className={`block soft-card rounded-2xl p-5 hover:border-clay-300 transition ${t.pinned ? "ring-1 ring-clay-300" : ""}`}
-              data-testid={`thread-${t.slug}`}
-            >
-              <div className="flex items-start gap-4">
-                <div className="flex flex-col items-center gap-0.5 text-muted-foreground">
-                  <ArrowUp className="h-4 w-4" />
-                  <div className="text-[11px] font-semibold font-mono text-foreground">{t.votes}</div>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {t.pinned && <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-clay-700"><Pin className="h-3 w-3" /> Pinned</span>}
-                    <span className="text-xs font-semibold">{t.author}</span>
-                    {t.badge && (
-                      <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full ${t.badge === "Admin" ? "bg-foreground text-background" : "bg-sage-100 text-sage-700"}`}>
-                        {t.badge}
+          {threads.map((t) => {
+            const isOfficial = t.badge === "Admin";
+            return (
+              <Link
+                key={t.id}
+                to={`/app/community/${t.slug}`}
+                data-testid={`thread-${t.slug}`}
+                className={`block rounded-xl border bg-white/70 hover:bg-white hover:border-[#A68057] transition overflow-hidden ${
+                  isOfficial ? "border-[#2E2218]" : t.pinned ? "border-[#94B28A]" : "border-[#E7DECB]"
+                }`}
+              >
+                <div className="flex">
+                  <div className="bg-[#FBF8F2] border-r border-[#EFE2C9] px-3 py-4 flex flex-col items-center gap-1 shrink-0">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                      <path
+                        d="M3 9l5-5 5 5"
+                        stroke="#6C5038"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    <span className="num-mono text-[12px] text-clay-900 font-semibold">{t.votes}</span>
+                  </div>
+                  <div className="flex-1 min-w-0 px-5 py-3.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {t.pinned && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-clay-700">
+                          <Pin className="h-3 w-3" aria-hidden="true" /> Pinned
+                        </span>
+                      )}
+                      {isOfficial && <span className="stamp stamp-official">Official</span>}
+                      {t.tag && <Pill tone="outline">{t.tag}</Pill>}
+                      <span className="text-[11px] text-clay-700 inline-flex items-center gap-1 ml-auto">
+                        <Clock className="h-3 w-3" aria-hidden="true" /> new
                       </span>
-                    )}
-                    {t.tag && <span className="text-[10px] uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded border border-border">{t.tag}</span>}
-                    <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1 ml-auto"><Clock className="h-3 w-3" /> new</span>
-                  </div>
-                  <h3 className="mt-1.5 font-heading text-lg font-semibold">{t.title}</h3>
-                  <p className="text-sm text-muted-foreground mt-1">{t.excerpt}</p>
-                  <div className="mt-3 text-[11px] text-muted-foreground inline-flex items-center gap-1 font-semibold">
-                    <MessageCircle className="h-3.5 w-3.5" /> {t.replies_count} replies
+                    </div>
+                    <h3 className="mt-2 font-heading text-[17px] leading-snug">{t.title}</h3>
+                    {t.excerpt ? (
+                      <p className="text-[13px] text-clay-700 mt-1.5 leading-[1.5] line-clamp-2">{t.excerpt}</p>
+                    ) : null}
+                    <div className="mt-3 flex items-center justify-between flex-wrap gap-2">
+                      <span className="inline-flex items-center gap-2 text-[12px]">
+                        <Avatar user={{ name: t.author || "?" }} size={22} />
+                        <span className="text-clay-900 font-medium">{t.author}</span>
+                        {t.badge && !isOfficial && <Pill tone="sage">{t.badge}</Pill>}
+                      </span>
+                      <span className="text-[11px] text-clay-700 inline-flex items-center gap-1 font-semibold">
+                        <MessageCircle className="h-3.5 w-3.5" aria-hidden="true" /> {t.replies_count} replies
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </Link>
-          ))}
+              </Link>
+            );
+          })}
+          {!threads.length ? (
+            <div className="rounded-xl border border-dashed border-[#D6C9AC] bg-[#FBF8F2] p-8 text-center">
+              <div className="text-[28px] mb-2">◌</div>
+              <div className="font-heading text-[18px] text-clay-900">No threads yet in this channel.</div>
+              <div className="text-[12.5px] text-clay-700 mt-1.5">Be the first to start one.</div>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

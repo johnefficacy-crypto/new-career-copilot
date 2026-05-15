@@ -654,6 +654,366 @@ def _persist(
 
 
 # ─── Public entrypoint ────────────────────────────────────────────────────
+def _compute_plan(
+    supabase: Any,
+    user_id: str,
+    *,
+    reason: str,
+) -> dict[str, Any]:
+    """Compute (but do not persist) today's plan candidate.
+
+    Returns one of two shapes:
+      - failure: ``{"generated": False, "reason": "...", "exam": slug?}``
+      - success: ``{"generated": True, "exam": <row>, "plan_phase_id": ...,
+                    "tasks": [...], "input_context": {...},
+                    "competition_pressure": "...", "focus": "...",
+                    "policy_affects_syllabus": bool}``
+    """
+    if not user_id:
+        return {"generated": False, "reason": "no_user"}
+
+    exam = _resolve_target_exam(supabase, user_id)
+    if not exam or not exam.get("id"):
+        return {"generated": False, "reason": "no_target_exam"}
+    exam_id = exam["id"]
+
+    # User autonomy: weighting focus, plan-shape overrides, pin / mute.
+    prefs = get_plan_preferences(supabase, user_id)
+    muted = set(prefs.get("muted_topic_ids") or [])
+    pinned = set(prefs.get("pinned_topic_ids") or [])
+    weights = focus_weights(prefs.get("focus"))
+
+    coverage = _load_locked_coverage(supabase, exam_id)
+    if not coverage:
+        return {
+            "generated": False,
+            "reason": "no_locked_coverage",
+            "exam": exam.get("slug"),
+        }
+    coverage = [c for c in coverage if c["topic_id"] not in muted]
+    if not coverage:
+        return {
+            "generated": False,
+            "reason": "all_topics_muted",
+            "exam": exam.get("slug"),
+        }
+
+    topic_ids = [c["topic_id"] for c in coverage]
+    pyq_counts = verified_pyq_topic_counts(supabase, exam_id) or {}
+    prereqs = _load_prerequisites(supabase, topic_ids)
+    mastery, error_topics = _load_user_signals(supabase, user_id, exam_id)
+
+    days_remaining = _days_remaining(supabase, exam_id)
+    comp = competition_context(supabase, exam_id, days_remaining=days_remaining)
+    pressure_level = (comp.get("cycle_pressure") or {}).get("pressure_level", "unknown")
+    policy_updates = policy_update_context(supabase, exam_id)
+
+    # Task count + sizing: a user preference overrides the persona policy.
+    snapshot = (
+        _safe(
+            lambda: (
+                supabase.table("aspirant_persona_snapshots")
+                .select("study_policy")
+                .eq("user_id", user_id)
+                .order("computed_at", desc=True)
+                .limit(1)
+                .execute()
+                .data
+            ),
+            default=[],
+        )
+        or []
+    )
+    study_policy = (snapshot[0] if snapshot else {}).get("study_policy") or {}
+    pref_max = prefs.get("max_tasks_per_day")
+    if pref_max:
+        max_tasks = max(1, min(8, int(pref_max)))
+    else:
+        try:
+            max_tasks = int(study_policy.get("max_tasks_per_day") or _DEFAULT_MAX_TASKS)
+        except (TypeError, ValueError):
+            max_tasks = _DEFAULT_MAX_TASKS
+        max_tasks = max(1, min(8, max_tasks))
+    size = (
+        prefs.get("preferred_task_size")
+        or study_policy.get("preferred_task_size")
+        or _DEFAULT_SIZE
+    )
+    minutes = _SIZE_MINUTES.get(size, _SIZE_MINUTES[_DEFAULT_SIZE])
+
+    # score every locked-coverage topic
+    for cov in coverage:
+        tid = cov["topic_id"]
+        pyq_count = int(pyq_counts.get(tid, 0))
+        topic_mastery = mastery.get(tid)
+        has_errors = tid in error_topics
+        is_pinned = tid in pinned
+        score, gap = _score_topic(
+            cov, pyq_count, topic_mastery, has_errors,
+            weights=weights, pinned=is_pinned,
+        )
+        cov["_pyq_count"] = pyq_count
+        cov["_mastery"] = topic_mastery
+        cov["_mastery_gap"] = gap
+        cov["_has_errors"] = has_errors
+        cov["_pinned"] = is_pinned
+        cov["_priority_score"] = score
+        cov["_task_type"] = _task_type(topic_mastery, has_errors)
+
+    coverage.sort(key=lambda c: c["_priority_score"], reverse=True)
+    ordered = _order_topics(coverage, prereqs)
+
+    # the phase carrying the most locked coverage drives the plan's phase
+    phase_counts: dict[str, int] = {}
+    for c in coverage:
+        ph = c.get("exam_phase_id")
+        if ph:
+            phase_counts[ph] = phase_counts.get(ph, 0) + 1
+    plan_phase_id = (
+        max(phase_counts, key=phase_counts.get) if phase_counts else None
+    )
+
+    tasks = _build_tasks(
+        ordered,
+        max_tasks=max_tasks,
+        minutes=minutes,
+        pressure_level=pressure_level,
+        exam_id=exam_id,
+    )
+
+    input_context = {
+        "reason": reason,
+        "generator_version": PLANNER_VERSION,
+        "exam_id": exam_id,
+        "exam_slug": exam.get("slug"),
+        "locked_topic_count": len(coverage),
+        "days_remaining": days_remaining,
+        "competition_pressure": pressure_level,
+        "policy_affects_syllabus": bool(policy_updates.get("affects_syllabus")),
+        "study_policy": {"max_tasks_per_day": max_tasks, "preferred_task_size": size},
+        "preferences": {
+            "focus": prefs.get("focus"),
+            "pinned_count": len(pinned),
+            "muted_count": len(muted),
+        },
+    }
+
+    return {
+        "generated": True,
+        "exam": exam,
+        "plan_phase_id": plan_phase_id,
+        "tasks": tasks,
+        "input_context": input_context,
+        "competition_pressure": pressure_level,
+        "focus": prefs.get("focus"),
+    }
+
+
+def _task_summary(t: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "topic_id": t.get("topic_id"),
+        "title": t["title"],
+        "task_type": t["task_type"],
+        "topic": t["topic"],
+        "priority_score": t["priority_score"],
+        "planned_minutes": t["planned_minutes"],
+        "why_this_task": t["why_this_task"],
+    }
+
+
+def _active_plan_today_tasks(supabase: Any, user_id: str) -> list[dict[str, Any]]:
+    """Return today's still-planned tasks for the user's active plan."""
+    plan = _active_plan(supabase, user_id)
+    if not plan:
+        return []
+    today = _today_iso()
+    rows = (
+        _safe(
+            lambda: (
+                supabase.table("study_tasks")
+                .select(
+                    "id, topic_id, title, task_type, topic, priority_score, "
+                    "planned_minutes, why_this_task, status, scheduled_date"
+                )
+                .eq("plan_id", plan["id"])
+                .eq("scheduled_date", today)
+                .execute()
+                .data
+            ),
+            default=[],
+        )
+        or []
+    )
+    return rows
+
+
+def _diff_tasks(
+    before: list[dict[str, Any]],
+    after: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Return a structured diff: ``added`` / ``removed`` / ``unchanged`` topic ids."""
+    before_topics = {b.get("topic_id"): b for b in before if b.get("topic_id")}
+    after_topics = {a.get("topic_id"): a for a in after if a.get("topic_id")}
+    added = sorted(set(after_topics) - set(before_topics))
+    removed = sorted(set(before_topics) - set(after_topics))
+    unchanged = sorted(set(before_topics) & set(after_topics))
+    return {
+        "added": [_task_summary(after_topics[t]) for t in added],
+        "removed": [
+            {
+                "topic_id": t,
+                "title": before_topics[t].get("title"),
+                "task_type": before_topics[t].get("task_type"),
+                "status": before_topics[t].get("status"),
+            }
+            for t in removed
+        ],
+        "unchanged": unchanged,
+        "added_count": len(added),
+        "removed_count": len(removed),
+        "unchanged_count": len(unchanged),
+    }
+
+
+def _risk_level(diff: dict[str, Any], before_count: int) -> str:
+    """Rough risk label from how much of the plan is mutating."""
+    if before_count == 0:
+        return "low"
+    total_changes = diff["added_count"] + diff["removed_count"]
+    ratio = total_changes / max(1, before_count)
+    if ratio >= 0.75:
+        return "high"
+    if ratio >= 0.4:
+        return "medium"
+    return "low"
+
+
+def compute_draft_plan(supabase: Any, user_id: str) -> dict[str, Any]:
+    """Compute today's plan candidate without mutating any persisted plan.
+
+    Returns the same envelope as ``apply_plan`` but with ``applied=False``,
+    no version row, no adaptation event, and the active plan's still-planned
+    tasks for today as ``before_tasks``. Safe to call repeatedly.
+    """
+    try:
+        computed = _compute_plan(supabase, user_id, reason="plan_draft")
+        if not computed.get("generated"):
+            return computed
+
+        tasks = computed["tasks"]
+        before = _active_plan_today_tasks(supabase, user_id)
+        before_tasks = [
+            {
+                "topic_id": b.get("topic_id"),
+                "title": b.get("title"),
+                "task_type": b.get("task_type"),
+                "topic": b.get("topic"),
+                "priority_score": b.get("priority_score"),
+                "planned_minutes": b.get("planned_minutes"),
+                "why_this_task": b.get("why_this_task"),
+                "status": b.get("status"),
+            }
+            for b in before
+        ]
+        after_tasks = [_task_summary(t) for t in tasks]
+        diff = _diff_tasks(before_tasks, after_tasks)
+        exam = computed["exam"]
+        return {
+            "applied": False,
+            "generated": True,
+            "exam": exam.get("slug"),
+            "exam_name": exam.get("name"),
+            "competition_pressure": computed["competition_pressure"],
+            "focus": computed["focus"],
+            "before_tasks": before_tasks,
+            "after_tasks": after_tasks,
+            "changes": diff,
+            "risk_level": _risk_level(diff, len(before_tasks)),
+            "generated_at": _now_iso(),
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("compute_draft_plan failed for %s", user_id)
+        return {
+            "generated": False,
+            "reason": "error",
+            "error": str(exc)[:200],
+        }
+
+
+def apply_plan(
+    supabase: Any,
+    user_id: str,
+    *,
+    reason: str = "manual_apply",
+    event_type: str = "manual_application",
+) -> dict[str, Any]:
+    """Apply today's computed plan. Always persists when ``generated=True``.
+
+    Idempotent: ``_persist`` reuses the active plan, clears today's still-
+    planned tasks for that plan, and inserts the fresh set; completed /
+    in-progress tasks survive. Creates exactly one ``study_plan_versions``
+    row and one ``study_adaptation_events`` row per call.
+    """
+    try:
+        before = _active_plan_today_tasks(supabase, user_id)
+        before_tasks = [
+            {
+                "topic_id": b.get("topic_id"),
+                "title": b.get("title"),
+                "task_type": b.get("task_type"),
+                "topic": b.get("topic"),
+                "priority_score": b.get("priority_score"),
+                "planned_minutes": b.get("planned_minutes"),
+                "why_this_task": b.get("why_this_task"),
+                "status": b.get("status"),
+            }
+            for b in before
+        ]
+
+        computed = _compute_plan(supabase, user_id, reason=reason)
+        if not computed.get("generated"):
+            return computed
+
+        tasks = computed["tasks"]
+        exam = computed["exam"]
+        persisted = _persist(
+            supabase,
+            user_id,
+            exam,
+            computed["plan_phase_id"],
+            tasks,
+            computed["input_context"],
+            event_type,
+        )
+        if not persisted.get("generated"):
+            return persisted
+
+        after_tasks = [_task_summary(t) for t in tasks]
+        diff = _diff_tasks(before_tasks, after_tasks)
+        return {
+            **persisted,
+            "applied": True,
+            "exam": exam.get("slug"),
+            "exam_name": exam.get("name"),
+            "task_count": len(tasks),
+            "focus": computed["focus"],
+            "competition_pressure": computed["competition_pressure"],
+            "before_tasks": before_tasks,
+            "after_tasks": after_tasks,
+            "changes": diff,
+            "risk_level": _risk_level(diff, len(before_tasks)),
+            "tasks": after_tasks,  # back-compat with /api/study/plan/generate callers
+            "generated_at": _now_iso(),
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("apply_plan failed for %s", user_id)
+        return {
+            "generated": False,
+            "reason": "error",
+            "error": str(exc)[:200],
+        }
+
+
 def generate_plan(
     supabase: Any,
     user_id: str,
@@ -663,172 +1023,8 @@ def generate_plan(
 ) -> dict[str, Any]:
     """Generate and persist today's study plan for ``user_id``.
 
-    Honours the user's ``user_study_plan_preferences`` — the weighting
-    ``focus``, plan-shape overrides and pinned / muted topics — on top of
-    the persona study policy. ``event_type`` is recorded on the
-    ``study_adaptation_events`` row so a scheduled or mock-triggered
-    regeneration is distinguishable from a manual one.
-
-    Returns a summary dict. ``generated=False`` (with a ``reason``) when the
-    plan cannot be built — no target exam, no locked exam intelligence, or
-    every candidate topic muted. Never raises.
+    Thin wrapper over :func:`apply_plan` — kept for callers of the existing
+    ``/api/study/plan/generate`` route and for scheduled / signal-driven
+    regenerations (``regen.regenerate_on_signal``).
     """
-    try:
-        if not user_id:
-            return {"generated": False, "reason": "no_user"}
-
-        exam = _resolve_target_exam(supabase, user_id)
-        if not exam or not exam.get("id"):
-            return {"generated": False, "reason": "no_target_exam"}
-        exam_id = exam["id"]
-
-        # User autonomy: weighting focus, plan-shape overrides, pin / mute.
-        prefs = get_plan_preferences(supabase, user_id)
-        muted = set(prefs.get("muted_topic_ids") or [])
-        pinned = set(prefs.get("pinned_topic_ids") or [])
-        weights = focus_weights(prefs.get("focus"))
-
-        coverage = _load_locked_coverage(supabase, exam_id)
-        if not coverage:
-            return {
-                "generated": False,
-                "reason": "no_locked_coverage",
-                "exam": exam.get("slug"),
-            }
-        coverage = [c for c in coverage if c["topic_id"] not in muted]
-        if not coverage:
-            return {
-                "generated": False,
-                "reason": "all_topics_muted",
-                "exam": exam.get("slug"),
-            }
-
-        topic_ids = [c["topic_id"] for c in coverage]
-        pyq_counts = verified_pyq_topic_counts(supabase, exam_id) or {}
-        prereqs = _load_prerequisites(supabase, topic_ids)
-        mastery, error_topics = _load_user_signals(supabase, user_id, exam_id)
-
-        days_remaining = _days_remaining(supabase, exam_id)
-        comp = competition_context(supabase, exam_id, days_remaining=days_remaining)
-        pressure_level = (comp.get("cycle_pressure") or {}).get("pressure_level", "unknown")
-        policy_updates = policy_update_context(supabase, exam_id)
-
-        # Task count + sizing: a user preference overrides the persona policy.
-        snapshot = (
-            _safe(
-                lambda: (
-                    supabase.table("aspirant_persona_snapshots")
-                    .select("study_policy")
-                    .eq("user_id", user_id)
-                    .order("computed_at", desc=True)
-                    .limit(1)
-                    .execute()
-                    .data
-                ),
-                default=[],
-            )
-            or []
-        )
-        study_policy = (snapshot[0] if snapshot else {}).get("study_policy") or {}
-        pref_max = prefs.get("max_tasks_per_day")
-        if pref_max:
-            max_tasks = max(1, min(8, int(pref_max)))
-        else:
-            try:
-                max_tasks = int(study_policy.get("max_tasks_per_day") or _DEFAULT_MAX_TASKS)
-            except (TypeError, ValueError):
-                max_tasks = _DEFAULT_MAX_TASKS
-            max_tasks = max(1, min(8, max_tasks))
-        size = (
-            prefs.get("preferred_task_size")
-            or study_policy.get("preferred_task_size")
-            or _DEFAULT_SIZE
-        )
-        minutes = _SIZE_MINUTES.get(size, _SIZE_MINUTES[_DEFAULT_SIZE])
-
-        # score every locked-coverage topic
-        for cov in coverage:
-            tid = cov["topic_id"]
-            pyq_count = int(pyq_counts.get(tid, 0))
-            topic_mastery = mastery.get(tid)
-            has_errors = tid in error_topics
-            is_pinned = tid in pinned
-            score, gap = _score_topic(
-                cov, pyq_count, topic_mastery, has_errors,
-                weights=weights, pinned=is_pinned,
-            )
-            cov["_pyq_count"] = pyq_count
-            cov["_mastery"] = topic_mastery
-            cov["_mastery_gap"] = gap
-            cov["_has_errors"] = has_errors
-            cov["_pinned"] = is_pinned
-            cov["_priority_score"] = score
-            cov["_task_type"] = _task_type(topic_mastery, has_errors)
-
-        coverage.sort(key=lambda c: c["_priority_score"], reverse=True)
-        ordered = _order_topics(coverage, prereqs)
-
-        # the phase carrying the most locked coverage drives the plan's phase
-        phase_counts: dict[str, int] = {}
-        for c in coverage:
-            ph = c.get("exam_phase_id")
-            if ph:
-                phase_counts[ph] = phase_counts.get(ph, 0) + 1
-        plan_phase_id = (
-            max(phase_counts, key=phase_counts.get) if phase_counts else None
-        )
-
-        tasks = _build_tasks(
-            ordered,
-            max_tasks=max_tasks,
-            minutes=minutes,
-            pressure_level=pressure_level,
-            exam_id=exam_id,
-        )
-
-        input_context = {
-            "reason": reason,
-            "generator_version": PLANNER_VERSION,
-            "exam_id": exam_id,
-            "exam_slug": exam.get("slug"),
-            "locked_topic_count": len(coverage),
-            "days_remaining": days_remaining,
-            "competition_pressure": pressure_level,
-            "policy_affects_syllabus": bool(policy_updates.get("affects_syllabus")),
-            "study_policy": {"max_tasks_per_day": max_tasks, "preferred_task_size": size},
-            "preferences": {
-                "focus": prefs.get("focus"),
-                "pinned_count": len(pinned),
-                "muted_count": len(muted),
-            },
-        }
-
-        persisted = _persist(
-            supabase, user_id, exam, plan_phase_id, tasks, input_context, event_type
-        )
-        if not persisted.get("generated"):
-            return persisted
-
-        return {
-            **persisted,
-            "exam": exam.get("slug"),
-            "exam_name": exam.get("name"),
-            "task_count": len(tasks),
-            "focus": prefs.get("focus"),
-            "competition_pressure": pressure_level,
-            "tasks": [
-                {
-                    "title": t["title"],
-                    "task_type": t["task_type"],
-                    "topic": t["topic"],
-                    "priority_score": t["priority_score"],
-                    "planned_minutes": t["planned_minutes"],
-                    "why_this_task": t["why_this_task"],
-                }
-                for t in tasks
-            ],
-            "generated_at": _now_iso(),
-        }
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("generate_plan failed for %s", user_id)
-        return {"generated": False, "reason": "error", "error": str(exc)[:200]}
+    return apply_plan(supabase, user_id, reason=reason, event_type=event_type)

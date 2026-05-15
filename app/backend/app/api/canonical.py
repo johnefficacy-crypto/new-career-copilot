@@ -2038,6 +2038,223 @@ async def add_mock(body: MockEntry, user: dict = Depends(get_current_user)):
     return mock
 
 
+class MockReviewBody(BaseModel):
+    """Server-backed mock-review state with optional per-topic results.
+
+    The fields mirror the prototype mock-review surface — a reviewer can
+    log overall totals, per-topic accuracy, error-type tags and free-form
+    notes in one call. ``review_status`` moves a mock through
+    ``unreviewed → reviewed → correction``.
+    """
+
+    review_status: str = Field(default="reviewed", pattern="^(unreviewed|reviewed|correction)$")
+    total_questions: int | None = None
+    correct_answers: int | None = None
+    wrong_answers: int | None = None
+    skipped_questions: int | None = None
+    avg_time_sec: float | None = None
+    error_types: dict[str, int] | None = None
+    notes: str | None = None
+    topic_breakdowns: list[MockTopicBreakdown] | None = None
+
+
+def _aggregate_error_types(breakdowns: list[MockTopicBreakdown] | None) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for b in breakdowns or []:
+        for k, v in (b.error_types or {}).items():
+            try:
+                out[k] = out.get(k, 0) + int(v)
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+@router_study.post("/mocks/{mock_id}/review")
+async def review_mock(
+    mock_id: str,
+    body: MockReviewBody,
+    user: dict = Depends(get_current_user),
+):
+    """Persist a server-backed mock review.
+
+    Writes the review state and aggregated error-type tags onto the mock
+    row, replaces any prior per-topic breakdowns for this mock with the
+    submitted set, recomputes the user's topic mastery, and fires a
+    best-effort plan regeneration so the next study day reflects the
+    review. Idempotent — calling it twice with the same body produces the
+    same final state.
+    """
+    supabase = get_supabase_admin()
+    # ownership check — mock ids must not be probable across users
+    existing = _safe(
+        lambda: supabase.table("mock_tests").select("id, user_id").eq("id", mock_id).limit(1).execute().data,
+        default=[],
+    ) or []
+    if not existing or existing[0].get("user_id") != user["id"]:
+        raise HTTPException(status_code=404, detail="Mock not found")
+
+    aggregated_error_types = (
+        body.error_types or _aggregate_error_types(body.topic_breakdowns) or None
+    )
+    patch: dict[str, Any] = {
+        "review_status": body.review_status,
+        "reviewed_at": _now_iso() if body.review_status != "unreviewed" else None,
+        "total_questions": body.total_questions,
+        "correct_answers": body.correct_answers,
+        "wrong_answers": body.wrong_answers,
+        "skipped_questions": body.skipped_questions,
+        "avg_time_sec": body.avg_time_sec,
+        "error_types": aggregated_error_types,
+        "notes": body.notes,
+        "updated_at": _now_iso(),
+    }
+    patch = {k: v for k, v in patch.items() if v is not None}
+
+    _safe(lambda: supabase.table("mock_tests").update(patch).eq("id", mock_id).execute())
+
+    if body.topic_breakdowns:
+        # idempotency: clear any previous breakdowns for this mock first
+        _safe(
+            lambda: supabase.table("mock_topic_breakdowns").delete().eq("mock_test_id", mock_id).execute()
+        )
+        rows = [_mock_breakdown_row(mock_id, b) for b in body.topic_breakdowns]
+        if rows:
+            _safe(lambda: supabase.table("mock_topic_breakdowns").insert(rows).execute())
+        from app.study_os.mastery import recompute_topic_mastery
+
+        _safe(lambda: recompute_topic_mastery(supabase, user["id"]))
+
+        from app.study_os.regen import regenerate_on_signal
+
+        _safe(
+            lambda: regenerate_on_signal(
+                supabase, user["id"], event_type="mock_reviewed", reason="mock_reviewed"
+            )
+        )
+
+    refreshed = _safe(
+        lambda: supabase.table("mock_tests").select("*").eq("id", mock_id).limit(1).execute().data,
+        default=[mock_id and {"id": mock_id}],
+    ) or [{"id": mock_id}]
+    return refreshed[0]
+
+
+class MockCorrectionTasksBody(BaseModel):
+    """Optional inputs for ``POST /api/study/mocks/:id/correction-tasks``.
+
+    When ``topic_ids`` is omitted we pull every weak / error topic from
+    this mock's persisted breakdowns. ``add_to_today`` defaults to True so
+    correction tasks land on the user's today plan.
+    """
+
+    topic_ids: list[str] | None = None
+    add_to_today: bool = True
+
+
+@router_study.post("/mocks/{mock_id}/correction-tasks")
+async def create_correction_tasks(
+    mock_id: str,
+    body: MockCorrectionTasksBody | None = None,
+    user: dict = Depends(get_current_user),
+):
+    """Create one ``mock_correction`` task per weak / errored topic on a mock.
+
+    Reads the persisted ``mock_topic_breakdowns`` for the mock (or
+    ``body.topic_ids`` if supplied), and inserts a task per topic onto the
+    user's active plan. Returns the created tasks. Best-effort regen
+    signal so the planner's next pass picks up the new tasks.
+    """
+    body = body or MockCorrectionTasksBody()
+    supabase = get_supabase_admin()
+
+    mock_rows = _safe(
+        lambda: supabase.table("mock_tests").select("id, user_id, exam_id").eq("id", mock_id).limit(1).execute().data,
+        default=[],
+    ) or []
+    if not mock_rows or mock_rows[0].get("user_id") != user["id"]:
+        raise HTTPException(status_code=404, detail="Mock not found")
+    mock = mock_rows[0]
+
+    plan_id = _ensure_active_plan(supabase, user["id"])
+    if not plan_id:
+        return {"items": [], "reason": "no_active_plan"}
+
+    if body.topic_ids:
+        topic_ids = list(dict.fromkeys(body.topic_ids))
+    else:
+        breakdowns = _safe(
+            lambda: (
+                supabase.table("mock_topic_breakdowns")
+                .select("topic_id, accuracy, wrong_answers, error_types")
+                .eq("mock_test_id", mock_id)
+                .execute()
+                .data
+            ),
+            default=[],
+        ) or []
+        topic_ids = []
+        for b in breakdowns:
+            tid = b.get("topic_id")
+            if not tid:
+                continue
+            wrong = b.get("wrong_answers") or 0
+            accuracy = b.get("accuracy")
+            has_errors = bool(b.get("error_types"))
+            if wrong > 0 or has_errors or (accuracy is not None and accuracy < 70):
+                topic_ids.append(tid)
+        topic_ids = list(dict.fromkeys(topic_ids))
+
+    if not topic_ids:
+        return {"items": [], "reason": "no_weak_topics"}
+
+    topic_rows = _safe(
+        lambda: supabase.table("topics").select("id, name, subject_id").in_("id", topic_ids).execute().data,
+        default=[],
+    ) or []
+    topics_by_id = {t["id"]: t for t in topic_rows if t.get("id")}
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    payloads = []
+    for tid in topic_ids:
+        topic = topics_by_id.get(tid) or {}
+        payloads.append(
+            {
+                "user_id": user["id"],
+                "plan_id": plan_id,
+                "topic_id": tid,
+                "subject_id": topic.get("subject_id"),
+                "exam_id": mock.get("exam_id"),
+                "task_type": "mock_correction",
+                "title": f"Correct {topic.get('name') or 'mock topic'} from this mock",
+                "topic": topic.get("name"),
+                "scheduled_date": today if body.add_to_today else None,
+                "day_label": "Today" if body.add_to_today else None,
+                "status": "planned",
+                "planned_minutes": 25,
+                "why_this_task": {
+                    "summary": "Correction task generated from a reviewed mock.",
+                    "mock_id": mock_id,
+                    "source": "mock_review",
+                },
+            }
+        )
+    payloads = [{k: v for k, v in p.items() if v is not None} for p in payloads]
+    inserted = _safe(
+        lambda: supabase.table("study_tasks").insert(payloads).execute().data,
+        default=[],
+    ) or []
+
+    from app.study_os.regen import regenerate_on_signal
+
+    _safe(
+        lambda: regenerate_on_signal(
+            supabase, user["id"], event_type="mock_correction_tasks_created", reason="mock_correction"
+        )
+    )
+
+    return {"items": inserted, "count": len(inserted)}
+
+
 @router_study.get("/subjects")
 async def subjects(user: dict = Depends(get_current_user)):
     """Subject progress derived from completed study_tasks per subject."""
