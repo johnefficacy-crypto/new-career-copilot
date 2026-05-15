@@ -187,7 +187,9 @@ class RunnerSB:
                     "id": "src-1",
                     "source_name": "Free Job Alert",
                     "source_type": "aggregator",
-                    "source_url": "https://www.freejobalert.com/government-jobs/",
+                    # Migration 074 dropped ``source_url``; fixtures now
+                    # populate ``official_url`` directly.
+                    "official_url": "https://www.freejobalert.com/government-jobs/",
                     "is_active": True,
                     "requires_official_confirmation": True,
                 }
@@ -216,6 +218,11 @@ def test_live_scraping_pass_creates_review_queue_without_promotion(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
     monkeypatch.setattr("app.scraping.runner.fetch_page_html", lambda _url: '<a href="/recruitment-one/">Recruitment one</a><a href="/recruitment-two/">Recruitment two</a>')
     monkeypatch.setattr("app.scraping.runner.fetch_page_text", lambda url: f"Recruitment notice for {url}")
+    # Disable the registry-host resolver so the aggregator detail URL is the
+    # one that lands in the queue. Migration 074 promotes the fixture's URL
+    # into ``source.official_url``, which would otherwise let the resolver
+    # match the test's same-host detail anchors and rewrite item_url.
+    monkeypatch.setattr("app.scraping.runner.resolve_with_registry", lambda *_a, **_kw: None)
 
     out = run_scraping_pass(sb, source_ids=["src-1"], limit=2, mock=False)
 
@@ -402,7 +409,7 @@ def test_direct_source_path_inserts_evidence_document(monkeypatch):
         "id": "src-2",
         "source_name": "UPSC Direct",
         "source_type": "official",
-        "source_url": "https://upsc.gov.in/notices",
+        "official_url": "https://upsc.gov.in/notices",
         "is_active": True,
         "requires_official_confirmation": False,
     }]
@@ -798,7 +805,7 @@ def test_runner_marks_run_failed_when_recruitments_dedupe_read_raises():
 
     class _SB:
         def __init__(self):
-            self.db = {"source_registry": [{"id": "src-1", "source_name": "X", "source_type": "aggregator", "is_active": True, "source_url": "https://x"}]}
+            self.db = {"source_registry": [{"id": "src-1", "source_name": "X", "source_type": "aggregator", "is_active": True, "official_url": "https://x"}]}
         def table(self, name): return _DedupQ(name, self.db)
 
     sb = _SB()
@@ -817,7 +824,7 @@ def test_runner_mark_success_clears_typed_error_fields():
         "id": "src-prev-failed",
         "source_name": "Free Job Alert",
         "source_type": "aggregator",
-        "source_url": "https://www.freejobalert.com/government-jobs/",
+        "official_url": "https://www.freejobalert.com/government-jobs/",
         "is_active": True,
         # Pre-existing failure state on the row:
         "consecutive_fails": 3,
@@ -1149,6 +1156,10 @@ def test_runner_skips_unchanged_detail_via_304(monkeypatch):
 
     monkeypatch.setattr(runner_mod, "fetch", _fake_fetch)
     monkeypatch.setattr(runner_mod, "fetch_page_html", lambda url: "<html><a href='/r'>r</a></html>")
+    # Disable the registry-host resolver so item_url stays at the discovered
+    # detail URL. See note in test_live_scraping_pass_creates_review_queue
+    # for the post-migration-074 rationale.
+    monkeypatch.setattr(runner_mod, "resolve_with_registry", lambda *_a, **_kw: None)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
 
     run_scraping_pass(sb, source_ids=["src-1"], mock=False, limit=3)
