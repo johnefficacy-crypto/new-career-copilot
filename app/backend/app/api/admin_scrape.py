@@ -403,6 +403,136 @@ def list_scrape_runs(
     return {"items": items}
 
 
+@router.get("/admin/scrape/runs/{run_id}")
+def get_scrape_run_detail(
+    run_id: str,
+    _admin: dict = Depends(require_permission("scraper.manage")),
+) -> dict[str, Any]:
+    """Return one scrape_runs row plus a per-source breakdown.
+
+    The frontend "Recent runs" list shows aggregate counts only. Admins
+    need the per-source view (sources processed, items queued, errors)
+    to debug a partial or failed pass without dropping to SQL.
+
+    Per-source data is derived from ``scrape_queue`` rows linked back to
+    this run via ``scrape_run_id``. Errors are taken from
+    ``scrape_runs.error_log`` (the runner's structured per-source list).
+    """
+    if not run_id or len(run_id) < 2:
+        raise HTTPException(status_code=422, detail="Invalid run_id")
+    supabase = get_supabase_admin()
+    rows = (
+        supabase.table("scrape_runs")
+        .select("*")
+        .eq("id", run_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Scrape run not found")
+    run = rows[0]
+
+    # Per-source breakdown from scrape_queue rows produced by this run.
+    queue_rows = (
+        supabase.table("scrape_queue")
+        .select("source_id, source_name, status, promoted_recruitment_id, official_source_resolved, data_quality_score")
+        .eq("scrape_run_id", run_id)
+        .limit(1000)
+        .execute()
+        .data
+        or []
+    )
+
+    by_source: dict[str, dict[str, Any]] = {}
+    for row in queue_rows:
+        sid = row.get("source_id") or "__unknown__"
+        if sid not in by_source:
+            by_source[sid] = {
+                "source_id": row.get("source_id"),
+                "source_name": row.get("source_name") or "Unknown source",
+                "items_total": 0,
+                "items_pending": 0,
+                "items_approved": 0,
+                "items_rejected": 0,
+                "items_duplicate": 0,
+                "items_merged": 0,
+                "items_promoted": 0,
+                "items_official_unresolved": 0,
+                "quality_min": None,
+                "quality_max": None,
+            }
+        bucket = by_source[sid]
+        bucket["items_total"] += 1
+        st = (row.get("status") or "").lower()
+        if st == "pending":
+            bucket["items_pending"] += 1
+        elif st == "approved":
+            bucket["items_approved"] += 1
+        elif st == "rejected":
+            bucket["items_rejected"] += 1
+        elif st == "duplicate":
+            bucket["items_duplicate"] += 1
+        elif st == "merged":
+            bucket["items_merged"] += 1
+        if row.get("promoted_recruitment_id"):
+            bucket["items_promoted"] += 1
+        if row.get("official_source_resolved") is False:
+            bucket["items_official_unresolved"] += 1
+        q = row.get("data_quality_score")
+        if q is not None:
+            bucket["quality_min"] = q if bucket["quality_min"] is None else min(bucket["quality_min"], q)
+            bucket["quality_max"] = q if bucket["quality_max"] is None else max(bucket["quality_max"], q)
+
+    # Index errors by source so the UI can show them next to the
+    # per-source rows. error_log entries shape: {source, error, at}.
+    errors = run.get("error_log") or []
+    errors_by_source: dict[str, list[dict[str, Any]]] = {}
+    for err in errors:
+        if not isinstance(err, dict):
+            continue
+        key = (err.get("source") or "").strip()
+        errors_by_source.setdefault(key, []).append(err)
+
+    # Pull source_registry names so unknown / unscraped sources (errored
+    # before producing any queue rows) still show up by name.
+    src_ids = [s for s in by_source.keys() if s != "__unknown__"]
+    name_by_id: dict[str, str] = {}
+    if src_ids:
+        srows = (
+            supabase.table("source_registry")
+            .select("id, source_name")
+            .in_("id", src_ids)
+            .execute()
+            .data
+            or []
+        )
+        name_by_id = {s["id"]: s.get("source_name") or "" for s in srows}
+
+    per_source = []
+    for sid, bucket in sorted(by_source.items(), key=lambda kv: kv[1]["source_name"].lower()):
+        name = bucket["source_name"] or name_by_id.get(sid, "Unknown source")
+        bucket["source_name"] = name
+        bucket["errors"] = errors_by_source.get(name, [])
+        per_source.append(bucket)
+
+    return {
+        "id": run["id"],
+        "status": run.get("status"),
+        "triggered_by": run.get("triggered_by"),
+        "triggered_by_user": run.get("triggered_by_user"),
+        "started_at": run.get("started_at"),
+        "finished_at": run.get("finished_at"),
+        "sources_checked": run.get("sources_checked") or 0,
+        "items_found": run.get("items_found") or 0,
+        "items_new": run.get("items_new") or 0,
+        "items_duplicate": run.get("items_duplicate") or 0,
+        "error_log": errors,
+        "per_source": per_source,
+    }
+
+
 @router.get("/admin/scrape/queue")
 def list_scrape_queue(
     status: str | None = Query(default="pending"),

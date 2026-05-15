@@ -5,6 +5,7 @@ import AdminWorkflowStepper from "../../features/admin/workflow/AdminWorkflowSte
 import NextActionCallout from "../../features/admin/workflow/NextActionCallout";
 import FieldReviewGroup from "../../features/admin/workflow/FieldReviewGroup";
 import PromotionPreviewPanel from "../../features/admin/workflow/PromotionPreviewPanel";
+import ScrapeRunDetailDrawer from "../../features/admin/scraping/ScrapeRunDetailDrawer";
 import { HIGH_RISK_QUEUE_FIELDS, NEXT_ACTION_MESSAGES, RECOMMENDED_REVIEW_FIELDS, SOURCE_TYPE_LABELS } from "../../features/admin/workflow/adminWorkflowContract";
 import { useFocusTrap } from "../../shared/a11y/useFocusTrap";
 import { EmptyState, ErrorState, LoadingSkeleton, StatusBadge, useToast } from "../../shared/ui";
@@ -192,6 +193,7 @@ export default function AdminScraper() {
   const [queueSort, setQueueSort] = useState("risky_first");
   const [queueRisk, setQueueRisk] = useState("all");
   const [queueTotal, setQueueTotal] = useState(null);
+  const [runDetailId, setRunDetailId] = useState(null);
   const [limit, setLimit] = useState(25);
   const [msg, setMsg] = useState(null);
   const toast = useToast();
@@ -236,7 +238,8 @@ export default function AdminScraper() {
     }
   }
 
-  useEffect(() => { load().catch(() => {}); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load().catch(() => {}); }, []);
 
   // Debounce the search input so backend isn't hammered while typing.
   useEffect(() => {
@@ -479,13 +482,30 @@ export default function AdminScraper() {
 
       <section className="soft-card rounded-2xl p-4">
         <h2 className="font-semibold">Recent runs</h2>
+        <p className="mt-1 text-xs text-muted-foreground">Click a row for per-source breakdown, errors, and quality range.</p>
         <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-          {items.slice(0, 6).map((run) => <div key={run.id} className="rounded-xl border border-border bg-white/60 p-3 text-xs"><div className="flex items-center justify-between gap-2"><div className="font-mono">{shortId(run.id)}</div><StatusBadge status={run.status} label={run.status} /></div><div className="mt-2">seen {run.items_seen} / new {run.items_new} / dup {run.items_duplicate}</div><div className="mt-1 truncate text-muted-foreground">{run.at || "-"}</div></div>)}
+          {items.slice(0, 6).map((run) => (
+            <button
+              key={run.id}
+              type="button"
+              onClick={() => setRunDetailId(run.id)}
+              className="rounded-xl border border-border bg-white/60 p-3 text-left text-xs hover:bg-clay-100"
+              data-testid={`scrape-run-card-${run.id}`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-mono">{shortId(run.id)}</div>
+                <StatusBadge status={run.status} label={run.status} />
+              </div>
+              <div className="mt-2">seen {run.items_seen} / new {run.items_new} / dup {run.items_duplicate}</div>
+              <div className="mt-1 truncate text-muted-foreground">{run.at || "-"}</div>
+            </button>
+          ))}
         </div>
       </section>
 
       <QueueDetailDrawer item={selected} onClose={() => setSelected(null)} onAction={act} onFieldAction={fieldAct} onMerge={mergeIntoRecruitment} />
       <LiveConfirm open={confirmOpen} sources={sourceMode === "selected" ? runSources : []} limit={limit} busy={running === "live"} onCancel={() => setConfirmOpen(false)} onConfirm={runLive} />
+      <ScrapeRunDetailDrawer runId={runDetailId} open={!!runDetailId} onClose={() => setRunDetailId(null)} />
     </div>
   );
 }
