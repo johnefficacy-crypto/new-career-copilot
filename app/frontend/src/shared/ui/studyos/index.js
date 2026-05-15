@@ -12,6 +12,9 @@ export {
   MiniBar,
   PageHeader,
   Drawer,
+  Tabs,
+  StudyEmptyState,
+  StudyConfidencePill,
 } from "./primitives";
 
 export {
