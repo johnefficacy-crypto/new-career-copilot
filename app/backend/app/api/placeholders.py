@@ -708,30 +708,7 @@ async def focus_summary(user: dict = Depends(get_current_user)):
     }
 
 
-class MockEntry(BaseModel):
-    exam: str
-    score: float
-    accuracy: float = Field(ge=0, le=100)
-    notes: str | None = None
-
-
-@router_study.get("/mocks")
-async def list_mocks(user: dict = Depends(get_current_user)):
-    return {"items": _mocks[user["id"]]}
-
-
-@router_study.post("/mocks")
-async def add_mock(body: MockEntry, user: dict = Depends(get_current_user)):
-    item = {
-        "id": f"mock-{len(_mocks[user['id']]) + 1}",
-        "exam": body.exam,
-        "score": body.score,
-        "accuracy": body.accuracy,
-        "notes": body.notes,
-        "created_at": _now(),
-    }
-    _mocks[user["id"]].append(item)
-    return item
+# Mocks endpoints moved to app.api.study_os (production-grade, Supabase-backed).
 
 
 @router_study.get("/subjects")

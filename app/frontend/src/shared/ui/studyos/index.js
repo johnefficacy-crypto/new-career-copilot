@@ -15,6 +15,9 @@ export {
   StudyEmptyState,
   StudyConfidencePill,
   Drawer,
+  Tabs,
+  StudyEmptyState,
+  StudyConfidencePill,
 } from "./primitives";
 
 export {

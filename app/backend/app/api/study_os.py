@@ -19,7 +19,8 @@ from app.study_os.mission_control import (
     build_task_reasoning_response,
 )
 from app.study_os.plan_preferences import get_plan_preferences, upsert_plan_preferences
-from app.study_os.planner import apply_plan, compute_draft_plan, generate_plan
+from app.study_os.planner import generate_plan
+from app.study_os import mocks as mocks_service
 
 logger = logging.getLogger("career_copilot.api.study_os")
 
@@ -198,168 +199,130 @@ async def generate_study_plan(user: dict = Depends(get_current_user)) -> dict[st
         )
 
 
-@router.get("/plan/draft")
-async def get_plan_draft(user: dict = Depends(get_current_user)) -> dict[str, Any]:
-    """Preview today's deterministic plan without touching the active plan.
-
-    Returns the computed plan candidate alongside the user's current
-    still-planned today tasks so the UI can diff before vs. after. Calling
-    ``/plan/draft`` never inserts ``study_tasks``, ``study_plan_versions``
-    or ``study_adaptation_events`` rows.
-    """
-    return compute_draft_plan(get_supabase_admin(), user.get("id"))
+# ─────────────────────────────── Mocks ──────────────────────────────────────
+class MockSubjectBreakdownBody(BaseModel):
+    subject: str
+    total_questions: int | None = None
+    correct_answers: int | None = None
+    wrong_answers: int | None = None
+    marks: float | None = None
+    accuracy: float | None = None
 
 
-@router.post("/plan/draft")
-async def post_plan_draft(user: dict = Depends(get_current_user)) -> dict[str, Any]:
-    """Same payload as ``GET /plan/draft`` — exists so the frontend can use
-    a write-style verb when the user explicitly asks for a fresh preview."""
-    return compute_draft_plan(get_supabase_admin(), user.get("id"))
+class MockCreateBody(BaseModel):
+    name: str
+    exam_slug: str | None = None
+    score: float | None = None
+    max_score: float | None = None
+    duration_min: int | None = None
+    attempted: int | None = None
+    correct: int | None = None
+    weak_topics: list[str] = Field(default_factory=list)
+    error_patterns: dict[str, int] = Field(default_factory=dict)
+    subject_breakdown: list[MockSubjectBreakdownBody] = Field(default_factory=list)
+    notes: str | None = None
+    attempted_at: str | None = None
 
 
-@router.post("/plan/apply")
-async def post_plan_apply(user: dict = Depends(get_current_user)) -> dict[str, Any]:
-    """Apply the deterministic plan candidate to the active plan.
+class MockReviewStateBody(BaseModel):
+    state: str = Field(pattern="^(scheduled|unreviewed|reviewed|correction_drafted)$")
 
-    Idempotent: replays the planner deterministically, replaces today's
-    still-planned tasks, persists exactly one new ``study_plan_versions``
-    row and one ``study_adaptation_events`` row per call. Completed and
-    in-progress tasks survive.
-    """
-    user_id = user.get("id")
-    supabase = get_supabase_admin()
+
+@router.get("/mocks")
+async def list_mocks(user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    items = mocks_service.list_mocks(get_supabase_admin(), user.get("id"))
+    return {"items": items, "trend": mocks_service.mock_trend(items)}
+
+
+@router.post("/mocks")
+async def create_mock(
+    body: MockCreateBody, user: dict = Depends(get_current_user)
+) -> dict[str, Any]:
+    payload = body.model_dump()
+    # Nested Pydantic models → plain dicts for the service layer.
+    payload["subject_breakdown"] = [
+        b.model_dump() if hasattr(b, "model_dump") else dict(b)
+        for b in (body.subject_breakdown or [])
+    ]
     try:
-        return apply_plan(supabase, user_id)
-    except Exception:  # noqa: BLE001
-        logger.exception("plan apply failed for %s", user_id)
-        raise HTTPException(status_code=500, detail="Plan apply is temporarily unavailable.")
+        return mocks_service.create_mock(get_supabase_admin(), user.get("id"), payload)
+    except RuntimeError:
+        logger.exception("mock insert failed for %s", user.get("id"))
+        raise HTTPException(status_code=500, detail="Could not log mock.")
 
 
-@router.get("/plan/changelog")
-async def get_plan_changelog(user: dict = Depends(get_current_user)) -> dict[str, Any]:
-    """Recent ``study_adaptation_events`` for the user's active plan.
-
-    Drives the PlanChangeLogCard. Each row carries a server-derived
-    ``trigger_source`` and ``change_summary`` — the UI must not invent
-    explanations.
-    """
-    user_id = user.get("id")
-    supabase = get_supabase_admin()
-    try:
-        from datetime import datetime  # noqa: F401 — keep stdlib imports local
-
-        rows = (
-            supabase.table("study_adaptation_events")
-            .select(
-                "id, plan_id, plan_version_id, event_type, trigger_source, "
-                "trigger_payload, change_summary, created_at"
-            )
-            .eq("user_id", user_id)
-            .order("created_at", desc=True)
-            .limit(20)
-            .execute()
-            .data
-            or []
-        )
-        return {"items": rows, "count": len(rows)}
-    except Exception:  # noqa: BLE001
-        logger.exception("plan changelog read failed for %s", user_id)
-        return {"items": [], "count": 0}
+@router.get("/mocks/{mock_id}")
+async def get_mock(
+    mock_id: str, user: dict = Depends(get_current_user)
+) -> dict[str, Any]:
+    row = mocks_service.get_mock(get_supabase_admin(), user.get("id"), mock_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Mock not found.")
+    return row
 
 
-@router.get("/topics")
-async def get_topics(
-    exam_id: str | None = None,
-    subject_id: str | None = None,
+@router.get("/mocks/{mock_id}/analysis")
+async def get_mock_analysis(
+    mock_id: str, user: dict = Depends(get_current_user)
+) -> dict[str, Any]:
+    bundle = mocks_service.get_mock_analysis(get_supabase_admin(), user.get("id"), mock_id)
+    if not bundle:
+        raise HTTPException(status_code=404, detail="Mock not found.")
+    return bundle
+
+
+@router.patch("/mocks/{mock_id}/review-state")
+async def set_review_state(
+    mock_id: str,
+    body: MockReviewStateBody,
     user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Locked-only topic intelligence for the topic tree.
-
-    Reads ``exam_topic_coverage`` rows with ``reviewer_status='locked'`` and
-    enriches them with topic / subject names, the user's mastery, error-
-    pattern count, and verified PYQ counts. The ``is_high_yield`` flag is
-    returned as the server-side value — never derived from anything else.
-
-    Falls back to the user's target exam when ``exam_id`` is omitted.
-    """
-    user_id = user.get("id")
-    supabase = get_supabase_admin()
     try:
-        from app.exam_intelligence.coverage import verified_pyq_topic_counts
-        from app.exam_intelligence.lookup import resolve_exam_by_id, resolve_exam_by_slug
-        from app.study_os.planner import (
-            _load_locked_coverage,
-            _load_user_signals,
-            _resolve_target_exam,
+        return mocks_service.set_review_state(
+            get_supabase_admin(), user.get("id"), mock_id, body.state
         )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Mock not found.")
 
-        if not exam_id:
-            target = _resolve_target_exam(supabase, user_id)
-            exam_id = target.get("id") if target else None
-        else:
-            target = resolve_exam_by_id(supabase, exam_id) or resolve_exam_by_slug(
-                supabase, exam_id
-            )
-            if target:
-                exam_id = target.get("id")
 
-        if not exam_id:
-            return {
-                "items": [],
-                "exam_id": None,
-                "subject_id": subject_id,
-                "trust_status": "locked",
-            }
+@router.post("/mocks/{mock_id}/correction-tasks")
+async def draft_correction_tasks(
+    mock_id: str, user: dict = Depends(get_current_user)
+) -> dict[str, Any]:
+    try:
+        items = mocks_service.draft_correction_tasks(
+            get_supabase_admin(), user.get("id"), mock_id
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Mock not found.")
+    return {"items": items}
 
-        coverage = _load_locked_coverage(supabase, exam_id)
-        if subject_id:
-            coverage = [c for c in coverage if c.get("subject_id") == subject_id]
 
-        pyq_counts = verified_pyq_topic_counts(supabase, exam_id) or {}
-        mastery, error_topics = _load_user_signals(supabase, user_id, exam_id)
+@router.post("/mocks/correction-tasks/{correction_id}/apply")
+async def apply_correction_task(
+    correction_id: str, user: dict = Depends(get_current_user)
+) -> dict[str, Any]:
+    try:
+        return mocks_service.apply_correction_task(
+            get_supabase_admin(), user.get("id"), correction_id
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Correction task not found.")
+    except RuntimeError:
+        logger.exception("apply correction failed for %s", correction_id)
+        raise HTTPException(status_code=500, detail="Could not apply correction task.")
 
-        # revision_due signal — derived from mastery only (server-side).
-        def _next_action(mast: float | None, has_err: bool) -> str:
-            if mast is None:
-                return "concept_learning"
-            if mast < 45:
-                return "concept_learning"
-            if mast < 75 or has_err:
-                return "retrieval_practice"
-            return "revision"
 
-        items: list[dict[str, Any]] = []
-        for c in coverage:
-            tid = c["topic_id"]
-            mast = mastery.get(tid)
-            has_err = tid in error_topics
-            items.append(
-                {
-                    "subject_id": c.get("subject_id"),
-                    "subject": c.get("subject_name"),
-                    "topic_id": tid,
-                    "topic": c.get("topic_name"),
-                    "parent_topic_id": None,
-                    "mastery_score": mast,
-                    "exam_priority_score": c.get("coverage_priority"),
-                    "is_high_yield": bool(c.get("is_high_yield")),
-                    "verified_pyq_count": int(pyq_counts.get(tid, 0)),
-                    "revision_due": mast is not None and mast >= 75,
-                    "error_pattern_count": 1 if has_err else 0,
-                    "next_action": _next_action(mast, has_err),
-                    "evidence_count": int(pyq_counts.get(tid, 0)),
-                    "trust_status": "locked",
-                }
-            )
-        return {
-            "items": items,
-            "exam_id": exam_id,
-            "subject_id": subject_id,
-            "trust_status": "locked",
-        }
-    except Exception:  # noqa: BLE001
-        logger.exception("topics read failed for %s", user_id)
-        return {"items": [], "exam_id": exam_id, "subject_id": subject_id, "trust_status": "locked"}
+@router.post("/mocks/correction-tasks/{correction_id}/dismiss")
+async def dismiss_correction_task(
+    correction_id: str, user: dict = Depends(get_current_user)
+) -> dict[str, Any]:
+    try:
+        return mocks_service.dismiss_correction_task(
+            get_supabase_admin(), user.get("id"), correction_id
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Correction task not found.")
 
 
 @router.get("/task-reasoning/{task_id}")
