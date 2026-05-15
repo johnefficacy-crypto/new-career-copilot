@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Eye, Filter, Play, RefreshCw, Search, X } from "lucide-react";
 import { api, getApiExistingRecruitmentId, getApiNextActions, getApiUnverifiedFields } from "../../lib/api";
 import AdminWorkflowStepper from "../../features/admin/workflow/AdminWorkflowStepper";
@@ -165,23 +165,47 @@ export default function AdminScraper() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [selectedIds, setSelectedIds] = useState([]);
   const [queueQuery, setQueueQuery] = useState("");
-  const [queueFilter, setQueueFilter] = useState("all");
+  const [queueFilter, setQueueFilter] = useState("pending");
+  const [queueSort, setQueueSort] = useState("risky_first");
+  const [queueRisk, setQueueRisk] = useState("all");
+  const [queueTotal, setQueueTotal] = useState(null);
   const [limit, setLimit] = useState(25);
   const [msg, setMsg] = useState(null);
   const toast = useToast();
+
+  // Reloads the queue from the server using the active filter/sort/search
+  // controls. Pulled out of ``load`` so the typing-debounced query input
+  // can refetch without re-fetching runs and sources every keystroke.
+  const reloadQueue = useCallback(async () => {
+    const params = new URLSearchParams();
+    params.set("status", queueFilter || "pending");
+    params.set("sort", queueSort || "risky_first");
+    if (queueRisk && queueRisk !== "all") params.set("risk", queueRisk);
+    if (queueQuery.trim()) params.set("q", queueQuery.trim());
+    params.set("limit", "100");
+    try {
+      const q = await api.get(`/api/admin/scrape/queue?${params.toString()}`);
+      setQueue(q.items || []);
+      setQueueTotal(typeof q.total === "number" ? q.total : null);
+    } catch (e) {
+      // Surface as a load error if the initial fetch never succeeded; once
+      // we have a page rendered, silently keep the previous data and let
+      // the next reload retry. A toast would be noisy on every keystroke.
+      if (loading) setLoadError(e);
+    }
+  }, [queueFilter, queueQuery, queueRisk, queueSort, loading]);
 
   async function load() {
     setLoading(true);
     setLoadError(null);
     try {
-      const [runs, q, src] = await Promise.all([
+      const [runs, src] = await Promise.all([
         api.get("/api/admin/scrape/runs"),
-        api.get("/api/admin/scrape/queue?status=all"),
         api.get("/api/admin/sources"),
       ]);
       setItems(runs.items || []);
-      setQueue(q.items || []);
       setSources(src.items || []);
+      await reloadQueue();
     } catch (e) {
       setLoadError(e);
     } finally {
@@ -189,7 +213,14 @@ export default function AdminScraper() {
     }
   }
 
-  useEffect(() => { load().catch(() => {}); }, []);
+  useEffect(() => { load().catch(() => {}); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  // Debounce the search input so backend isn't hammered while typing.
+  useEffect(() => {
+    if (loading) return;
+    const handle = setTimeout(() => { reloadQueue().catch(() => {}); }, 250);
+    return () => clearTimeout(handle);
+  }, [queueQuery, queueFilter, queueRisk, queueSort, reloadQueue, loading]);
 
   const filteredSources = useMemo(() => sources.filter((source) => source.is_active !== false && (typeFilter === "all" || source.source_type === typeFilter)), [sources, typeFilter]);
   const runSources = useMemo(() => {
@@ -198,27 +229,11 @@ export default function AdminScraper() {
     return filteredSources.filter((source) => ids.includes(source.id));
   }, [filteredSources, selectedIds, sourceMode]);
   const canRunSelected = sourceMode !== "selected" || selectedIds.length > 0;
-  const queueStats = useMemo(() => ({
-    total: queue.length,
-    pending: queue.filter((item) => item.status === "pending").length,
-    duplicate: queue.filter((item) => reviewState(item).key === "duplicate").length,
-    blocked: queue.filter((item) => reviewState(item).key === "blocked").length,
-    ready: queue.filter((item) => reviewState(item).key === "ready").length,
-    promoted: queue.filter((item) => reviewState(item).key === "promoted").length,
-    merged: queue.filter((item) => reviewState(item).key === "merged").length,
-    rejected: queue.filter((item) => reviewState(item).key === "rejected").length,
-  }), [queue]);
   const workflowMessage = msg && msg.includes("Live run") ? NEXT_ACTION_MESSAGES.reviewQueue : NEXT_ACTION_MESSAGES.runDryFirst;
-  const visibleQueue = useMemo(() => {
-    const needle = queueQuery.trim().toLowerCase();
-    return queue.filter((item) => {
-      const extracted = item.extracted_data || {};
-      const stateKey = reviewState(item).key;
-      const matchesStatus = queueFilter === "all" || stateKey === queueFilter || (queueFilter === "pending" && item.status === "pending");
-      const haystack = `${item.source_name || ""} ${item.source_url || ""} ${extracted.title || extracted.name || ""} ${extracted.organization_name || extracted.organization || ""}`.toLowerCase();
-      return matchesStatus && (!needle || haystack.includes(needle));
-    });
-  }, [queue, queueFilter, queueQuery]);
+  // Server-side filter/search/sort delivers the queue already shaped; no
+  // client-side re-filtering. Keeping a pass-through binding so the table
+  // and stats can stay on a single variable name.
+  const visibleQueue = queue;
 
   async function runDry() {
     setRunning("dry"); setMsg(null);
@@ -316,21 +331,42 @@ export default function AdminScraper() {
         <button onClick={load} className="btn btn-ghost" disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Reload</button>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      {/* Status pills mirror scrape_queue.status values one-for-one so the
+          backend can do the filtering. The "Risk" and "Sort" dropdowns layer
+          on top — official_unresolved / low_quality / needs_review are
+          orthogonal to status (e.g. a pending item with low quality). */}
+      <div className="flex flex-wrap items-center gap-2">
         {[
-          ["all", "All", queueStats.total],
-          ["pending", "Pending", queueStats.pending],
-          ["duplicate", "Duplicates", queueStats.duplicate],
-          ["blocked", "Needs review", queueStats.blocked],
-          ["ready", "Ready", queueStats.ready],
-          ["promoted", "Promoted", queueStats.promoted],
-          ["merged", "Merged", queueStats.merged],
-          ["rejected", "Rejected", queueStats.rejected],
-        ].map(([key, label, value]) => (
+          ["pending", "Pending"],
+          ["approved", "Approved"],
+          ["duplicate", "Duplicates"],
+          ["merged", "Merged"],
+          ["rejected", "Rejected"],
+          ["all", "All"],
+        ].map(([key, label]) => (
           <button key={key} type="button" onClick={() => setQueueFilter(key)} className={`rounded-full border px-3 py-1.5 text-xs ${queueFilter === key ? "border-dusk-700 bg-dusk-700 text-white" : "border-border bg-white/70 text-foreground/75 hover:bg-clay-100"}`}>
-            {label} <span className="font-mono">{value}</span>
+            {label}
           </button>
         ))}
+        <label className="ml-2 text-xs">
+          <span className="mr-1 uppercase tracking-widest text-[10px] text-muted-foreground">Risk</span>
+          <select value={queueRisk} onChange={(e) => setQueueRisk(e.target.value)} className="rounded-lg border border-border bg-white/80 px-2 py-1 text-xs">
+            <option value="all">Any</option>
+            <option value="official_unresolved">Official unresolved</option>
+            <option value="low_quality">Low quality</option>
+            <option value="needs_review">Needs review</option>
+          </select>
+        </label>
+        <label className="text-xs">
+          <span className="mr-1 uppercase tracking-widest text-[10px] text-muted-foreground">Sort</span>
+          <select value={queueSort} onChange={(e) => setQueueSort(e.target.value)} className="rounded-lg border border-border bg-white/80 px-2 py-1 text-xs">
+            <option value="risky_first">Risky first</option>
+            <option value="quality_asc">Lowest quality first</option>
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+          </select>
+        </label>
+        {queueTotal != null ? <span className="ml-auto text-xs text-muted-foreground">{queueTotal} match{queueTotal === 1 ? "" : "es"}</span> : null}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">

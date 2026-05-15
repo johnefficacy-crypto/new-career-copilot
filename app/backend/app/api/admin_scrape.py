@@ -406,20 +406,78 @@ def list_scrape_runs(
 @router.get("/admin/scrape/queue")
 def list_scrape_queue(
     status: str | None = Query(default="pending"),
-    limit: int = Query(default=50, ge=1, le=50),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    q: str | None = Query(default=None, max_length=200),
+    source_type: str | None = Query(default=None, max_length=64),
+    risk: str | None = Query(
+        default=None,
+        description="Risk filter: official_unresolved | low_quality | needs_review",
+    ),
+    sort: str = Query(
+        default="risky_first",
+        description="risky_first | quality_asc | newest | oldest",
+    ),
     _admin: dict = Depends(require_permission("scraper.manage")),
 ) -> dict[str, Any]:
+    """List scrape queue items with server-side filter/search/sort.
+
+    The previous behaviour (status + limit) is preserved for callers that
+    only pass those. New params let the admin UI stop loading 50 rows and
+    filtering them in the browser, which was breaking past row 50.
+
+    ``q`` matches against ``source_name`` and ``source_url`` (ILIKE).
+    ``risk=official_unresolved`` enforces ``official_source_resolved=false``.
+    ``risk=low_quality`` selects rows with ``data_quality_score < 50`` or null.
+    """
     supabase = get_supabase_admin()
-    q = (
-        supabase.table("scrape_queue")
-        .select("id, source_id, source_url, source_name, raw_html, raw_payload, extracted_data, confidence_score, data_quality_score, status, duplicate_of, promoted_recruitment_id, reviewer_id, reviewer_notes, reviewed_at, field_evidence, official_source_resolved, official_source_host, extraction_status, evidence_required, scraped_at")
-        .order("data_quality_score", desc=False, nullsfirst=True)
-        .order("scraped_at", desc=True)
-        .limit(limit)
-    )
+    selection = "id, source_id, source_url, source_name, raw_html, raw_payload, extracted_data, confidence_score, data_quality_score, status, duplicate_of, promoted_recruitment_id, reviewer_id, reviewer_notes, reviewed_at, field_evidence, official_source_resolved, official_source_host, extraction_status, evidence_required, scraped_at"
+    base = supabase.table("scrape_queue").select(selection, count="exact")
     if status and status != "all":
-        q = q.eq("status", status)
-    rows = q.execute().data or []
+        base = base.eq("status", status)
+    if q:
+        # PostgREST .or_ expects comma-separated filter expressions; ILIKE
+        # gives case-insensitive search. The wildcard wrapping happens here
+        # so callers don't need to know the SQL form.
+        needle = f"%{q.strip()}%"
+        base = base.or_(f"source_name.ilike.{needle},source_url.ilike.{needle}")
+    if risk == "official_unresolved":
+        base = base.eq("official_source_resolved", False)
+    elif risk == "low_quality":
+        base = base.lt("data_quality_score", 50)
+    elif risk == "needs_review":
+        base = base.in_("status", ["pending", "needs_review"])
+    # Sort. ``risky_first`` puts unresolved-official rows ahead of the rest
+    # by sorting on ``official_source_resolved`` nulls/false first, then
+    # falling back to quality and recency.
+    if sort == "quality_asc":
+        base = base.order("data_quality_score", desc=False, nullsfirst=True).order("scraped_at", desc=True)
+    elif sort == "newest":
+        base = base.order("scraped_at", desc=True)
+    elif sort == "oldest":
+        base = base.order("scraped_at", desc=False)
+    else:  # risky_first (default)
+        base = base.order("official_source_resolved", desc=False, nullsfirst=True).order("data_quality_score", desc=False, nullsfirst=True).order("scraped_at", desc=True)
+    # PostgREST uses (offset, limit-1) ranges; .range() handles that math.
+    res = base.range(offset, offset + limit - 1).execute()
+    rows = res.data or []
+    total = getattr(res, "count", None)
+
+    # source_type lives in source_registry, not on scrape_queue. Filter in
+    # Python after the fetch — fine because the page size cap is 200.
+    if source_type:
+        wanted = source_type.strip().lower()
+        if wanted:
+            src_rows = (
+                supabase.table("source_registry")
+                .select("id, source_type")
+                .execute()
+                .data
+                or []
+            )
+            type_by_id = {s.get("id"): (s.get("source_type") or "").lower() for s in src_rows}
+            rows = [r for r in rows if type_by_id.get(r.get("source_id")) == wanted]
+
     supabase2 = get_supabase_admin()
     existing = (supabase2.table("recruitments").select("id,name,year,official_notification_url").limit(400).execute().data or [])
     queue_ids = [r["id"] for r in rows if r.get("id")]
@@ -457,7 +515,19 @@ def list_scrape_queue(
         missing = [f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified", "corrected"}]
         r["unverified_fields"] = sorted(missing)
         r["promotable"] = len(missing) == 0
-    return {"items": rows}
+    return {
+        "items": rows,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "filters": {
+            "status": status,
+            "q": q,
+            "source_type": source_type,
+            "risk": risk,
+            "sort": sort,
+        },
+    }
 
 
 # ════════════════════════════════════════════════════════════════════════════
