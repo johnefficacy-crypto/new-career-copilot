@@ -261,6 +261,8 @@ class FakeSupabase:
             "consensus_pending", "conflict", "admin_override_required",
             # PR4 extension (migration 082):
             "complexity_detected",
+            # PR5 extension (migration 084):
+            "stale_source_changed", "stale_canonical_changed", "needs_reverification",
         }:
             raise ValueError(f"chk_lifecycle_status: {lifecycle!r}")
         tier = row.get("criticality_tier")
@@ -274,6 +276,8 @@ class FakeSupabase:
             "confirm_suggested_proof",
             # PR3 extension (migration 081):
             "resolve_conflict",
+            # PR5 extension (migration 085):
+            "await_corrigendum",
         }:
             raise ValueError(f"chk_recommended_action: {rec_action!r}")
         trig = row.get("trigger_reason")
