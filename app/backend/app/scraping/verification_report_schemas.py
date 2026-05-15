@@ -164,6 +164,34 @@ def validate_evidence_summary(value: Any) -> dict[str, dict[str, Any]]:
     return {k: items[k].model_dump(exclude_none=True) for k in items}
 
 
+# ── PR4: EligibilityComplexitySignal ──────────────────────────────────
+#
+# Produced by ``app.scraping.eligibility_complexity`` and consumed by
+# ``app.eligibility.complexity_contract`` to decide whether a Tier B
+# (and Tier A age-relaxation) publish gate should fire. The full
+# ``BlockingLevel`` set applies here (including ``conditional_result_allowed``)
+# unlike :class:`RiskFlag`, which is narrower.
+
+
+class EligibilityComplexitySignal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    flag: str = Field(min_length=1)
+    field_key: str = Field(min_length=1)
+    source_field_path: str = Field(min_length=1)
+    blocking_level: BlockingLevel
+    evidence_summary_key: str | None = None
+
+
+_COMPLEXITY_ADAPTER = TypeAdapter(list[EligibilityComplexitySignal])
+
+
+def validate_complexity_signals(value: Any) -> list[dict[str, Any]]:
+    """Validate a list of complexity signals; returns canonical dict form."""
+    signals = _COMPLEXITY_ADAPTER.validate_python(value if value is not None else [])
+    return [s.model_dump(exclude_none=True) for s in signals]
+
+
 __all__ = [
     "RiskFlag",
     "ConflictValue",
@@ -171,8 +199,10 @@ __all__ = [
     "EvidenceSummaryItem",
     "SuggestedOfficialUrl",
     "OfficialUrlMethod",
+    "EligibilityComplexitySignal",
     "validate_risk_flags",
     "validate_conflicts",
     "validate_evidence_summary",
     "validate_suggested_official_urls",
+    "validate_complexity_signals",
 ]
