@@ -77,6 +77,10 @@ _KNOWN_LIFECYCLE_STATES: set[str] = set(PR1_LIFECYCLE_STATES) | {
     "admin_override_required",
     # PR4 (migration 082):
     "complexity_detected",
+    # PR5 (migration 084):
+    "stale_source_changed",
+    "stale_canonical_changed",
+    "needs_reverification",
 }
 
 
@@ -125,6 +129,22 @@ extend_transitions({
     "classified":          {"complexity_detected"},
     "consensus_pending":   {"complexity_detected"},
     "complexity_detected": {"classified", "superseded", "rejected"},
+})
+
+
+# ── PR5 lifecycle additions ───────────────────────────────────────────
+#
+# Migration 084 widens the DB constraint with three staleness states.
+# ``pending_reverification_batch`` is intentionally NOT a lifecycle
+# state — it's a value of the ``staleness_status`` column (plan §6).
+
+extend_transitions({
+    "classified":              {"stale_source_changed", "stale_canonical_changed", "needs_reverification"},
+    "complexity_detected":     {"stale_source_changed", "stale_canonical_changed", "needs_reverification"},
+    "consensus_pending":       {"stale_source_changed", "stale_canonical_changed", "needs_reverification"},
+    "stale_source_changed":    {"superseded", "rejected"},
+    "stale_canonical_changed": {"superseded", "rejected"},
+    "needs_reverification":    {"superseded", "rejected"},
 })
 
 

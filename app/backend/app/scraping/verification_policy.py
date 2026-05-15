@@ -118,6 +118,44 @@ RESOLVER_RERUN_LIMITS: dict[str, int] = {
 }
 
 
+# ── PR5: Corrigendum / staleness ─────────────────────────────────────
+#
+# Poll cadence and batch-throttle thresholds for the watcher. Tier A is
+# checked daily, Tier B every three days, Tier C weekly. The per-run
+# ceilings stop a misconfigured cron from sweeping every source/report
+# in one pass.
+
+CORRIGENDUM_WATCH_LIMITS: dict[str, int] = {
+    "tier_a_interval_hours": 24,
+    "tier_b_interval_hours": 72,
+    "tier_c_interval_hours": 168,
+    "max_sources_per_run": 100,
+    "max_reports_per_run": 300,
+    # When a single source flips this many reports in one pass, the
+    # remainder are deferred to a batch acknowledgment rather than
+    # producing N independent admin cards.
+    "mass_change_batch_limit": 25,
+}
+
+
+# Canonical recruitment fields that should fire the staleness hook when
+# an admin edits them via the admin_trust endpoint. The list matches
+# the consensus engine's CONSENSUS_FIELDS subset that's stored directly
+# on ``recruitments`` (post_names lives on the ``posts`` table, so it's
+# not editable from the recruitment-level path).
+CRITICAL_RECRUITMENT_FIELDS: frozenset[str] = frozenset({
+    "name",
+    "organization_id",
+    "apply_start_date",
+    "apply_end_date",
+    "notification_date",
+    "total_vacancies",
+    "year",
+    "official_notification_url",
+    "official_apply_url",
+})
+
+
 # Recommended-action default for each tier. Used by ``verification_reports``
 # when a fresh report is created and the resolver/consensus stages haven't
 # run yet. Tier C may shortcut to ``promote_eligible`` when data quality is
