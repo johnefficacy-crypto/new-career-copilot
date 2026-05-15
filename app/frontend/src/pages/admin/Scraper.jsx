@@ -6,6 +6,7 @@ import NextActionCallout from "../../features/admin/workflow/NextActionCallout";
 import FieldReviewGroup from "../../features/admin/workflow/FieldReviewGroup";
 import PromotionPreviewPanel from "../../features/admin/workflow/PromotionPreviewPanel";
 import ScrapeRunDetailDrawer from "../../features/admin/scraping/ScrapeRunDetailDrawer";
+import InlineAuditTimeline from "../../features/admin/shared/InlineAuditTimeline";
 import { HIGH_RISK_QUEUE_FIELDS, NEXT_ACTION_MESSAGES, RECOMMENDED_REVIEW_FIELDS, SOURCE_TYPE_LABELS } from "../../features/admin/workflow/adminWorkflowContract";
 import { useFocusTrap } from "../../shared/a11y/useFocusTrap";
 import { EmptyState, ErrorState, LoadingSkeleton, StatusBadge, useToast } from "../../shared/ui";
@@ -145,6 +146,10 @@ function QueueDetailDrawer({ item, onClose, onAction, onFieldAction, onMerge }) 
           <h3 className="font-semibold">Raw JSON</h3>
           <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-white/70 p-3 text-[11px]">{JSON.stringify(item, null, 2)}</pre>
         </section>
+
+        <div className="mt-5">
+          <InlineAuditTimeline entityType="scrape_queue" entityId={item.id} title="Queue item audit timeline" />
+        </div>
       </aside>
     </div>
   );
