@@ -1,29 +1,31 @@
-import React, { useEffect, useState } from "react";
-import { Link, Outlet } from "react-router-dom";
-import { Bell, Bot, Compass, CreditCard, Database, ExternalLink, FileSearch, GaugeCircle, GraduationCap, LayoutGrid, ListChecks, LogOut, Menu, MessagesSquare, PanelLeftClose, PanelLeftOpen, Radar, ScrollText, ShieldCheck, ShoppingBag, Sparkles, Users2 } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import {
+  Bell, Bot, CreditCard, Database, ExternalLink, FileSearch, GaugeCircle,
+  GraduationCap, LayoutGrid, ListChecks, LogOut, Menu, MessagesSquare, Radar,
+  ScrollText, ShieldCheck, ShoppingBag, Sparkles, Users2, X,
+} from "lucide-react";
 import { useAuth } from "../../lib/authContext";
-import AppSidebar from "../../shared/layouts/AppSidebar";
-import TopBar from "../../shared/layouts/TopBar";
 
 const OPERATIONS_NAV = [
-  { to: "/admin/operations", label: "Operations Console", icon: LayoutGrid, testId: "admin-nav-operations", description: "Run the full scraper-to-publish pipeline without losing context.", end: true },
-  { to: "/admin/verification-gateway", label: "Verification Gateway", icon: ShieldCheck, testId: "admin-nav-verification-gateway", description: "Recruitment Verification Gateway — classify, resolve, consensus, publish gate." },
-  { to: "/admin/sources", label: "Source Registry", icon: Database, testId: "admin-nav-source-registry", description: "Manage trusted official and discovery-only sources." },
-  { to: "/admin/scraper", label: "Scrape Runs / Queue Review", icon: Radar, testId: "admin-nav-scraper-monitor", description: "Run discovery and review extracted candidates." },
-  { to: "/admin/recruitments", label: "Recruitment Drafts / Publish Gate", icon: FileSearch, testId: "admin-nav-recruitments", description: "Validate, verify, and publish canonical recruitments." },
-  { to: "/admin/eligibility-queue", label: "Promotion Queue", icon: ListChecks, testId: "admin-nav-promotion-queue", description: "Scraped candidates awaiting promotion review." },
-  { to: "/admin/eligibility-ops", label: "Eligibility Ops", icon: GaugeCircle, testId: "admin-nav-eligibility-ops", description: "Eligibility recompute, stale results, and alerts." },
+  { to: "/admin/operations", label: "Operations Console", icon: LayoutGrid, end: true, testId: "admin-nav-operations" },
+  { to: "/admin/verification-gateway", label: "Verification Gateway", icon: ShieldCheck, testId: "admin-nav-verification-gateway" },
+  { to: "/admin/sources", label: "Source Registry", icon: Database, testId: "admin-nav-source-registry" },
+  { to: "/admin/scraper", label: "Scrape Runs", icon: Radar, testId: "admin-nav-scraper-monitor" },
+  { to: "/admin/recruitments", label: "Recruitments", icon: FileSearch, testId: "admin-nav-recruitments" },
+  { to: "/admin/eligibility-queue", label: "Promotion Queue", icon: ListChecks, testId: "admin-nav-promotion-queue" },
+  { to: "/admin/eligibility-ops", label: "Eligibility Ops", icon: GaugeCircle, testId: "admin-nav-eligibility-ops" },
   { to: "/admin/notifications", label: "Notifications", icon: Bell, testId: "admin-nav-notifications" },
 ];
 
 const GOVERNANCE_NAV = [
   { to: "/admin", label: "Overview", icon: LayoutGrid, end: true, testId: "admin-nav-overview" },
-  { to: "/admin/organizations", label: "Organizations", icon: Users2, testId: "admin-nav-organizations", description: "Verify organization provenance for linked recruitments." },
+  { to: "/admin/organizations", label: "Organizations", icon: Users2, testId: "admin-nav-organizations" },
   { to: "/admin/audit", label: "Audit Trail", icon: ScrollText, testId: "admin-nav-audit-log" },
   { to: "/admin/rbac", label: "RBAC & Users", icon: ShieldCheck, testId: "admin-nav-rbac-&-users" },
   { to: "/admin/ai-policy", label: "AI Policy", icon: Bot, testId: "admin-nav-ai-policy" },
-  { to: "/admin/persona", label: "Persona", icon: Sparkles, testId: "admin-nav-persona", description: "Question bank, snapshots, and Study OS policy preview." },
-  { to: "/admin/exam-intelligence", label: "Exam Intelligence", icon: GraduationCap, testId: "admin-nav-exam-intelligence", description: "Verify syllabus mentions and PYQ topic tags before they reach users." },
+  { to: "/admin/persona", label: "Persona", icon: Sparkles, testId: "admin-nav-persona" },
+  { to: "/admin/exam-intelligence", label: "Exam Intelligence", icon: GraduationCap, testId: "admin-nav-exam-intelligence" },
 ];
 
 const BUSINESS_NAV = [
@@ -39,85 +41,137 @@ const SECTIONS = [
   { label: "Business", items: BUSINESS_NAV },
 ];
 
-function AdminSidebar({ collapsed = false, onClose }) {
+function formatSync(now) {
+  const days = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm} · ${days[now.getDay()]} ${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`;
+}
+
+function Sidebar({ onClose }) {
   return (
-    <AppSidebar
-      collapsed={collapsed}
-      brandIcon={Compass}
-      brandTitle="Governance"
-      brandSubtitle="Admin console"
-      sections={SECTIONS}
-      tone="admin"
-      onClose={onClose}
-      footer={{
-        bottom: (
-          <Link to="/app" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground">
-            Switch to aspirant view <ExternalLink className="h-3 w-3" />
-          </Link>
-        ),
-      }}
-    />
+    <aside className="oc-sidebar flex flex-col" data-testid="admin-sidebar">
+      <div className="oc-brand">
+        <Link to="/" className="block" title="Career Copilot · admin">
+          <div className="lbl">Career Copilot · admin</div>
+          <div className="oc-brand-title">Governance</div>
+        </Link>
+      </div>
+      <nav className="flex-1 overflow-y-auto pb-3">
+        {SECTIONS.map((section) => (
+          <div key={section.label}>
+            <div className="oc-section">{section.label}</div>
+            <div>
+              {section.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.end}
+                    onClick={onClose}
+                    className={({ isActive }) => `oc-navlink${isActive ? " active" : ""}`}
+                    data-testid={item.testId}
+                  >
+                    {Icon ? <Icon className="nav-glyph" /> : null}
+                    <span className="truncate">{item.label}</span>
+                  </NavLink>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </nav>
+      <div className="oc-sidebar-foot">
+        <Link to="/app" className="inline-flex items-center gap-1">
+          Switch to aspirant view <ExternalLink className="h-3 w-3" />
+        </Link>
+      </div>
+    </aside>
   );
 }
 
 export default function AdminShell() {
   const auth = useAuth();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("adminSidebarCollapsed") === "true");
+  const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
-    localStorage.setItem("adminSidebarCollapsed", String(sidebarCollapsed));
-  }, [sidebarCollapsed]);
+    const id = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => { setMobileOpen(false); }, [location.pathname]);
+
+  const sync = useMemo(() => formatSync(now), [now]);
+  const userEmail = auth.user?.email || "admin";
+  const userRole = auth.user?.role || "admin";
+  const userHandle = userEmail.includes("@") ? userEmail.split("@")[0] : userEmail;
 
   return (
-    <div className="flex min-h-screen linen-bg">
-      <aside className="hidden lg:flex">
-        <AdminSidebar collapsed={sidebarCollapsed} />
-      </aside>
-
-      {mobileOpen && (
-        <div className="fixed inset-0 z-40 flex lg:hidden">
-          <div className="absolute inset-0 bg-black/30" onClick={() => setMobileOpen(false)} />
-          <div className="relative z-10">
-            <AdminSidebar onClose={() => setMobileOpen(false)} />
-          </div>
+    <div className="oc" data-testid="admin-shell">
+      <div className="flex min-h-screen">
+        <div className="hidden lg:flex">
+          <Sidebar />
         </div>
-      )}
 
-      <div className="min-w-0 flex-1">
-        <TopBar
-          className="bg-[#F5EDE0]/90 backdrop-blur border-clay-200"
-          left={(
-            <div className="flex min-w-0 items-center gap-2">
-              <button type="button" className="btn btn-ghost h-9 w-9 p-0 lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open admin navigation">
-                <Menu className="h-4 w-4" />
-              </button>
+        {mobileOpen ? (
+          <div className="fixed inset-0 z-40 flex lg:hidden">
+            <div className="absolute inset-0 bg-black/30" onClick={() => setMobileOpen(false)} aria-hidden="true" />
+            <div className="relative z-10">
+              <Sidebar onClose={() => setMobileOpen(false)} />
+            </div>
+            <button
+              type="button"
+              className="absolute right-3 top-3 z-20 btn small"
+              onClick={() => setMobileOpen(false)}
+              aria-label="Close navigation"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ) : null}
+
+        <div className="min-w-0 flex-1">
+          <header className="mast">
+            <div className="flex items-end gap-3 min-w-0">
               <button
                 type="button"
-                className="btn btn-ghost hidden h-9 w-9 p-0 lg:inline-flex"
-                onClick={() => setSidebarCollapsed((value) => !value)}
-                aria-label={sidebarCollapsed ? "Expand admin navigation" : "Collapse admin navigation"}
-                title={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
+                className="btn small lg:hidden"
+                onClick={() => setMobileOpen(true)}
+                aria-label="Open admin navigation"
               >
-                {sidebarCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+                <Menu className="h-4 w-4" />
               </button>
-              <div className="min-w-0 truncate text-sm text-muted-foreground">
-                <span className="font-semibold text-foreground">{auth.user?.email}</span> · role <span className="pill pill-dusk">{auth.user?.role}</span>
+              <div className="min-w-0">
+                <div className="lbl">Career Copilot · admin</div>
+                <h1 className="oc-title disp" style={{ fontSize: "22px", marginTop: "2px" }}>
+                  Admin operations console
+                </h1>
               </div>
             </div>
-          )}
-          right={(
-            <div className="ml-auto flex items-center gap-3">
-              <span className="hidden text-xs text-muted-foreground font-mono sm:inline">build · cc-2026.01.commercial</span>
-              <button onClick={auth.logout} className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs hover:bg-clay-100" data-testid="admin-logout">
-                <LogOut className="h-3.5 w-3.5" /> Sign out
-              </button>
+            <div className="mast-meta">
+              <div><strong>{userHandle}</strong> · {userRole}</div>
+              <div>last sync {sync}</div>
+              <div className="row" style={{ justifyContent: "flex-end", marginTop: 4 }}>
+                <span className="anno">build · cc-2026.01.commercial</span>
+                <button
+                  type="button"
+                  className="btn small"
+                  onClick={auth.logout}
+                  data-testid="admin-logout"
+                >
+                  <LogOut className="h-3 w-3" /> Sign out
+                </button>
+              </div>
             </div>
-          )}
-        />
-        <main className="w-full max-w-none p-4 sm:p-6 lg:p-8 animate-fade-up">
-          <Outlet />
-        </main>
+          </header>
+          <main className="oc-main animate-fade-up" data-testid="admin-main">
+            <Outlet />
+          </main>
+        </div>
       </div>
     </div>
   );

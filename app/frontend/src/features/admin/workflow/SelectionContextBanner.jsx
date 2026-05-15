@@ -1,13 +1,6 @@
 import React from "react";
 import { X } from "lucide-react";
 
-// Sticky banner that surfaces the admin's currently selected source / queue
-// item / recruitment as small chips. Each chip has its own clear button so
-// admins can drop one selection without losing the others when scrolling
-// through the right-hand workspace.
-//
-// Only renders when at least one selection is active. Position is sticky
-// inside the parent column; parent decides the offset.
 export default function SelectionContextBanner({
   source,
   queueItem,
@@ -22,10 +15,12 @@ export default function SelectionContextBanner({
       key: "source",
       kind: "Source",
       label: source.org || source.source_name || source.id,
-      detail: source.source_type || source.kind || null,
+      detail: source.source_type || source.kind || (source.is_verified ? "verified" : null),
       onClear: onClearSource,
       testId: "ctx-chip-source",
     });
+  } else {
+    items.push({ key: "source-empty", kind: "Source", label: "none", detail: null, testId: "ctx-chip-source-empty" });
   }
   if (queueItem) {
     items.push({
@@ -36,43 +31,32 @@ export default function SelectionContextBanner({
       onClear: onClearQueue,
       testId: "ctx-chip-queue",
     });
+  } else {
+    items.push({ key: "queue-empty", kind: "Queue", label: "none", detail: null, testId: "ctx-chip-queue-empty" });
   }
   if (recruitment) {
     items.push({
       key: "recruitment",
-      kind: "Recruitment",
+      kind: "Recruit",
       label: recruitment.name || recruitment.id,
       detail: recruitment.publish_status || null,
       onClear: onClearRecruitment,
       testId: "ctx-chip-recruitment",
     });
+  } else {
+    items.push({ key: "recruitment-empty", kind: "Recruit", label: "none", detail: null, testId: "ctx-chip-recruitment-empty" });
   }
 
-  if (!items.length) return null;
-
   return (
-    <div
-      className="sticky top-0 z-30 -mx-1 flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-[#FBF6EF]/95 px-3 py-2 backdrop-blur"
-      data-testid="selection-context-banner"
-    >
-      <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Context</span>
+    <div className="ctx-strip" data-testid="selection-context-banner">
+      <span className="lbl" style={{ alignSelf: "center" }}>context</span>
       {items.map((item) => (
-        <span
-          key={item.key}
-          className="inline-flex items-center gap-1 rounded-full border border-border bg-white/80 pl-2 pr-1 py-0.5 text-[11px]"
-          data-testid={item.testId}
-        >
-          <span className="font-mono text-[9px] uppercase text-muted-foreground">{item.kind}</span>
-          <span className="font-semibold max-w-[180px] truncate">{item.label}</span>
-          {item.detail ? <span className="text-muted-foreground">· {item.detail}</span> : null}
+        <span key={item.key} className="ctx-chip" data-testid={item.testId}>
+          <span className="ctx-kind">{item.kind}</span>
+          <strong>{item.label}</strong>
+          {item.detail ? <span style={{ color: "var(--ink-mute)" }}>· {item.detail}</span> : null}
           {item.onClear ? (
-            <button
-              type="button"
-              onClick={item.onClear}
-              className="ml-0.5 rounded-full p-0.5 hover:bg-clay-100"
-              aria-label={`Clear ${item.kind} selection`}
-              data-testid={`${item.testId}-clear`}
-            >
+            <button type="button" onClick={item.onClear} aria-label={`Clear ${item.kind}`} data-testid={`${item.testId}-clear`}>
               <X className="h-3 w-3" />
             </button>
           ) : null}

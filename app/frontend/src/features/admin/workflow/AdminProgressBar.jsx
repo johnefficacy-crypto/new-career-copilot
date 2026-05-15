@@ -1,5 +1,4 @@
 import React from "react";
-import { Check, Circle, AlertTriangle } from "lucide-react";
 
 const STEPS = [
   { id: "source_ready", label: "Source ready" },
@@ -22,7 +21,6 @@ export function computeProgress(state = {}) {
   const out = {};
   const { source, latestRun, queueItem, recruitment, validateResult, eligibilityOps } = state;
 
-  // 1. Source ready
   const sourceType = source?.source_type || source?.kind;
   if (source) {
     if (sourceType === "aggregator") {
@@ -38,7 +36,6 @@ export function computeProgress(state = {}) {
     out.source_ready = { status: "pending", reason: "Select a source." };
   }
 
-  // 2. Dry scrape
   if (latestRun?.mode === "dry" || latestRun?.triggered_by === "dry") {
     out.dry_scrape = { status: "complete" };
   } else if (latestRun) {
@@ -47,7 +44,6 @@ export function computeProgress(state = {}) {
     out.dry_scrape = { status: "pending", reason: "Run a dry scrape." };
   }
 
-  // 3. Live scrape
   if (latestRun && latestRun.status === "completed") {
     out.live_scrape = { status: "complete" };
   } else if (latestRun && latestRun.status === "failed") {
@@ -58,7 +54,6 @@ export function computeProgress(state = {}) {
     out.live_scrape = { status: "pending", reason: "Run a live scrape." };
   }
 
-  // 4. Queue review
   if (queueItem) {
     if (queueItem.status === "rejected" || queueItem.status === "duplicate") {
       out.queue_review = { status: "blocked", reason: `Item status: ${queueItem.status}` };
@@ -71,7 +66,6 @@ export function computeProgress(state = {}) {
     out.queue_review = { status: "pending", reason: "Select a queue item." };
   }
 
-  // 5. Field fixes
   if (queueItem) {
     const unverified = queueItem.unverified_fields || [];
     if (unverified.length === 0) {
@@ -83,7 +77,6 @@ export function computeProgress(state = {}) {
     out.field_fixes = { status: "pending" };
   }
 
-  // 6. Official source resolved
   if (queueItem) {
     if (queueItem.official_source_resolved === false) {
       out.official_source_resolved = { status: "blocked", reason: "Resolve official source before promotion." };
@@ -96,7 +89,6 @@ export function computeProgress(state = {}) {
     out.official_source_resolved = { status: "pending" };
   }
 
-  // 7. Promoted draft
   if (queueItem?.promoted_recruitment_id || recruitment) {
     out.promoted_draft = { status: "complete" };
   } else if (queueItem?.promotable) {
@@ -105,7 +97,6 @@ export function computeProgress(state = {}) {
     out.promoted_draft = { status: "pending", reason: "Promotion blocked until field & source gates pass." };
   }
 
-  // 8. Draft blockers fixed
   const blockers = validateResult?.blocking_issues || recruitment?.blocking_issues || [];
   if (recruitment) {
     if (blockers.length === 0) {
@@ -117,7 +108,6 @@ export function computeProgress(state = {}) {
     out.draft_blockers_fixed = { status: "pending" };
   }
 
-  // 9. Validated
   if (validateResult) {
     out.validated = validateResult.ready
       ? { status: "complete" }
@@ -128,7 +118,6 @@ export function computeProgress(state = {}) {
     out.validated = { status: "pending" };
   }
 
-  // 10. Verified
   if (recruitment) {
     if (recruitment.publish_status === "verified" || recruitment.publish_status === "published") {
       out.verified = { status: "complete" };
@@ -141,7 +130,6 @@ export function computeProgress(state = {}) {
     out.verified = { status: "pending" };
   }
 
-  // 11. Published
   if (recruitment) {
     if (recruitment.publish_status === "published") {
       out.published = { status: "complete" };
@@ -154,7 +142,6 @@ export function computeProgress(state = {}) {
     out.published = { status: "pending" };
   }
 
-  // 12. Eligibility monitored
   if (recruitment?.publish_status === "published") {
     if (eligibilityOps) {
       out.eligibility_monitored = { status: "complete" };
@@ -168,9 +155,6 @@ export function computeProgress(state = {}) {
   return out;
 }
 
-// Sub-steps grouped into four phases. The full 12-step row used to wrap
-// onto 3 rows on a laptop and was hard to scan; the phase header gives an
-// at-a-glance status, the dots fill in the detail without taking width.
 const PHASES = [
   { id: "discovery", label: "Discovery", stepIds: ["source_ready", "dry_scrape", "live_scrape"] },
   { id: "review", label: "Review", stepIds: ["queue_review", "field_fixes", "official_source_resolved"] },
@@ -179,7 +163,6 @@ const PHASES = [
 ];
 
 function rollupPhaseStatus(phaseSteps, progress) {
-  // Phase status priority: blocked > active > pending > complete-all.
   let anyActive = false;
   let anyPending = false;
   let allComplete = true;
@@ -196,68 +179,52 @@ function rollupPhaseStatus(phaseSteps, progress) {
   return "pending";
 }
 
-function toneFor(status) {
-  if (status === "complete") return "border-sage-300 bg-sage-100 text-sage-900";
-  if (status === "active") return "border-clay-300 bg-clay-50 text-foreground";
-  if (status === "blocked") return "border-amber-300 bg-amber-50 text-amber-900";
-  return "border-border bg-white/60 text-muted-foreground";
+function phaseClass(status) {
+  if (status === "complete") return "phase done";
+  if (status === "active") return "phase active";
+  if (status === "blocked") return "phase blocked";
+  return "phase";
 }
 
-function iconFor(status) {
-  if (status === "complete") return Check;
-  if (status === "blocked") return AlertTriangle;
-  return Circle;
+function phaseCountLabel(stepIds, progress, status) {
+  const done = stepIds.filter((id) => (progress[id]?.status) === "complete").length;
+  const total = stepIds.length;
+  if (status === "blocked") {
+    const blocked = stepIds.filter((id) => (progress[id]?.status) === "blocked").length;
+    return `blocked · ${blocked} fix`;
+  }
+  if (status === "active") return `${done} / ${total} active`;
+  if (status === "complete") return `${done} / ${total} done`;
+  return `${done} / ${total} pending`;
 }
-
-const STEP_LABEL_BY_ID = Object.fromEntries(STEPS.map((s) => [s.id, s.label]));
 
 export default function AdminProgressBar({ state = {}, onStepClick }) {
   const progress = computeProgress(state);
   return (
-    <nav className="soft-card rounded-2xl p-3" aria-label="Scraper-to-publish progress" data-testid="admin-progress-bar">
-      <ol className="flex flex-wrap gap-2 text-xs">
-        {PHASES.map((phase, phaseIndex) => {
-          const phaseStatus = rollupPhaseStatus(phase.stepIds, progress);
-          const PhaseIcon = iconFor(phaseStatus);
-          const phaseTone = toneFor(phaseStatus);
-          const completedCount = phase.stepIds.filter((id) => (progress[id]?.status) === "complete").length;
-          return (
-            <li key={phase.id} className="flex-1 min-w-[180px]" data-testid={`progress-phase-${phase.id}`} data-status={phaseStatus}>
-              <div className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2 ${phaseTone}`}>
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-mono text-[10px] opacity-75">{phaseIndex + 1}</span>
-                  <PhaseIcon className="h-3.5 w-3.5 shrink-0" />
-                  <span className="font-semibold truncate">{phase.label}</span>
-                </div>
-                <span className="text-[10px] font-mono opacity-75 shrink-0">{completedCount}/{phase.stepIds.length}</span>
-              </div>
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                {phase.stepIds.map((id) => {
-                  const node = progress[id] || { status: "pending" };
-                  const StepIcon = iconFor(node.status);
-                  const stepTone = toneFor(node.status);
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => onStepClick?.(id)}
-                      title={node.reason ? `${STEP_LABEL_BY_ID[id]} — ${node.reason}` : STEP_LABEL_BY_ID[id]}
-                      aria-label={`${STEP_LABEL_BY_ID[id]} — ${node.status}`}
-                      data-testid={`progress-step-${id}`}
-                      data-status={node.status}
-                      className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] ${stepTone}`}
-                    >
-                      <StepIcon className="h-3 w-3" />
-                      <span className="hidden xl:inline">{STEP_LABEL_BY_ID[id]}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </li>
-          );
-        })}
-      </ol>
-    </nav>
+    <section className="card" data-testid="admin-progress-bar">
+      <div className="card-body">
+        <div className="lbl" style={{ marginBottom: 8 }}>Pipeline · 4 phases · 12 steps</div>
+        <div className="phase-rail">
+          {PHASES.map((phase, phaseIndex) => {
+            const phaseStatus = rollupPhaseStatus(phase.stepIds, progress);
+            return (
+              <button
+                type="button"
+                key={phase.id}
+                className={phaseClass(phaseStatus)}
+                onClick={() => onStepClick?.(phase.stepIds[0])}
+                data-testid={`progress-phase-${phase.id}`}
+                data-status={phaseStatus}
+              >
+                <div className="phase-num">{String(phaseIndex + 1).padStart(2, "0")}</div>
+                <div className="phase-name">{phase.label}</div>
+                <div className="phase-count">{phaseCountLabel(phase.stepIds, progress, phaseStatus)}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </section>
   );
 }
 
