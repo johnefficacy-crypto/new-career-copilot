@@ -1,6 +1,6 @@
 import React, { useState } from "react";
-import { AlertTriangle, ArrowRight, Compass, ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
+import { ExternalLink } from "lucide-react";
 import FieldReviewGroup from "./FieldReviewGroup";
 import PostEligibilityReviewGroup from "./PostEligibilityReviewGroup";
 import BlockerList from "./BlockerList";
@@ -9,10 +9,28 @@ import RecruitmentBlockerFixForm from "../recruitments/RecruitmentBlockerFixForm
 import { HIGH_RISK_QUEUE_FIELDS, RECOMMENDED_REVIEW_FIELDS } from "./adminWorkflowContract";
 import { scoreToPct, isLowQuality } from "./scoreUtils";
 
-// AdminFixPanel concentrates blocker display + fix controls for both the
-// selected scrape_queue item and the selected canonical recruitment so admins
-// do not need to leave the Operations Console to fix the most common issues.
-// Backend validate-publish remains the source of truth for publish readiness.
+// Source-tier mapping: A = official, B = institutional, C = aggregator.
+function tierForItem(item) {
+  const tier = (item?.source_tier || "").toUpperCase();
+  if (tier === "A" || tier === "B" || tier === "C") return tier;
+  const kind = (item?.source_type || item?.source_kind || "").toLowerCase();
+  if (kind === "aggregator") return "C";
+  if (kind === "institutional" || kind === "institution") return "B";
+  return "A";
+}
+
+function statusBadge(item) {
+  const status = (item?.status || "pending").toLowerCase();
+  if (status === "approved") return { cls: "badge resolved", text: "resolved" };
+  if (status === "rejected") return { cls: "badge neutral", text: "rejected" };
+  if (status === "duplicate") return { cls: "badge neutral", text: "duplicate" };
+  if (status === "merged") return { cls: "badge info", text: "merged" };
+  if (item?.unverified_fields?.length || item?.official_source_resolved === false) {
+    return { cls: "badge blocker", text: "unresolved" };
+  }
+  return { cls: "badge pending", text: "suggested" };
+}
+
 export default function AdminFixPanel({
   queueItem,
   recruitment,
@@ -33,9 +51,8 @@ export default function AdminFixPanel({
   if (!queueItem && !recruitment) {
     return <NextActionEmpty nextAction={nextAction} onJump={onJumpToTarget} />;
   }
-
   return (
-    <div className="space-y-4" data-testid="admin-fix-panel">
+    <div className="stack" data-testid="admin-fix-panel">
       {queueItem ? (
         <QueueFixSection
           item={queueItem}
@@ -68,48 +85,69 @@ function QueueFixSection({ item, onFieldAction, onPromote, onMergeIntoExisting, 
   const officialUnresolved = item.official_source_resolved === false;
   const dataQualityPct = scoreToPct(item.data_quality_score);
   const lowQuality = isLowQuality(item.data_quality_score);
+  const tier = tierForItem(item);
+  const status = statusBadge(item);
+  const posts = (item.raw_extracted_item || item.normalized_item || {}).posts;
+  const postCount = Array.isArray(posts) ? posts.length : 0;
+  const title = item.recruitment || item.raw_extracted_item?.title || item.normalized_item?.title || "Untitled candidate";
+  const blockedFromPromote = blockers.length > 0 || officialUnresolved || !item.promotable;
 
   return (
-    <section className="soft-card rounded-2xl p-4" data-testid="queue-fix-section">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Queue item fixes</div>
-          <h3 className="font-heading text-xl">{item.recruitment || item.raw_extracted_item?.title || "Untitled candidate"}</h3>
-          <p className="text-xs text-muted-foreground mt-1">Source: {item.source || "-"}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-xs">
+    <section className="card" data-testid="queue-fix-section">
+      <div className="card-head-col">
+        <div className="row" style={{ gap: 5 }}>
+          <span className={`badge tier-${tier.toLowerCase()}`}>{tier}</span>
+          <span className={status.cls}>{status.text}</span>
+          {item.source_type ? <span className="badge neutral">source · {item.source_type}</span> : null}
           {dataQualityPct != null ? (
-            <span className={`pill ${lowQuality ? "pill-amber" : "pill-sage"}`} data-testid="queue-data-quality">
-              quality {dataQualityPct}%
-            </span>
+            <span className={`badge ${lowQuality ? "pending" : "resolved"}`}>quality {dataQualityPct}%</span>
           ) : null}
-          {officialUnresolved ? <span className="pill pill-amber">official source unresolved</span> : null}
-          {dups.length ? <span className="pill pill-amber">duplicate candidate</span> : null}
+        </div>
+        <h3 className="oc-title" style={{ fontSize: 17 }}>{title}</h3>
+        <div className="row-sub">
+          queue_id {String(item.id || "").slice(0, 10)} · source {item.source || "unknown"}
         </div>
       </div>
-
-      {lowQuality ? (
-        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-          Low data quality. Confirm extracted values are complete before promotion.
-        </div>
-      ) : null}
-
-      {officialUnresolved ? (
-        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <div className="flex-1">
-              <div className="font-semibold">Official source not resolved</div>
-              <div>Backend gate blocks promotion until an official, verified source is linked.</div>
+      <div className="card-body stack">
+        <div>
+          <div className="lbl" style={{ marginBottom: 6 }}>Promotion preview</div>
+          <div className="grid2">
+            <div className="field">
+              <div className="field-lbl">resulting status</div>
+              <div className="field-val">{item.promotable ? "needs_review" : "blocked"}</div>
             </div>
-            <button type="button" className="btn btn-ghost h-7 text-[11px]" onClick={onOpenOfficialSourceResolver} disabled={busy} data-testid="open-official-resolver">
-              Resolve
-            </button>
+            <div className="field">
+              <div className="field-lbl">organization</div>
+              <div className="field-val">{item.organization || item.org || "link existing"}</div>
+            </div>
+            <div className="field">
+              <div className="field-lbl">posts</div>
+              <div className="field-val">{postCount ? `${postCount} will be created` : "—"}</div>
+              {postCount ? <div className="field-sub">{posts.map((p, i) => p?.post_name || `post ${i}`).slice(0, 3).join(" · ")}</div> : null}
+            </div>
+            <div className="field">
+              <div className="field-lbl">duplicates</div>
+              <div className={dups.length ? "field-val" : "field-val seal"}>{dups.length ? `${dups.length} candidate${dups.length === 1 ? "" : "s"}` : "none found"}</div>
+            </div>
           </div>
         </div>
-      ) : null}
 
-      <div className="mt-4">
+        {officialUnresolved ? (
+          <div style={{ background: "var(--pending-bg)", border: "1px solid var(--pending)", borderRadius: 3, padding: "10px 12px" }}>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <div>
+                <div className="fld-key" style={{ color: "var(--pending)" }}>Official source not resolved</div>
+                <div className="field-sub" style={{ color: "var(--pending)", marginTop: 3 }}>
+                  Backend gate blocks promotion until an official, verified source is linked.
+                </div>
+              </div>
+              <button type="button" className="btn small" onClick={onOpenOfficialSourceResolver} disabled={busy} data-testid="open-official-resolver">
+                Resolve
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <FieldReviewGroup
           extracted={item.raw_extracted_item || item.normalized_item || {}}
           evidence={item.field_evidence_status || {}}
@@ -118,56 +156,69 @@ function QueueFixSection({ item, onFieldAction, onPromote, onMergeIntoExisting, 
           recommendedFields={RECOMMENDED_REVIEW_FIELDS}
           onFieldAction={(field, action, correctedValue, scope) => onQueueFieldActionSafe(onFieldAction, item.id, field, action, correctedValue, scope)}
         />
-      </div>
 
-      <div className="mt-4">
-        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Post-level eligibility review</div>
-        <p className="text-xs text-muted-foreground mt-1">Eligibility matching relies on per-post age, education, and vacancy fields. Correcting these uses dotted paths (posts.0.min_age) so the backend patches the nested array instead of creating a flat key.</p>
-        <div className="mt-3">
+        <div>
+          <div className="lbl" style={{ marginBottom: 6 }}>Post-level eligibility review</div>
+          <div className="anno" style={{ marginBottom: 6 }}>
+            Eligibility matching relies on per-post age, education, and vacancy fields. Corrections use dotted paths (posts.0.min_age).
+          </div>
           <PostEligibilityReviewGroup
-            posts={(item.raw_extracted_item || item.normalized_item || {}).posts}
+            posts={posts}
             evidence={item.field_evidence_status || {}}
             onFieldAction={(path, action, correctedValue) => onQueueFieldActionSafe(onFieldAction, item.id, path, action, correctedValue)}
           />
         </div>
-      </div>
 
-      {dups.length ? (
-        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
-          <div className="font-semibold text-amber-900">Possible duplicates</div>
-          <ul className="mt-2 space-y-1 text-xs">
-            {dups.slice(0, 3).map((d, i) => {
-              const dupId = d.recruitment_id || d.id;
-              return (
-              <li key={dupId || i} className="flex flex-wrap items-center justify-between gap-2">
-                <span>{d.name || d.title || dupId}</span>
-                <div className="flex gap-1">
-                  <button type="button" className="btn btn-ghost h-7 text-[11px]" onClick={() => onMergeIntoExisting?.(item, d)} disabled={busy}>
-                    Preview merge
-                  </button>
-                  <button type="button" className="btn btn-ghost h-7 text-[11px]" onClick={() => onMarkDuplicate?.(item, d)} disabled={busy}>
-                    Mark duplicate
-                  </button>
-                </div>
-              </li>
-              );
-            })}
-          </ul>
+        {dups.length ? (
+          <div>
+            <div className="lbl" style={{ marginBottom: 6 }}>Possible duplicates</div>
+            <div className="card fld-list">
+              {dups.slice(0, 5).map((d, i) => {
+                const dupId = d.recruitment_id || d.id;
+                return (
+                  <div key={dupId || i} className="fld">
+                    <div className="fld-head">
+                      <span className="fld-key">{d.name || d.title || dupId}</span>
+                      <div className="row">
+                        <button type="button" className="btn small" onClick={() => onMergeIntoExisting?.(item, d)} disabled={busy}>Preview merge</button>
+                        <button type="button" className="btn small" onClick={() => onMarkDuplicate?.(item, d)} disabled={busy}>Mark duplicate</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+
+        <div style={{ background: blockedFromPromote ? "var(--blocker-bg)" : "var(--resolved-bg)", border: `1px solid ${blockedFromPromote ? "var(--blocker)" : "var(--resolved)"}`, borderRadius: 3, padding: "10px 12px" }}>
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <div>
+              <div className="fld-key" style={{ color: blockedFromPromote ? "var(--blocker)" : "var(--resolved)" }}>
+                {blockedFromPromote ? "Promote blocked" : "Ready to promote"}
+              </div>
+              <div className="field-sub" style={{ color: blockedFromPromote ? "var(--blocker)" : "var(--resolved)", marginTop: 3 }}>
+                {blockedFromPromote
+                  ? `${blockers.length ? `Verify ${blockers.length} required field${blockers.length === 1 ? "" : "s"}` : ""}${blockers.length && officialUnresolved ? " · " : ""}${officialUnresolved ? "Resolve official source" : ""}`
+                  : "All gates open. Promotion will create a recruitment draft."}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn primary"
+              disabled={busy || blockedFromPromote}
+              onClick={() => onPromote?.(item)}
+              data-testid="fix-panel-promote"
+            >
+              Promote to draft
+            </button>
+          </div>
         </div>
-      ) : null}
-
-      <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-3">
-        <button
-          type="button"
-          className="btn btn-primary h-9 text-xs"
-          disabled={busy || !item.promotable || officialUnresolved}
-          onClick={() => onPromote?.(item)}
-          data-testid="fix-panel-promote"
-        >
-          Promote to draft
-        </button>
-        {blockers.length ? (
-          <span className="text-xs text-amber-700 self-center">Blocked by: {blockers.join(", ")}</span>
+      </div>
+      <div className="card-foot">
+        <button type="button" className="btn ghost small" disabled={busy}>Reject candidate</button>
+        {dups.length ? (
+          <button type="button" className="btn small" disabled={busy} onClick={() => onMarkDuplicate?.(item, dups[0])}>Mark duplicate</button>
         ) : null}
       </div>
     </section>
@@ -175,12 +226,8 @@ function QueueFixSection({ item, onFieldAction, onPromote, onMergeIntoExisting, 
 }
 
 function onQueueFieldActionSafe(handler, id, field, action, correctedValue, scope) {
-  try {
-    return handler?.(id, field, action, correctedValue, scope);
-  } catch (err) {
-    console.error("queue field action failed", err);
-    return undefined;
-  }
+  try { return handler?.(id, field, action, correctedValue, scope); }
+  catch (err) { console.error("queue field action failed", err); return undefined; }
 }
 
 function RecruitmentFixSection({ recruitment, validateResult, sources = [], onValidate, onVerify, onPublish, busy }) {
@@ -198,53 +245,85 @@ function RecruitmentFixSection({ recruitment, validateResult, sources = [], onVa
     "unverified_source_provenance",
   ]);
   const nonCriteriaBlockers = blockers.filter((b) => NON_CRITERIA_BLOCKERS.has(b));
+  const status = recruitment.publish_status || "draft";
+  const statusBadgeCls = status === "published" ? "badge resolved"
+    : status === "verified" ? "badge info"
+    : status === "needs_review" ? "badge pending" : "badge neutral";
   return (
-    <section className="soft-card rounded-2xl p-4" data-testid="recruitment-fix-section">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Recruitment fixes</div>
-          <h3 className="font-heading text-xl">{recruitment.name || "Untitled recruitment"}</h3>
-          <p className="text-xs text-muted-foreground mt-1">
-            publish_status: <code>{recruitment.publish_status || "unknown"}</code>
-          </p>
+    <section className="card" data-testid="recruitment-fix-section">
+      <div className="card-head-col">
+        <div className="row" style={{ gap: 5 }}>
+          <span className="badge tier-a">A</span>
+          <span className={statusBadgeCls}>{status}</span>
         </div>
-        <Link to={`/admin/recruitments?focus=${recruitment.id}`} className="btn btn-ghost h-8 text-xs">
+        <h3 className="oc-title" style={{ fontSize: 17 }}>{recruitment.name || "Untitled recruitment"}</h3>
+        <div className="row-sub">
+          recruitment_id {String(recruitment.id || "").slice(0, 10)} · publish_status {status} · {blockers.length} blocker{blockers.length === 1 ? "" : "s"}
+        </div>
+      </div>
+      <div className="card-body stack">
+        <div className="grid2">
+          <div className="field">
+            <div className="field-lbl">organization</div>
+            <div className="field-val">{recruitment.organization_name || recruitment.organization?.name || "—"}</div>
+            {recruitment.organization?.is_verified ? <div className="field-sub seal">verified</div> : null}
+          </div>
+          <div className="field">
+            <div className="field-lbl">apply window</div>
+            <div className="field-val">{recruitment.apply_start_date || "—"} → {recruitment.apply_end_date || "—"}</div>
+          </div>
+          <div className="field">
+            <div className="field-lbl">posts</div>
+            <div className="field-val">{recruitment.post_count != null ? `${recruitment.post_count} post${recruitment.post_count === 1 ? "" : "s"}` : "—"}</div>
+          </div>
+          <div className="field">
+            <div className="field-lbl">source provenance</div>
+            <div className={recruitment.source_provenance_verified ? "field-val seal" : "field-val"}>
+              {recruitment.source_provenance_verified ? "linked & verified" : (recruitment.source_provenance ? "linked" : "missing")}
+            </div>
+          </div>
+        </div>
+
+        <BlockerList blockers={blockers} empty="No publish blockers reported." />
+
+        {nonCriteriaBlockers.length ? (
+          <div data-testid="recruitment-blocker-fix-section">
+            <RecruitmentBlockerFixForm
+              recruitment={recruitment}
+              blockers={nonCriteriaBlockers}
+              sources={sources}
+              onChanged={() => onValidate?.(recruitment)}
+            />
+          </div>
+        ) : null}
+
+        {(blockers.includes("posts_missing") || blockers.includes("eligibility_rules_missing")) ? (
+          <div data-testid="recruitment-criteria-section">
+            <RecruitmentCriteriaPanel recruitmentId={recruitment.id} onChanged={() => onValidate?.(recruitment)} />
+          </div>
+        ) : null}
+
+        <div className="anno">
+          Once blockers clear, validate-publish runs server-side. Mark verified opens publish gate. Publish triggers eligibility recompute fan-out.
+        </div>
+      </div>
+      <div className="card-foot">
+        <Link to={`/admin/recruitments?focus=${recruitment.id}`} className="btn ghost small">
           Open full editor <ExternalLink className="h-3 w-3" />
         </Link>
-      </div>
-
-      <div className="mt-3">
-        <BlockerList blockers={blockers} />
-      </div>
-
-      {nonCriteriaBlockers.length ? (
-        <div className="mt-4" data-testid="recruitment-blocker-fix-section">
-          <RecruitmentBlockerFixForm
-            recruitment={recruitment}
-            blockers={nonCriteriaBlockers}
-            sources={sources}
-            onChanged={() => onValidate?.(recruitment)}
-          />
-        </div>
-      ) : null}
-
-      {(blockers.includes("posts_missing") || blockers.includes("eligibility_rules_missing")) ? (
-        <div className="mt-4" data-testid="recruitment-criteria-section">
-          <RecruitmentCriteriaPanel recruitmentId={recruitment.id} onChanged={() => onValidate?.(recruitment)} />
-        </div>
-      ) : null}
-
-      <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-3">
-        <button type="button" className="btn btn-ghost h-9 text-xs" disabled={busy} onClick={async () => {
-          setReviewing(true);
-          try { await onValidate?.(recruitment); } finally { setReviewing(false); }
-        }} data-testid="fix-panel-validate">
-          {reviewing ? "Validating..." : "Validate publish readiness"}
+        <button
+          type="button"
+          className="btn small"
+          disabled={busy}
+          onClick={async () => { setReviewing(true); try { await onValidate?.(recruitment); } finally { setReviewing(false); } }}
+          data-testid="fix-panel-validate"
+        >
+          {reviewing ? "Validating…" : "Validate publish readiness"}
         </button>
         <button
           type="button"
-          className="btn btn-ghost h-9 text-xs"
-          disabled={busy || !validateResult?.ready || recruitment.publish_status === "verified" || recruitment.publish_status === "published"}
+          className="btn small"
+          disabled={busy || !validateResult?.ready || status === "verified" || status === "published"}
           onClick={() => onVerify?.(recruitment)}
           data-testid="fix-panel-verify"
         >
@@ -252,8 +331,8 @@ function RecruitmentFixSection({ recruitment, validateResult, sources = [], onVa
         </button>
         <button
           type="button"
-          className="btn btn-primary h-9 text-xs"
-          disabled={busy || recruitment.publish_status !== "verified"}
+          className="btn primary small"
+          disabled={busy || status !== "verified"}
           onClick={() => onPublish?.(recruitment)}
           data-testid="fix-panel-publish"
         >
@@ -264,48 +343,30 @@ function RecruitmentFixSection({ recruitment, validateResult, sources = [], onVa
   );
 }
 
-// Replaces the bare "Select a queue item or a recruitment..." empty state.
-// Reads the first actionable checklist item (first blocked, then first todo)
-// and renders it as a CTA so the right column always has something useful.
 function NextActionEmpty({ nextAction, onJump }) {
   const status = nextAction?.status || "todo";
-  const tone = status === "blocked"
-    ? "border-amber-300 bg-amber-50 text-amber-900"
-    : status === "done"
-      ? "border-sage-300 bg-sage-50 text-sage-900"
-      : "border-clay-300 bg-clay-50 text-foreground";
+  const tone = status === "blocked" ? "warn" : "";
   const label = nextAction?.label || "Pick a workflow target on the left";
   const reason = nextAction?.reason;
   const hint = nextAction?.hint;
   const ctaLabel = nextAction?.target ? "Jump to action" : "Select something to fix";
   return (
-    <section className="soft-card rounded-2xl p-6" data-testid="admin-fix-panel-empty">
-      <div className="flex items-start gap-3">
-        <div className="rounded-full bg-dusk-700/10 p-2 shrink-0">
-          <Compass className="h-5 w-5 text-dusk-700" aria-hidden="true" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Next safe action</div>
-          <h3 className="font-heading text-lg mt-0.5">{label}</h3>
-          {reason ? <p className="mt-1 text-sm text-muted-foreground" data-testid="empty-next-reason">{reason}</p> : null}
-          {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
-          <div className={`mt-3 inline-flex items-center gap-2 rounded-full border px-2 py-1 text-[11px] ${tone}`} data-testid="empty-next-status">
-            <span className="font-semibold uppercase tracking-widest">{status}</span>
-          </div>
-          <div className="mt-4">
-            <button
-              type="button"
-              className="btn btn-primary h-9 text-xs"
-              onClick={() => onJump?.(nextAction?.target, nextAction)}
-              disabled={!nextAction?.target}
-              data-testid="empty-next-cta"
-            >
-              {ctaLabel}
-              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
-          </div>
-        </div>
+    <section className={`next-action ${tone}`} data-testid="admin-fix-panel-empty">
+      <div>
+        <div className="lbl" style={{ marginBottom: 5 }}>Next safe action</div>
+        <h4 className="oc-title" style={{ color: "var(--paper)" }}>{label}</h4>
+        {reason ? <div style={{ fontSize: 12, color: "rgba(250,247,242,0.85)", marginTop: 4 }} data-testid="empty-next-reason">{reason}</div> : null}
+        {hint ? <div style={{ fontSize: 11, color: "rgba(250,247,242,0.65)", marginTop: 4 }}>{hint}</div> : null}
       </div>
+      <button
+        type="button"
+        className="btn primary"
+        onClick={() => onJump?.(nextAction?.target, nextAction)}
+        disabled={!nextAction?.target}
+        data-testid="empty-next-cta"
+      >
+        {ctaLabel}
+      </button>
     </section>
   );
 }

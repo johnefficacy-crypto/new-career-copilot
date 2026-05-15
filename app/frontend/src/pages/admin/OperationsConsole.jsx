@@ -1,36 +1,58 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { LayoutGrid, RefreshCw } from "lucide-react";
 import { api, getApiUnverifiedFields } from "../../lib/api";
-import { EmptyState, ErrorState, LoadingSkeleton, StatusBadge } from "../../shared/ui";
 import useAdminAction from "../../features/admin/shared/useAdminAction";
 import AdminProgressBar from "../../features/admin/workflow/AdminProgressBar";
 import AdminActionChecklist from "../../features/admin/workflow/AdminActionChecklist";
 import AdminFixPanel from "../../features/admin/workflow/AdminFixPanel";
-import NextActionCallout from "../../features/admin/workflow/NextActionCallout";
 import useAdminNextActions from "../../features/admin/workflow/useAdminNextActions";
 import OfficialSourceResolver from "../../features/admin/workflow/OfficialSourceResolver";
 import DuplicateMergePreview from "../../features/admin/workflow/DuplicateMergePreview";
 import SelectionContextBanner from "../../features/admin/workflow/SelectionContextBanner";
 import { scoreToPct } from "../../features/admin/workflow/scoreUtils";
 
-// "Select Source" rather than "Source Setup" — create/edit/verify still live
-// on /admin/sources to avoid duplicating the source registry drawer here.
-const TABS = [
-  { id: "source", label: "Select Source" },
-  { id: "scrape", label: "Scrape Run" },
-  { id: "queue", label: "Queue Review" },
-  { id: "draft", label: "Draft Fixes" },
-  { id: "publish", label: "Validate / Verify / Publish" },
-  { id: "eligibility", label: "Eligibility Ops" },
+const VIEWS = [
+  { id: "source", label: "Setup & run" },
+  { id: "queue", label: "Review & publish" },
 ];
+
+const QUEUE_FILTERS = [
+  { key: "pending", label: "Pending" },
+  { key: "approved", label: "Promoted" },
+  { key: "merged", label: "Merged" },
+  { key: "duplicate", label: "Duplicate" },
+  { key: "rejected", label: "Rejected" },
+  { key: "all", label: "All" },
+];
+
+function tierForItem(item) {
+  const tier = (item?.source_tier || "").toUpperCase();
+  if (tier === "A" || tier === "B" || tier === "C") return tier;
+  const kind = (item?.source_type || item?.source_kind || "").toLowerCase();
+  if (kind === "aggregator") return "C";
+  if (kind === "institutional") return "B";
+  return "A";
+}
+
+function itemBadge(item) {
+  const status = (item?.status || "pending").toLowerCase();
+  if (status === "approved") return { cls: "badge resolved", text: "resolved" };
+  if (status === "rejected") return { cls: "badge neutral", text: "rejected" };
+  if (status === "duplicate") return { cls: "badge neutral", text: "duplicate" };
+  if (status === "merged") return { cls: "badge info", text: "merged" };
+  if (item?.unverified_fields?.length || item?.official_source_resolved === false) {
+    return { cls: "badge blocker", text: "unresolved" };
+  }
+  if ((item?.duplicate_candidates || []).length) return { cls: "badge blocker", text: "conflict" };
+  return { cls: "badge pending", text: "suggested" };
+}
 
 export default function OperationsConsole() {
   const [searchParams, setSearchParams] = useSearchParams();
   const sourceId = searchParams.get("source_id") || null;
   const queueId = searchParams.get("queue_id") || null;
   const recruitmentId = searchParams.get("recruitment_id") || null;
-  const tab = searchParams.get("tab") || "source";
+  const mode = searchParams.get("mode") || "queue";
 
   const [sources, setSources] = useState([]);
   const [runs, setRuns] = useState([]);
@@ -41,7 +63,7 @@ export default function OperationsConsole() {
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState(null);
   const [resolverOpen, setResolverOpen] = useState(false);
-  const [mergeTarget, setMergeTarget] = useState(null); // { id, name } of recruitment to merge into
+  const [mergeTarget, setMergeTarget] = useState(null);
   const [queueFilter, setQueueFilter] = useState(() => searchParams.get("queue_status") || "pending");
 
   const { runAction, busyKey, error: actionError } = useAdminAction();
@@ -62,8 +84,6 @@ export default function OperationsConsole() {
       const [s, r, q, recs] = await Promise.all([
         api.get("/api/admin/sources"),
         api.get("/api/admin/scrape/runs?limit=10"),
-        // status=all so admins can also inspect merged/rejected/duplicate rows
-        // without leaving the console; filtering is local via filter chips.
         api.get("/api/admin/scrape/queue?status=all&limit=50"),
         api.get("/api/admin/recruitments"),
       ]);
@@ -94,7 +114,6 @@ export default function OperationsConsole() {
   );
   const latestRun = runs[0] || null;
 
-  // Auto-validate when recruitment selection changes
   useEffect(() => {
     setValidateResult(null);
     if (!recruitmentId) return;
@@ -122,37 +141,17 @@ export default function OperationsConsole() {
   );
 
   const onStepClick = useCallback((stepId) => {
-    const map = {
-      source_ready: "source",
-      dry_scrape: "scrape",
-      live_scrape: "scrape",
-      queue_review: "queue",
-      field_fixes: "draft",
-      official_source_resolved: "draft",
-      promoted_draft: "draft",
-      draft_blockers_fixed: "publish",
-      validated: "publish",
-      verified: "publish",
-      published: "publish",
-      eligibility_monitored: "eligibility",
-    };
-    updateParams({ tab: map[stepId] || tab });
-  }, [tab, updateParams]);
+    const setupSteps = new Set(["source_ready", "dry_scrape", "live_scrape"]);
+    updateParams({ mode: setupSteps.has(stepId) ? "source" : "queue" });
+  }, [updateParams]);
 
   const onJumpToChecklistTarget = useCallback((target) => {
     if (!target) return;
-    const tabMap = {
-      "source-list": "source",
-      "run-controls": "scrape",
-      "queue-list": "queue",
-      "fix-panel": "draft",
-      "recruitment-fixes": "publish",
-      "eligibility-ops": "eligibility",
-    };
-    if (tabMap[target]) updateParams({ tab: tabMap[target] });
+    const setupTargets = new Set(["source-list", "run-controls"]);
+    if (setupTargets.has(target)) updateParams({ mode: "source" });
+    else updateParams({ mode: "queue" });
   }, [updateParams]);
 
-  // ── Actions ─────────────────────────────────────────────────────────
   const queueFieldAction = useCallback(async (id, field, action, correctedValue, scope) => {
     await runAction({
       key: `field-${id}-${field}-${action}-${scope?.entity_key || ""}`,
@@ -178,7 +177,7 @@ export default function OperationsConsole() {
           const r = await api.post(`/api/admin/scrape/items/${item.id}/promote`, {});
           setMsg(`Promoted to recruitment ${(r.recruitment_id || "unknown").slice(0, 8)}. No alerts sent.`);
           await loadAll();
-          updateParams({ recruitment_id: r.recruitment_id, tab: "publish" });
+          updateParams({ recruitment_id: r.recruitment_id, mode: "queue" });
         } catch (e) {
           const fields = getApiUnverifiedFields(e);
           if (fields.length) setMsg(`Promote blocked. Verify required fields: ${fields.join(", ")}.`);
@@ -224,8 +223,6 @@ export default function OperationsConsole() {
   }, [runAction, loadAll]);
 
   const openMergePreview = useCallback((_item, dup) => {
-    // Backend duplicate_candidates() ships {recruitment_id, name, ...} — there
-    // is no `id` field. Falling back to `id` covers any legacy payload shape.
     const targetId = dup?.recruitment_id || dup?.id;
     if (!targetId) return;
     setMergeTarget({ id: targetId, name: dup.name || dup.title || targetId });
@@ -271,138 +268,96 @@ export default function OperationsConsole() {
     });
   }, [queueId, runAction, loadAll]);
 
-  const runScrape = useCallback(async (mode) => {
-    const key = mode === "dry" ? "scrape-dry" : "scrape-live";
+  const runScrape = useCallback(async (modeArg) => {
+    const key = modeArg === "dry" ? "scrape-dry" : "scrape-live";
     await runAction({
       key,
-      confirm: mode === "dry" ? null : "Run live scrape now? Live scrape only queues candidates; it does not publish.",
-      successMessage: mode === "dry" ? "Dry scrape complete." : "Live scrape complete.",
+      confirm: modeArg === "dry" ? null : "Run live scrape now? Live scrape only queues candidates; it does not publish.",
+      successMessage: modeArg === "dry" ? "Dry scrape complete." : "Live scrape complete.",
       action: async () => {
         const body = sourceId ? { source_ids: [sourceId], limit: 25 } : { limit: 25 };
-        await api.post(mode === "dry" ? "/api/admin/scrape/run-dry" : "/api/admin/scrape/run", body);
+        await api.post(modeArg === "dry" ? "/api/admin/scrape/run-dry" : "/api/admin/scrape/run", body);
         await loadAll();
       },
     });
   }, [runAction, loadAll, sourceId]);
 
-  if (loading && !sources.length && !queue.length) return <LoadingSkeleton variant="table" />;
-  if (loadError) return <ErrorState title="Failed to load Operations Console" message={loadError.message} onRetry={loadAll} />;
+  if (loading && !sources.length && !queue.length) {
+    return (
+      <div className="stack">
+        <div className="skel" style={{ height: 90 }} />
+        <div className="skel" style={{ height: 180 }} />
+      </div>
+    );
+  }
+  if (loadError) {
+    return (
+      <div className="card">
+        <div className="card-body">
+          <div className="err-row">Failed to load Operations Console · {loadError.message}</div>
+          <div style={{ marginTop: 10 }}>
+            <button className="btn small" onClick={loadAll}>Retry</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const pendingCount = queue.filter((q) => (q.status || "pending") === "pending").length;
+  const totalSources = sources.length;
 
   return (
-    <div className="space-y-4" data-testid="admin-operations-console">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Operations</div>
-          <h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight inline-flex items-center gap-2">
-            <LayoutGrid className="h-6 w-6" /> Scraper Operations Console
-          </h1>
-          <p className="text-muted-foreground mt-1 max-w-2xl">
-            One page for the entire scraper-to-publish pipeline. Backend trust gates remain source of truth.
-          </p>
-        </div>
-        <button type="button" className="btn btn-ghost h-9 text-xs" onClick={loadAll} data-testid="ops-refresh">
-          <RefreshCw className="h-3.5 w-3.5" /> Refresh
-        </button>
-      </div>
+    <div data-testid="admin-operations-console">
+      <nav className="modebar" style={{ margin: "-18px -22px 0", padding: "0 22px" }}>
+        {VIEWS.map((v) => (
+          <button
+            key={v.id}
+            type="button"
+            className={`modepill${mode === v.id ? " active" : ""}`}
+            onClick={() => updateParams({ mode: v.id })}
+            data-testid={`ops-mode-${v.id}`}
+          >
+            {v.label}{" "}
+            <span className="count">{v.id === "source" ? `${totalSources} src` : pendingCount}</span>
+          </button>
+        ))}
+      </nav>
 
-      <AdminProgressBar state={progressState} onStepClick={onStepClick} />
-
-      <SelectionContextBanner
-        source={selectedSource}
-        queueItem={selectedQueueItem}
-        recruitment={selectedRecruitment}
-        onClearSource={() => updateParams({ source_id: null })}
-        onClearQueue={() => updateParams({ queue_id: null })}
-        onClearRecruitment={() => updateParams({ recruitment_id: null })}
-      />
-
-      <NextActionCallout
-        message={firstActionableMessage(checklistItems)}
-        tone={anyBlocked(checklistItems) ? "warn" : "info"}
-      />
-
-      {msg ? <div className="rounded-xl bg-sage-100/60 border border-sage-200 p-3 text-xs" data-testid="ops-msg">{msg}</div> : null}
-      {actionError ? <div className="text-xs text-destructive">{actionError.message}</div> : null}
-
-      <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
-        <div className="space-y-3" data-testid="ops-left-column">
-          <AdminActionChecklist items={checklistItems} onJump={onJumpToChecklistTarget} />
-
-          {/* The view selector is a compact left-rail filter, not a primary
-              page nav. The progress bar above is the actual navigation —
-              clicking a step there updates this selector. Keeping the
-              ``tab`` URL param so existing deep links still work. */}
-          <div className="soft-card rounded-2xl p-3" data-testid="ops-view-selector">
-            <label className="block text-[10px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
-              View
-              <select
-                className="mt-1 w-full rounded-lg border border-border bg-white/80 px-2 py-1.5 text-xs"
-                value={tab}
-                onChange={(e) => updateParams({ tab: e.target.value })}
-                data-testid="ops-view-select"
-              >
-                {TABS.map((t) => (
-                  <option key={t.id} value={t.id}>{t.label}</option>
-                ))}
-              </select>
-            </label>
-            <p className="mt-1 text-[10px] text-muted-foreground">
-              Workspace follows your selection. Use the View selector to filter the list, not to navigate.
-            </p>
-          </div>
-
-          {tab === "source" && (
-            <SourceList sources={sources} selectedId={sourceId} onSelect={(id) => updateParams({ source_id: id })} />
-          )}
-          {tab === "scrape" && (
-            <ScrapeRunPanel
-              runs={runs}
-              source={selectedSource}
-              onRunDry={() => runScrape("dry")}
-              onRunLive={() => runScrape("live")}
-              busy={Boolean(busyKey)}
-            />
-          )}
-          {tab === "queue" && (
-            <QueueList
-              items={queue}
-              selectedId={queueId}
-              filter={queueFilter}
-              onFilterChange={(value) => { setQueueFilter(value); updateParams({ queue_status: value === "pending" ? null : value }); }}
-              onSelect={(id) => updateParams({ queue_id: id, tab: "draft" })}
-            />
-          )}
-          {(tab === "draft" || tab === "publish") && (
-            <RecruitmentList items={recruitments} selectedId={recruitmentId} onSelect={(id) => updateParams({ recruitment_id: id })} />
-          )}
-          {tab === "eligibility" && (
-            <EligibilityOpsLink />
-          )}
-        </div>
-
-        <div className="space-y-3" data-testid="ops-workspace">
-          {/* Workspace is now entity-driven: a selected queue item always
-              shows its fix panel, a selected recruitment always shows the
-              recruitment fixer, regardless of the ``tab`` filter on the
-              left. This decouples "what am I working on" from "which list
-              am I browsing", which was the whole point of the layout
-              pivot. ``tab`` only chooses what the left rail shows. */}
-          {!selectedQueueItem && !selectedRecruitment ? (
-            <section className="soft-card rounded-2xl p-4 text-sm text-muted-foreground" data-testid="ops-workspace-empty">
-              <div className="text-[11px] uppercase tracking-[0.22em] text-foreground font-semibold">No selection</div>
-              <p className="mt-2">
-                Pick an item from the list on the left — or click a step in the progress bar above — to start working.
-                The checklist surfaces the next safe action; the workspace will populate with the matching fix panel.
-              </p>
-            </section>
-          ) : null}
-          <AdminFixPanel
-            queueItem={selectedQueueItem}
-            recruitment={selectedRecruitment}
-            validateResult={validateResult}
+      <div className="scrn" style={{ borderTop: "none", paddingLeft: 0, paddingRight: 0 }}>
+        {mode === "source" ? (
+          <SetupAndRun
             sources={sources}
+            selectedSource={selectedSource}
+            runs={runs}
+            queue={queue}
+            onSelectSource={(id) => updateParams({ source_id: id })}
+            onRunDry={() => runScrape("dry")}
+            onRunLive={() => runScrape("live")}
+            busy={Boolean(busyKey)}
+          />
+        ) : (
+          <ReviewAndPublish
+            checklistItems={checklistItems}
+            progressState={progressState}
+            selectedSource={selectedSource}
+            selectedQueueItem={selectedQueueItem}
+            selectedRecruitment={selectedRecruitment}
+            queue={queue}
+            queueId={queueId}
+            recruitmentId={recruitmentId}
+            recruitments={recruitments}
+            sources={sources}
+            validateResult={validateResult}
             nextAction={nextAction}
-            onJumpToTarget={onJumpToChecklistTarget}
+            queueFilter={queueFilter}
+            onQueueFilter={(value) => { setQueueFilter(value); updateParams({ queue_status: value === "pending" ? null : value }); }}
+            onSelectQueue={(id) => updateParams({ queue_id: id })}
+            onSelectRecruitment={(id) => updateParams({ recruitment_id: id })}
+            onClearSource={() => updateParams({ source_id: null })}
+            onClearQueue={() => updateParams({ queue_id: null })}
+            onClearRecruitment={() => updateParams({ recruitment_id: null })}
+            onStepClick={onStepClick}
+            onJumpToChecklistTarget={onJumpToChecklistTarget}
             onQueueFieldAction={queueFieldAction}
             onPromote={promote}
             onMergeIntoExisting={openMergePreview}
@@ -411,181 +366,332 @@ export default function OperationsConsole() {
             onVerify={verify}
             onPublish={publish}
             onOpenOfficialSourceResolver={() => setResolverOpen(true)}
-            busy={Boolean(busyKey)}
-          />
-          <OfficialSourceResolver
-            open={resolverOpen && Boolean(selectedQueueItem)}
-            sources={sources}
-            queueItem={selectedQueueItem}
-            busy={Boolean(busyKey)}
-            onClose={() => setResolverOpen(false)}
-            onSubmit={resolveOfficialSource}
-          />
-          <DuplicateMergePreview
-            open={Boolean(mergeTarget && queueId)}
-            queueId={queueId}
-            recruitment={mergeTarget}
-            busy={Boolean(busyKey)}
-            onClose={() => setMergeTarget(null)}
+            resolverOpen={resolverOpen}
+            mergeTarget={mergeTarget}
+            onCloseResolver={() => setResolverOpen(false)}
+            onCloseMerge={() => setMergeTarget(null)}
+            onResolveOfficialSource={resolveOfficialSource}
             onConfirmMerge={confirmMerge}
+            busy={Boolean(busyKey)}
+            msg={msg}
+            actionError={actionError}
           />
-        </div>
+        )}
       </div>
     </div>
   );
 }
 
-function firstActionableMessage(items) {
-  const blocked = items.find((i) => i.status === "blocked");
-  if (blocked) return `Blocked: ${blocked.label} — ${blocked.reason || "see fix panel"}`;
-  const todo = items.find((i) => i.status === "todo");
-  if (todo) return `Next: ${todo.label}`;
-  return "All checklist items complete.";
-}
+function SetupAndRun({ sources, selectedSource, runs, queue, onSelectSource, onRunDry, onRunLive, busy }) {
+  const latestRun = runs[0] || null;
+  const tierA = queue.filter((q) => tierForItem(q) === "A").length;
+  const tierB = queue.filter((q) => tierForItem(q) === "B").length;
+  const tierC = queue.filter((q) => tierForItem(q) === "C").length;
+  const sourceType = selectedSource?.source_type || selectedSource?.kind || "official";
+  const trustBadge = selectedSource?.is_verified
+    ? { cls: "badge resolved", text: "verified" }
+    : selectedSource ? { cls: "badge pending", text: "unverified" } : null;
+  const isAggregator = sourceType === "aggregator";
 
-function anyBlocked(items) {
-  return items.some((i) => i.status === "blocked");
-}
-
-function SourceList({ sources, selectedId, onSelect }) {
-  if (!sources.length) return <EmptyState title="No sources yet" description="Add a source from the Source Registry." actionLabel="Open Source Registry" actionHref="/admin/sources" />;
   return (
-    <section className="soft-card rounded-2xl p-3" data-testid="ops-source-list">
-      <div className="flex items-center justify-between mb-2">
-        <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Select source</div>
-        <a className="text-[11px] link-under" href="/admin/sources" data-testid="ops-manage-sources">Manage sources</a>
+    <section className="scrn" style={{ padding: "0 0 18px", border: "none" }}>
+      <div className="scrn-head">
+        <h3 className="oc-title">Setup &amp; run</h3>
+        <span className="scrn-tag">mode · setup</span>
       </div>
-      <p className="text-[11px] text-muted-foreground mb-2">
-        Pick a verified source to scrape against. Create, edit, or verify sources in the{" "}
-        <a className="link-under" href="/admin/sources">Source Registry</a>.
-      </p>
-      <ul className="space-y-1">
-        {sources.map((s) => (
-          <li key={s.id}>
-            <button type="button" onClick={() => onSelect(s.id)} className={`w-full text-left rounded-xl border px-3 py-2 text-sm ${selectedId === s.id ? "border-dusk-700 bg-dusk-700/10" : "border-border bg-white/60"}`} data-testid={`ops-source-${s.id}`}>
-              <div className="font-semibold truncate">{s.org}</div>
-              <div className="text-[11px] text-muted-foreground truncate">{s.source_type || s.kind || "-"} · {s.is_verified ? "verified" : s.source_type === "aggregator" ? "discovery-only" : "unverified"}</div>
-            </button>
-          </li>
-        ))}
-      </ul>
+      <div className="stack">
+        <div className="card">
+          <div className="card-head">
+            <h4 className="oc-title">Source</h4>
+            {trustBadge ? <span className={trustBadge.cls}>{trustBadge.text}</span> : <span className="badge neutral">no selection</span>}
+          </div>
+          <div className="card-body stack">
+            <div>
+              <div className="lbl" style={{ marginBottom: 5 }}>Pick verified source</div>
+              <select className="input" value={selectedSource?.id || ""} onChange={(e) => onSelectSource(e.target.value || null)} data-testid="setup-source-select">
+                <option value="">Select a source…</option>
+                {sources.map((s) => (
+                  <option key={s.id} value={s.id}>{s.org || s.source_name} · {s.source_type || s.kind || "official"}</option>
+                ))}
+              </select>
+            </div>
+            {selectedSource ? (
+              <div className="row">
+                <span className="lbl">trust</span>
+                <span className={trustBadge.cls}>{trustBadge.text}</span>
+                <span className="lbl" style={{ marginLeft: 10 }}>policy</span>
+                <span className="badge neutral">{isAggregator ? "discovery only" : "official"}</span>
+              </div>
+            ) : null}
+            <div className="anno">
+              {isAggregator
+                ? "Aggregator data discovers candidates only. Cannot become canonical until paired with official proof."
+                : "Verified official sources can become canonical proof. Promotion requires verified required fields."}
+            </div>
+          </div>
+          <div className="card-foot">
+            <button type="button" className="btn small" onClick={onRunDry} disabled={busy} data-testid="ops-run-dry">Dry scrape</button>
+            <button type="button" className="btn primary small" onClick={onRunLive} disabled={busy} data-testid="ops-run-live">Run live scrape</button>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-head">
+            <h4 className="oc-title">Last run</h4>
+            <span className="row-sub">{latestRun ? `${(latestRun.id || "").slice(0, 8)} · ${(latestRun.at || "").slice(11, 16) || "—"}` : "no runs yet"}</span>
+          </div>
+          <div className="card-body">
+            <div className="grid2">
+              <div className="field">
+                <div className="field-lbl">extracted</div>
+                <div className="field-val"><strong>{latestRun?.items_total ?? latestRun?.items_extracted ?? 0}</strong> items</div>
+              </div>
+              <div className="field">
+                <div className="field-lbl">classified</div>
+                <div className="field-val"><strong>{latestRun?.items_total ?? 0}</strong></div>
+                <div className="field-sub">A·{tierA} · B·{tierB} · C·{tierC}</div>
+              </div>
+              <div className="field">
+                <div className="field-lbl">queued</div>
+                <div className="field-val"><strong>{latestRun?.items_new ?? 0}</strong></div>
+                <div className="field-sub">{latestRun?.items_duplicate ?? 0} duplicate · hash match</div>
+              </div>
+              <div className="field">
+                <div className="field-lbl">duration</div>
+                <div className="field-val"><strong>{latestRun?.duration_human || "—"}</strong></div>
+                <div className="field-sub">{latestRun?.duration_per_item_human || "—"} / item</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-head">
+            <h4 className="oc-title">Recent runs</h4>
+            <a className="btn ghost small" href="/admin/scraper">Open scrape monitor</a>
+          </div>
+          {runs.length === 0 ? (
+            <div className="card-body"><div className="anno">No runs yet.</div></div>
+          ) : (
+            <table className="t">
+              <thead>
+                <tr>
+                  <th style={{ width: "42%" }}>Source</th>
+                  <th style={{ width: "20%" }}>Tier</th>
+                  <th style={{ width: "14%" }}>Items</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.slice(0, 6).map((r) => {
+                  const tier = (r.source_tier || "A").toUpperCase();
+                  const statusCls = r.status === "completed" ? "badge resolved" : r.status === "failed" ? "badge blocker" : r.status === "running" ? "badge pending" : "badge info";
+                  return (
+                    <tr key={r.id}>
+                      <td>
+                        <div className="row-ttl">{r.source_name || r.source || "—"}</div>
+                        <div className="row-sub">{(r.id || "").slice(0, 8)} · {(r.at || "").slice(11, 16)}</div>
+                      </td>
+                      <td><span className={`badge tier-${tier.toLowerCase()}`}>{tier} · {r.items_total || 0}</span></td>
+                      <td className="num">{r.items_total || 0}</td>
+                      <td><span className={statusCls}>{r.status || "—"}</span></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
     </section>
   );
 }
 
-function ScrapeRunPanel({ runs, source, onRunDry, onRunLive, busy }) {
+function ReviewAndPublish({
+  checklistItems, progressState, selectedSource, selectedQueueItem, selectedRecruitment,
+  queue, queueId, recruitmentId, recruitments, sources, validateResult, nextAction,
+  queueFilter, onQueueFilter, onSelectQueue, onSelectRecruitment,
+  onClearSource, onClearQueue, onClearRecruitment,
+  onStepClick, onJumpToChecklistTarget, onQueueFieldAction,
+  onPromote, onMergeIntoExisting, onMarkDuplicate,
+  onValidate, onVerify, onPublish, onOpenOfficialSourceResolver,
+  resolverOpen, mergeTarget, onCloseResolver, onCloseMerge,
+  onResolveOfficialSource, onConfirmMerge, busy, msg, actionError,
+}) {
+  const calloutTitle = nextAction?.label || "Pick a workflow target";
+  const calloutMessage = nextAction?.reason || nextAction?.hint || "Select a queue item or recruitment to start working.";
+  const calloutTone = checklistItems.some((i) => i.status === "blocked") ? "warn" : "info";
+
   return (
-    <section className="soft-card rounded-2xl p-3" data-testid="ops-scrape-run">
-      <div className="text-[11px] uppercase tracking-widest text-muted-foreground mb-2">Scrape</div>
-      <div className="flex flex-wrap gap-2 mb-3">
-        <button type="button" className="btn btn-ghost h-8 text-xs" onClick={onRunDry} disabled={busy} data-testid="ops-run-dry">
-          Run dry scrape{source ? ` (${source.org})` : ""}
-        </button>
-        <button type="button" className="btn btn-primary h-8 text-xs" onClick={onRunLive} disabled={busy} data-testid="ops-run-live">
-          Run live scrape
-        </button>
-      </div>
-      <div className="text-[11px] text-muted-foreground">Recent runs</div>
-      <ul className="mt-1 space-y-1 text-xs">
-        {runs.length === 0 ? <li className="text-muted-foreground">No runs yet.</li> : runs.slice(0, 5).map((r) => (
-          <li key={r.id} className="flex items-center justify-between gap-2 border-b border-border py-1 last:border-0">
-            <span>{(r.at || "").slice(0, 19).replace("T", " ")}</span>
-            <StatusBadge status={r.status} label={`${r.status} · ${r.items_new || 0} new`} />
-          </li>
-        ))}
-      </ul>
-    </section>
+    <>
+      <section className="scrn" style={{ padding: "0 0 18px", border: "none" }}>
+        <div className="scrn-head">
+          <h3 className="oc-title">Review pipeline state</h3>
+          <span className="scrn-tag">progress + context + next action</span>
+        </div>
+        <div className="stack">
+          <AdminProgressBar state={progressState} onStepClick={onStepClick} />
+          <SelectionContextBanner
+            source={selectedSource}
+            queueItem={selectedQueueItem}
+            recruitment={selectedRecruitment}
+            onClearSource={onClearSource}
+            onClearQueue={onClearQueue}
+            onClearRecruitment={onClearRecruitment}
+          />
+          <div className={`next-action${calloutTone === "warn" ? " warn" : ""}`}>
+            <div>
+              <div className="lbl" style={{ marginBottom: 5 }}>Next safe action</div>
+              <h4 className="oc-title" style={{ color: "var(--paper)" }}>{calloutTitle}</h4>
+              <div style={{ fontSize: 12, color: "rgba(250,247,242,0.85)", marginTop: 4 }}>{calloutMessage}</div>
+            </div>
+            {nextAction?.target ? (
+              <button type="button" className="btn primary" onClick={() => onJumpToChecklistTarget(nextAction.target)}>Open fix panel</button>
+            ) : null}
+          </div>
+          {msg ? <div className="warn-row" data-testid="ops-msg">{msg}</div> : null}
+          {actionError ? <div className="err-row">{actionError.message}</div> : null}
+        </div>
+      </section>
+
+      <section className="scrn" style={{ borderTop: "1px solid var(--rule)" }}>
+        <div className="scrn-head">
+          <h3 className="oc-title">Left rail · workspace</h3>
+          <span className="scrn-tag">checklist + queue · fix panel</span>
+        </div>
+        <div className="grid" style={{ display: "grid", gridTemplateColumns: "minmax(280px, 340px) 1fr", gap: 16 }}>
+          <div className="stack" data-testid="ops-left-column">
+            <AdminActionChecklist items={checklistItems} onJump={onJumpToChecklistTarget} />
+
+            <div className="card">
+              <div className="filter-bar">
+                {QUEUE_FILTERS.map((f) => (
+                  <button
+                    key={f.key}
+                    type="button"
+                    className={`filter${queueFilter === f.key ? " active" : ""}`}
+                    onClick={() => onQueueFilter(f.key)}
+                    data-testid={`queue-filter-${f.key}`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+              <QueueList items={queue} filter={queueFilter} selectedId={queueId} onSelect={onSelectQueue} />
+            </div>
+
+            <RecruitmentList items={recruitments} selectedId={recruitmentId} onSelect={onSelectRecruitment} />
+          </div>
+
+          <div className="stack" data-testid="ops-workspace">
+            <AdminFixPanel
+              queueItem={selectedQueueItem}
+              recruitment={selectedRecruitment}
+              validateResult={validateResult}
+              sources={sources}
+              nextAction={nextAction}
+              onJumpToTarget={onJumpToChecklistTarget}
+              onQueueFieldAction={onQueueFieldAction}
+              onPromote={onPromote}
+              onMergeIntoExisting={onMergeIntoExisting}
+              onMarkDuplicate={onMarkDuplicate}
+              onValidate={onValidate}
+              onVerify={onVerify}
+              onPublish={onPublish}
+              onOpenOfficialSourceResolver={onOpenOfficialSourceResolver}
+              busy={busy}
+            />
+            <OfficialSourceResolver
+              open={resolverOpen && Boolean(selectedQueueItem)}
+              sources={sources}
+              queueItem={selectedQueueItem}
+              busy={busy}
+              onClose={onCloseResolver}
+              onSubmit={onResolveOfficialSource}
+            />
+            <DuplicateMergePreview
+              open={Boolean(mergeTarget && queueId)}
+              queueId={queueId}
+              recruitment={mergeTarget}
+              busy={busy}
+              onClose={onCloseMerge}
+              onConfirmMerge={onConfirmMerge}
+            />
+          </div>
+        </div>
+      </section>
+    </>
   );
 }
 
-const QUEUE_FILTERS = [
-  { key: "pending", label: "Pending" },
-  { key: "approved", label: "Promoted" },
-  { key: "merged", label: "Merged" },
-  { key: "duplicate", label: "Duplicate" },
-  { key: "rejected", label: "Rejected" },
-  { key: "all", label: "All" },
-];
-
-function QueueList({ items, selectedId, filter = "pending", onFilterChange, onSelect }) {
+function QueueList({ items, filter, selectedId, onSelect }) {
   const filtered = filter === "all" ? items : items.filter((q) => (q.status || "pending") === filter);
+  if (filtered.length === 0) {
+    return <div className="empty"><div className="empty-title">No queue items</div>No items in this view.</div>;
+  }
   return (
-    <section className="soft-card rounded-2xl p-3" data-testid="ops-queue-list">
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-        <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Queue ({filtered.length}/{items.length})</div>
-      </div>
-      <div className="flex flex-wrap gap-1 mb-2" role="tablist" aria-label="Queue status filter">
-        {QUEUE_FILTERS.map((f) => (
+    <div className="qlist" style={{ maxHeight: "60vh", overflowY: "auto" }}>
+      {filtered.map((q) => {
+        const conf = scoreToPct(q.confidence_score ?? q.confidence);
+        const quality = scoreToPct(q.data_quality_score);
+        const tier = tierForItem(q);
+        const status = itemBadge(q);
+        const title = q.recruitment || q.extracted_data?.title || q.source_name || q.id;
+        const action = q.status === "approved" ? "→ already promoted"
+          : status.text === "unresolved" ? "→ resolve official source"
+          : status.text === "conflict" ? "→ resolve conflict"
+          : status.text === "suggested" ? "→ confirm suggested proof"
+          : "→ review";
+        return (
           <button
-            key={f.key}
+            key={q.id}
             type="button"
-            role="tab"
-            aria-selected={filter === f.key}
-            onClick={() => onFilterChange?.(f.key)}
-            className={`rounded-full border px-2 py-0.5 text-[10px] ${filter === f.key ? "border-dusk-700 bg-dusk-700 text-white" : "border-border bg-white/70 text-foreground/75 hover:bg-clay-100"}`}
-            data-testid={`queue-filter-${f.key}`}
+            className={`qitem${selectedId === q.id ? " selected" : ""}`}
+            onClick={() => onSelect(q.id)}
+            data-testid={`ops-queue-${q.id}`}
           >
-            {f.label}
+            <div className="row" style={{ gap: 5 }}>
+              <span className={`badge tier-${tier.toLowerCase()}`}>{tier}</span>
+              <span className={status.cls}>{status.text}</span>
+            </div>
+            <div className="qttl">{title}</div>
+            <div className="qsub">
+              {q.source_name || q.source || "—"}
+              {conf != null ? ` · conf ${(conf / 100).toFixed(2)}` : ""}
+              {quality != null ? ` · quality ${quality}%` : ""}
+            </div>
+            <div className="qaction">{action}</div>
           </button>
-        ))}
-      </div>
-      {filtered.length === 0 ? (
-        <p className="text-xs text-muted-foreground py-2">No queue items in this view.</p>
-      ) : (
-        <ul className="space-y-1 max-h-[60vh] overflow-y-auto">
-          {filtered.map((q) => {
-            const conf = scoreToPct(q.confidence_score ?? q.confidence);
-            const quality = scoreToPct(q.data_quality_score);
-            const statusLabel = (q.status || "pending");
-            return (
-              <li key={q.id}>
-                <button type="button" onClick={() => onSelect(q.id)} className={`w-full text-left rounded-xl border px-3 py-2 text-xs ${selectedId === q.id ? "border-dusk-700 bg-dusk-700/10" : "border-border bg-white/60"}`} data-testid={`ops-queue-${q.id}`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="font-semibold truncate flex-1">{q.recruitment || q.extracted_data?.title || q.source_name || q.id}</div>
-                    <span className="pill pill-dusk text-[9px] uppercase">{statusLabel}</span>
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">
-                    conf {conf != null ? `${conf}%` : "-"}{quality != null ? ` · quality ${quality}%` : ""}{(q.unverified_fields || []).length ? ` · ${q.unverified_fields.length} unverified` : ""}{q.official_source_resolved === false ? " · official unresolved" : ""}
-                  </div>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </section>
+        );
+      })}
+    </div>
   );
 }
 
 function RecruitmentList({ items, selectedId, onSelect }) {
-  if (!items.length) return <EmptyState title="No recruitments" description="Promote a queue item to create a draft." />;
+  if (!items.length) return null;
   return (
-    <section className="soft-card rounded-2xl p-3" data-testid="ops-recruitment-list">
-      <div className="text-[11px] uppercase tracking-widest text-muted-foreground mb-2">Recruitments ({items.length})</div>
-      <ul className="space-y-1 max-h-[60vh] overflow-y-auto">
+    <section className="card">
+      <div className="card-head">
+        <h4 className="oc-title">Recruitments</h4>
+        <span className="row-sub">{items.length}</span>
+      </div>
+      <div className="qlist" style={{ maxHeight: "40vh", overflowY: "auto" }}>
         {items.map((r) => (
-          <li key={r.id}>
-            <button type="button" onClick={() => onSelect(r.id)} className={`w-full text-left rounded-xl border px-3 py-2 text-xs ${selectedId === r.id ? "border-dusk-700 bg-dusk-700/10" : "border-border bg-white/60"}`} data-testid={`ops-recruitment-${r.id}`}>
-              <div className="font-semibold truncate">{r.name}</div>
-              <div className="text-[10px] text-muted-foreground truncate">
-                {r.publish_status} · {(r.blocking_issues || []).length} blockers
-              </div>
-            </button>
-          </li>
+          <button
+            key={r.id}
+            type="button"
+            className={`qitem${selectedId === r.id ? " selected" : ""}`}
+            onClick={() => onSelect(r.id)}
+            data-testid={`ops-recruitment-${r.id}`}
+          >
+            <div className="qttl">{r.name}</div>
+            <div className="qsub">
+              {r.publish_status || "draft"} · {(r.blocking_issues || []).length} blocker{(r.blocking_issues || []).length === 1 ? "" : "s"}
+            </div>
+          </button>
         ))}
-      </ul>
-    </section>
-  );
-}
-
-function EligibilityOpsLink() {
-  return (
-    <section className="soft-card rounded-2xl p-3" data-testid="ops-eligibility-link">
-      <div className="text-[11px] uppercase tracking-widest text-muted-foreground mb-2">Eligibility Ops</div>
-      <p className="text-xs text-muted-foreground">
-        Downstream eligibility recompute and stale results live in the Eligibility Ops page.
-      </p>
-      <a className="btn btn-ghost h-8 text-xs mt-2" href="/admin/eligibility-ops">Open Eligibility Ops</a>
+      </div>
     </section>
   );
 }

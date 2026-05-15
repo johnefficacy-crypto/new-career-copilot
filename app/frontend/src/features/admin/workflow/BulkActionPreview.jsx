@@ -1,72 +1,80 @@
 import React from "react";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
 
-// BulkActionPreview — renders the backend's bulk-dry-run response.
-// Plan §6 contract:
-//   {
-//     selected_ids, action, dry_run: true,
-//     result: { eligible_count, blocked_count, blockers: [...] },
-//   }
-//
-// Apply button is only enabled when at least one selected row is
-// eligible. Blocked rows are listed with their reason_code so the
-// admin sees exactly why each one was skipped.
+// Renders the backend's bulk-dry-run response. Plan §6 contract:
+//   { selected_ids, action, dry_run: true,
+//     result: { eligible_count, blocked_count, blockers: [...] } }
 export default function BulkActionPreview({ dryRun, onApply, disabled }) {
   if (!dryRun) return null;
   const { result, action } = dryRun;
   if (!result) return null;
   const hasEligible = (result.eligible_count || 0) > 0;
+  const blockerGroups = groupBlockers(result.blockers || []);
   return (
-    <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-      <header className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-900">
-          {action} — preview
-        </h3>
-        <button
-          type="button"
-          className="inline-flex h-8 items-center gap-1 rounded-lg bg-gray-900 px-3 text-xs font-medium text-white disabled:bg-gray-300"
-          onClick={onApply}
-          disabled={disabled || !hasEligible}
-        >
-          Apply to {result.eligible_count} eligible
-        </button>
-      </header>
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <Stat label="Eligible" value={result.eligible_count} icon="ok" />
-        <Stat label="Blocked" value={result.blocked_count} icon="warn" />
+    <section className="card" data-testid="bulk-action-preview">
+      <div className="card-head-col">
+        <div className="lbl">Bulk preview · dry run</div>
+        <h3 className="oc-title">{action || "Bulk action"} · {dryRun.selected_ids?.length || result.eligible_count + result.blocked_count} items</h3>
+        <div className="anno" style={{ marginTop: 2 }}>
+          Apply will only act on eligible items. Blocked items remain unchanged with their reason_code intact.
+        </div>
       </div>
-      {result.blockers && result.blockers.length > 0 ? (
-        <ul className="mt-4 space-y-1 text-xs">
-          {result.blockers.map((b) => (
-            <li key={b.id} className="flex items-start gap-2">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden="true" />
-              <div>
-                <span className="font-mono text-gray-700">{b.id}</span>
-                <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 font-mono text-amber-800">
-                  {b.reason_code}
-                </span>
-                <p className="mt-0.5 text-gray-600">{b.message}</p>
-              </div>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      <div className="card-body stack">
+        <div className="grid4">
+          <div className="field big">
+            <div className="field-lbl">selected</div>
+            <div className="field-val">{(result.eligible_count || 0) + (result.blocked_count || 0)}</div>
+          </div>
+          <div className="field big good">
+            <div className="field-lbl">eligible</div>
+            <div className="field-val">{result.eligible_count || 0}</div>
+          </div>
+          <div className="field big bad">
+            <div className="field-lbl">blocked</div>
+            <div className="field-val">{result.blocked_count || 0}</div>
+          </div>
+          <div className="field big">
+            <div className="field-lbl">action</div>
+            <div className="field-val" style={{ fontSize: 14, fontFamily: "var(--fmono)" }}>{action}</div>
+          </div>
+        </div>
+        {blockerGroups.length > 0 ? (
+          <div>
+            <div className="lbl" style={{ marginBottom: 6 }}>Blocked · grouped by reason_code</div>
+            <div className="card">
+              {blockerGroups.map((group) => (
+                <div key={group.reason_code} className="blocker-grp">
+                  <div className="bg-head" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                    <div>
+                      <div className="row-ttl">{group.reason_code}</div>
+                      <div className="anno">{group.items.length} item{group.items.length === 1 ? "" : "s"}</div>
+                    </div>
+                  </div>
+                  <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 11.5, color: "var(--ink-soft)" }}>
+                    {group.items.slice(0, 6).map((b) => (
+                      <li key={b.id}>{b.message || b.id}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+      <div className="card-foot">
+        <button type="button" className="btn primary small" onClick={onApply} disabled={disabled || !hasEligible}>
+          Apply to {result.eligible_count || 0} eligible
+        </button>
+      </div>
     </section>
   );
 }
 
-function Stat({ label, value, icon }) {
-  const cls = icon === "ok"
-    ? "text-emerald-700 bg-emerald-50 border-emerald-200"
-    : "text-amber-700 bg-amber-50 border-amber-200";
-  const Ico = icon === "ok" ? CheckCircle2 : AlertTriangle;
-  return (
-    <div className={`flex items-center justify-between rounded-xl border px-3 py-2 ${cls}`}>
-      <span className="flex items-center gap-2">
-        <Ico className="h-4 w-4" aria-hidden="true" />
-        {label}
-      </span>
-      <span className="font-semibold">{value ?? 0}</span>
-    </div>
-  );
+function groupBlockers(list) {
+  const map = new Map();
+  for (const item of list) {
+    const code = item.reason_code || "unknown";
+    if (!map.has(code)) map.set(code, { reason_code: code, items: [] });
+    map.get(code).items.push(item);
+  }
+  return Array.from(map.values());
 }
