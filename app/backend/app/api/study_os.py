@@ -22,6 +22,7 @@ from app.study_os.plan_preferences import get_plan_preferences, upsert_plan_pref
 from app.study_os.planner import apply_plan, compute_draft_plan, generate_plan
 from app.study_os import mocks as mocks_service
 from app.study_os import plan_by_subject as plan_by_subject_service
+from app.study_os import plan_timeline as plan_timeline_service
 from app.study_os import subjects as subjects_service
 from app.study_os import weekly_review as weekly_review_service
 
@@ -225,6 +226,25 @@ async def post_plan_apply(user: dict = Depends(get_current_user)) -> dict[str, A
     except Exception:  # noqa: BLE001
         logger.exception("plan apply failed for %s", user_id)
         raise HTTPException(status_code=500, detail="Plan apply is temporarily unavailable.")
+
+
+@router.get("/plan/timeline")
+async def plan_timeline(user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    """Exam-cycle timeline payload for the Study Plan page.
+
+    Composes exam_context + plan_context + cycle_progress + milestones +
+    phase_bands + weekly planned-vs-actual series + per-subject progress
+    + deterministic risk flags. Safe fallback (status='not_connected') is
+    returned whenever required data is missing — the UI must not assume
+    every field is populated.
+    """
+    try:
+        return plan_timeline_service.get_plan_timeline(
+            get_supabase_admin(), user.get("id")
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("plan_timeline build failed for %s", user.get("id"))
+        return plan_timeline_service._empty_payload()  # type: ignore[attr-defined]
 
 
 @router.get("/plan/by-subject")

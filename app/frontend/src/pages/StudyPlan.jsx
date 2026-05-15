@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { Card, Drawer, Eyebrow, PageHeader, Pill, SectionHeader, StatusDot } from "../shared/ui/studyos";
 import PlanChangeLogCard from "../features/study/components/PlanChangeLogCard";
 import PlanByTopic from "../features/study/components/PlanByTopic";
+import ExamCycleTimeline from "../features/study/components/ExamCycleTimeline";
 
 const STATUS_TONE = {
   completed: "sage",
@@ -166,6 +167,9 @@ export default function StudyPlan() {
           </div>
         }
       />
+
+      {/* Exam cycle timeline — full-cycle planned vs actual */}
+      <ExamCycleTimeline />
 
       {/* Week timeline */}
       <Card padded={false}>
@@ -430,6 +434,8 @@ function DraftDiff({ draft, onApply, applying }) {
         </div>
       </div>
 
+      <DraftTimelinePreview timeline={draft.timeline} />
+
       <div className="flex justify-end gap-2 pt-2 border-t border-[#E7DECB]">
         <button
           type="button"
@@ -441,6 +447,48 @@ function DraftDiff({ draft, onApply, applying }) {
           {applying ? "Applying…" : "Apply"}
         </button>
       </div>
+    </div>
+  );
+}
+
+// DraftTimelinePreview — only renders when the draft payload includes a
+// timeline preview. We never invent these numbers; if the draft doesn't
+// carry them, the section stays out of the drawer entirely.
+function DraftTimelinePreview({ timeline }) {
+  if (!timeline || typeof timeline !== "object") return null;
+  const before = timeline.before_projected_completion;
+  const after = timeline.after_projected_completion;
+  const pressureChange = timeline.changed_phase_pressure;
+  const moved = Array.isArray(timeline.subjects_moved_earlier)
+    ? timeline.subjects_moved_earlier
+    : [];
+  const hasContent =
+    before || after || pressureChange || moved.length > 0;
+  if (!hasContent) return null;
+  return (
+    <div className="rounded-xl border border-[#E7DECB] bg-[#FBF8F2] p-3">
+      <Eyebrow>Cycle impact (preview)</Eyebrow>
+      <ul className="mt-2 space-y-1.5 text-[12px] text-clay-800">
+        {before || after ? (
+          <li>
+            Projected completion{" "}
+            <span className="num-mono">{before || "—"}</span> →{" "}
+            <span className="num-mono">{after || "—"}</span>
+          </li>
+        ) : null}
+        {pressureChange ? (
+          <li>
+            Phase pressure shift ·{" "}
+            <span className="num-mono">{pressureChange}</span>
+          </li>
+        ) : null}
+        {moved.length ? (
+          <li>
+            Subjects moved earlier ·{" "}
+            <span className="num-mono">{moved.join(", ")}</span>
+          </li>
+        ) : null}
+      </ul>
     </div>
   );
 }
