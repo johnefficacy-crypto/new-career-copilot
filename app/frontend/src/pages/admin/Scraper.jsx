@@ -48,7 +48,11 @@ function QueueDetailDrawer({ item, onClose, onAction, onFieldAction, onMerge }) 
   };
   if (!item) return null;
   const extracted = item.extracted_data || {};
-  const evidence = item.field_evidence_status || item.field_evidence || {};
+  // The bare ``field_evidence`` JSON fallback was a leftover from the
+  // pre-relational evidence schema; the backend now always populates
+  // ``field_evidence_status`` from the relational table, so the fallback
+  // is dead. Removed as part of Sprint 5 wire-contract cleanup.
+  const evidence = item.field_evidence_status || {};
   const evidenceDetails = item.field_evidence_details || [];
   const state = reviewState(item);
   const primaryDuplicate = (item.duplicate_candidates || [])[0];

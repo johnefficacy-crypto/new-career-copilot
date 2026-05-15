@@ -765,7 +765,11 @@ def list_scrape_queue(
     ``risk=low_quality`` selects rows with ``data_quality_score < 50`` or null.
     """
     supabase = get_supabase_admin()
-    selection = "id, source_id, source_url, source_name, raw_html, raw_payload, extracted_data, confidence_score, data_quality_score, status, duplicate_of, promoted_recruitment_id, reviewer_id, reviewer_notes, reviewed_at, field_evidence, official_source_resolved, official_source_host, extraction_status, evidence_required, scraped_at"
+    # Note: the legacy ``field_evidence`` JSON column was dropped from this
+    # SELECT in Sprint 5. The promotion gate and the UI both read the
+    # relational ``extracted_field_evidence`` table; the JSON column was
+    # being shipped to clients but never consumed.
+    selection = "id, source_id, source_url, source_name, raw_html, raw_payload, extracted_data, confidence_score, data_quality_score, status, duplicate_of, promoted_recruitment_id, reviewer_id, reviewer_notes, reviewed_at, official_source_resolved, official_source_host, extraction_status, evidence_required, scraped_at"
     base = supabase.table("scrape_queue").select(selection, count="exact")
     if status and status != "all":
         base = base.eq("status", status)
