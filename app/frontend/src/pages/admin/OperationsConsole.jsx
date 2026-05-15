@@ -324,25 +324,33 @@ export default function OperationsConsole() {
       {msg ? <div className="rounded-xl bg-sage-100/60 border border-sage-200 p-3 text-xs" data-testid="ops-msg">{msg}</div> : null}
       {actionError ? <div className="text-xs text-destructive">{actionError.message}</div> : null}
 
-      <div className="flex flex-wrap gap-2 border-b border-border pb-2" role="tablist">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            role="tab"
-            aria-selected={tab === t.id}
-            onClick={() => updateParams({ tab: t.id })}
-            className={`rounded-full border px-3 py-1.5 text-xs ${tab === t.id ? "border-dusk-700 bg-dusk-700 text-white" : "border-border bg-white/70 text-foreground/75 hover:bg-clay-100"}`}
-            data-testid={`ops-tab-${t.id}`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
       <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
         <div className="space-y-3" data-testid="ops-left-column">
           <AdminActionChecklist items={checklistItems} onJump={onJumpToChecklistTarget} />
+
+          {/* The view selector is a compact left-rail filter, not a primary
+              page nav. The progress bar above is the actual navigation —
+              clicking a step there updates this selector. Keeping the
+              ``tab`` URL param so existing deep links still work. */}
+          <div className="soft-card rounded-2xl p-3" data-testid="ops-view-selector">
+            <label className="block text-[10px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
+              View
+              <select
+                className="mt-1 w-full rounded-lg border border-border bg-white/80 px-2 py-1.5 text-xs"
+                value={tab}
+                onChange={(e) => updateParams({ tab: e.target.value })}
+                data-testid="ops-view-select"
+              >
+                {TABS.map((t) => (
+                  <option key={t.id} value={t.id}>{t.label}</option>
+                ))}
+              </select>
+            </label>
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              Workspace follows your selection. Use the View selector to filter the list, not to navigate.
+            </p>
+          </div>
+
           {tab === "source" && (
             <SourceList sources={sources} selectedId={sourceId} onSelect={(id) => updateParams({ source_id: id })} />
           )}
@@ -373,9 +381,24 @@ export default function OperationsConsole() {
         </div>
 
         <div className="space-y-3" data-testid="ops-workspace">
+          {/* Workspace is now entity-driven: a selected queue item always
+              shows its fix panel, a selected recruitment always shows the
+              recruitment fixer, regardless of the ``tab`` filter on the
+              left. This decouples "what am I working on" from "which list
+              am I browsing", which was the whole point of the layout
+              pivot. ``tab`` only chooses what the left rail shows. */}
+          {!selectedQueueItem && !selectedRecruitment ? (
+            <section className="soft-card rounded-2xl p-4 text-sm text-muted-foreground" data-testid="ops-workspace-empty">
+              <div className="text-[11px] uppercase tracking-[0.22em] text-foreground font-semibold">No selection</div>
+              <p className="mt-2">
+                Pick an item from the list on the left — or click a step in the progress bar above — to start working.
+                The checklist surfaces the next safe action; the workspace will populate with the matching fix panel.
+              </p>
+            </section>
+          ) : null}
           <AdminFixPanel
-            queueItem={tab === "draft" ? selectedQueueItem : null}
-            recruitment={tab === "publish" ? selectedRecruitment : null}
+            queueItem={selectedQueueItem}
+            recruitment={selectedRecruitment}
             validateResult={validateResult}
             sources={sources}
             nextAction={nextAction}
