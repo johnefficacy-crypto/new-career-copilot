@@ -21,6 +21,7 @@ from app.study_os.mission_control import (
 from app.study_os.plan_preferences import get_plan_preferences, upsert_plan_preferences
 from app.study_os.planner import apply_plan, compute_draft_plan, generate_plan
 from app.study_os import mocks as mocks_service
+from app.study_os import plan_by_subject as plan_by_subject_service
 from app.study_os import subjects as subjects_service
 from app.study_os import weekly_review as weekly_review_service
 
@@ -224,6 +225,32 @@ async def post_plan_apply(user: dict = Depends(get_current_user)) -> dict[str, A
     except Exception:  # noqa: BLE001
         logger.exception("plan apply failed for %s", user_id)
         raise HTTPException(status_code=500, detail="Plan apply is temporarily unavailable.")
+
+
+@router.get("/plan/by-subject")
+async def plan_by_subject(
+    user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Per-subject allocation for the user's planning week.
+
+    Aggregates study_tasks scheduled this Monday → Sunday, groups them by
+    subject, and tags each bucket with a trust_status reflecting whether
+    the subject has locked coverage in the target exam.
+    """
+    try:
+        return plan_by_subject_service.list_plan_by_subject(
+            get_supabase_admin(), user.get("id")
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("plan_by_subject read failed for %s", user.get("id"))
+        return {
+            "week_start": None,
+            "week_end": None,
+            "items": [],
+            "total_minutes": 0,
+            "total_hours": 0,
+            "trust_status": "preview",
+        }
 
 
 @router.get("/plan/changelog")
