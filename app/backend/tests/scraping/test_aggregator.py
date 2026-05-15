@@ -123,3 +123,23 @@ def test_discovery_keeps_lifecycle_links_in_lifecycle_links_list():
     types = sorted(l.event_type for l in result.lifecycle_links)
     assert types == ["admit_card", "corrigendum"]
     assert all(l.url.startswith("https://www.freejobalert.com/") for l in result.lifecycle_links)
+
+
+def test_discover_filters_cloudflare_cdn_cgi_decoy_urls():
+    """Cloudflare's scrape-shield rewrites some links into ``/cdn-cgi/...``
+    decoys with opaque, unstable URLs. Queueing those poisons evidence
+    traceability and URL-based dedup. The discoverer must drop them."""
+    html = """
+      <a href="/government-jobs/">Government Jobs (listing root)</a>
+      <a href="/nhai-recruitment-2026/">NHAI Recruitment 2026</a>
+      <a href="/cdn-cgi/content?url=https://www.indgovtjobs.net/something">Hidden decoy</a>
+      <a href="/cdn-cgi/l/email-protection#abcdef">Obfuscated email</a>
+    """
+    result = discover_aggregator_detail_urls(
+        html,
+        "https://www.indgovtjobs.net/government-jobs/",
+        max_items=10,
+    )
+    assert "https://www.indgovtjobs.net/nhai-recruitment-2026/" in result.urls
+    assert all("/cdn-cgi/" not in u for u in result.urls)
+    assert result.stats.get("cloudflare_filtered", 0) == 2

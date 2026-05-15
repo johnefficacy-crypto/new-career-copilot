@@ -27,9 +27,21 @@ def _norm(value: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
 
 
-def _norm_url(value: str | None) -> str:
+def normalize_url(value: str | None) -> str:
+    """Public URL normaliser shared with the runner's pre-LLM dedup path.
+
+    Lowercases, strips whitespace, drops the query string, and strips
+    trailing slashes — enough to match "same notice, different
+    capitalisation / tracking params". Stricter than a full URL parse,
+    deliberately: tracking params are noise for identity here.
+    """
     raw = (value or "").strip().lower()
     return raw.split("?", 1)[0].rstrip("/")
+
+
+# Back-compat private alias — existing callers in this module use the
+# underscore form. New callers should import ``normalize_url``.
+_norm_url = normalize_url
 
 
 def _title_ratio(a: str, b: str) -> float:

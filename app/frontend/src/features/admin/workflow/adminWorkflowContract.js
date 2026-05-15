@@ -69,6 +69,11 @@ export const HIGH_RISK_QUEUE_FIELDS = [
   "official_apply_url",
   "organization_name",
   "total_vacancies",
+  // Post-scoped. FieldReviewGroup already renders this per post with a
+  // boolean correction control; before this, the backend gate blocked
+  // promotion on missing requires_domicile evidence but the drawer
+  // never surfaced the row, dead-ending the reviewer.
+  "requires_domicile",
 ];
 
 export const RECOMMENDED_REVIEW_FIELDS = [

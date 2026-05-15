@@ -153,3 +153,17 @@ def test_recruitment_key_unified_across_callers():
         official_notification_url="https://x",
     )
     assert compute_similarity_key(data) == same
+
+
+def test_normalize_url_strips_query_and_trailing_slash_for_dedup():
+    """Same notice with tracking params or trailing slash differences
+    must hash to the same dedup key, otherwise the runner's pre-LLM
+    duplicate short-circuit can't fire."""
+    from app.scraping.dedup import normalize_url
+
+    base = "https://ssc.gov.in/cgl-2026"
+    assert normalize_url(base + "/") == normalize_url(base)
+    assert normalize_url(base + "?utm_source=x") == normalize_url(base)
+    assert normalize_url(" HTTPS://SSC.GOV.IN/CGL-2026 ") == normalize_url(base)
+    assert normalize_url(None) == ""
+    assert normalize_url("") == ""

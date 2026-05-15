@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -35,7 +36,7 @@ from .extractor import (
     fetch_page_text,
 )
 from .fetcher import FetchResult, fetch, strip_html
-from .dedup import find_duplicate
+from .dedup import find_duplicate, normalize_url as _norm_url_for_dedup
 from .normalizer import normalize_recruitment
 from .promotion_gate import evaluate_promotion_gate
 from .resolver import ResolverResult, resolve_with_registry
@@ -1323,6 +1324,30 @@ def run_scraping_pass(
     ) -> str | None:
         """Run extraction → dedup → queue insert. Returns inserted queue id or None on failure."""
         nonlocal total_found, total_new, total_dup
+
+        # ── Pre-LLM URL dedup ──────────────────────────────────────────────
+        # extract_recruitment_data is an Anthropic call. If we already have
+        # a canonical recruitment with this exact URL there is no value in
+        # spending a model token on it — short-circuit before extraction.
+        # Title/org-similarity dedup still happens post-extraction; this
+        # only catches the URL-exact case, which is the cheapest and most
+        # common false-positive in re-scrape passes.
+        norm_item_url = _norm_url_for_dedup(item_url)
+        if norm_item_url:
+            for r in existing_recs:
+                rec_urls = {
+                    _norm_url_for_dedup(r.get("official_notification_url")),
+                    _norm_url_for_dedup(r.get("official_apply_url")),
+                } - {""}
+                if norm_item_url in rec_urls:
+                    total_found += 1
+                    total_dup += 1
+                    logger.info(
+                        "scrape.pre_llm_duplicate run_id=%s source_id=%s url=%s recruitment_id=%s",
+                        run_id, src.get("id"), item_url, r.get("id"),
+                    )
+                    return None
+
         extraction = extract_recruitment_data(raw, item_url, source_name, mock=mock)
         if not extraction:
             error_log.append({"source": source_name, "url": item_url, "error": "Extraction returned null", "at": utc_now_iso()})
@@ -1333,9 +1358,21 @@ def run_scraping_pass(
         total_found += 1
 
         sim_key = compute_similarity_key(data)
+        # Canonical-identity sanity. RawExtractedRecruitment is permissive,
+        # so a low-quality extraction can produce e.g. ``"-0-"`` (empty
+        # org + null year + empty title). Every other low-quality
+        # extraction would collapse to the same sim_key and false-match
+        # via the queued-similarity-key signal, polluting both the
+        # ``recruitment_candidates`` table and the queue's dedup view.
+        # Detect the collapse and (a) swap in a per-row unique sentinel
+        # so find_duplicate can't false-match, (b) skip the canonical
+        # candidate upsert later. The queue row is still inserted and
+        # marked needs_review so an admin can fill the gaps.
+        canonical_collapsed = bool(re.fullmatch(r"-\d+-", sim_key))
+        sim_key_for_dedup = sim_key if not canonical_collapsed else f"__incomplete_{uuid.uuid4().hex}"
         decision = find_duplicate(
             data.model_dump(),
-            sim_key=sim_key,
+            sim_key=sim_key_for_dedup,
             existing_recruitments=existing_recs,
             queued=queued_id_by_key,
         )
@@ -1353,6 +1390,7 @@ def run_scraping_pass(
             "aggregator_listing_id": listing_id,
             "resolver_reason": resolver_result.reason if resolver_result else None,
             "resolver_host": resolver_result.host if resolver_result else None,
+            "canonical_key_invalid": canonical_collapsed,
         }
         extraction_provider = extraction.get("provider") or ("mock" if extraction.get("is_mock") else "anthropic")
         document_id = _ensure_notification_document(
@@ -1383,6 +1421,17 @@ def run_scraping_pass(
             official_source_host = None
             evidence_required = bool(src.get("requires_official_confirmation"))
 
+        # ``extraction_status`` distinguishes a technically successful
+        # model call from one whose output is admin-usable. A collapsed
+        # canonical key (missing org/title/year) or a data_quality_score
+        # below the review threshold means the row needs a human pass
+        # before any downstream consumer treats it as "extraction
+        # completed". This separates transport success from semantic
+        # success in the admin queue and dashboards.
+        is_low_quality = normalized.data_quality_score < 0.30
+        extraction_status = (
+            "needs_review" if (canonical_collapsed or is_low_quality) else "ok"
+        )
         queue_payload = {
             "source_url": item_url,
             "source_name": source_name,
@@ -1399,16 +1448,17 @@ def run_scraping_pass(
             "official_source_resolved": official_source_resolved,
             "official_source_host": official_source_host,
             "evidence_required": evidence_required,
-            "extraction_status": "ok",
+            "extraction_status": extraction_status,
             "notification_document_id": document_id,
             "extraction_provider": extraction_provider,
             "extraction_prompt_version": PROMPT_VERSION,
         }
         logger.info(
-            "scrape.queue_insert run_id=%s source_id=%s source_name=%s target_url=%s extraction_status=%s confidence_score=%.2f data_quality_score=%.2f duplicate_status=%s duplicate_reason=%s resolver=%s",
-            run_id, src.get("id"), source_name, item_url, "ok",
+            "scrape.queue_insert run_id=%s source_id=%s source_name=%s target_url=%s extraction_status=%s confidence_score=%.2f data_quality_score=%.2f duplicate_status=%s duplicate_reason=%s resolver=%s canonical_key_invalid=%s",
+            run_id, src.get("id"), source_name, item_url, extraction_status,
             confidence, normalized.data_quality_score, queue_payload["status"], decision.reason,
             resolver_result.reason if resolver_result else None,
+            canonical_collapsed,
         )
         inserted = execute_or_raise(
             "scrape_queue.insert",
@@ -1420,8 +1470,26 @@ def run_scraping_pass(
             total_dup += 1
         else:
             total_new += 1
-            if inserted_id:
+            # Only register a valid canonical key in the run-local map.
+            # Registering a ``-0-`` collapse here would cause every
+            # subsequent incomplete extraction in the same run to
+            # false-dup against this row.
+            if inserted_id and not canonical_collapsed:
                 queued_id_by_key.setdefault(sim_key, inserted_id)
+
+        if canonical_collapsed:
+            # Skip the canonical candidate merge entirely. The queue row
+            # is still inserted (extraction_status=needs_review) so an
+            # admin can fill in the missing identity fields, after which
+            # a follow-up pass can build a real candidate row.
+            logger.info(
+                "scrape.canonical_key_invalid run_id=%s source_id=%s url=%s sim_key=%s "
+                "title=%r organization=%r year=%r data_quality_score=%.2f",
+                run_id, src.get("id"), item_url, sim_key,
+                data.title, data.organization_name, data.year,
+                normalized.data_quality_score,
+            )
+            return inserted_id
 
         # Candidate merge: tie this queue row to a canonical candidate keyed
         # by ``recruitment_key(org, year, title)``. Future PRs upgrade the
