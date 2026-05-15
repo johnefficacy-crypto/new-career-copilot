@@ -59,6 +59,7 @@ def test_risk_flag_extra_fields_rejected():
 def test_valid_conflict_passes():
     out = validate_conflicts([
         {
+            "conflict_id": "11111111-1111-4111-8111-111111111111",
             "conflict_key": "apply_end_date.mismatch",
             "field_path": "apply_end_date",
             "values": [
@@ -68,13 +69,14 @@ def test_valid_conflict_passes():
         }
     ])
     assert out[0]["status"] == "open"  # default
+    assert out[0]["conflict_id"] == "11111111-1111-4111-8111-111111111111"
     assert len(out[0]["values"]) == 2
 
 
 def test_conflict_with_no_values_rejected():
     with pytest.raises(ValidationError):
         validate_conflicts([
-            {"conflict_key": "k", "field_path": "p", "values": []}
+            {"conflict_id": "id-1", "conflict_key": "k", "field_path": "p", "values": []}
         ])
 
 
@@ -82,6 +84,7 @@ def test_conflict_value_confidence_out_of_range_rejected():
     with pytest.raises(ValidationError):
         validate_conflicts([
             {
+                "conflict_id": "id-1",
                 "conflict_key": "k",
                 "field_path": "p",
                 "values": [{"source": "x", "value": "y", "confidence": 1.5}],
@@ -93,10 +96,24 @@ def test_conflict_status_must_be_known_value():
     with pytest.raises(ValidationError):
         validate_conflicts([
             {
+                "conflict_id": "id-1",
                 "conflict_key": "k",
                 "field_path": "p",
                 "values": [{"source": "x", "value": "y"}],
                 "status": "maybe",
+            }
+        ])
+
+
+def test_conflict_missing_id_is_rejected():
+    # PR3 added conflict_id as a required field. Existing PR1/PR2 callers
+    # had no way to pass one; the validator now insists.
+    with pytest.raises(ValidationError):
+        validate_conflicts([
+            {
+                "conflict_key": "k",
+                "field_path": "p",
+                "values": [{"source": "x", "value": "y"}],
             }
         ])
 

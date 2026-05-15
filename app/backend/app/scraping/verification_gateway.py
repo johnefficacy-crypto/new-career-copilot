@@ -23,6 +23,10 @@ from typing import Any
 
 from supabase import Client
 
+from .consensus_engine import (
+    collect_observations,
+    compare_observations,
+)
 from .official_resolver import (
     ResolverCandidate,
     ResolverResult,
@@ -34,6 +38,8 @@ from .verification_reports import (
     get_active_report,
     get_or_create_verification_report_for_queue,
     set_resolver_state,
+    update_lifecycle_status,
+    write_conflicts,
 )
 
 
@@ -196,6 +202,128 @@ def _persist_resolver_outcome(
         )
 
 
+# ── Stage 3: consensus (PR3) ──────────────────────────────────────────
+
+
+def _fetch_peer_queue_items(
+    supabase: Client,
+    *,
+    primary_queue_item: dict[str, Any],
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Find other open queue items that likely describe the same recruitment.
+
+    Identity key: (organization_name, notification_number) when both
+    present. Falls back to no peers — better to short-circuit consensus
+    than match too broadly and produce spurious conflicts.
+    """
+    extracted = primary_queue_item.get("extracted_data") or {}
+    org = (extracted.get("organization_name") or "").strip().lower()
+    notif = (extracted.get("notification_number") or "").strip().lower()
+    if not org or not notif:
+        return []
+    try:
+        rows = (
+            supabase.table("scrape_queue")
+            .select("id, source_url, source_name, extracted_data")
+            .limit(200)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("orchestrator.consensus_peer_lookup_failed")
+        return []
+    peers: list[dict[str, Any]] = []
+    for r in rows:
+        if r.get("id") == primary_queue_item.get("id"):
+            continue
+        ext = r.get("extracted_data") or {}
+        if (ext.get("organization_name") or "").strip().lower() != org:
+            continue
+        if (ext.get("notification_number") or "").strip().lower() != notif:
+            continue
+        peers.append(r)
+        if len(peers) >= limit:
+            break
+    return peers
+
+
+def run_consensus_stage(
+    supabase: Client,
+    report_id: str,
+    *,
+    queue_item: dict[str, Any] | None = None,
+    source: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run the consensus engine for a single report.
+
+    Behaviour:
+
+    * Loads peer queue items by identity (org + notification_number).
+    * Compares the consensus fields across the primary + peers.
+    * Writes conflicts (if any) onto the report's jsonb column.
+    * Transitions the lifecycle: ``classified → consensus_pending`` first
+      (always), then ``consensus_pending → conflict`` if conflicts exist.
+    * On no conflicts: transitions back ``consensus_pending → classified``.
+    """
+    report = _fetch_report(supabase, report_id)
+    if report is None:
+        raise LookupError(f"verification_report {report_id} not found")
+    if queue_item is None and report.get("scrape_queue_id"):
+        queue_item = _fetch_queue_item(supabase, report["scrape_queue_id"])
+    if queue_item is None:
+        # Recruitment-only reports (PR7 soft backfill) have no peer-queue
+        # signal yet; consensus is a no-op until PR5's canonical-edit
+        # hook brings their peers into scope.
+        return {"status": "skipped_no_queue", "report_id": report_id}
+
+    # Move into consensus_pending first; if we're already there (re-run),
+    # update_lifecycle_status no-ops on same-state.
+    if report.get("lifecycle_status") == "classified":
+        update_lifecycle_status(supabase, report_id, "consensus_pending")
+
+    peers = _fetch_peer_queue_items(supabase, primary_queue_item=queue_item)
+    observations = collect_observations(
+        primary_queue_item=queue_item,
+        primary_source=source,
+        peer_queue_items=peers,
+    )
+    result = compare_observations(observations)
+
+    conflicts_payload = [
+        {
+            "conflict_id": c.conflict_id,
+            "conflict_key": c.conflict_key,
+            "field_path": c.field_path,
+            "values": c.values,
+            "status": "open",
+        }
+        for c in result.conflicts
+    ]
+    if conflicts_payload:
+        write_conflicts(
+            supabase, report_id,
+            conflicts=conflicts_payload,
+            lifecycle_status="conflict",
+            recommended_action="resolve_conflict",
+        )
+    else:
+        # No conflicts — clear any stale list and exit consensus_pending.
+        write_conflicts(
+            supabase, report_id,
+            conflicts=[],
+            lifecycle_status="classified",
+        )
+
+    return {
+        "status": "conflict" if conflicts_payload else "clean",
+        "report_id": report_id,
+        "conflict_count": len(conflicts_payload),
+        "peer_count": len(peers),
+    }
+
+
 def _candidate_to_dict(c: ResolverCandidate) -> dict[str, Any]:
     return {
         "url": c.url,
@@ -270,6 +398,26 @@ def run_gateway_for_queue_item(
     # itself it's invoked on an existing report; the queue entry-point
     # is the one that knows whether classification just minted a row.
     stage_result.classification_outcome = outcome
+
+    # PR3: chain into consensus stage.
+    # Guard: Tier A with unresolved resolver state skips consensus —
+    # no point comparing values when we don't have an official anchor.
+    is_tier_a = report.get("criticality_tier") == "A_HIGH_STAKES"
+    if is_tier_a and stage_result.resolver_status in (None, "not_attempted", "unresolved"):
+        return stage_result
+    try:
+        run_consensus_stage(
+            supabase, report["id"],
+            queue_item=queue_item, source=source,
+        )
+    except Exception:  # noqa: BLE001
+        # Plan §4 error handling: never raise out of the consensus
+        # stage. Lifecycle stays at consensus_pending; admin sees
+        # request_admin_review as the recommended action.
+        logger.exception(
+            "orchestrator.consensus_stage_failed report_id=%s",
+            report["id"],
+        )
     return stage_result
 
 
@@ -298,6 +446,7 @@ def enqueue_or_run_gateway_after_scrape_queue_insert(
 __all__ = [
     "GatewayResult",
     "enqueue_or_run_gateway_after_scrape_queue_insert",
+    "run_consensus_stage",
     "run_gateway_for_queue_item",
     "run_resolver_stage",
 ]

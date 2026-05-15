@@ -255,7 +255,11 @@ class FakeSupabase:
         if not row.get("scrape_queue_id") and not row.get("recruitment_id"):
             raise ValueError("chk_verification_report_owner")
         lifecycle = row.get("lifecycle_status")
-        if lifecycle not in {"classified", "backfilled_needs_review", "superseded", "rejected"}:
+        if lifecycle not in {
+            "classified", "backfilled_needs_review", "superseded", "rejected",
+            # PR3 extension (migration 079):
+            "consensus_pending", "conflict", "admin_override_required",
+        }:
             raise ValueError(f"chk_lifecycle_status: {lifecycle!r}")
         tier = row.get("criticality_tier")
         if tier not in {"A_HIGH_STAKES", "B_TECHNICAL_CONDITIONAL", "C_STANDARD_LONG_TAIL"}:
@@ -266,6 +270,8 @@ class FakeSupabase:
             "promote_eligible", "block_publish", "no_action",
             # PR2 extension (migration 078):
             "confirm_suggested_proof",
+            # PR3 extension (migration 081):
+            "resolve_conflict",
         }:
             raise ValueError(f"chk_recommended_action: {rec_action!r}")
         trig = row.get("trigger_reason")

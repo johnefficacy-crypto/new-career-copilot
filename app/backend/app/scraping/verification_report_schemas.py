@@ -54,6 +54,10 @@ class ConflictValue(BaseModel):
 class VerificationConflict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # PR3 addition. A stable uuid that survives report-version supersession,
+    # so an override row can reference a specific conflict even after the
+    # report is re-generated with a new array ordering.
+    conflict_id: str = Field(min_length=1)
     conflict_key: str = Field(min_length=1)
     field_path: str = Field(min_length=1)
     values: list[ConflictValue] = Field(min_length=1)
