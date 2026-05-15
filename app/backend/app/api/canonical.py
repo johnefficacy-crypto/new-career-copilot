@@ -24,6 +24,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from supabase import Client
 
+from app.api.community_seed import (
+    COMMUNITY_CHANNEL_RULES as _COMMUNITY_CHANNEL_RULES_SNAPSHOT,
+    COMMUNITY_FLAIRS as _COMMUNITY_FLAIRS_SNAPSHOT,
+    COMMUNITY_SPACES as _COMMUNITY_SPACES_SNAPSHOT,
+    COMMUNITY_THREADS as _COMMUNITY_THREADS_SNAPSHOT,
+    COMMUNITY_USERS as _COMMUNITY_USERS_SNAPSHOT,
+)
 from app.core.auth import get_current_user, get_optional_user
 from app.db.supabase_client import get_supabase_admin
 from app.eligibility.recompute_queue import enqueue_eligibility_recompute
@@ -1298,6 +1305,26 @@ async def categories():
             }
             for r in rows
         ]
+    }
+
+
+@router_community.get("/spaces")
+async def spaces():
+    """Telegram-style spaces + channels.
+
+    Returns the structured community map that the frontend
+    `features/community/CommunityScreen` consumes. Until forum_spaces /
+    forum_channels canonical tables land we serve a deterministic
+    reference snapshot — the same shape lives in
+    `frontend/src/features/community/data.js`, so the UI degrades
+    gracefully when this endpoint is missing or DB rows are empty.
+    """
+    return {
+        "spaces": _COMMUNITY_SPACES_SNAPSHOT,
+        "users": _COMMUNITY_USERS_SNAPSHOT,
+        "threads": _COMMUNITY_THREADS_SNAPSHOT,
+        "flairs": _COMMUNITY_FLAIRS_SNAPSHOT,
+        "channel_rules": _COMMUNITY_CHANNEL_RULES_SNAPSHOT,
     }
 
 

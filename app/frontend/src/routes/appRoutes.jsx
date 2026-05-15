@@ -17,9 +17,7 @@ import Mocks from "../pages/study/Mocks";
 import Subjects from "../pages/study/Subjects";
 import WeeklyReview from "../pages/study/WeeklyReview";
 import StudyCompare from "../pages/study/Compare";
-import Community from "../pages/Community";
-import CreateThread from "../pages/CreateThread";
-import ThreadDetail from "../pages/ThreadDetail";
+import CommunityScreen from "../features/community/CommunityScreen";
 import Marketplace from "../pages/Marketplace";
 import ResourceDetail from "../pages/ResourceDetail";
 import Mentors from "../pages/Mentors";
@@ -47,9 +45,10 @@ export const appRouteElements = (
       <Route path="/app/study/subjects" element={<Subjects />} />
       <Route path="/app/study/review" element={<WeeklyReview />} />
       <Route path="/app/study/compare" element={<StudyCompare />} />
-      <Route path="/app/community" element={<Community />} />
-      <Route path="/app/community/new" element={<CreateThread />} />
-      <Route path="/app/community/:slug" element={<ThreadDetail />} />
+      <Route path="/app/community" element={<CommunityScreen />} />
+      <Route path="/app/community/:spaceId" element={<CommunityScreen />} />
+      <Route path="/app/community/:spaceId/:channelId" element={<CommunityScreen />} />
+      <Route path="/app/community/:spaceId/:channelId/:threadId" element={<CommunityScreen />} />
       <Route path="/app/marketplace" element={<Marketplace />} />
       <Route path="/app/marketplace/:id" element={<ResourceDetail />} />
       <Route path="/app/mentors" element={<Mentors />} />
