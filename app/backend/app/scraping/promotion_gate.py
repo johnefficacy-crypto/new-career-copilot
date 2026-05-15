@@ -201,3 +201,145 @@ def evaluate_promotion_gate(supabase: Client, queue_item: dict[str, Any]) -> Gat
         )
 
     return GateResult(ok=True, warnings=warnings)
+
+
+# ── PR2: Gateway promotion gate stub ─────────────────────────────────
+#
+# The pre-existing :func:`evaluate_promotion_gate` enforces the
+# high-risk-fields contract on a queue item. The *gateway* promotion
+# gate is a separate concern: it gates promotion based on the
+# verification report's resolver state.
+#
+# PR2 ships the *stub* version — Tier A blocks on unresolved/missing
+# official proof; Tier B and C pass unconditionally. PR3 adds the
+# consensus check; PR4 adds the eligibility-complexity check.
+#
+# Both gates run in sequence on the admin promotion path: a queue item
+# must pass :func:`evaluate_promotion_gate` AND
+# :func:`check_gateway_promotion`. They cover orthogonal risks and
+# neither replaces the other.
+
+@dataclass
+class GatewayGateResult:
+    """Outcome of the gateway promotion gate.
+
+    Mirrors :class:`GateResult` shape so callers can fold both results
+    into the same downstream "this is why we blocked" UI.
+    """
+
+    ok: bool
+    reason_code: str | None = None
+    message: str | None = None
+    blocking_level: str | None = None  # 'promotion_blocker' | 'publish_blocker' | 'warning'
+    tier: str | None = None
+
+
+def check_gateway_promotion(report: dict[str, Any] | None) -> GatewayGateResult:
+    """PR2 stub gateway promotion gate.
+
+    Behaviour:
+
+    * Tier A — blocks if no active verification report OR if
+      ``official_resolution_status`` is null / ``not_attempted`` /
+      ``unresolved``. ``admin_attached`` / ``auto_resolved`` pass.
+    * Tier B / Tier C — pass unconditionally. PR3 adds consensus
+      blockers, PR4 adds complexity blockers for Tier B.
+
+    The reason codes here are stable contract surfaces; the admin UI
+    matches on them to show the right blocker copy.
+    """
+    if report is None:
+        return GatewayGateResult(
+            ok=False,
+            reason_code="gateway_not_ready",
+            message="Verification report missing — gateway has not processed this item.",
+            blocking_level="promotion_blocker",
+        )
+
+    tier = report.get("criticality_tier")
+    if tier == "A_HIGH_STAKES":
+        status = report.get("official_resolution_status")
+        if status in (None, "not_attempted", "unresolved"):
+            return GatewayGateResult(
+                ok=False,
+                reason_code="official_proof_missing",
+                message="Tier A recruitment requires an official-source proof before promotion.",
+                blocking_level="promotion_blocker",
+                tier=tier,
+            )
+        # PR3 strengthening: Tier A also blocks on unresolved consensus
+        # conflicts. ``resolved_by_admin`` and ``ignored`` pass.
+        if _has_unresolved_conflict(report):
+            return GatewayGateResult(
+                ok=False,
+                reason_code="consensus_conflict_unresolved",
+                message="Tier A recruitment has an unresolved consensus conflict — admin override required.",
+                blocking_level="promotion_blocker",
+                tier=tier,
+            )
+
+    # PR4 strengthening: any tier with an unrepresented complexity
+    # ``promotion_blocker`` flag is held back. The detector wrote the
+    # signal to ``risk_flags`` and the complexity_contract adapter
+    # decides representation; here we just inspect the gate's view.
+    has_promotion_blocker = _has_complexity_blocker(report, level="promotion_blocker")
+    if has_promotion_blocker:
+        return GatewayGateResult(
+            ok=False,
+            reason_code="eligibility_rule_missing",
+            message="An eligibility-complexity rule is detected but not yet represented as a canonical rule.",
+            blocking_level="promotion_blocker",
+            tier=tier,
+        )
+    return GatewayGateResult(ok=True, tier=tier)
+
+
+def _has_complexity_blocker(report: dict[str, Any], *, level: str) -> bool:
+    """Return True if a complexity flag at ``level`` is on ``risk_flags``.
+
+    The publish gate elsewhere (``admin_trust.py``) checks
+    ``publish_blocker``; the gateway promotion gate here only blocks on
+    ``promotion_blocker``. Same shape, different threshold.
+    """
+    for flag in report.get("risk_flags") or []:
+        if (flag or {}).get("blocking_level") == level:
+            return True
+    return False
+
+
+def _has_unresolved_conflict(report: dict[str, Any]) -> bool:
+    """Inlined consensus check.
+
+    Avoids importing ``consensus_engine`` at module load so the gate's
+    dependency surface stays flat.
+    """
+    for c in report.get("conflicts") or []:
+        if (c or {}).get("status", "open") == "open":
+            return True
+    return False
+
+
+def check_gateway_publish(report: dict[str, Any] | None) -> GatewayGateResult:
+    """Publish-readiness gate (PR4).
+
+    Stricter than :func:`check_gateway_promotion` — publish requires
+    no ``publish_blocker`` complexity flag (in addition to all the
+    promotion checks). Used by ``admin_trust.py``'s publish-readiness
+    path so a recruitment can be promoted to draft but held back from
+    publish until conditional rules are represented.
+    """
+    promotion = check_gateway_promotion(report)
+    if not promotion.ok:
+        return promotion
+    if report is not None and _has_complexity_blocker(report, level="publish_blocker"):
+        return GatewayGateResult(
+            ok=False,
+            reason_code="eligibility_rule_missing",
+            message=(
+                "Conditional eligibility rule detected but not yet represented as a canonical rule. "
+                "Publish blocked; draft remains allowed."
+            ),
+            blocking_level="publish_blocker",
+            tier=report.get("criticality_tier"),
+        )
+    return GatewayGateResult(ok=True, tier=promotion.tier)

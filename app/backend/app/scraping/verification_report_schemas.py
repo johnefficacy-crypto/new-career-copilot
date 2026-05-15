@@ -54,6 +54,10 @@ class ConflictValue(BaseModel):
 class VerificationConflict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # PR3 addition. A stable uuid that survives report-version supersession,
+    # so an override row can reference a specific conflict even after the
+    # report is re-generated with a new array ordering.
+    conflict_id: str = Field(min_length=1)
     conflict_key: str = Field(min_length=1)
     field_path: str = Field(min_length=1)
     values: list[ConflictValue] = Field(min_length=1)
@@ -70,11 +74,51 @@ class EvidenceSummaryItem(BaseModel):
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
+# ── PR2: SuggestedOfficialUrl ─────────────────────────────────────────
+#
+# The resolver may surface multiple candidate URLs that fell into the
+# "suggest_for_admin" confidence band (0.60–0.85). Each one is stored
+# under the report's ``suggested_official_urls`` jsonb column and the
+# admin "confirm-suggested-proof" endpoint accepts one of them.
+#
+# ``method`` records *how* the candidate was found, NOT what the admin
+# did with it. When an admin accepts, the row is preserved as-is for
+# the audit trail and a separate column flips to ``admin_attached``.
+
+OfficialUrlMethod = Literal[
+    "direct_link",
+    "duplicate",
+    "canonical_match",
+    "source_registry",
+    "career_crawl",
+    "sitemap",
+]
+
+
+class SuggestedOfficialUrl(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(min_length=1)
+    url_type: Literal["notification", "apply", "pdf", "career_page", "unknown"]
+    method: OfficialUrlMethod
+    confidence: float = Field(ge=0.0, le=1.0)
+    source_id: str | None = None
+    host: str | None = None
+    evidence_summary_key: str | None = None
+
+
 # Validators reused for the full jsonb payloads. ``TypeAdapter`` lets us
 # validate list/dict shapes without wrapping them in a container model.
 _RISK_FLAGS_ADAPTER = TypeAdapter(list[RiskFlag])
 _CONFLICTS_ADAPTER = TypeAdapter(list[VerificationConflict])
 _EVIDENCE_ADAPTER = TypeAdapter(dict[str, EvidenceSummaryItem])
+_SUGGESTED_URLS_ADAPTER = TypeAdapter(list[SuggestedOfficialUrl])
+
+
+def validate_suggested_official_urls(value: Any) -> list[dict[str, Any]]:
+    """Validate ``suggested_official_urls`` jsonb. Returns canonical dict form."""
+    urls = _SUGGESTED_URLS_ADAPTER.validate_python(value if value is not None else [])
+    return [u.model_dump(exclude_none=True) for u in urls]
 
 
 def validate_risk_flags(value: Any) -> list[dict[str, Any]]:
@@ -120,12 +164,45 @@ def validate_evidence_summary(value: Any) -> dict[str, dict[str, Any]]:
     return {k: items[k].model_dump(exclude_none=True) for k in items}
 
 
+# ── PR4: EligibilityComplexitySignal ──────────────────────────────────
+#
+# Produced by ``app.scraping.eligibility_complexity`` and consumed by
+# ``app.eligibility.complexity_contract`` to decide whether a Tier B
+# (and Tier A age-relaxation) publish gate should fire. The full
+# ``BlockingLevel`` set applies here (including ``conditional_result_allowed``)
+# unlike :class:`RiskFlag`, which is narrower.
+
+
+class EligibilityComplexitySignal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    flag: str = Field(min_length=1)
+    field_key: str = Field(min_length=1)
+    source_field_path: str = Field(min_length=1)
+    blocking_level: BlockingLevel
+    evidence_summary_key: str | None = None
+
+
+_COMPLEXITY_ADAPTER = TypeAdapter(list[EligibilityComplexitySignal])
+
+
+def validate_complexity_signals(value: Any) -> list[dict[str, Any]]:
+    """Validate a list of complexity signals; returns canonical dict form."""
+    signals = _COMPLEXITY_ADAPTER.validate_python(value if value is not None else [])
+    return [s.model_dump(exclude_none=True) for s in signals]
+
+
 __all__ = [
     "RiskFlag",
     "ConflictValue",
     "VerificationConflict",
     "EvidenceSummaryItem",
+    "SuggestedOfficialUrl",
+    "OfficialUrlMethod",
+    "EligibilityComplexitySignal",
     "validate_risk_flags",
     "validate_conflicts",
     "validate_evidence_summary",
+    "validate_suggested_official_urls",
+    "validate_complexity_signals",
 ]

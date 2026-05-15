@@ -46,6 +46,7 @@ from .verification_report_schemas import (
     validate_conflicts,
     validate_evidence_summary,
     validate_risk_flags,
+    validate_suggested_official_urls,
 )
 
 
@@ -66,12 +67,85 @@ PR1_LIFECYCLE_STATES: frozenset[str] = frozenset({
 })
 
 
-ALLOWED_REPORT_TRANSITIONS: dict[str, frozenset[str]] = {
-    "classified":              frozenset({"superseded", "rejected"}),
-    "backfilled_needs_review": frozenset({"classified", "superseded", "rejected"}),
-    "rejected":                frozenset({"superseded"}),
-    "superseded":              frozenset(),   # terminal, immutable
+# Set of states the service-layer transition guard accepts. Each PR
+# widens this; the underlying DB constraint widens in lockstep via its
+# own migration.
+_KNOWN_LIFECYCLE_STATES: set[str] = set(PR1_LIFECYCLE_STATES) | {
+    # PR3 (migration 079):
+    "consensus_pending",
+    "conflict",
+    "admin_override_required",
+    # PR4 (migration 082):
+    "complexity_detected",
+    # PR5 (migration 084):
+    "stale_source_changed",
+    "stale_canonical_changed",
+    "needs_reverification",
 }
+
+
+ALLOWED_REPORT_TRANSITIONS: dict[str, set[str]] = {
+    "classified":              {"superseded", "rejected"},
+    "backfilled_needs_review": {"classified", "superseded", "rejected"},
+    "rejected":                {"superseded"},
+    "superseded":              set(),   # terminal, immutable
+}
+
+
+def extend_transitions(additions: dict[str, set[str]]) -> None:
+    """Per-key union extension. Use this in every later PR's amendment.
+
+    ``dict |=`` would *overwrite* existing keys rather than unioning,
+    silently dropping PR1's transitions. Per the PR plan §0.1 the
+    matrix is a single source of truth and every PR amends via this
+    helper.
+    """
+    for state, allowed in additions.items():
+        ALLOWED_REPORT_TRANSITIONS[state] = (
+            ALLOWED_REPORT_TRANSITIONS.get(state, set()) | allowed
+        )
+
+
+# ── PR3 lifecycle additions ───────────────────────────────────────────
+#
+# Migration 079 widens the DB ``chk_lifecycle_status`` constraint to
+# accept these three. The transition matrix is widened here.
+
+extend_transitions({
+    "classified":              {"consensus_pending"},
+    "consensus_pending":       {"classified", "conflict", "admin_override_required", "superseded", "rejected"},
+    "conflict":                {"admin_override_required", "classified", "superseded", "rejected"},
+    "admin_override_required": {"classified", "superseded", "rejected"},
+})
+
+
+# ── PR4 lifecycle additions ───────────────────────────────────────────
+#
+# Migration 082 widens the DB ``chk_lifecycle_status`` constraint to
+# accept ``complexity_detected``. The consensus stage may skip-to
+# complexity for Tier B per plan §5.
+
+extend_transitions({
+    "classified":          {"complexity_detected"},
+    "consensus_pending":   {"complexity_detected"},
+    "complexity_detected": {"classified", "superseded", "rejected"},
+})
+
+
+# ── PR5 lifecycle additions ───────────────────────────────────────────
+#
+# Migration 084 widens the DB constraint with three staleness states.
+# ``pending_reverification_batch`` is intentionally NOT a lifecycle
+# state — it's a value of the ``staleness_status`` column (plan §6).
+
+extend_transitions({
+    "classified":              {"stale_source_changed", "stale_canonical_changed", "needs_reverification"},
+    "complexity_detected":     {"stale_source_changed", "stale_canonical_changed", "needs_reverification"},
+    "consensus_pending":       {"stale_source_changed", "stale_canonical_changed", "needs_reverification"},
+    "stale_source_changed":    {"superseded", "rejected"},
+    "stale_canonical_changed": {"superseded", "rejected"},
+    "needs_reverification":    {"superseded", "rejected"},
+})
 
 
 # ── Trigger reasons emitted by PR1 ─────────────────────────────────────
@@ -263,7 +337,7 @@ def update_lifecycle_status(
     This is the ONLY choke point for ``lifecycle_status`` writes. Direct
     table updates bypass the transition matrix and are not supported.
     """
-    if new_status not in PR1_LIFECYCLE_STATES:
+    if new_status not in _KNOWN_LIFECYCLE_STATES:
         raise ValueError(f"unknown lifecycle_status: {new_status!r}")
 
     row = (
@@ -293,6 +367,252 @@ def update_lifecycle_status(
     updated = (
         supabase.table(TABLE)
         .update({"lifecycle_status": new_status})
+        .eq("id", report_id)
+        .execute()
+        .data
+        or [None]
+    )[0]
+    if not updated:
+        raise RuntimeError(f"verification_report {report_id} update returned no row")
+    return updated
+
+
+# ── PR3: consensus state setters ──────────────────────────────────────
+
+
+def write_conflicts(
+    supabase: Client,
+    report_id: str,
+    *,
+    conflicts: list[dict[str, Any]],
+    lifecycle_status: str | None = None,
+    recommended_action: str | None = None,
+) -> dict[str, Any]:
+    """Persist conflict list onto a report and optionally flip lifecycle.
+
+    The consensus engine produces conflict dicts; this is the choke
+    point that validates them through Pydantic and writes them out.
+    Lifecycle flips go via :func:`update_lifecycle_status` so the
+    transition matrix is enforced.
+    """
+    payload: dict[str, Any] = {"conflicts": validate_conflicts(conflicts)}
+    if recommended_action is not None:
+        payload["recommended_action"] = recommended_action
+    updated = (
+        supabase.table(TABLE)
+        .update(payload)
+        .eq("id", report_id)
+        .execute()
+        .data
+        or [None]
+    )[0]
+    if not updated:
+        raise RuntimeError(f"verification_report {report_id} update returned no row")
+    if lifecycle_status is not None:
+        updated = update_lifecycle_status(supabase, report_id, lifecycle_status)
+    return updated
+
+
+def write_complexity_signals(
+    supabase: Client,
+    report_id: str,
+    *,
+    signals: list[dict[str, Any]],
+    lifecycle_status: str | None = None,
+    recommended_action: str | None = None,
+) -> dict[str, Any]:
+    """Persist complexity signals onto a report's ``risk_flags`` jsonb.
+
+    Plan §5: PR4 reuses ``risk_flags`` rather than adding a fourth
+    jsonb column. The signal shape is compatible with the existing
+    ``RiskFlag`` validator — both carry ``flag``, ``field_key``,
+    ``source_field_path``, ``blocking_level``.
+
+    Optional ``lifecycle_status`` flip routes through
+    :func:`update_lifecycle_status` so the transition matrix is
+    enforced.
+    """
+    from .verification_report_schemas import validate_complexity_signals
+
+    payload: dict[str, Any] = {"risk_flags": validate_complexity_signals(signals)}
+    if recommended_action is not None:
+        payload["recommended_action"] = recommended_action
+    updated = (
+        supabase.table(TABLE)
+        .update(payload)
+        .eq("id", report_id)
+        .execute()
+        .data
+        or [None]
+    )[0]
+    if not updated:
+        raise RuntimeError(f"verification_report {report_id} update returned no row")
+    if lifecycle_status is not None:
+        updated = update_lifecycle_status(supabase, report_id, lifecycle_status)
+    return updated
+
+
+def record_override(
+    supabase: Client,
+    *,
+    verification_report_id: str,
+    conflict_id: str,
+    conflict_key: str,
+    field_path: str | None,
+    prior_value: Any,
+    chosen_value: Any,
+    reason: str,
+    evidence_url: str | None,
+    override_scope: str,
+    created_by: str,
+) -> dict[str, Any]:
+    """Insert a row into ``recruitment_verification_overrides``.
+
+    Validates ``override_scope`` against the (post-plan-fix) two-value
+    set; ``'report'`` was removed deliberately and the value is no
+    longer accepted.
+
+    Marks the matching conflict on the report's jsonb column as
+    ``resolved_by_admin``. The conflict row is matched by
+    ``conflict_id``; if no match exists the call raises.
+    """
+    if override_scope not in {"field", "recruitment"}:
+        raise ValueError(f"override_scope must be 'field' or 'recruitment', got {override_scope!r}")
+
+    row = (
+        supabase.table(TABLE)
+        .select("id, conflicts")
+        .eq("id", verification_report_id)
+        .limit(1)
+        .execute()
+        .data
+        or [None]
+    )[0]
+    if not row:
+        raise LookupError(f"verification_report {verification_report_id} not found")
+
+    conflicts = list(row.get("conflicts") or [])
+    matched = False
+    for c in conflicts:
+        if c.get("conflict_id") == conflict_id:
+            c["status"] = "resolved_by_admin"
+            matched = True
+            break
+    if not matched:
+        raise LookupError(
+            f"conflict_id {conflict_id} not found on verification_report {verification_report_id}"
+        )
+
+    override_payload = {
+        "verification_report_id": verification_report_id,
+        "conflict_id": conflict_id,
+        "conflict_key": conflict_key,
+        "field_path": field_path,
+        "prior_value": prior_value,
+        "chosen_value": chosen_value,
+        "reason": reason,
+        "evidence_url": evidence_url,
+        "override_scope": override_scope,
+        "created_by": created_by,
+    }
+    inserted = (
+        supabase.table("recruitment_verification_overrides")
+        .insert(override_payload)
+        .execute()
+        .data
+        or [None]
+    )[0]
+
+    # Persist the resolved-status update on the report.
+    supabase.table(TABLE).update({"conflicts": validate_conflicts(conflicts)}).eq(
+        "id", verification_report_id
+    ).execute()
+
+    return inserted or override_payload
+
+
+# ── PR2: resolver state setters ────────────────────────────────────────
+
+
+_OFFICIAL_RESOLUTION_STATUSES: frozenset[str] = frozenset({
+    "not_attempted",
+    "auto_resolved",
+    "suggested",
+    "unresolved",
+    "admin_attached",
+    "rejected",
+})
+
+
+def set_resolver_state(
+    supabase: Client,
+    report_id: str,
+    *,
+    status: str,
+    method: str | None,
+    confidence: float | None,
+    suggested_urls: list[dict[str, Any]] | None = None,
+    recommended_action: str | None = None,
+) -> dict[str, Any]:
+    """Write resolver outcome onto a verification report.
+
+    The resolver itself never mutates ``lifecycle_status``. That stays
+    on ``classified`` (or whatever PR3+ has elevated it to). The resolver
+    only writes the four resolver columns and may bump
+    ``recommended_action`` to ``confirm_suggested_proof`` /
+    ``await_official_proof`` when appropriate.
+    """
+    if status not in _OFFICIAL_RESOLUTION_STATUSES:
+        raise ValueError(f"unknown official_resolution_status: {status!r}")
+    if confidence is not None and not (0.0 <= confidence <= 1.0):
+        raise ValueError(f"confidence out of range: {confidence!r}")
+    payload: dict[str, Any] = {
+        "official_resolution_status": status,
+        "official_resolution_method": method,
+        "official_resolution_confidence": confidence,
+        "suggested_official_urls": validate_suggested_official_urls(suggested_urls or []),
+    }
+    if recommended_action is not None:
+        payload["recommended_action"] = recommended_action
+
+    updated = (
+        supabase.table(TABLE)
+        .update(payload)
+        .eq("id", report_id)
+        .execute()
+        .data
+        or [None]
+    )[0]
+    if not updated:
+        raise RuntimeError(f"verification_report {report_id} update returned no row")
+    return updated
+
+
+def attach_admin_official_url(
+    supabase: Client,
+    report_id: str,
+    *,
+    chosen_url: str,
+    original_method: str,
+) -> dict[str, Any]:
+    """Record an admin's manual confirmation of a suggested URL.
+
+    Audit-truthful: the new status is ``admin_attached`` (not
+    ``auto_resolved``), preserving the fact that a human made the
+    decision. The original suggestion's ``method`` is kept so we can
+    later answer "what kind of source ended up confirmed?".
+    """
+    payload = {
+        "official_resolution_status": "admin_attached",
+        "official_resolution_method": original_method,
+        # Confidence is preserved as-is on the row; the column already
+        # reflects the suggestion's confidence and the admin's attach
+        # doesn't invalidate that fact.
+        "recommended_action": "request_admin_review",
+    }
+    updated = (
+        supabase.table(TABLE)
+        .update(payload)
         .eq("id", report_id)
         .execute()
         .data
@@ -482,10 +802,16 @@ __all__ = [
     "PR1_LIFECYCLE_STATES",
     "PR1_TRIGGER_REASONS",
     "ALLOWED_REPORT_TRANSITIONS",
+    "attach_admin_official_url",
     "backfill_existing_recruitment",
+    "extend_transitions",
     "get_active_report",
     "get_or_create_verification_report_for_queue",
     "get_or_create_verification_report_for_recruitment",
     "mark_superseded",
+    "record_override",
+    "set_resolver_state",
     "update_lifecycle_status",
+    "write_complexity_signals",
+    "write_conflicts",
 ]

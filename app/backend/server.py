@@ -32,6 +32,7 @@ from app.api.admin_scrape import router as admin_scrape_router
 from app.api.admin_eligibility import router as admin_eligibility_router
 from app.api.auth import router as auth_router
 from app.api.admin_trust import router as admin_trust_router
+from app.api.admin_verification_reports import router as admin_verification_reports_router
 from app.api.evidence import router as evidence_router
 from app.api.exam_intelligence import router as exam_intelligence_router
 from app.api.canonical import router as canonical_router
@@ -166,6 +167,7 @@ api.include_router(eligibility_router)
 api.include_router(notifications_router)
 api.include_router(admin_scrape_router)  # admin scraper trust-gate routes
 api.include_router(admin_trust_router)
+api.include_router(admin_verification_reports_router)  # PR7 gateway read API
 api.include_router(admin_eligibility_router)  # recompute queue, publish impact, generic audit
 api.include_router(admin_persona_router)  # PR4 admin persona controls
 api.include_router(admin_exam_intel_router)  # PR5 admin exam intelligence review

@@ -41,6 +41,9 @@ class _Query:
         self._mode: str = "select"
         self._update_payload: dict[str, Any] | None = None
         self._insert_payload: dict[str, Any] | None = None
+        self._order_col: str | None = None
+        self._order_desc: bool = False
+        self._range: tuple[int, int] | None = None
 
     # ── builder mutations ─────────────────────────────────────────────
 
@@ -70,6 +73,20 @@ class _Query:
         self._limit = n
         return self
 
+    def order(self, col: str, *, desc: bool = False) -> "_Query":
+        self._order_col = col
+        self._order_desc = desc
+        return self
+
+    def range(self, start: int, end: int) -> "_Query":
+        # PostgREST .range(start, end) is inclusive on both ends.
+        self._range = (start, end)
+        return self
+
+    def gt(self, col: str, val: Any) -> "_Query":
+        self._filters.append(("gt", col, val))
+        return self
+
     # ── runner ────────────────────────────────────────────────────────
 
     def _matches(self, row: dict[str, Any]) -> bool:
@@ -84,6 +101,10 @@ class _Query:
                 else:
                     if row.get(col) != val:
                         return False
+            elif op == "gt":
+                cell = row.get(col)
+                if cell is None or not (cell > val):
+                    return False
             else:
                 raise NotImplementedError(op)
         return True
@@ -92,6 +113,14 @@ class _Query:
         rows = self._store._tables.setdefault(self._table, [])
         if self._mode == "select":
             out = [deepcopy(r) for r in rows if self._matches(r)]
+            if self._order_col is not None:
+                out.sort(
+                    key=lambda r: (r.get(self._order_col) is None, r.get(self._order_col)),
+                    reverse=self._order_desc,
+                )
+            if self._range is not None:
+                start, end = self._range
+                out = out[start : end + 1]
             if self._limit is not None:
                 out = out[: self._limit]
             return _ExecResult(out)
@@ -104,7 +133,17 @@ class _Query:
                     updated.append(deepcopy(r))
             return _ExecResult(updated)
         if self._mode == "insert":
-            payload = dict(self._insert_payload or {})
+            raw = self._insert_payload
+            if isinstance(raw, list):
+                inserted: list[dict[str, Any]] = []
+                for entry in raw:
+                    payload = dict(entry)
+                    payload.setdefault("id", str(uuid.uuid4()))
+                    rows.append(payload)
+                    self._store._enforce_constraints(self._table, payload)
+                    inserted.append(deepcopy(payload))
+                return _ExecResult(inserted)
+            payload = dict(raw or {})
             payload.setdefault("id", str(uuid.uuid4()))
             rows.append(payload)
             self._store._enforce_constraints(self._table, payload)
@@ -216,7 +255,15 @@ class FakeSupabase:
         if not row.get("scrape_queue_id") and not row.get("recruitment_id"):
             raise ValueError("chk_verification_report_owner")
         lifecycle = row.get("lifecycle_status")
-        if lifecycle not in {"classified", "backfilled_needs_review", "superseded", "rejected"}:
+        if lifecycle not in {
+            "classified", "backfilled_needs_review", "superseded", "rejected",
+            # PR3 extension (migration 079):
+            "consensus_pending", "conflict", "admin_override_required",
+            # PR4 extension (migration 082):
+            "complexity_detected",
+            # PR5 extension (migration 084):
+            "stale_source_changed", "stale_canonical_changed", "needs_reverification",
+        }:
             raise ValueError(f"chk_lifecycle_status: {lifecycle!r}")
         tier = row.get("criticality_tier")
         if tier not in {"A_HIGH_STAKES", "B_TECHNICAL_CONDITIONAL", "C_STANDARD_LONG_TAIL"}:
@@ -225,6 +272,12 @@ class FakeSupabase:
         if rec_action not in {
             "await_official_proof", "request_admin_review",
             "promote_eligible", "block_publish", "no_action",
+            # PR2 extension (migration 078):
+            "confirm_suggested_proof",
+            # PR3 extension (migration 081):
+            "resolve_conflict",
+            # PR5 extension (migration 085):
+            "await_corrigendum",
         }:
             raise ValueError(f"chk_recommended_action: {rec_action!r}")
         trig = row.get("trigger_reason")

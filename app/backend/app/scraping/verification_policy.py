@@ -87,6 +87,75 @@ TIER_POLICIES: dict[CriticalityTier, TierPolicy] = {
 BACKFILL_MODE: Literal["soft", "strict"] = "soft"
 
 
+# ── PR2 additions ────────────────────────────────────────────────────────
+
+# Execution mode for the orchestrator (PR plan §0.3).
+# ``sync``        — `verification_gateway` runs inline after scrape_queue insert.
+# ``async_queue`` — orchestrator enqueues a job and returns immediately.
+# No auto-detection — the flag is explicit. PR2 defaults to ``sync``.
+GATEWAY_EXECUTION_MODE: Literal["sync", "async_queue"] = "sync"
+
+
+# Official-source resolver confidence bands (PR plan §3).
+#
+#   ≥ 0.85       → status = 'auto_resolved'
+#   0.60 – 0.85  → status = 'suggested', recommended_action = 'confirm_suggested_proof'
+#   < 0.60       → status = 'unresolved', recommended_action = 'await_official_proof'
+OFFICIAL_RESOLUTION_THRESHOLDS: dict[str, float] = {
+    "auto_resolve": 0.85,
+    "suggest_for_admin": 0.60,
+    "manual_required": 0.0,
+}
+
+
+# Cooldown / rate limit for the admin "re-run resolver" endpoint (PR plan §3).
+# Per-report cooldown prevents one admin from hammering the same row;
+# the per-admin-per-hour ceiling stops a stuck script from running all
+# day. The orchestrator reads these — no separate config file.
+RESOLVER_RERUN_LIMITS: dict[str, int] = {
+    "per_report_cooldown_seconds": 300,   # 5 min
+    "per_admin_per_hour": 60,
+}
+
+
+# ── PR5: Corrigendum / staleness ─────────────────────────────────────
+#
+# Poll cadence and batch-throttle thresholds for the watcher. Tier A is
+# checked daily, Tier B every three days, Tier C weekly. The per-run
+# ceilings stop a misconfigured cron from sweeping every source/report
+# in one pass.
+
+CORRIGENDUM_WATCH_LIMITS: dict[str, int] = {
+    "tier_a_interval_hours": 24,
+    "tier_b_interval_hours": 72,
+    "tier_c_interval_hours": 168,
+    "max_sources_per_run": 100,
+    "max_reports_per_run": 300,
+    # When a single source flips this many reports in one pass, the
+    # remainder are deferred to a batch acknowledgment rather than
+    # producing N independent admin cards.
+    "mass_change_batch_limit": 25,
+}
+
+
+# Canonical recruitment fields that should fire the staleness hook when
+# an admin edits them via the admin_trust endpoint. The list matches
+# the consensus engine's CONSENSUS_FIELDS subset that's stored directly
+# on ``recruitments`` (post_names lives on the ``posts`` table, so it's
+# not editable from the recruitment-level path).
+CRITICAL_RECRUITMENT_FIELDS: frozenset[str] = frozenset({
+    "name",
+    "organization_id",
+    "apply_start_date",
+    "apply_end_date",
+    "notification_date",
+    "total_vacancies",
+    "year",
+    "official_notification_url",
+    "official_apply_url",
+})
+
+
 # Recommended-action default for each tier. Used by ``verification_reports``
 # when a fresh report is created and the resolver/consensus stages haven't
 # run yet. Tier C may shortcut to ``promote_eligible`` when data quality is
