@@ -52,19 +52,19 @@ export default function CompetitionMetricsTable({ items, onReview, busyRowId }) 
   }
 
   return (
-    <div className="soft-card rounded-2xl overflow-hidden" data-testid="competition-metrics-table">
-      <table className="w-full text-sm">
-        <thead className="bg-clay-50 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+    <div className="soft-card grain relative overflow-hidden rounded-[18px]" data-testid="competition-metrics-table">
+      <table className="tbl">
+        <thead>
           <tr>
-            <th className="text-left px-4 py-2">Exam</th>
-            <th className="text-right px-4 py-2">Vacancy</th>
-            <th className="text-right px-4 py-2">Applicants</th>
-            <th className="text-right px-4 py-2">Selection ratio</th>
-            <th className="text-right px-4 py-2">Pressure</th>
-            <th className="text-left px-4 py-2">Source basis</th>
-            <th className="text-left px-4 py-2">Confidence</th>
-            <th className="text-left px-4 py-2">Status</th>
-            {interactive ? <th className="text-left px-4 py-2">Actions</th> : null}
+            <th>Exam</th>
+            <th className="right">Vacancy</th>
+            <th className="right">Applicants</th>
+            <th className="right">Selection ratio</th>
+            <th className="right">Pressure</th>
+            <th>Source basis</th>
+            <th>Confidence</th>
+            <th>Status</th>
+            {interactive ? <th>Actions</th> : null}
           </tr>
         </thead>
         <tbody>

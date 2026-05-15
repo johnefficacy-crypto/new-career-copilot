@@ -11,54 +11,54 @@ export default function ExamListTable({ items, onSelect }) {
   const rows = Array.isArray(items) ? items : [];
   if (!rows.length) {
     return (
-      <div className="soft-card rounded-2xl p-5 text-sm text-muted-foreground">
+      <div className="soft-card grain relative overflow-hidden rounded-[18px] p-5 text-sm text-clay-700">
         No exams registered yet.
       </div>
     );
   }
   return (
-    <div className="soft-card rounded-2xl overflow-hidden">
-      <table className="w-full text-sm" data-testid="exam-intel-exam-table">
-        <thead className="bg-clay-50 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+    <div className="soft-card grain relative overflow-hidden rounded-[18px]">
+      <table className="tbl" data-testid="exam-intel-exam-table">
+        <thead>
           <tr>
-            <th className="text-left px-4 py-2">Slug</th>
-            <th className="text-left px-4 py-2">Name</th>
-            <th className="text-left px-4 py-2">Type</th>
-            <th className="text-right px-4 py-2">Syllabus ✓</th>
-            <th className="text-right px-4 py-2">Syllabus ⏳</th>
-            <th className="text-right px-4 py-2">Verified topics</th>
-            <th className="text-right px-4 py-2">High-yield</th>
-            <th className="text-left px-4 py-2">Readiness</th>
-            <th className="text-right px-4 py-2">Actions</th>
+            <th>Slug</th>
+            <th>Name</th>
+            <th>Type</th>
+            <th className="right">Syllabus ✓</th>
+            <th className="right">Syllabus ⏳</th>
+            <th className="right">Verified topics</th>
+            <th className="right">High-yield</th>
+            <th>Readiness</th>
+            <th className="right">Actions</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((e) => (
-            <tr key={e.id} className="border-t border-clay-100">
-              <td className="px-4 py-2 font-mono text-xs">{e.slug}</td>
-              <td className="px-4 py-2">{e.name}</td>
-              <td className="px-4 py-2 text-xs text-muted-foreground">{e.exam_type}</td>
-              <td className="px-4 py-2 text-right tabular-nums text-sage-700">{e.syllabus_verified ?? 0}</td>
-              <td className="px-4 py-2 text-right tabular-nums text-dusk-700">{e.syllabus_pending ?? 0}</td>
-              <td className="px-4 py-2 text-right tabular-nums">
+            <tr key={e.id}>
+              <td className="num-mono">{e.slug}</td>
+              <td>{e.name}</td>
+              <td className="text-clay-700">{e.exam_type}</td>
+              <td className="right num-mono text-sage-700">{e.syllabus_verified ?? 0}</td>
+              <td className="right num-mono text-dusk-700">{e.syllabus_pending ?? 0}</td>
+              <td className="right num-mono">
                 {e.verified_topic_count ?? 0}
-                <span className="text-muted-foreground"> / {e.coverage_total ?? 0}</span>
+                <span className="text-clay-700"> / {e.coverage_total ?? 0}</span>
               </td>
-              <td className="px-4 py-2 text-right tabular-nums">{e.high_yield_topic_count ?? 0}</td>
-              <td className="px-4 py-2">
+              <td className="right num-mono">{e.high_yield_topic_count ?? 0}</td>
+              <td>
                 <StatusBadge
                   status={READINESS_STATUS[e.readiness_level] || "missing"}
                   label={(e.readiness_level || "not_ready").replaceAll("_", " ")}
                 />
               </td>
-              <td className="px-4 py-2 text-right">
+              <td className="right">
                 <button
                   type="button"
                   onClick={() => onSelect && onSelect(e)}
-                  className="btn btn-ghost text-xs"
+                  className="text-[11px] px-3 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold"
                   data-testid={`exam-intel-review-${e.slug}`}
                 >
-                  Review queue
+                  Review queue →
                 </button>
               </td>
             </tr>
