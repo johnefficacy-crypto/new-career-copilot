@@ -69,7 +69,7 @@ export default function PartnersScreen() {
             >
               End partnership
             </button>
-            <button type="button" className="text-[12px] px-3 py-1.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold">
+            <button type="button" className="text-[12px] px-3 py-1.5 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold">
               Pause this week
             </button>
           </div>
@@ -96,7 +96,7 @@ export default function PartnersScreen() {
 
 function PartnerHeroCard({ partner, you, partnership, thisWeek }) {
   return (
-    <Card className="!bg-[#2E2218] !border-[#2E2218]">
+    <Card className="!bg-[#4E3A29] !border-[#4E3A29]">
       <div className="flex items-center gap-6 flex-wrap" data-testid="partner-hero">
         <div className="flex items-center gap-3">
           <Avatar user={you} size={56} />
@@ -338,7 +338,7 @@ function DailyCheckinPartner({ onPosted }) {
             onClick={submit}
             disabled={posting || done == null}
             data-testid="partner-checkin-post"
-            className="text-[11px] px-3 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold disabled:opacity-50"
+            className="text-[11px] px-3 py-1 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold disabled:opacity-50"
           >
             {posted ? "Posted ✓" : posting ? "Posting…" : "Post"}
           </button>
@@ -502,7 +502,7 @@ function PartnerCandidatesCard({ candidates, onInvited }) {
                 className={`text-[11px] px-2.5 py-1 rounded-full font-semibold ${
                   c.invited
                     ? "border border-[#54794E] bg-[#F0F5EF] text-[#33482F]"
-                    : "bg-[#2E2218] text-[#F3EADB]"
+                    : "bg-[#4E3A29] text-[#F3EADB]"
                 }`}
               >
                 {c.invited ? "Invited" : "Invite"}

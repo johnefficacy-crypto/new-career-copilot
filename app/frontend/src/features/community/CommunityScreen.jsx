@@ -126,8 +126,8 @@ export default function CommunityScreen() {
     // surface renders edge-to-edge like the reference prototype.
     <div
       data-testid="community-page"
-      className="flex overflow-hidden -mx-5 lg:-mx-8 -my-5 lg:-my-8"
-      style={{ height: "calc(100vh - 64px)" }}
+      className="flex overflow-hidden"
+      style={{ height: "calc(100vh - 60px)" }}
     >
       <SpacesRail spaces={spaces} activeId={space?.id} onPick={pickSpace} />
       <ChannelsRail
@@ -247,7 +247,7 @@ function isVerifiedAuthor(users, t) {
 /* ─── Spaces rail ──────────────────────────────────────────────────────── */
 function SpacesRail({ spaces, activeId, onPick }) {
   return (
-    <aside className="w-[78px] bg-[#F3EADB] border-r border-[#E7DECB] flex flex-col items-center py-4 gap-2 overflow-y-auto shrink-0">
+    <aside className="w-[64px] bg-[#F3EADB] border-r border-[#E7DECB] flex flex-col items-center py-4 gap-2 overflow-y-auto shrink-0">
       <div className="num-mono text-[9px] text-[#A68057] tracking-[0.18em] mb-1">SPACES</div>
       {spaces.map((s) => {
         const totalUnread = s.channels.reduce((a, c) => a + (c.unread || 0), 0);
@@ -262,11 +262,11 @@ function SpacesRail({ spaces, activeId, onPick }) {
           >
             <SpaceIcon space={s} size={44} active={activeId === s.id} />
             {totalUnread > 0 ? (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#2E2218] text-[#F3EADB] text-[9px] font-bold flex items-center justify-center num-mono">
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#4E3A29] text-[#F3EADB] text-[9px] font-bold flex items-center justify-center num-mono">
                 {totalUnread}
               </span>
             ) : null}
-            <span className="absolute left-[52px] top-1/2 -translate-y-1/2 px-2 py-1 rounded-md bg-[#2E2218] text-[#F3EADB] text-[10.5px] whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition z-10">
+            <span className="absolute left-[52px] top-1/2 -translate-y-1/2 px-2 py-1 rounded-md bg-[#4E3A29] text-[#F3EADB] text-[10.5px] whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition z-10">
               {s.name}
             </span>
           </button>
@@ -296,7 +296,7 @@ function ChannelsRail({ space, activeId, onPick, isAdmin, onCreateChannel }) {
     quiet: space.channels.filter((c) => !c.lockedAdminWrite && (c.unread || 0) === 0),
   };
   return (
-    <aside className="w-[300px] border-r border-[#E7DECB] bg-[#FBF4E8] flex flex-col shrink-0">
+    <aside className="w-[252px] border-r border-[#E7DECB] bg-[#FBF4E8] flex flex-col shrink-0">
       <div className="px-4 pt-4 pb-3 border-b border-[#E7DECB]">
         <div className="flex items-center gap-3">
           <SpaceIcon space={space} size={36} active />
@@ -381,7 +381,7 @@ function RailGroup({ title, channels, activeId, onPick, space, muted }) {
           onClick={() => onPick(ch)}
           data-testid={`channel-${ch.id}`}
           className={`w-full text-left flex items-center gap-2.5 px-2 py-2 rounded-lg mb-0.5 transition ${
-            activeId === ch.id ? "bg-[#2E2218]" : "hover:bg-[#F3EADB]"
+            activeId === ch.id ? "bg-[#4E3A29]" : "hover:bg-[#F3EADB]"
           }`}
         >
           <ChannelIcon ch={ch} color={space.color} size={26} />
@@ -415,7 +415,7 @@ function RailGroup({ title, channels, activeId, onPick, space, muted }) {
           {ch.unread > 0 ? (
             <span
               className={`min-w-[20px] h-[18px] px-1.5 rounded-full text-[9.5px] font-bold flex items-center justify-center num-mono ${
-                activeId === ch.id ? "bg-[#D6BC93] text-[#2E2218]" : "bg-[#2E2218] text-[#F3EADB]"
+                activeId === ch.id ? "bg-[#D6BC93] text-[#2E2218]" : "bg-[#4E3A29] text-[#F3EADB]"
               }`}
             >
               {ch.unread}
@@ -481,7 +481,7 @@ function ChannelHeader({ space, channel, onCompose }) {
             type="button"
             onClick={onCompose}
             data-testid="new-thread-btn"
-            className="px-3.5 py-1.5 rounded-full bg-[#2E2218] text-[#F3EADB] text-[12px] font-semibold flex items-center gap-1.5"
+            className="px-3.5 py-1.5 rounded-full bg-[#4E3A29] text-[#F3EADB] text-[12px] font-semibold flex items-center gap-1.5"
           >
             <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
               <path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
@@ -512,7 +512,7 @@ function ThreadToolbar({ sort, onSort, channel, count }) {
             onClick={() => onSort(s.v)}
             data-testid={`sort-${s.v}`}
             className={`px-3 py-1 rounded-full text-[11.5px] font-semibold ${
-              sort === s.v ? "bg-[#2E2218] text-[#F3EADB]" : "text-clay-700 hover:bg-[#E7D6BA]"
+              sort === s.v ? "bg-[#4E3A29] text-[#F3EADB]" : "text-clay-700 hover:bg-[#E7D6BA]"
             }`}
           >
             {s.label}
@@ -564,7 +564,7 @@ function ThreadCard({ thread, users, channelId, onOpen, onVoted }) {
       onClick={onOpen}
       data-testid={`thread-card-${thread.id}`}
       className={`rounded-xl border bg-white/70 hover:bg-white hover:border-[#A68057] transition cursor-pointer flex gap-0 overflow-hidden ${
-        isOfficial ? "border-[#2E2218]" : thread.pinned ? "border-[#94B28A]" : "border-[#E7DECB]"
+        isOfficial ? "border-[#4E3A29]" : thread.pinned ? "border-[#94B28A]" : "border-[#E7DECB]"
       }`}
       style={isOfficial ? { background: "linear-gradient(180deg, #FBF8F2 0%, #FBF6EF 100%)" } : {}}
     >
@@ -765,7 +765,7 @@ function ThreadDetail({ thread, channel, users, onBack, onChanged }) {
             <div className="rule mt-5 pt-4 flex items-center gap-2 flex-wrap">
               <button
                 type="button"
-                className="px-3 py-1.5 rounded-full bg-[#2E2218] text-[#F3EADB] text-[12px] font-semibold"
+                className="px-3 py-1.5 rounded-full bg-[#4E3A29] text-[#F3EADB] text-[12px] font-semibold"
               >
                 Reply
               </button>
@@ -799,7 +799,7 @@ function ThreadDetail({ thread, channel, users, onBack, onChanged }) {
           </article>
 
           {thread.repliesLocked ? (
-            <div className="mt-5 rounded-xl border border-[#2E2218] bg-[#2E2218] text-[#D6BC93] p-4 flex items-center gap-3">
+            <div className="mt-5 rounded-xl border border-[#4E3A29] bg-[#4E3A29] text-[#D6BC93] p-4 flex items-center gap-3">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <rect x="3" y="7" width="10" height="7" rx="1.5" stroke="#D6BC93" strokeWidth="1.4" />
                 <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" stroke="#D6BC93" strokeWidth="1.4" />
@@ -847,7 +847,7 @@ function ReplySection({ replies, thread, channel, users, onChanged }) {
               key={s}
               type="button"
               className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
-                i === 0 ? "bg-[#2E2218] text-[#F3EADB]" : "text-clay-700"
+                i === 0 ? "bg-[#4E3A29] text-[#F3EADB]" : "text-clay-700"
               }`}
             >
               {s}
@@ -1002,7 +1002,7 @@ function ReplyComposer({ channelId, threadId, onPosted }) {
             type="button"
             onClick={submit}
             disabled={posting || !body.trim()}
-            className="text-[11px] px-3 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold disabled:opacity-50"
+            className="text-[11px] px-3 py-1 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold disabled:opacity-50"
             data-testid="reply-submit"
           >
             {posting ? "Posting…" : "Post reply"}
@@ -1143,7 +1143,7 @@ function ComposerDrawer({ channel, onClose, onCreated }) {
                 onClick={() => setFlair(k)}
                 className={`text-[11px] px-2.5 py-1 rounded-full border ${
                   flair === k
-                    ? "bg-[#2E2218] text-[#F3EADB] border-[#2E2218]"
+                    ? "bg-[#4E3A29] text-[#F3EADB] border-[#4E3A29]"
                     : "border-[#E7DECB] text-clay-700"
                 }`}
               >
@@ -1193,7 +1193,7 @@ function ComposerDrawer({ channel, onClose, onCreated }) {
             type="button"
             onClick={submit}
             disabled={posting || title.trim().length < 6 || body.trim().length < 10}
-            className="px-4 py-2 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold text-[12px] disabled:opacity-50"
+            className="px-4 py-2 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold text-[12px] disabled:opacity-50"
             data-testid="thread-submit"
           >
             {posting ? "Posting…" : "Post thread"}
@@ -1290,7 +1290,7 @@ function NewChannelDrawer({ space, onClose, onCreated }) {
             type="button"
             onClick={submit}
             disabled={submitting || !name.trim()}
-            className="px-4 py-2 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold text-[12px] disabled:opacity-50"
+            className="px-4 py-2 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold text-[12px] disabled:opacity-50"
             data-testid="new-channel-submit"
           >
             {submitting ? "Creating…" : "Create channel"}

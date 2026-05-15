@@ -21,17 +21,24 @@ export default function DashShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
 
+  // Immersive surfaces have their own primary nav (e.g. Community's spaces
+  // rail). Hide the global sidebar and lift the centered max-width on these
+  // routes so the screen breathes.
+  const immersive = pathname.startsWith("/app/community");
+
   useEffect(() => { setSidebarOpen(false); }, [pathname]);
   useEffect(() => { api.get("/api/notifications/me/unread-count").then((d) => setUnreadCount(Number(d?.count || 0))).catch(() => setUnreadCount(0)); }, [pathname]);
 
   return (
     <div className="min-h-screen flex linen-bg">
-      <div className="hidden lg:block"><AppSidebar brandIcon={Compass} brandTitle="Career Copilot" brandSubtitle="Aspirant OS" sections={SECTIONS} user={auth.user} footer={{ adminLink: <Link to="/admin" data-testid="sidebar-admin" className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm bg-dusk-100 text-dusk-700 hover:bg-dusk-200"><Shield className="h-4 w-4" strokeWidth={1.8} /> Admin console</Link>, bottom: <div className="rounded-xl bg-clay-100/70 border border-clay-200 p-4"><div className="text-[10px] uppercase tracking-[0.22em] text-clay-700">Upgrade</div><div className="font-heading font-semibold mt-1 text-clay-800">Unlock the full study OS</div><Link to="/app/pricing" data-testid="sidebar-upgrade" className="mt-3 w-full bg-clay-500 text-white rounded-lg py-2 text-xs font-semibold inline-block text-center">See plans</Link></div> }} /></div>
+      {immersive ? null : (
+        <div className="hidden lg:block"><AppSidebar brandIcon={Compass} brandTitle="Career Copilot" brandSubtitle="Aspirant OS" sections={SECTIONS} user={auth.user} footer={{ adminLink: <Link to="/admin" data-testid="sidebar-admin" className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm bg-dusk-100 text-dusk-700 hover:bg-dusk-200"><Shield className="h-4 w-4" strokeWidth={1.8} /> Admin console</Link>, bottom: <div className="rounded-xl bg-clay-100/70 border border-clay-200 p-4"><div className="text-[10px] uppercase tracking-[0.22em] text-clay-700">Upgrade</div><div className="font-heading font-semibold mt-1 text-clay-800">Unlock the full study OS</div><Link to="/app/pricing" data-testid="sidebar-upgrade" className="mt-3 w-full bg-clay-500 text-white rounded-lg py-2 text-xs font-semibold inline-block text-center">See plans</Link></div> }} /></div>
+      )}
       {sidebarOpen && <div className="lg:hidden fixed inset-0 z-40 flex"><div className="absolute inset-0 bg-black/30" onClick={() => setSidebarOpen(false)} /><div className="relative z-10"><AppSidebar brandIcon={Compass} brandTitle="Career Copilot" brandSubtitle="Aspirant OS" sections={SECTIONS} user={auth.user} onClose={() => setSidebarOpen(false)} footer={{ adminLink: <Link to="/admin" onClick={() => setSidebarOpen(false)} data-testid="sidebar-admin" className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm bg-dusk-100 text-dusk-700 hover:bg-dusk-200"><Shield className="h-4 w-4" strokeWidth={1.8} /> Admin console</Link> }} /></div></div>}
 
       <div className="flex-1 min-w-0">
         <TopBar className="bg-[#FBF6EF]/80 backdrop-blur" left={<button className="lg:hidden h-9 w-9 grid place-items-center rounded-lg border border-border" onClick={() => setSidebarOpen(true)} data-testid="mobile-menu-toggle" aria-label="Open navigation menu"><Menu className="h-4 w-4" /></button>} center={<div className="relative flex-1 max-w-xl"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" /><input data-testid="global-search" placeholder="Search exams, threads, mentors…" className="w-full pl-9 pr-4 py-2 rounded-lg bg-white/80 border border-border focus:border-clay-400 text-sm outline-none" /></div>} right={<><Link to="/app/notifications" data-testid="notif-btn" aria-label="Open notifications" className="h-9 w-9 grid place-items-center rounded-lg border border-border bg-white/70 relative"><Bell className="h-4 w-4" />{unreadCount > 0 && <span className="absolute -top-1 -right-1 text-[10px] leading-none px-1.5 py-0.5 rounded-full bg-clay-500 text-white">{unreadCount > 9 ? "9+" : unreadCount}</span>}</Link><Link to="/app/profile" className="h-9 w-9 grid place-items-center rounded-lg border border-border bg-white/70" data-testid="settings-btn" aria-label="Open profile settings"><Settings className="h-4 w-4" /></Link><UserMenu user={auth.user} onLogout={auth.logout} /></>} />
-        <main key={pathname} className="p-5 lg:p-8 max-w-7xl mx-auto animate-fade-up"><Outlet /></main>
+        <main key={pathname} className={immersive ? "animate-fade-up" : "p-5 lg:p-8 max-w-7xl mx-auto animate-fade-up"}><Outlet /></main>
       </div>
     </div>
   );
