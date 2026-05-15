@@ -277,8 +277,34 @@ def check_gateway_promotion(report: dict[str, Any] | None) -> GatewayGateResult:
                 blocking_level="promotion_blocker",
                 tier=tier,
             )
-    # Tier B / Tier C — pass through. Real Tier B blockers land in PR4.
+
+    # PR4 strengthening: any tier with an unrepresented complexity
+    # ``promotion_blocker`` flag is held back. The detector wrote the
+    # signal to ``risk_flags`` and the complexity_contract adapter
+    # decides representation; here we just inspect the gate's view.
+    has_promotion_blocker = _has_complexity_blocker(report, level="promotion_blocker")
+    if has_promotion_blocker:
+        return GatewayGateResult(
+            ok=False,
+            reason_code="eligibility_rule_missing",
+            message="An eligibility-complexity rule is detected but not yet represented as a canonical rule.",
+            blocking_level="promotion_blocker",
+            tier=tier,
+        )
     return GatewayGateResult(ok=True, tier=tier)
+
+
+def _has_complexity_blocker(report: dict[str, Any], *, level: str) -> bool:
+    """Return True if a complexity flag at ``level`` is on ``risk_flags``.
+
+    The publish gate elsewhere (``admin_trust.py``) checks
+    ``publish_blocker``; the gateway promotion gate here only blocks on
+    ``promotion_blocker``. Same shape, different threshold.
+    """
+    for flag in report.get("risk_flags") or []:
+        if (flag or {}).get("blocking_level") == level:
+            return True
+    return False
 
 
 def _has_unresolved_conflict(report: dict[str, Any]) -> bool:
@@ -291,3 +317,29 @@ def _has_unresolved_conflict(report: dict[str, Any]) -> bool:
         if (c or {}).get("status", "open") == "open":
             return True
     return False
+
+
+def check_gateway_publish(report: dict[str, Any] | None) -> GatewayGateResult:
+    """Publish-readiness gate (PR4).
+
+    Stricter than :func:`check_gateway_promotion` — publish requires
+    no ``publish_blocker`` complexity flag (in addition to all the
+    promotion checks). Used by ``admin_trust.py``'s publish-readiness
+    path so a recruitment can be promoted to draft but held back from
+    publish until conditional rules are represented.
+    """
+    promotion = check_gateway_promotion(report)
+    if not promotion.ok:
+        return promotion
+    if report is not None and _has_complexity_blocker(report, level="publish_blocker"):
+        return GatewayGateResult(
+            ok=False,
+            reason_code="eligibility_rule_missing",
+            message=(
+                "Conditional eligibility rule detected but not yet represented as a canonical rule. "
+                "Publish blocked; draft remains allowed."
+            ),
+            blocking_level="publish_blocker",
+            tier=report.get("criticality_tier"),
+        )
+    return GatewayGateResult(ok=True, tier=promotion.tier)

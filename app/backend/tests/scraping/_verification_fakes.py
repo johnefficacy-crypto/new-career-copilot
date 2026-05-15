@@ -259,6 +259,8 @@ class FakeSupabase:
             "classified", "backfilled_needs_review", "superseded", "rejected",
             # PR3 extension (migration 079):
             "consensus_pending", "conflict", "admin_override_required",
+            # PR4 extension (migration 082):
+            "complexity_detected",
         }:
             raise ValueError(f"chk_lifecycle_status: {lifecycle!r}")
         tier = row.get("criticality_tier")

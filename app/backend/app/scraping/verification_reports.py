@@ -75,6 +75,8 @@ _KNOWN_LIFECYCLE_STATES: set[str] = set(PR1_LIFECYCLE_STATES) | {
     "consensus_pending",
     "conflict",
     "admin_override_required",
+    # PR4 (migration 082):
+    "complexity_detected",
 }
 
 
@@ -110,6 +112,19 @@ extend_transitions({
     "consensus_pending":       {"classified", "conflict", "admin_override_required", "superseded", "rejected"},
     "conflict":                {"admin_override_required", "classified", "superseded", "rejected"},
     "admin_override_required": {"classified", "superseded", "rejected"},
+})
+
+
+# ── PR4 lifecycle additions ───────────────────────────────────────────
+#
+# Migration 082 widens the DB ``chk_lifecycle_status`` constraint to
+# accept ``complexity_detected``. The consensus stage may skip-to
+# complexity for Tier B per plan §5.
+
+extend_transitions({
+    "classified":          {"complexity_detected"},
+    "consensus_pending":   {"complexity_detected"},
+    "complexity_detected": {"classified", "superseded", "rejected"},
 })
 
 
@@ -361,6 +376,45 @@ def write_conflicts(
     transition matrix is enforced.
     """
     payload: dict[str, Any] = {"conflicts": validate_conflicts(conflicts)}
+    if recommended_action is not None:
+        payload["recommended_action"] = recommended_action
+    updated = (
+        supabase.table(TABLE)
+        .update(payload)
+        .eq("id", report_id)
+        .execute()
+        .data
+        or [None]
+    )[0]
+    if not updated:
+        raise RuntimeError(f"verification_report {report_id} update returned no row")
+    if lifecycle_status is not None:
+        updated = update_lifecycle_status(supabase, report_id, lifecycle_status)
+    return updated
+
+
+def write_complexity_signals(
+    supabase: Client,
+    report_id: str,
+    *,
+    signals: list[dict[str, Any]],
+    lifecycle_status: str | None = None,
+    recommended_action: str | None = None,
+) -> dict[str, Any]:
+    """Persist complexity signals onto a report's ``risk_flags`` jsonb.
+
+    Plan §5: PR4 reuses ``risk_flags`` rather than adding a fourth
+    jsonb column. The signal shape is compatible with the existing
+    ``RiskFlag`` validator — both carry ``flag``, ``field_key``,
+    ``source_field_path``, ``blocking_level``.
+
+    Optional ``lifecycle_status`` flip routes through
+    :func:`update_lifecycle_status` so the transition matrix is
+    enforced.
+    """
+    from .verification_report_schemas import validate_complexity_signals
+
+    payload: dict[str, Any] = {"risk_flags": validate_complexity_signals(signals)}
     if recommended_action is not None:
         payload["recommended_action"] = recommended_action
     updated = (
@@ -738,5 +792,6 @@ __all__ = [
     "record_override",
     "set_resolver_state",
     "update_lifecycle_status",
+    "write_complexity_signals",
     "write_conflicts",
 ]

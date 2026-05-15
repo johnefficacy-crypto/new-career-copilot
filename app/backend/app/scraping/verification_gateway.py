@@ -27,6 +27,7 @@ from .consensus_engine import (
     collect_observations,
     compare_observations,
 )
+from .eligibility_complexity import detect_complexity
 from .official_resolver import (
     ResolverCandidate,
     ResolverResult,
@@ -39,6 +40,7 @@ from .verification_reports import (
     get_or_create_verification_report_for_queue,
     set_resolver_state,
     update_lifecycle_status,
+    write_complexity_signals,
     write_conflicts,
 )
 
@@ -324,6 +326,71 @@ def run_consensus_stage(
     }
 
 
+# ── Stage 4: eligibility complexity (PR4) ─────────────────────────────
+
+
+def run_eligibility_complexity_stage(
+    supabase: Client,
+    report_id: str,
+    *,
+    queue_item: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run the complexity detector + persist signals on the report.
+
+    The detector is pure (no DB). The adapter that decides whether a
+    detected signal is *unrepresented* in canonical rules lives in
+    :mod:`app.eligibility.complexity_contract` and is consumed by the
+    publish/promotion gate, not here.
+
+    Lifecycle behaviour:
+
+    * Any signal detected → ``complexity_detected`` + recommended_action
+      mapped to ``block_publish`` when a publish_blocker or
+      promotion_blocker flag is present.
+    * No signals → leave lifecycle as-is; clear any prior risk_flags
+      list so a re-run after admin corrections doesn't keep stale flags.
+    """
+    report = _fetch_report(supabase, report_id)
+    if report is None:
+        raise LookupError(f"verification_report {report_id} not found")
+    if queue_item is None and report.get("scrape_queue_id"):
+        queue_item = _fetch_queue_item(supabase, report["scrape_queue_id"])
+    extracted = (queue_item or {}).get("extracted_data") or {}
+
+    signals = detect_complexity(extracted)
+    payload = [
+        {
+            "flag": s.flag,
+            "field_key": s.field_key,
+            "source_field_path": s.source_field_path,
+            "blocking_level": s.blocking_level,
+            "evidence_summary_key": s.evidence_summary_key,
+        }
+        for s in signals
+    ]
+
+    if not signals:
+        write_complexity_signals(supabase, report_id, signals=[])
+        return {"status": "no_complexity", "report_id": report_id, "signal_count": 0}
+
+    has_hard_blocker = any(
+        s.blocking_level in {"promotion_blocker", "publish_blocker"}
+        for s in signals
+    )
+    write_complexity_signals(
+        supabase, report_id,
+        signals=payload,
+        lifecycle_status="complexity_detected",
+        recommended_action="block_publish" if has_hard_blocker else None,
+    )
+    return {
+        "status": "complexity_detected",
+        "report_id": report_id,
+        "signal_count": len(signals),
+        "has_hard_blocker": has_hard_blocker,
+    }
+
+
 def _candidate_to_dict(c: ResolverCandidate) -> dict[str, Any]:
     return {
         "url": c.url,
@@ -418,6 +485,21 @@ def run_gateway_for_queue_item(
             "orchestrator.consensus_stage_failed report_id=%s",
             report["id"],
         )
+
+    # PR4: complexity detection runs regardless of consensus outcome.
+    # An open conflict doesn't suppress complexity flagging — the two
+    # blockers are orthogonal: an admin can resolve a conflict in one
+    # field while the recruitment still has an unrepresented domicile
+    # rule.
+    try:
+        run_eligibility_complexity_stage(
+            supabase, report["id"], queue_item=queue_item,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "orchestrator.complexity_stage_failed report_id=%s",
+            report["id"],
+        )
     return stage_result
 
 
@@ -447,6 +529,7 @@ __all__ = [
     "GatewayResult",
     "enqueue_or_run_gateway_after_scrape_queue_insert",
     "run_consensus_stage",
+    "run_eligibility_complexity_stage",
     "run_gateway_for_queue_item",
     "run_resolver_stage",
 ]
