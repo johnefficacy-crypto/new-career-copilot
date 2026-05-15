@@ -21,6 +21,7 @@ from app.study_os.mission_control import (
 from app.study_os.plan_preferences import get_plan_preferences, upsert_plan_preferences
 from app.study_os.planner import apply_plan, compute_draft_plan, generate_plan
 from app.study_os import mocks as mocks_service
+from app.study_os import subjects as subjects_service
 from app.study_os import weekly_review as weekly_review_service
 
 logger = logging.getLogger("career_copilot.api.study_os")
@@ -247,6 +248,18 @@ async def get_plan_changelog(user: dict = Depends(get_current_user)) -> dict[str
         return {"items": rows, "count": len(rows)}
     except Exception:  # noqa: BLE001
         logger.exception("plan changelog read failed for %s", user_id)
+        return {"items": [], "count": 0}
+
+
+# ───────────────────────────── Subjects ─────────────────────────────────────
+@router.get("/subjects")
+async def list_subjects(user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    """Per-subject progress for the user's target exam (verified topics only)."""
+    try:
+        items = subjects_service.list_subjects(get_supabase_admin(), user.get("id"))
+        return {"items": items, "count": len(items)}
+    except Exception:  # noqa: BLE001
+        logger.exception("subjects read failed for %s", user.get("id"))
         return {"items": [], "count": 0}
 
 
