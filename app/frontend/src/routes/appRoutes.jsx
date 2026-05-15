@@ -16,6 +16,7 @@ import Focus from "../pages/study/Focus";
 import Mocks from "../pages/study/Mocks";
 import Subjects from "../pages/study/Subjects";
 import WeeklyReview from "../pages/study/WeeklyReview";
+import StudyCompare from "../pages/study/Compare";
 import Community from "../pages/Community";
 import CreateThread from "../pages/CreateThread";
 import ThreadDetail from "../pages/ThreadDetail";
@@ -45,6 +46,7 @@ export const appRouteElements = (
       <Route path="/app/study/mocks" element={<Mocks />} />
       <Route path="/app/study/subjects" element={<Subjects />} />
       <Route path="/app/study/review" element={<WeeklyReview />} />
+      <Route path="/app/study/compare" element={<StudyCompare />} />
       <Route path="/app/community" element={<Community />} />
       <Route path="/app/community/new" element={<CreateThread />} />
       <Route path="/app/community/:slug" element={<ThreadDetail />} />

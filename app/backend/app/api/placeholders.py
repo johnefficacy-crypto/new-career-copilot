@@ -718,42 +718,56 @@ async def focus_summary(user: dict = Depends(get_current_user)):
 
 
 # ───────────────────────── Accountability ──────────────────────────────────
+# Backed by Supabase tables introduced in migration 070 (study_groups,
+# study_group_members, accountability_pairs). Mentor bookings still use the
+# legacy `mentor_bookings` table from migration 019. Frontend paths kept
+# identical so /app/accountability does not need to change.
 
 router_acc = APIRouter(prefix="/accountability", tags=["accountability"])
 
 
 @router_acc.get("/partners")
 async def list_partners(user: dict = Depends(get_current_user)):
-    return {
-        "items": [
-            {"id": "p-1", "name": "Karan M.", "exam": "ssc-cgl-2026", "match": 0.91, "stage": "Tier I prep", "city": "Pune"},
-            {"id": "p-2", "name": "Aisha B.", "exam": "ibps-po-xv", "match": 0.86, "stage": "Prelims sprint", "city": "Hyderabad"},
-            {"id": "p-3", "name": "Vikram J.", "exam": "ssc-cgl-2026", "match": 0.78, "stage": "Building base", "city": "Lucknow"},
-        ]
-    }
+    from app.db.supabase_client import get_supabase_admin
+    from app.study_os.social_sessions import list_partner_suggestions, list_pairs
+
+    sb = get_supabase_admin()
+    pairs = list_pairs(sb, user["id"])
+    suggestions = list_partner_suggestions(sb, user["id"], limit=10)
+    return {"suggested": suggestions, "pairs": pairs}
 
 
 class PartnerReq(BaseModel):
     partner_id: str
     message: str | None = None
+    pairing_goal: str = "discipline"
+    exam_id: str | None = None
 
 
 @router_acc.post("/partners/request")
 async def request_partner(body: PartnerReq, user: dict = Depends(get_current_user)):
-    _partner_requests[user["id"]].append(body.partner_id)
-    return {"ok": True, "status": "pending"}
+    from app.db.supabase_client import get_supabase_admin
+    from app.study_os.social_sessions import request_partner as _req
+
+    try:
+        row = _req(
+            get_supabase_admin(),
+            user["id"],
+            body.partner_id,
+            body.pairing_goal,
+            body.exam_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "status": "pending", "pair": row}
 
 
 @router_acc.get("/groups")
 async def list_groups(user: dict = Depends(get_current_user)):
-    base = [
-        {"id": "g-quant-sprint", "name": "Quant Sprint Squad", "members": 142, "exam": "ssc-cgl-2026"},
-        {"id": "g-banking-mains", "name": "Banking Mains Crew", "members": 78, "exam": "ibps-po-xv"},
-        {"id": "g-rbi-interview", "name": "RBI Interview Circle", "members": 31, "exam": "rbi-grade-b-2026"},
-    ]
-    for g in base:
-        g["joined"] = user["id"] in _group_members[g["id"]]
-    return {"items": base}
+    from app.db.supabase_client import get_supabase_admin
+    from app.study_os.social_sessions import list_groups as _list
+
+    return {"items": _list(get_supabase_admin(), user["id"])}
 
 
 class JoinGroup(BaseModel):
@@ -762,12 +776,17 @@ class JoinGroup(BaseModel):
 
 @router_acc.post("/groups/join")
 async def join_group(body: JoinGroup, user: dict = Depends(get_current_user)):
-    members = _group_members[body.group_id]
-    if user["id"] in members:
-        members.discard(user["id"])
-        return {"joined": False}
-    members.add(user["id"])
-    return {"joined": True}
+    from app.db.supabase_client import get_supabase_admin
+    from app.study_os.social_sessions import join_group as _join
+
+    try:
+        return _join(get_supabase_admin(), user["id"], body.group_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 class MentorBook(BaseModel):

@@ -257,6 +257,11 @@ def collect_user_signals(supabase: Any, user_id: str) -> dict[str, Any]:
             value = row.get("answer_value")
         persona_question_answers[key] = value
 
+    # Study-OS comparison signals (PR 13). Pulled from the 30-day window of
+    # study_behavior_daily_snapshots. Each value is None when no snapshots
+    # exist yet — downstream classifier rules check for None before firing.
+    study_signals = _collect_study_os_signals(supabase, user_id)
+
     return {
         "profile_completeness": _profile_completeness(profile, prefs),
         "goal_exams_count": _goal_exams_count(profile, prefs),
@@ -272,11 +277,141 @@ def collect_user_signals(supabase: Any, user_id: str) -> dict[str, Any]:
         "mocks_taken_30d": mocks_taken_30d,
         "weekly_review_available": weekly_review_available,
         "persona_question_answers": persona_question_answers,
+        # PR 13 — study-OS comparison signals.
+        "relative_consistency_percentile": study_signals["relative_consistency_percentile"],
+        "relative_adherence_percentile": study_signals["relative_adherence_percentile"],
+        "focus_reliability": study_signals["focus_reliability"],
+        "overplanning_index": study_signals["overplanning_index"],
+        "backlog_recovery_rate": study_signals["backlog_recovery_rate"],
+        "mock_review_rate": study_signals["mock_review_rate"],
+        "correction_completion_rate": study_signals["correction_completion_rate"],
+        "multi_exam_load": study_signals["multi_exam_load"],
         # Internal extras — used by classifier but not part of the
         # documented signal contract.
         "_career_stage": profile.get("career_stage"),
         "_onboarding_completed": bool(profile.get("onboarding_completed")),
         "_total_tasks_14d": total_tasks,
+    }
+
+
+def _collect_study_os_signals(supabase: Any, user_id: str) -> dict[str, Any]:
+    """Aggregate the spec's new persona signals from the last 30 days of
+    `study_behavior_daily_snapshots`. Returns all keys as None / 0 when
+    no data is available so the classifier sees a stable contract.
+    """
+    empty = {
+        "relative_consistency_percentile": None,
+        "relative_adherence_percentile": None,
+        "focus_reliability": None,
+        "overplanning_index": None,
+        "backlog_recovery_rate": None,
+        "mock_review_rate": None,
+        "correction_completion_rate": None,
+        "multi_exam_load": 0,
+    }
+    rows = _safe(
+        lambda: (
+            supabase.table("study_behavior_daily_snapshots")
+            .select(
+                "total_study_minutes, focus_minutes, focus_session_count, "
+                "planned_tasks, completed_tasks, missed_tasks, backlog_count, "
+                "mock_count, mock_review_count, correction_tasks_completed, "
+                "consistency_score, behavior_adherence_score, snapshot_date"
+            )
+            .eq("user_id", user_id)
+            .gte("snapshot_date", _iso_days_ago(30)[:10])
+            .execute()
+            .data
+        ),
+        default=None,
+    )
+    if not rows:
+        return empty
+
+    consistencies = [
+        r.get("consistency_score") for r in rows if r.get("consistency_score") is not None
+    ]
+    adherences = [
+        r.get("behavior_adherence_score")
+        for r in rows
+        if r.get("behavior_adherence_score") is not None
+    ]
+    sessions_total = sum(int(r.get("focus_session_count") or 0) for r in rows)
+    focus_total = sum(int(r.get("focus_minutes") or 0) for r in rows)
+    planned_total = sum(int(r.get("planned_tasks") or 0) for r in rows)
+    completed_total = sum(int(r.get("completed_tasks") or 0) for r in rows)
+    missed_total = sum(int(r.get("missed_tasks") or 0) for r in rows)
+    mocks_total = sum(int(r.get("mock_count") or 0) for r in rows)
+    mock_reviews = sum(int(r.get("mock_review_count") or 0) for r in rows)
+    corrections = sum(int(r.get("correction_tasks_completed") or 0) for r in rows)
+    backlogs = [int(r.get("backlog_count") or 0) for r in rows]
+
+    consistency_avg = (
+        sum(consistencies) / len(consistencies) if consistencies else None
+    )
+    adherence_avg = sum(adherences) / len(adherences) if adherences else None
+
+    # Heuristic percentile until cohort_metric_snapshots is populated:
+    # 0.9 → 90, 0.5 → 50. Calibrated against the cohort store would replace
+    # this in a follow-up.
+    rel_consistency_pct = (
+        int(round(consistency_avg * 100)) if consistency_avg is not None else None
+    )
+    rel_adherence_pct = (
+        int(round(adherence_avg * 100)) if adherence_avg is not None else None
+    )
+
+    focus_reliability = (
+        focus_total / (sessions_total * 25)
+        if sessions_total > 0
+        else None
+    )
+    if focus_reliability is not None:
+        focus_reliability = round(min(1.0, focus_reliability), 3)
+
+    overplanning_index = (
+        (missed_total + max(planned_total - completed_total - missed_total, 0))
+        / planned_total
+        if planned_total > 0
+        else None
+    )
+    if overplanning_index is not None:
+        overplanning_index = round(min(1.0, overplanning_index), 3)
+
+    if len(backlogs) >= 2 and backlogs[0] > 0:
+        recovered = max(backlogs[0] - backlogs[-1], 0)
+        backlog_recovery_rate = round(recovered / backlogs[0], 3)
+    else:
+        backlog_recovery_rate = None
+
+    mock_review_rate = round(mock_reviews / mocks_total, 3) if mocks_total > 0 else None
+    correction_completion_rate = (
+        round(corrections / mocks_total, 3) if mocks_total > 0 else None
+    )
+
+    # multi_exam_load — count of active user_exam_goals.
+    goals = _safe(
+        lambda: (
+            supabase.table("user_exam_goals")
+            .select("id, status")
+            .eq("user_id", user_id)
+            .eq("status", "active")
+            .execute()
+            .data
+        ),
+        default=None,
+    ) or []
+    multi_exam_load = len(goals)
+
+    return {
+        "relative_consistency_percentile": rel_consistency_pct,
+        "relative_adherence_percentile": rel_adherence_pct,
+        "focus_reliability": focus_reliability,
+        "overplanning_index": overplanning_index,
+        "backlog_recovery_rate": backlog_recovery_rate,
+        "mock_review_rate": mock_review_rate,
+        "correction_completion_rate": correction_completion_rate,
+        "multi_exam_load": multi_exam_load,
     }
 
 
@@ -296,6 +431,14 @@ def _empty_signals() -> dict[str, Any]:
         "mocks_taken_30d": 0,
         "weekly_review_available": False,
         "persona_question_answers": {},
+        "relative_consistency_percentile": None,
+        "relative_adherence_percentile": None,
+        "focus_reliability": None,
+        "overplanning_index": None,
+        "backlog_recovery_rate": None,
+        "mock_review_rate": None,
+        "correction_completion_rate": None,
+        "multi_exam_load": 0,
         "_career_stage": None,
         "_onboarding_completed": False,
         "_total_tasks_14d": 0,
