@@ -63,10 +63,13 @@ function buildPayload(form) {
   // decision, not a form bit: it must come from POST /api/admin/sources/
   // {id}/verify, which runs the backend trust evaluator. Preserve the
   // existing flag on edit so a save here does not clobber prior verification.
+  // Send only ``official_url`` — the backend mirrors it to the legacy
+  // ``source_url`` column so older readers keep working. Stopping the
+  // double-write here removes the schema-drift smell that asked
+  // reviewers to wonder which field was authoritative.
   return {
     source_name: form.source_name.trim(),
     official_url: form.official_url.trim(),
-    source_url: form.official_url.trim(),
     source_type: form.source_type,
     is_active: !!form.is_active,
     is_verified: !!form.is_verified,
