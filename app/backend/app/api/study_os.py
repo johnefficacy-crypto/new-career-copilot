@@ -20,6 +20,7 @@ from app.study_os.mission_control import (
 )
 from app.study_os.plan_preferences import get_plan_preferences, upsert_plan_preferences
 from app.study_os.planner import generate_plan
+from app.study_os import mocks as mocks_service
 
 logger = logging.getLogger("career_copilot.api.study_os")
 
@@ -196,6 +197,132 @@ async def generate_study_plan(user: dict = Depends(get_current_user)) -> dict[st
         raise HTTPException(
             status_code=500, detail="Plan generation is temporarily unavailable."
         )
+
+
+# ─────────────────────────────── Mocks ──────────────────────────────────────
+class MockSubjectBreakdownBody(BaseModel):
+    subject: str
+    total_questions: int | None = None
+    correct_answers: int | None = None
+    wrong_answers: int | None = None
+    marks: float | None = None
+    accuracy: float | None = None
+
+
+class MockCreateBody(BaseModel):
+    name: str
+    exam_slug: str | None = None
+    score: float | None = None
+    max_score: float | None = None
+    duration_min: int | None = None
+    attempted: int | None = None
+    correct: int | None = None
+    weak_topics: list[str] = Field(default_factory=list)
+    error_patterns: dict[str, int] = Field(default_factory=dict)
+    subject_breakdown: list[MockSubjectBreakdownBody] = Field(default_factory=list)
+    notes: str | None = None
+    attempted_at: str | None = None
+
+
+class MockReviewStateBody(BaseModel):
+    state: str = Field(pattern="^(scheduled|unreviewed|reviewed|correction_drafted)$")
+
+
+@router.get("/mocks")
+async def list_mocks(user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    items = mocks_service.list_mocks(get_supabase_admin(), user.get("id"))
+    return {"items": items, "trend": mocks_service.mock_trend(items)}
+
+
+@router.post("/mocks")
+async def create_mock(
+    body: MockCreateBody, user: dict = Depends(get_current_user)
+) -> dict[str, Any]:
+    payload = body.model_dump()
+    # Nested Pydantic models → plain dicts for the service layer.
+    payload["subject_breakdown"] = [
+        b.model_dump() if hasattr(b, "model_dump") else dict(b)
+        for b in (body.subject_breakdown or [])
+    ]
+    try:
+        return mocks_service.create_mock(get_supabase_admin(), user.get("id"), payload)
+    except RuntimeError:
+        logger.exception("mock insert failed for %s", user.get("id"))
+        raise HTTPException(status_code=500, detail="Could not log mock.")
+
+
+@router.get("/mocks/{mock_id}")
+async def get_mock(
+    mock_id: str, user: dict = Depends(get_current_user)
+) -> dict[str, Any]:
+    row = mocks_service.get_mock(get_supabase_admin(), user.get("id"), mock_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Mock not found.")
+    return row
+
+
+@router.get("/mocks/{mock_id}/analysis")
+async def get_mock_analysis(
+    mock_id: str, user: dict = Depends(get_current_user)
+) -> dict[str, Any]:
+    bundle = mocks_service.get_mock_analysis(get_supabase_admin(), user.get("id"), mock_id)
+    if not bundle:
+        raise HTTPException(status_code=404, detail="Mock not found.")
+    return bundle
+
+
+@router.patch("/mocks/{mock_id}/review-state")
+async def set_review_state(
+    mock_id: str,
+    body: MockReviewStateBody,
+    user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    try:
+        return mocks_service.set_review_state(
+            get_supabase_admin(), user.get("id"), mock_id, body.state
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Mock not found.")
+
+
+@router.post("/mocks/{mock_id}/correction-tasks")
+async def draft_correction_tasks(
+    mock_id: str, user: dict = Depends(get_current_user)
+) -> dict[str, Any]:
+    try:
+        items = mocks_service.draft_correction_tasks(
+            get_supabase_admin(), user.get("id"), mock_id
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Mock not found.")
+    return {"items": items}
+
+
+@router.post("/mocks/correction-tasks/{correction_id}/apply")
+async def apply_correction_task(
+    correction_id: str, user: dict = Depends(get_current_user)
+) -> dict[str, Any]:
+    try:
+        return mocks_service.apply_correction_task(
+            get_supabase_admin(), user.get("id"), correction_id
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Correction task not found.")
+    except RuntimeError:
+        logger.exception("apply correction failed for %s", correction_id)
+        raise HTTPException(status_code=500, detail="Could not apply correction task.")
+
+
+@router.post("/mocks/correction-tasks/{correction_id}/dismiss")
+async def dismiss_correction_task(
+    correction_id: str, user: dict = Depends(get_current_user)
+) -> dict[str, Any]:
+    try:
+        return mocks_service.dismiss_correction_task(
+            get_supabase_admin(), user.get("id"), correction_id
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Correction task not found.")
 
 
 @router.get("/task-reasoning/{task_id}")
