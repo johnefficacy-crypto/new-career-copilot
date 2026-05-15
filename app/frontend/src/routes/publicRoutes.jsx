@@ -43,7 +43,7 @@ export const publicRouteElements = (
     <Route path="/prototype/resources" element={<PrototypeResources />} />
     <Route path="/prototype/library" element={<PrototypeLibrary />} />
     <Route path="/prototype/seller" element={<PrototypeSeller />} />
-    <Route path="/prototype/onboarding" element={<PrototypeOnboarding />} />
+    <Route path="/onboarding" element={<PrototypeOnboarding />} />
     <Route path="/prototype/admin-eligibility" element={<PrototypeAdminEligibility />} />
     <Route path="/prototype/admin-community" element={<PrototypeAdminCommunity />} />
     <Route path="/prototype/admin-marketplace" element={<PrototypeAdminMarket />} />
