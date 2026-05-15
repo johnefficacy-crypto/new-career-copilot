@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Avatar,
@@ -18,6 +18,7 @@ import {
   VoteColumn,
 } from "../../shared/ui/studyos";
 import { api } from "../../lib/api";
+import { useAuth } from "../../lib/authContext";
 import {
   COMMUNITY_SPACES as SEED_SPACES,
   COMMUNITY_USERS as SEED_USERS,
@@ -34,10 +35,12 @@ import {
 export default function CommunityScreen() {
   const params = useParams();
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
 
   const [spaces, setSpaces] = useState(SEED_SPACES);
   const [users, setUsers] = useState(SEED_USERS);
   const [threadsByChannel, setThreadsByChannel] = useState(SEED_THREADS);
+  const [newChannelOpen, setNewChannelOpen] = useState(false);
 
   const [spaceId, setSpaceId] = useState(params.spaceId || SEED_SPACES[0].id);
   const [channelId, setChannelId] = useState(
@@ -48,24 +51,38 @@ export default function CommunityScreen() {
   const [composerOpen, setComposerOpen] = useState(false);
 
   // Live data: fetch the spaces document; gracefully fall back to seed.
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .get("/api/community/spaces")
-      .then((d) => {
-        if (cancelled || !d) return;
-        if (Array.isArray(d.spaces) && d.spaces.length) setSpaces(d.spaces);
-        if (d.users && typeof d.users === "object") setUsers((prev) => ({ ...prev, ...d.users }));
-        if (d.threads && typeof d.threads === "object")
-          setThreadsByChannel((prev) => ({ ...prev, ...d.threads }));
-      })
-      .catch(() => {
-        // Backend not configured for spaces yet — keep seed data.
-      });
-    return () => {
-      cancelled = true;
-    };
+  const refreshSpaces = useCallback(async () => {
+    try {
+      const d = await api.get("/api/community/spaces");
+      if (!d) return;
+      if (Array.isArray(d.spaces) && d.spaces.length) setSpaces(d.spaces);
+      if (d.users && typeof d.users === "object") setUsers((prev) => ({ ...prev, ...d.users }));
+      if (d.threads && typeof d.threads === "object")
+        setThreadsByChannel((prev) => ({ ...prev, ...d.threads }));
+    } catch {
+      // Backend not configured for spaces yet — keep seed data.
+    }
   }, []);
+
+  useEffect(() => {
+    refreshSpaces();
+  }, [refreshSpaces]);
+
+  // After picking a channel, fetch its threads from the runtime endpoint so
+  // votes / newly-created threads / replies show up live.
+  const refreshChannelThreads = useCallback(async (cid) => {
+    if (!cid) return;
+    try {
+      const d = await api.get(`/api/community/channels/${cid}/threads?sort=hot`);
+      if (Array.isArray(d?.items)) {
+        setThreadsByChannel((prev) => ({ ...prev, [cid]: d.items }));
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (channelId) refreshChannelThreads(channelId);
+  }, [channelId, refreshChannelThreads]);
 
   const space = useMemo(() => spaces.find((s) => s.id === spaceId) || spaces[0], [spaces, spaceId]);
   const channel = useMemo(
@@ -113,7 +130,13 @@ export default function CommunityScreen() {
       style={{ height: "calc(100vh - 64px)" }}
     >
       <SpacesRail spaces={spaces} activeId={space?.id} onPick={pickSpace} />
-      <ChannelsRail space={space} activeId={channel?.id} onPick={pickChannel} />
+      <ChannelsRail
+        space={space}
+        activeId={channel?.id}
+        onPick={pickChannel}
+        isAdmin={isAdmin}
+        onCreateChannel={() => setNewChannelOpen(true)}
+      />
 
       <section className="flex-1 min-w-0 flex flex-col bg-[#FBF6EF]">
         <ChannelHeader space={space} channel={channel} onCompose={() => setComposerOpen(true)} />
@@ -127,6 +150,7 @@ export default function CommunityScreen() {
             channel={channel}
             users={users}
             onBack={closeThread}
+            onChanged={() => refreshChannelThreads(channel.id)}
           />
         ) : (
           <>
@@ -146,7 +170,9 @@ export default function CommunityScreen() {
                         key={t.id}
                         thread={t}
                         users={users}
+                        channelId={channel.id}
                         onOpen={() => openThread(t)}
+                        onVoted={() => refreshChannelThreads(channel.id)}
                       />
                     ))}
                   </div>
@@ -159,7 +185,28 @@ export default function CommunityScreen() {
       </section>
 
       {composerOpen ? (
-        <ComposerDrawer channel={channel} onClose={() => setComposerOpen(false)} />
+        <ComposerDrawer
+          channel={channel}
+          onClose={() => setComposerOpen(false)}
+          onCreated={(newThread) => {
+            refreshChannelThreads(channel.id);
+            if (newThread?.id) navigate(`/app/community/${space.id}/${channel.id}/${newThread.id}`);
+          }}
+        />
+      ) : null}
+
+      {newChannelOpen ? (
+        <NewChannelDrawer
+          space={space}
+          onClose={() => setNewChannelOpen(false)}
+          onCreated={(ch) => {
+            refreshSpaces();
+            if (ch?.id) {
+              setChannelId(ch.id);
+              navigate(`/app/community/${space.id}/${ch.id}`, { replace: true });
+            }
+          }}
+        />
       ) : null}
     </div>
   );
@@ -241,7 +288,7 @@ function SpacesRail({ spaces, activeId, onPick }) {
 }
 
 /* ─── Channels rail ────────────────────────────────────────────────────── */
-function ChannelsRail({ space, activeId, onPick }) {
+function ChannelsRail({ space, activeId, onPick, isAdmin, onCreateChannel }) {
   if (!space) return null;
   const grouped = {
     pinned: space.channels.filter((c) => c.lockedAdminWrite),
@@ -290,6 +337,20 @@ function ChannelsRail({ space, activeId, onPick }) {
         ) : null}
         {grouped.quiet.length > 0 ? (
           <RailGroup title="Quiet" channels={grouped.quiet} activeId={activeId} onPick={onPick} space={space} muted />
+        ) : null}
+        {isAdmin ? (
+          <button
+            type="button"
+            onClick={onCreateChannel}
+            data-testid="new-channel-btn"
+            className="mt-2 w-full text-left flex items-center gap-2 px-2 py-2 rounded-lg border border-dashed border-[#A68057] text-clay-700 hover:bg-[#F3EADB]"
+          >
+            <span className="w-[26px] h-[26px] rounded-md border border-dashed border-[#A68057] flex items-center justify-center text-[#A68057] font-mono text-[16px] leading-none">
+              +
+            </span>
+            <span className="text-[12.5px] font-medium">New channel</span>
+            <span className="ml-auto num-mono text-[9px] text-[#A68057] uppercase tracking-[0.18em]">admin</span>
+          </button>
         ) : null}
       </div>
 
@@ -467,10 +528,37 @@ function ThreadToolbar({ sort, onSort, channel, count }) {
 }
 
 /* ─── Thread card ──────────────────────────────────────────────────────── */
-function ThreadCard({ thread, users, onOpen }) {
+function ThreadCard({ thread, users, channelId, onOpen, onVoted }) {
   const u = users[thread.author];
   const isOfficial = u?.role === "admin";
   const flair = FLAIRS[thread.flair];
+  const [localVote, setLocalVote] = useState(thread.youVoted || 0);
+  const [localNet, setLocalNet] = useState(
+    thread.netVotes != null
+      ? thread.netVotes
+      : (thread.upvotes || 0) - (thread.downvotes || 0),
+  );
+
+  async function vote(direction) {
+    const wanted = localVote === direction ? 0 : direction;
+    const delta = wanted - localVote;
+    setLocalVote(wanted);
+    setLocalNet((v) => v + delta);
+    try {
+      const d = await api.post(
+        `/api/community/channels/${channelId}/threads/${thread.id}/vote`,
+        { direction },
+      );
+      if (d) {
+        if (typeof d.netVotes === "number") setLocalNet(d.netVotes);
+        if (typeof d.yourVote === "number") setLocalVote(d.yourVote);
+      }
+      onVoted && onVoted();
+    } catch {
+      // optimistic state already applied; ignore network errors
+    }
+  }
+
   return (
     <article
       onClick={onOpen}
@@ -481,7 +569,11 @@ function ThreadCard({ thread, users, onOpen }) {
       style={isOfficial ? { background: "linear-gradient(180deg, #FBF8F2 0%, #FBF6EF 100%)" } : {}}
     >
       <div className="bg-[#FBF8F2] border-r border-[#EFE2C9] py-3 flex flex-col items-center">
-        <VoteColumn count={(thread.upvotes || 0) - (thread.downvotes || 0)} />
+        <VoteColumn
+          count={localNet}
+          voted={localVote === 1 ? 1 : localVote === -1 ? -1 : null}
+          onVote={(d) => vote(d)}
+        />
       </div>
 
       <div className="flex-1 min-w-0 px-5 py-3.5">
@@ -554,11 +646,52 @@ function ThreadCard({ thread, users, onOpen }) {
 }
 
 /* ─── Thread detail ────────────────────────────────────────────────────── */
-function ThreadDetail({ thread, channel, users, onBack }) {
+function ThreadDetail({ thread, channel, users, onBack, onChanged }) {
   const u = users[thread.author] || { name: thread.author };
-  const [vote, setVote] = useState(0);
   const flair = FLAIRS[thread.flair];
-  const replies = thread.topReplies || [];
+  const [liveThread, setLiveThread] = useState(thread);
+  const replies = liveThread.topReplies || liveThread.replies_list || thread.topReplies || [];
+  const [vote, setVote] = useState(liveThread.youVoted || 0);
+  const [netVotes, setNetVotes] = useState(
+    liveThread.netVotes != null
+      ? liveThread.netVotes
+      : (liveThread.upvotes || 0) - (liveThread.downvotes || 0),
+  );
+
+  const refreshThread = useCallback(async () => {
+    if (!channel?.id || !thread.id) return;
+    try {
+      const d = await api.get(`/api/community/channels/${channel.id}/threads/${thread.id}`);
+      if (d?.thread) {
+        const fresh = { ...d.thread, topReplies: d.replies || [] };
+        setLiveThread(fresh);
+        if (typeof fresh.netVotes === "number") setNetVotes(fresh.netVotes);
+        if (typeof fresh.youVoted === "number") setVote(fresh.youVoted);
+      }
+    } catch {}
+  }, [channel?.id, thread.id]);
+
+  useEffect(() => {
+    refreshThread();
+  }, [refreshThread]);
+
+  async function castVote(direction) {
+    const wanted = vote === direction ? 0 : direction;
+    const delta = wanted - vote;
+    setVote(wanted);
+    setNetVotes((v) => v + delta);
+    try {
+      const d = await api.post(
+        `/api/community/channels/${channel.id}/threads/${thread.id}/vote`,
+        { direction },
+      );
+      if (d) {
+        if (typeof d.netVotes === "number") setNetVotes(d.netVotes);
+        if (typeof d.yourVote === "number") setVote(d.yourVote);
+      }
+      onChanged && onChanged();
+    } catch {}
+  }
 
   return (
     <div className="flex-1 overflow-auto" data-testid={`thread-detail-${thread.id}`}>
@@ -600,12 +733,12 @@ function ThreadDetail({ thread, channel, users, onBack }) {
               <div className="flex items-center gap-2 text-[11px] text-clay-700">
                 <VoteColumn
                   vertical={false}
-                  count={(thread.upvotes || 0) - (thread.downvotes || 0) + vote}
+                  count={netVotes}
                   voted={vote === 1 ? 1 : vote === -1 ? -1 : null}
-                  onVote={(d) => setVote((v) => (v === d ? 0 : d))}
+                  onVote={(d) => castVote(d)}
                 />
                 <span className="text-[#A68057]">·</span>
-                <span className="num-mono">{thread.replies || 0} replies</span>
+                <span className="num-mono">{liveThread.replies || 0} replies</span>
               </div>
             </div>
 
@@ -684,17 +817,26 @@ function ThreadDetail({ thread, channel, users, onBack }) {
               </div>
             </div>
           ) : (
-            <ReplySection replies={replies} thread={thread} users={users} />
+            <ReplySection
+              replies={replies}
+              thread={liveThread}
+              channel={channel}
+              users={users}
+              onChanged={() => {
+                refreshThread();
+                onChanged && onChanged();
+              }}
+            />
           )}
         </div>
 
-        <ThreadSidebar thread={thread} channel={channel} users={users} />
+        <ThreadSidebar thread={liveThread} channel={channel} users={users} />
       </div>
     </div>
   );
 }
 
-function ReplySection({ replies, thread, users }) {
+function ReplySection({ replies, thread, channel, users, onChanged }) {
   return (
     <div className="mt-6">
       <div className="flex items-center justify-between mb-3">
@@ -714,40 +856,20 @@ function ReplySection({ replies, thread, users }) {
         </div>
       </div>
 
-      <ReplyComposer />
+      <ReplyComposer channelId={channel?.id} threadId={thread.id} onPosted={onChanged} />
 
       <ul className="mt-5 space-y-3">
-        {replies.map((r, i) => {
-          const u = users[r.author] || { name: r.author };
-          const isVerified = u?.badge && (u.badge.kind === "topper" || u.badge.kind === "officer");
-          return (
-            <li
-              key={r.id}
-              className={`rounded-xl border p-4 flex gap-4 ${
-                isVerified ? "border-[#94B28A] bg-[#F0F5EF]/40" : "border-[#E7DECB] bg-white/60"
-              }`}
-            >
-              <VoteColumn count={r.upvotes} />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <UserChip user={u} time="2h" compact />
-                  {isVerified && i === 0 ? (
-                    <span className="pill pill-sage" style={{ fontSize: 9.5 }}>
-                      Top verified answer
-                    </span>
-                  ) : null}
-                </div>
-                <p className="text-[13.5px] text-[#2E2218] mt-2 leading-[1.6] whitespace-pre-wrap">{r.body}</p>
-                <div className="mt-2.5 flex items-center gap-3 text-[10.5px] text-clay-700">
-                  <button type="button" className="hover:text-clay-900">Reply</button>
-                  <button type="button" className="hover:text-clay-900">Save</button>
-                  <button type="button" className="hover:text-clay-900">Share</button>
-                  <button type="button" className="ml-auto hover:text-clay-900">Report</button>
-                </div>
-              </div>
-            </li>
-          );
-        })}
+        {replies.map((r, i) => (
+          <ReplyItem
+            key={r.id}
+            reply={r}
+            users={users}
+            channelId={channel?.id}
+            threadId={thread.id}
+            isFirst={i === 0}
+            onChanged={onChanged}
+          />
+        ))}
         {replies.length === 0 ? (
           <li className="rounded-xl border border-dashed border-[#D6C9AC] bg-[#FBF8F2] p-5 text-center text-[12.5px] text-clay-700">
             No replies yet. Be the first to add a calm, sourced answer.
@@ -758,8 +880,89 @@ function ReplySection({ replies, thread, users }) {
   );
 }
 
-function ReplyComposer() {
+function ReplyItem({ reply, users, channelId, threadId, isFirst, onChanged }) {
+  const u = users[reply.author] || { name: reply.author };
+  const isVerified = u?.badge && (u.badge.kind === "topper" || u.badge.kind === "officer");
+  const [vote, setVote] = useState(reply.youVoted || 0);
+  const [net, setNet] = useState(reply.netVotes != null ? reply.netVotes : reply.upvotes || 0);
+
+  async function castVote(direction) {
+    const wanted = vote === direction ? 0 : direction;
+    const delta = wanted - vote;
+    setVote(wanted);
+    setNet((v) => v + delta);
+    try {
+      const d = await api.post(
+        `/api/community/channels/${channelId}/threads/${threadId}/replies/${reply.id}/vote`,
+        { direction },
+      );
+      if (d) {
+        if (typeof d.netVotes === "number") setNet(d.netVotes);
+        if (typeof d.yourVote === "number") setVote(d.yourVote);
+      }
+      onChanged && onChanged();
+    } catch {}
+  }
+
+  return (
+    <li
+      data-testid={`reply-${reply.id}`}
+      className={`rounded-xl border p-4 flex gap-4 ${
+        isVerified ? "border-[#94B28A] bg-[#F0F5EF]/40" : "border-[#E7DECB] bg-white/60"
+      }`}
+    >
+      <VoteColumn
+        count={net}
+        voted={vote === 1 ? 1 : vote === -1 ? -1 : null}
+        onVote={(d) => castVote(d)}
+      />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <UserChip user={u} time={reply.createdAt || "2h"} compact />
+          {isVerified && isFirst ? (
+            <span className="pill pill-sage" style={{ fontSize: 9.5 }}>
+              Top verified answer
+            </span>
+          ) : null}
+        </div>
+        <p className="text-[13.5px] text-[#2E2218] mt-2 leading-[1.6] whitespace-pre-wrap">
+          {reply.body}
+        </p>
+        <div className="mt-2.5 flex items-center gap-3 text-[10.5px] text-clay-700">
+          <button type="button" className="hover:text-clay-900">Reply</button>
+          <button type="button" className="hover:text-clay-900">Save</button>
+          <button type="button" className="hover:text-clay-900">Share</button>
+          <button type="button" className="ml-auto hover:text-clay-900">Report</button>
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function ReplyComposer({ channelId, threadId, onPosted }) {
   const [body, setBody] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function submit() {
+    const text = body.trim();
+    if (!text || !channelId || !threadId) return;
+    setPosting(true);
+    setError(null);
+    try {
+      await api.post(
+        `/api/community/channels/${channelId}/threads/${threadId}/replies`,
+        { body: text },
+      );
+      setBody("");
+      onPosted && onPosted();
+    } catch (e) {
+      setError(e?.message || "Could not post reply.");
+    } finally {
+      setPosting(false);
+    }
+  }
+
   return (
     <div className="rounded-xl border border-[#E7DECB] bg-white/80" data-testid="reply-composer">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-[#E7DECB] text-[10.5px] text-clay-700">
@@ -784,9 +987,9 @@ function ReplyComposer() {
         className="block w-full px-3 py-2.5 text-[13px] bg-transparent outline-none resize-none placeholder:text-[#A68057]"
         data-testid="reply-body"
       />
-      <div className="flex items-center justify-between px-3 py-2 border-t border-[#E7DECB]">
-        <span className="text-[10.5px] text-clay-700">
-          Be calm. No pile-ons. Verified Topper answers may be promoted to the top.
+      <div className="flex items-center justify-between px-3 py-2 border-t border-[#E7DECB] gap-3 flex-wrap">
+        <span className="text-[10.5px] text-clay-700 flex-1">
+          {error ? <span className="text-[#7A3925]">{error}</span> : "Be calm. No pile-ons. Verified Topper answers may be promoted to the top."}
         </span>
         <div className="flex gap-2">
           <button
@@ -797,10 +1000,12 @@ function ReplyComposer() {
           </button>
           <button
             type="button"
-            className="text-[11px] px-3 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold"
+            onClick={submit}
+            disabled={posting || !body.trim()}
+            className="text-[11px] px-3 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold disabled:opacity-50"
             data-testid="reply-submit"
           >
-            Post reply
+            {posting ? "Posting…" : "Post reply"}
           </button>
         </div>
       </div>
@@ -895,25 +1100,34 @@ function ThreadSidebar({ thread, channel, users }) {
 }
 
 /* ─── Composer drawer ──────────────────────────────────────────────────── */
-function ComposerDrawer({ channel, onClose }) {
+function ComposerDrawer({ channel, onClose, onCreated }) {
   const [flair, setFlair] = useState("discussion");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [error, setError] = useState(null);
   const flairOptions = Object.keys(FLAIRS).slice(0, 7);
 
   async function submit() {
     if (!title.trim() || !body.trim() || !channel) return;
-    try {
-      await api.post("/api/community/threads", {
-        title: title.trim(),
-        category: channel.id,
-        body: body.trim(),
-        tag: FLAIRS[flair]?.label || "Discussion",
-      });
-    } catch {
-      // best-effort: backend may not have this channel id; close anyway.
+    if (title.trim().length < 6 || body.trim().length < 10) {
+      setError("Title must be ≥ 6 chars and body ≥ 10 chars.");
+      return;
     }
-    onClose();
+    setPosting(true);
+    setError(null);
+    try {
+      const newThread = await api.post(
+        `/api/community/channels/${channel.id}/threads`,
+        { title: title.trim(), body: body.trim(), flair },
+      );
+      onCreated && onCreated(newThread);
+      onClose();
+    } catch (e) {
+      setError(e?.message || "Could not post thread.");
+    } finally {
+      setPosting(false);
+    }
   }
 
   return (
@@ -962,6 +1176,11 @@ function ComposerDrawer({ channel, onClose }) {
         <div className="rounded-lg bg-[#F0F5EF] border border-[#B9CFAF] p-3 text-[11.5px] text-[#33482F]">
           <strong>Before posting:</strong> if this is a PYQ or factual claim, attach the year/question or a source link. The community moderation rule on misinformation is firm.
         </div>
+        {error ? (
+          <div className="rounded-lg bg-[#F2DDD6] border border-[#D9B4A6] p-3 text-[11.5px] text-[#7A3925]">
+            {error}
+          </div>
+        ) : null}
         <div className="flex justify-end gap-2">
           <button
             type="button"
@@ -973,10 +1192,108 @@ function ComposerDrawer({ channel, onClose }) {
           <button
             type="button"
             onClick={submit}
-            className="px-4 py-2 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold text-[12px]"
+            disabled={posting || title.trim().length < 6 || body.trim().length < 10}
+            className="px-4 py-2 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold text-[12px] disabled:opacity-50"
             data-testid="thread-submit"
           >
-            Post thread
+            {posting ? "Posting…" : "Post thread"}
+          </button>
+        </div>
+      </div>
+    </Drawer>
+  );
+}
+
+function NewChannelDrawer({ space, onClose, onCreated }) {
+  const [name, setName] = useState("");
+  const [purpose, setPurpose] = useState("");
+  const [locked, setLocked] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function submit() {
+    const slug = name.trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]{1,31}$/.test(slug)) {
+      setError("Channel name must be lowercase letters, numbers, or dashes (2–32 chars).");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const d = await api.post(`/api/community/spaces/${space.id}/channels`, {
+        name: slug,
+        purpose: purpose || null,
+        lockedAdminWrite: locked,
+      });
+      onCreated && onCreated(d?.channel);
+      onClose();
+    } catch (e) {
+      setError(e?.message || "Could not create channel.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Drawer open onClose={onClose} title={`New channel in ${space?.name || ""}`} width={520}>
+      <div className="space-y-4" data-testid="new-channel-drawer">
+        <div>
+          <Eyebrow>Channel name</Eyebrow>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. mock-tests"
+            className="mt-2 w-full px-3 py-2 rounded-lg border border-[#E7DECB] bg-white/70 text-[14px] outline-none font-mono"
+            data-testid="new-channel-name"
+          />
+          <div className="num-mono text-[10px] text-clay-700 mt-1">
+            lowercase · letters, numbers, dashes only · 2–32 chars
+          </div>
+        </div>
+        <div>
+          <Eyebrow>Purpose</Eyebrow>
+          <input
+            value={purpose}
+            onChange={(e) => setPurpose(e.target.value)}
+            placeholder="What this channel is for (visible at the top)"
+            className="mt-2 w-full px-3 py-2 rounded-lg border border-[#E7DECB] bg-white/70 text-[14px] outline-none"
+          />
+        </div>
+        <label className="flex items-start gap-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={locked}
+            onChange={(e) => setLocked(e.target.checked)}
+            className="mt-0.5"
+          />
+          <span className="text-[12.5px] text-clay-900">
+            <strong>Admin-write only.</strong>
+            <span className="block text-[11px] text-clay-700 mt-0.5">
+              Replies are locked. Only admin posts appear. Use for official update channels.
+            </span>
+          </span>
+        </label>
+        {error ? (
+          <div className="rounded-lg bg-[#F2DDD6] border border-[#D9B4A6] p-3 text-[11.5px] text-[#7A3925]">
+            {error}
+          </div>
+        ) : null}
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-full border border-[#E7DECB] text-clay-700 font-semibold text-[12px]"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={submitting || !name.trim()}
+            className="px-4 py-2 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold text-[12px] disabled:opacity-50"
+            data-testid="new-channel-submit"
+          >
+            {submitting ? "Creating…" : "Create channel"}
           </button>
         </div>
       </div>

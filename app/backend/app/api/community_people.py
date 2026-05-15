@@ -19,6 +19,9 @@ from pydantic import BaseModel, Field
 
 from app.api.community_seed import (
     ACCOUNTABILITY,
+    COMMUNITY_FLAIRS,
+    COMMUNITY_SPACES,
+    COMMUNITY_THREADS,
     COMMUNITY_USERS,
     MENTOR_EARNINGS,
     MENTOR_SESSIONS,
@@ -51,6 +54,8 @@ _mentor_bookings: dict[str, dict[str, dict]] = defaultdict(dict)    # uid -> {se
 _resource_votes: dict[str, set[str]] = defaultdict(set)             # resource_id -> {uid}
 _resource_reports: dict[str, list[dict]] = defaultdict(list)        # resource_id -> [{uid, reason}]
 _contributed_resources: list[dict] = []
+_thread_votes: dict[str, dict[str, int]] = defaultdict(dict)        # thread_id -> {uid: +1/-1}
+_reply_votes: dict[str, dict[str, int]] = defaultdict(dict)         # reply_id -> {uid: +1/-1}
 
 
 def _vote_count(base: int, resource_id: str) -> int:
@@ -490,3 +495,266 @@ async def report_resource(
     entry = {"uid": user["id"], "reason": payload.reason.strip(), "at": _now_iso()}
     _resource_reports[resource_id].append(entry)
     return {"reported": True, "resourceId": resource_id, "totalReports": len(_resource_reports[resource_id])}
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  SPACES · CHANNELS · THREADS · REPLIES · VOTES
+# ════════════════════════════════════════════════════════════════════════
+#
+# These work against the in-memory ``COMMUNITY_SPACES`` / ``COMMUNITY_THREADS``
+# seed dictionaries in ``community_seed.py``. They live alongside the
+# Supabase-backed canonical /threads endpoints — the community screen reads
+# from this snapshot via ``/api/community/spaces``, so persisting mutations
+# here is what makes the UI feel alive end-to-end.
+
+
+def _find_space(space_id: str) -> dict:
+    for s in COMMUNITY_SPACES:
+        if s["id"] == space_id:
+            return s
+    raise HTTPException(status_code=404, detail="Space not found")
+
+
+def _find_channel(channel_id: str) -> tuple[dict, dict]:
+    for s in COMMUNITY_SPACES:
+        for c in s["channels"]:
+            if c["id"] == channel_id:
+                return s, c
+    raise HTTPException(status_code=404, detail="Channel not found")
+
+
+def _find_thread(thread_id: str, channel_id: str | None = None) -> dict:
+    channels = [channel_id] if channel_id else list(COMMUNITY_THREADS.keys())
+    for cid in channels:
+        for t in COMMUNITY_THREADS.get(cid, []):
+            if t["id"] == thread_id:
+                return t
+    raise HTTPException(status_code=404, detail="Thread not found")
+
+
+def _net_thread_votes(thread: dict) -> int:
+    base = (thread.get("upvotes", 0) or 0) - (thread.get("downvotes", 0) or 0)
+    return base + sum(_thread_votes.get(thread["id"], {}).values())
+
+
+def _net_reply_votes(reply: dict) -> int:
+    base = reply.get("upvotes", 0) or 0
+    return base + sum(_reply_votes.get(reply["id"], {}).values())
+
+
+def _shape_thread_runtime(thread: dict, uid: str | None) -> dict:
+    return {
+        **thread,
+        "netVotes": _net_thread_votes(thread),
+        "youVoted": _thread_votes.get(thread["id"], {}).get(uid) if uid else 0,
+    }
+
+
+def _shape_reply_runtime(reply: dict, uid: str | None) -> dict:
+    return {
+        **reply,
+        "netVotes": _net_reply_votes(reply),
+        "youVoted": _reply_votes.get(reply["id"], {}).get(uid) if uid else 0,
+    }
+
+
+@router.get("/channels/{channel_id}/threads")
+async def list_channel_threads(
+    channel_id: str,
+    sort: str = Query(default="hot", description="hot | new | top | verified | unanswered"),
+    user: dict | None = Depends(get_optional_user),
+):
+    _find_channel(channel_id)
+    uid = (user or {}).get("id")
+    items = [_shape_thread_runtime(t, uid) for t in COMMUNITY_THREADS.get(channel_id, [])]
+    if sort == "new":
+        items.sort(key=lambda t: not t.get("pinned"))
+    elif sort == "top":
+        items.sort(key=lambda t: -(t.get("upvotes") or 0))
+    elif sort == "verified":
+        def _v(t: dict) -> int:
+            u = COMMUNITY_USERS.get(t.get("author")) or {}
+            badge = u.get("badge") or {}
+            return 1 if badge.get("kind") in {"topper", "officer", "admin"} else 0
+        items.sort(key=lambda t: (-_v(t), -(t.get("upvotes") or 0)))
+    elif sort == "unanswered":
+        items = [t for t in items if (t.get("replies") or 0) == 0]
+    else:  # hot
+        items.sort(
+            key=lambda t: (
+                not t.get("pinned"),
+                -(t.get("netVotes") or 0),
+            )
+        )
+    return {"items": items, "channelId": channel_id, "total": len(items)}
+
+
+@router.get("/channels/{channel_id}/threads/{thread_id}")
+async def thread_with_replies(
+    channel_id: str, thread_id: str, user: dict | None = Depends(get_optional_user)
+):
+    _find_channel(channel_id)
+    t = _find_thread(thread_id, channel_id)
+    uid = (user or {}).get("id")
+    replies = [_shape_reply_runtime(r, uid) for r in (t.get("topReplies") or [])]
+    return {"thread": _shape_thread_runtime(t, uid), "replies": replies}
+
+
+class ThreadCreate(BaseModel):
+    title: str = Field(min_length=6, max_length=160)
+    body: str = Field(min_length=10, max_length=4000)
+    flair: str | None = Field(default="discussion", max_length=24)
+
+
+@router.post("/channels/{channel_id}/threads")
+async def create_thread(
+    channel_id: str, payload: ThreadCreate, user: dict = Depends(get_current_user)
+):
+    _space, channel = _find_channel(channel_id)
+    if channel.get("lockedAdminWrite") and user.get("role") not in {"admin", "super_admin"}:
+        raise HTTPException(status_code=403, detail="Channel is admin-write only")
+    if payload.flair and payload.flair not in COMMUNITY_FLAIRS:
+        raise HTTPException(status_code=400, detail="Invalid flair")
+    new_thread = {
+        "id": f"t-{uuid4().hex[:10]}",
+        "channelId": channel_id,
+        "flair": payload.flair or "discussion",
+        "title": payload.title.strip(),
+        "body": payload.body.strip(),
+        "author": user["id"],
+        "upvotes": 1,
+        "downvotes": 0,
+        "replies": 0,
+        "createdAt": "now",
+        "topReplies": [],
+    }
+    COMMUNITY_THREADS.setdefault(channel_id, []).insert(0, new_thread)
+    # Auto-upvote by the author so the vote count reads naturally.
+    _thread_votes[new_thread["id"]][user["id"]] = 1
+    if user["id"] not in COMMUNITY_USERS:
+        COMMUNITY_USERS[user["id"]] = {
+            "id": user["id"],
+            "name": user.get("name") or user.get("email") or "Member",
+            "role": user.get("role", "aspirant"),
+            "avatarColor": "#A68057",
+        }
+    return _shape_thread_runtime(new_thread, user["id"])
+
+
+class ReplyCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+
+
+@router.post("/channels/{channel_id}/threads/{thread_id}/replies")
+async def create_reply(
+    channel_id: str,
+    thread_id: str,
+    payload: ReplyCreate,
+    user: dict = Depends(get_current_user),
+):
+    _find_channel(channel_id)
+    t = _find_thread(thread_id, channel_id)
+    if t.get("repliesLocked"):
+        raise HTTPException(status_code=423, detail="Replies are locked on this thread")
+    reply = {
+        "id": f"r-{uuid4().hex[:10]}",
+        "author": user["id"],
+        "upvotes": 1,
+        "body": payload.body.strip(),
+        "createdAt": "now",
+    }
+    t.setdefault("topReplies", []).insert(0, reply)
+    t["replies"] = (t.get("replies") or 0) + 1
+    _reply_votes[reply["id"]][user["id"]] = 1
+    if user["id"] not in COMMUNITY_USERS:
+        COMMUNITY_USERS[user["id"]] = {
+            "id": user["id"],
+            "name": user.get("name") or user.get("email") or "Member",
+            "role": user.get("role", "aspirant"),
+            "avatarColor": "#A68057",
+        }
+    return _shape_reply_runtime(reply, user["id"])
+
+
+class VotePayload(BaseModel):
+    direction: int = Field(default=1, description="+1 upvote, -1 downvote, 0 clear")
+
+
+def _toggle_vote(store: dict[str, dict[str, int]], obj_id: str, uid: str, direction: int) -> int:
+    if direction not in (-1, 0, 1):
+        raise HTTPException(status_code=400, detail="direction must be -1, 0, or 1")
+    bucket = store[obj_id]
+    if direction == 0 or bucket.get(uid) == direction:
+        bucket.pop(uid, None)
+        return 0
+    bucket[uid] = direction
+    return direction
+
+
+@router.post("/channels/{channel_id}/threads/{thread_id}/vote")
+async def vote_thread(
+    channel_id: str,
+    thread_id: str,
+    payload: VotePayload,
+    user: dict = Depends(get_current_user),
+):
+    _find_channel(channel_id)
+    t = _find_thread(thread_id, channel_id)
+    your_vote = _toggle_vote(_thread_votes, thread_id, user["id"], payload.direction)
+    return {
+        "threadId": thread_id,
+        "yourVote": your_vote,
+        "netVotes": _net_thread_votes(t),
+    }
+
+
+@router.post("/channels/{channel_id}/threads/{thread_id}/replies/{reply_id}/vote")
+async def vote_reply(
+    channel_id: str,
+    thread_id: str,
+    reply_id: str,
+    payload: VotePayload,
+    user: dict = Depends(get_current_user),
+):
+    _find_channel(channel_id)
+    t = _find_thread(thread_id, channel_id)
+    reply = next((r for r in (t.get("topReplies") or []) if r["id"] == reply_id), None)
+    if not reply:
+        raise HTTPException(status_code=404, detail="Reply not found")
+    your_vote = _toggle_vote(_reply_votes, reply_id, user["id"], payload.direction)
+    return {
+        "replyId": reply_id,
+        "yourVote": your_vote,
+        "netVotes": _net_reply_votes(reply),
+    }
+
+
+class ChannelCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=32, pattern=r"^[a-z0-9][a-z0-9-]*$")
+    purpose: str | None = Field(default=None, max_length=140)
+    lockedAdminWrite: bool = False
+
+
+@router.post("/spaces/{space_id}/channels")
+async def create_channel(
+    space_id: str, payload: ChannelCreate, user: dict = Depends(get_current_user)
+):
+    if user.get("role") not in {"admin", "super_admin"}:
+        raise HTTPException(status_code=403, detail="Channels are admin-managed")
+    space = _find_space(space_id)
+    if any(c["name"] == payload.name for c in space["channels"]):
+        raise HTTPException(status_code=409, detail="Channel name already exists in this space")
+    prefix = space["id"][:1] if space["id"] else "c"
+    channel = {
+        "id": f"{prefix}-{payload.name}-{uuid4().hex[:4]}",
+        "name": payload.name,
+        "purpose": payload.purpose or "Discussion channel.",
+        "lockedAdminWrite": payload.lockedAdminWrite,
+        "unread": 0,
+        "lastActiveAt": "now",
+        "pinned": 0,
+        "members": space.get("members", 0),
+    }
+    space["channels"].append(channel)
+    COMMUNITY_THREADS.setdefault(channel["id"], [])
+    return {"channel": channel, "spaceId": space_id}
