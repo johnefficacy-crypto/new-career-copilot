@@ -3,6 +3,7 @@ import { Sparkles, ArrowRight } from "lucide-react";
 import { api } from "../lib/api";
 import { Card, Drawer, Eyebrow, PageHeader, Pill, SectionHeader, StatusDot } from "../shared/ui/studyos";
 import PlanChangeLogCard from "../features/study/components/PlanChangeLogCard";
+import PlanByTopic from "../features/study/components/PlanByTopic";
 
 const STATUS_TONE = {
   completed: "sage",
@@ -322,7 +323,10 @@ export default function StudyPlan() {
         </Card>
       </div>
 
-      <PlanChangeLogCard />
+      <div className="grid lg:grid-cols-[1fr_400px] gap-6 items-start">
+        <PlanByTopic />
+        <PlanChangeLogCard />
+      </div>
 
       <Drawer
         open={draftOpen}
