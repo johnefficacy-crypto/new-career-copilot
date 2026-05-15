@@ -80,7 +80,7 @@ export default function ResourcesScreen() {
             type="button"
             onClick={() => setContributeOpen(true)}
             data-testid="resource-contribute-btn"
-            className="text-[12px] px-3 py-1.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold"
+            className="text-[12px] px-3 py-1.5 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold"
           >
             + Contribute resource
           </button>
@@ -153,7 +153,7 @@ function FilterSidebar({ type, setType, trust, setTrust, exam, setExam }) {
               data-testid={`res-exam-${e === "all" ? "all" : e.replace(/\s+/g, "-").toLowerCase()}`}
               className={`text-[11px] px-2.5 py-1 rounded-full border ${
                 exam === e
-                  ? "bg-[#2E2218] text-[#F3EADB] border-[#2E2218]"
+                  ? "bg-[#4E3A29] text-[#F3EADB] border-[#4E3A29]"
                   : "border-[#E7DECB] text-clay-700"
               }`}
             >
@@ -181,7 +181,7 @@ function FilterSidebar({ type, setType, trust, setTrust, exam, setExam }) {
               onClick={() => setType(k)}
               data-testid={`res-type-${k}`}
               className={`text-left text-[12px] px-2.5 py-1.5 rounded-md ${
-                type === k ? "bg-[#2E2218] text-[#F3EADB]" : "text-[#3a2e22] hover:bg-[#F3EADB]"
+                type === k ? "bg-[#4E3A29] text-[#F3EADB]" : "text-[#3a2e22] hover:bg-[#F3EADB]"
               }`}
             >
               {label}
@@ -206,7 +206,7 @@ function FilterSidebar({ type, setType, trust, setTrust, exam, setExam }) {
               onClick={() => setTrust(k)}
               data-testid={`res-trust-${k}`}
               className={`flex items-center gap-2 text-left text-[12px] px-2.5 py-1.5 rounded-md ${
-                trust === k ? "bg-[#2E2218] text-[#F3EADB]" : "text-[#3a2e22] hover:bg-[#F3EADB]"
+                trust === k ? "bg-[#4E3A29] text-[#F3EADB]" : "text-[#3a2e22] hover:bg-[#F3EADB]"
               }`}
             >
               {k !== "all" ? <SourceTrustStamp trust={k} /> : <span className="w-2 h-2 bg-[#A68057] rounded-sm" />}
@@ -293,7 +293,7 @@ function ResourceCard({ r, onVote, onReport }) {
       <div className="rule mt-3 pt-2 flex gap-2">
         <button
           type="button"
-          className="flex-1 text-[11.5px] px-2.5 py-1.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold"
+          className="flex-1 text-[11.5px] px-2.5 py-1.5 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold"
         >
           Open
         </button>
@@ -449,7 +449,7 @@ function ContributeDrawer({ onClose, onContributed }) {
             onClick={submit}
             disabled={submitting || form.title.trim().length < 4}
             data-testid="resource-contribute-submit"
-            className="px-4 py-2 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold text-[12px] disabled:opacity-50"
+            className="px-4 py-2 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold text-[12px] disabled:opacity-50"
           >
             {submitting ? "Submitting…" : "Submit resource"}
           </button>

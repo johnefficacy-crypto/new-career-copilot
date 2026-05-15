@@ -68,7 +68,7 @@ export default function MentorsScreen() {
               type="button"
               onClick={() => setView("browse")}
               className={`px-3 py-1 rounded-full text-[12px] font-semibold ${
-                view === "browse" ? "bg-[#2E2218] text-[#F3EADB]" : "text-clay-700"
+                view === "browse" ? "bg-[#4E3A29] text-[#F3EADB]" : "text-clay-700"
               }`}
             >
               Browse
@@ -77,7 +77,7 @@ export default function MentorsScreen() {
               type="button"
               onClick={() => setView("earnings")}
               className={`px-3 py-1 rounded-full text-[12px] font-semibold ${
-                view === "earnings" ? "bg-[#2E2218] text-[#F3EADB]" : "text-clay-700"
+                view === "earnings" ? "bg-[#4E3A29] text-[#F3EADB]" : "text-clay-700"
               }`}
             >
               You as mentor
@@ -180,7 +180,7 @@ function FeaturedSessionsCard({ sessions, mentors, onBooked }) {
                     className={`text-[11.5px] px-3 py-1.5 rounded-full font-semibold whitespace-nowrap ${
                       s.youBooked
                         ? "border border-[#54794E] bg-[#F0F5EF] text-[#33482F]"
-                        : "bg-[#2E2218] text-[#F3EADB]"
+                        : "bg-[#4E3A29] text-[#F3EADB]"
                     }`}
                   >
                     {s.youBooked ? "Booked ✓" : `Book · ₹${s.price}`}
@@ -321,7 +321,7 @@ function MentorProfileDrawer({ mentor, onClose }) {
         <div className="mt-3 flex gap-2 flex-wrap">
           <button
             type="button"
-            className="text-[12px] px-3 py-1.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold"
+            className="text-[12px] px-3 py-1.5 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold"
           >
             Request 1:1
           </button>

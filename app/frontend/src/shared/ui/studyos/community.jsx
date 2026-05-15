@@ -94,7 +94,7 @@ export function AdminBadge() {
   return (
     <span
       className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded num-mono"
-      style={{ background: "#2E2218", color: "#F3EADB", fontSize: 10, fontWeight: 600, letterSpacing: 0.4 }}
+      style={{ background: "#4E3A29", color: "#F3EADB", fontSize: 10, fontWeight: 600, letterSpacing: 0.4 }}
     >
       <span style={{ width: 6, height: 6, background: "#D6BC93", display: "inline-block" }} />
       <span>ADMIN</span>
@@ -213,8 +213,8 @@ export function ChannelIcon({ ch = {}, color = "#6C5038", size = 30 }) {
       style={{
         width: size,
         height: size,
-        background: locked ? "#2E2218" : "#FBF6EF",
-        border: `1px solid ${locked ? "#2E2218" : "#E7DECB"}`,
+        background: locked ? "#4E3A29" : "#FBF6EF",
+        border: `1px solid ${locked ? "#4E3A29" : "#E7DECB"}`,
         color: locked ? "#D6BC93" : color,
       }}
     >
@@ -257,7 +257,7 @@ export function ChannelRulesRibbon({ channel = {}, rules = [] }) {
   const locked = channel.lockedAdminWrite;
   return (
     <div
-      className={`px-5 py-3 ${locked ? "bg-[#2E2218] text-[#D6BC93]" : "bg-[#F3EADB]/70 text-clay-700"} text-[11.5px] border-b border-[#E7DECB]`}
+      className={`px-5 py-3 ${locked ? "bg-[#4E3A29] text-[#D6BC93]" : "bg-[#F3EADB]/70 text-clay-700"} text-[11.5px] border-b border-[#E7DECB]`}
     >
       <div className="flex items-start gap-3">
         <div

@@ -66,7 +66,7 @@ export default function StudyGroupsScreen() {
             <button type="button" className="text-[12px] px-3 py-1.5 rounded-full border border-[#E7DECB] text-clay-700 font-semibold">
               Find a group →
             </button>
-            <button type="button" className="text-[12px] px-3 py-1.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold" data-testid="create-group-btn">
+            <button type="button" className="text-[12px] px-3 py-1.5 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold" data-testid="create-group-btn">
               + Create group
             </button>
           </div>
@@ -118,7 +118,7 @@ function GroupListCard({ g, active, onPick }) {
       onClick={onPick}
       data-testid={`group-card-${g.id}`}
       className={`w-full text-left rounded-xl border p-4 transition ${
-        active ? "bg-[#FBF6EF] border-[#2E2218]" : "bg-white/70 border-[#E7DECB] hover:border-[#A68057]"
+        active ? "bg-[#FBF6EF] border-[#4E3A29]" : "bg-white/70 border-[#E7DECB] hover:border-[#A68057]"
       }`}
     >
       <div className="flex items-start justify-between gap-2">
@@ -196,7 +196,7 @@ function GroupDetail({ group }) {
                 className={`text-[11.5px] px-3 py-1.5 rounded-full font-semibold ${
                   group.youRequested
                     ? "border border-[#54794E] bg-[#F0F5EF] text-[#33482F]"
-                    : "bg-[#2E2218] text-[#F3EADB]"
+                    : "bg-[#4E3A29] text-[#F3EADB]"
                 }`}
               >
                 {group.youRequested ? "Request sent" : "Request to join"}
@@ -244,7 +244,7 @@ function GroupKPI({ k, v, sub, pct }) {
 function NextSessionCard({ s }) {
   const [whenDay, whenTime] = s.at.split("·").map((x) => x.trim());
   return (
-    <Card className="!bg-[#2E2218] !border-[#2E2218]">
+    <Card className="!bg-[#4E3A29] !border-[#4E3A29]">
       <div className="flex items-start gap-5 flex-wrap">
         <div className="text-right shrink-0">
           <div className="num-mono text-[10px] text-[#D6BC93] uppercase tracking-[0.18em]">Next session</div>
@@ -326,7 +326,7 @@ function DailyCheckinCard({ groupId }) {
             onClick={submit}
             disabled={posting || !body.trim()}
             data-testid="group-checkin-post"
-            className="text-[11px] px-3 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold disabled:opacity-50"
+            className="text-[11px] px-3 py-1 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold disabled:opacity-50"
           >
             {posted ? "Posted ✓" : posting ? "Posting…" : "Post check-in"}
           </button>
@@ -412,7 +412,7 @@ function SharedResourcesCard() {
         eyebrow="Shared resource library"
         title="Group-visible files & links."
         right={
-          <button type="button" className="text-[11.5px] px-3 py-1.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold">
+          <button type="button" className="text-[11.5px] px-3 py-1.5 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold">
             + Upload
           </button>
         }
@@ -509,7 +509,7 @@ function UpcomingStudyRooms({ rooms = STUDY_ROOM_SESSIONS, groups = STUDY_GROUPS
             Reminders 15 min before. Post-session hours feed your study analytics.
           </p>
         </div>
-        <button type="button" className="text-[11.5px] px-3 py-1.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold">
+        <button type="button" className="text-[11.5px] px-3 py-1.5 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold">
           + Schedule a session
         </button>
       </div>
@@ -563,7 +563,7 @@ function UpcomingStudyRooms({ rooms = STUDY_ROOM_SESSIONS, groups = STUDY_GROUPS
                           href={`https://${s.platformLink}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-[11px] px-2.5 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold"
+                          className="text-[11px] px-2.5 py-1 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold"
                         >
                           Open link
                         </a>
