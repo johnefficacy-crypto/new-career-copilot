@@ -7,6 +7,7 @@ import TopBar from "../../shared/layouts/TopBar";
 
 const OPERATIONS_NAV = [
   { to: "/admin/operations", label: "Operations Console", icon: LayoutGrid, testId: "admin-nav-operations", description: "Run the full scraper-to-publish pipeline without losing context.", end: true },
+  { to: "/admin/verification-gateway", label: "Verification Gateway", icon: ShieldCheck, testId: "admin-nav-verification-gateway", description: "Recruitment Verification Gateway — classify, resolve, consensus, publish gate." },
   { to: "/admin/sources", label: "Source Registry", icon: Database, testId: "admin-nav-source-registry", description: "Manage trusted official and discovery-only sources." },
   { to: "/admin/scraper", label: "Scrape Runs / Queue Review", icon: Radar, testId: "admin-nav-scraper-monitor", description: "Run discovery and review extracted candidates." },
   { to: "/admin/recruitments", label: "Recruitment Drafts / Publish Gate", icon: FileSearch, testId: "admin-nav-recruitments", description: "Validate, verify, and publish canonical recruitments." },
