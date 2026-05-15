@@ -113,9 +113,10 @@ function QueueFixSection({ item, onFieldAction, onPromote, onMergeIntoExisting, 
         <FieldReviewGroup
           extracted={item.raw_extracted_item || item.normalized_item || {}}
           evidence={item.field_evidence_status || {}}
+          evidenceDetails={item.field_evidence_details || []}
           requiredFields={HIGH_RISK_QUEUE_FIELDS}
           recommendedFields={RECOMMENDED_REVIEW_FIELDS}
-          onFieldAction={(field, action, correctedValue) => onQueueFieldActionSafe(onFieldAction, item.id, field, action, correctedValue)}
+          onFieldAction={(field, action, correctedValue, scope) => onQueueFieldActionSafe(onFieldAction, item.id, field, action, correctedValue, scope)}
         />
       </div>
 
@@ -173,9 +174,9 @@ function QueueFixSection({ item, onFieldAction, onPromote, onMergeIntoExisting, 
   );
 }
 
-function onQueueFieldActionSafe(handler, id, field, action, correctedValue) {
+function onQueueFieldActionSafe(handler, id, field, action, correctedValue, scope) {
   try {
-    return handler?.(id, field, action, correctedValue);
+    return handler?.(id, field, action, correctedValue, scope);
   } catch (err) {
     console.error("queue field action failed", err);
     return undefined;

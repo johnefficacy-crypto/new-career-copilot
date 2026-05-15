@@ -38,6 +38,7 @@ function QueueDetailDrawer({ item, onClose, onAction, onFieldAction, onMerge }) 
   if (!item) return null;
   const extracted = item.extracted_data || {};
   const evidence = item.field_evidence_status || item.field_evidence || {};
+  const evidenceDetails = item.field_evidence_details || [];
   const state = reviewState(item);
   const primaryDuplicate = (item.duplicate_candidates || [])[0];
 
@@ -99,9 +100,10 @@ function QueueDetailDrawer({ item, onClose, onAction, onFieldAction, onMerge }) 
             <FieldReviewGroup
               extracted={extracted}
               evidence={evidence}
+              evidenceDetails={evidenceDetails}
               requiredFields={HIGH_RISK_QUEUE_FIELDS}
               recommendedFields={RECOMMENDED_REVIEW_FIELDS}
-              onFieldAction={(field, action, correctedValue) => onFieldAction(item.id, field, action, correctedValue)}
+              onFieldAction={(field, action, correctedValue, scope) => onFieldAction(item.id, field, action, correctedValue, scope)}
             />
           </div>
         </section>
@@ -294,9 +296,15 @@ export default function AdminScraper() {
     }
   };
 
-  const fieldAct = async (id, field, action, correctedValue) => {
+  const fieldAct = async (id, field, action, correctedValue, scope) => {
+    const body = {
+      notes: scope?.notes || "field review",
+      corrected_value: correctedValue,
+      entity_type: scope?.entity_type || null,
+      entity_key: scope?.entity_key || null,
+    };
     try {
-      await api.post(`/api/admin/scrape/items/${id}/fields/${field}/${action}`, { notes: "field review", corrected_value: correctedValue });
+      await api.post(`/api/admin/scrape/items/${id}/fields/${field}/${action}`, body);
       toast.success(`${field} ${action} saved.`);
       await load();
     } catch (e) {

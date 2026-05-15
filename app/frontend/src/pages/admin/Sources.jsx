@@ -59,13 +59,17 @@ function sourceToForm(source) {
 function buildPayload(form) {
   if (!form.source_type) throw new Error("Select a source type before saving.");
   const isAggregator = form.source_type === "aggregator";
+  // ``is_verified`` is intentionally not sent from this form. Trust is a
+  // decision, not a form bit: it must come from POST /api/admin/sources/
+  // {id}/verify, which runs the backend trust evaluator. Preserve the
+  // existing flag on edit so a save here does not clobber prior verification.
   return {
     source_name: form.source_name.trim(),
     official_url: form.official_url.trim(),
     source_url: form.official_url.trim(),
     source_type: form.source_type,
     is_active: !!form.is_active,
-    is_verified: isAggregator ? false : !!form.is_verified,
+    is_verified: !!form.is_verified,
     tier: form.tier === "" ? null : Number(form.tier),
     category: form.category || (isAggregator ? "aggregator" : null),
     notes: form.notes,
@@ -162,10 +166,16 @@ function SourceFormDrawer({ open, mode, form, setForm, busy, error, onClose, onS
             <span>Active</span>
             <input type="checkbox" checked={!!form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />
           </label>
-          <label className={`soft-card flex items-center justify-between rounded-xl p-3 text-sm ${isAggregator ? "opacity-60" : ""}`}>
-            <span>Verified official source</span>
-            <input type="checkbox" disabled={isAggregator} checked={!isAggregator && !!form.is_verified} onChange={(e) => setForm({ ...form, is_verified: e.target.checked })} />
-          </label>
+          <div className="soft-card flex items-center justify-between rounded-xl p-3 text-sm">
+            <span>Verification status</span>
+            {isAggregator ? (
+              <span className="pill pill-amber">Discovery only</span>
+            ) : form.is_verified ? (
+              <span className="pill pill-sage">Verified official source</span>
+            ) : (
+              <span className="pill" title="Save the source, then run the Verify action to perform the trust check.">Not verified — use Verify action</span>
+            )}
+          </div>
         </div>
 
         <div className="mt-6 flex justify-end gap-2">
