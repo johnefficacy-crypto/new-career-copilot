@@ -1,0 +1,530 @@
+<style>
+.oc { --paper:#FAF7F2; --paper-card:#FFFEFB; --paper-sunk:#F2EDE3; --ink:#1A1815; --ink-soft:#4A4640; --ink-mute:#7A736A; --rule:#D8D2C4; --rule-soft:#E8E2D4; --tier-a:#8B1A1A; --tier-a-bg:#F5E6E6; --tier-b:#8B6914; --tier-b-bg:#F5EDD6; --tier-c:#3D5A2E; --tier-c-bg:#E8EFE0; --blocker:#B83227; --blocker-bg:#FBE6E3; --resolved:#2F6B3E; --resolved-bg:#E2EDE5; --pending:#8B6914; --pending-bg:#F5EDD6; --info:#1E3A5F; --info-bg:#E2E8EF; --fdisp:'Fraunces',Georgia,serif; --fbody:'IBM Plex Sans',system-ui,sans-serif; --fmono:'JetBrains Mono',ui-monospace,Menlo,monospace; background:var(--paper); color:var(--ink); font-family:var(--fbody); font-size:13px; line-height:1.45; padding:0 0 8px; border-radius:6px; border:1px solid var(--rule); }
+.oc * { box-sizing:border-box; }
+.oc .disp { font-family:var(--fdisp); font-weight:400; letter-spacing:-0.015em; }
+.oc .mono { font-family:var(--fmono); }
+.oc .lbl { font-family:var(--fmono); font-size:11px; text-transform:uppercase; letter-spacing:0.1em; color:var(--ink-mute); }
+.oc h2.title { font-family:var(--fdisp); font-weight:500; font-size:20px; margin:0; letter-spacing:-0.01em; color:var(--ink); }
+.oc h3.title { font-family:var(--fdisp); font-weight:500; font-size:15px; margin:0; color:var(--ink); }
+.oc h4.title { font-family:var(--fdisp); font-weight:500; font-size:14px; margin:0; color:var(--ink); }
+.oc .mast { padding:14px 18px 12px; border-bottom:2px solid var(--ink); display:flex; align-items:flex-end; justify-content:space-between; gap:16px; }
+.oc .modebar { display:flex; border-bottom:1px solid var(--rule); padding:0 18px; }
+.oc .modepill { padding:11px 16px; font-size:12px; font-weight:500; color:var(--ink-mute); border-bottom:2px solid transparent; margin-bottom:-1px; }
+.oc .modepill.active { color:var(--ink); border-bottom-color:var(--ink); }
+.oc .count { font-family:var(--fmono); font-size:11px; margin-left:6px; color:var(--ink-mute); background:var(--paper-sunk); padding:1px 6px; border-radius:2px; }
+.oc .modepill.active .count { background:var(--ink); color:var(--paper); }
+.oc .scrn { padding:16px 18px; border-top:1px solid var(--rule); }
+.oc .scrn:first-of-type { border-top:none; }
+.oc .scrn-head { display:flex; justify-content:space-between; align-items:baseline; padding-bottom:8px; margin-bottom:14px; border-bottom:1px solid var(--rule); }
+.oc .scrn-tag { font-family:var(--fmono); font-size:10px; text-transform:uppercase; letter-spacing:0.16em; color:var(--ink-mute); }
+.oc .card { background:var(--paper-card); border:1px solid var(--rule); border-radius:4px; }
+.oc .card-head { padding:10px 14px; border-bottom:1px solid var(--rule); display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.oc .card-body { padding:14px; }
+.oc .card-foot { padding:9px 14px; border-top:1px solid var(--rule); background:var(--paper-sunk); display:flex; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
+.oc .badge { display:inline-flex; align-items:center; gap:5px; font-family:var(--fmono); font-size:11px; text-transform:uppercase; letter-spacing:0.06em; padding:2px 7px; border-radius:2px; font-weight:500; line-height:1.4; }
+.oc .badge::before { content:""; width:5px; height:5px; border-radius:50%; background:currentColor; opacity:0.7; }
+.oc .badge.tier-a { background:var(--tier-a-bg); color:var(--tier-a); }
+.oc .badge.tier-b { background:var(--tier-b-bg); color:var(--tier-b); }
+.oc .badge.tier-c { background:var(--tier-c-bg); color:var(--tier-c); }
+.oc .badge.blocker { background:var(--blocker-bg); color:var(--blocker); }
+.oc .badge.resolved { background:var(--resolved-bg); color:var(--resolved); }
+.oc .badge.pending { background:var(--pending-bg); color:var(--pending); }
+.oc .badge.info { background:var(--info-bg); color:var(--info); }
+.oc .badge.neutral { background:var(--paper-sunk); color:var(--ink-soft); }
+.oc .btn { font-family:var(--fbody); font-size:12px; font-weight:500; padding:6px 11px; border-radius:3px; border:1px solid var(--rule); background:var(--paper-card); color:var(--ink); cursor:pointer; }
+.oc .btn.primary { background:var(--ink); color:var(--paper); border-color:var(--ink); }
+.oc .btn.ghost { background:transparent; border-color:transparent; color:var(--ink-soft); }
+.oc .btn.danger { background:var(--blocker); color:var(--paper); border-color:var(--blocker); }
+.oc .btn.small { padding:4px 9px; font-size:11px; }
+.oc .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.oc .stack > * + * { margin-top:10px; }
+.oc .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.oc .grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+.oc .field { border:1px solid var(--rule); border-radius:3px; padding:10px 12px; background:var(--paper); }
+.oc .field-lbl { font-family:var(--fmono); font-size:10px; text-transform:uppercase; letter-spacing:0.1em; color:var(--ink-mute); margin-bottom:6px; display:flex; justify-content:space-between; align-items:center; }
+.oc .field-val { font-size:13px; color:var(--ink); }
+.oc .field-sub { font-family:var(--fmono); font-size:11px; color:var(--ink-mute); margin-top:4px; }
+.oc table.t { width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed; }
+.oc table.t th { text-align:left; font-family:var(--fmono); font-size:10px; text-transform:uppercase; letter-spacing:0.08em; color:var(--ink-mute); padding:7px 10px; border-bottom:1px solid var(--rule); font-weight:500; }
+.oc table.t td { padding:9px 10px; border-bottom:1px solid var(--rule-soft); vertical-align:top; font-size:12px; word-wrap:break-word; }
+.oc .row-id { font-family:var(--fmono); font-size:11px; color:var(--ink-mute); }
+.oc .row-ttl { font-weight:500; line-height:1.3; }
+.oc .row-sub { font-family:var(--fmono); font-size:11px; color:var(--ink-mute); margin-top:2px; }
+.oc .input { width:100%; padding:7px 10px; border:1px solid var(--rule); border-radius:3px; background:var(--paper); font-family:var(--fbody); font-size:13px; color:var(--ink); }
+.oc textarea.input { min-height:60px; resize:vertical; }
+.oc .phase-rail { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+.oc .phase { border:1px solid var(--rule); border-radius:3px; padding:9px 11px; background:var(--paper-card); }
+.oc .phase.active { border-color:var(--ink); background:var(--ink); color:var(--paper); }
+.oc .phase.done { background:var(--resolved-bg); border-color:var(--resolved); }
+.oc .phase.blocked { background:var(--blocker-bg); border-color:var(--blocker); }
+.oc .phase-num { font-family:var(--fmono); font-size:10px; opacity:0.7; }
+.oc .phase-name { font-weight:500; font-size:12px; margin-top:2px; }
+.oc .phase-count { font-family:var(--fmono); font-size:10px; opacity:0.7; margin-top:4px; }
+.oc .ctx-strip { display:flex; gap:6px; flex-wrap:wrap; padding:8px 10px; background:var(--paper-sunk); border-radius:3px; border:1px solid var(--rule-soft); }
+.oc .ctx-chip { display:inline-flex; align-items:center; gap:6px; font-size:11px; padding:3px 9px; background:var(--paper-card); border:1px solid var(--rule); border-radius:99px; }
+.oc .ctx-chip .ctx-kind { font-family:var(--fmono); font-size:9px; text-transform:uppercase; letter-spacing:0.1em; color:var(--ink-mute); }
+.oc .next-action { background:var(--ink); color:var(--paper); padding:14px 16px; border-radius:4px; display:grid; grid-template-columns:1fr auto; gap:14px; align-items:center; }
+.oc .next-action .lbl { color:rgba(250,247,242,0.7); }
+.oc .next-action .btn.primary { background:var(--paper); color:var(--ink); border-color:var(--paper); }
+.oc .check-row { display:grid; grid-template-columns:22px 1fr auto; gap:10px; align-items:flex-start; padding:8px 10px; border-bottom:1px solid var(--rule-soft); }
+.oc .check-row:last-child { border-bottom:none; }
+.oc .check-row .num { font-family:var(--fmono); font-size:11px; color:var(--ink-mute); padding-top:1px; }
+.oc .check-row .ctxt { font-size:12px; line-height:1.4; }
+.oc .check-row .csub { font-family:var(--fmono); font-size:10px; color:var(--ink-mute); margin-top:2px; }
+.oc .qlist .qitem { padding:10px 12px; border-bottom:1px solid var(--rule-soft); }
+.oc .qlist .qitem.selected { background:var(--paper-sunk); border-left:3px solid var(--ink); padding-left:9px; }
+.oc .qlist .qitem:last-child { border-bottom:none; }
+.oc .qlist .qttl { font-weight:500; font-size:12.5px; line-height:1.3; margin-top:3px; }
+.oc .qlist .qsub { font-family:var(--fmono); font-size:10px; color:var(--ink-mute); margin-top:2px; }
+.oc .qlist .qaction { font-family:var(--fmono); font-size:9.5px; color:var(--ink-soft); margin-top:5px; text-transform:uppercase; letter-spacing:0.06em; }
+.oc .filter-bar { display:flex; gap:5px; flex-wrap:wrap; padding:8px 12px; background:var(--paper-sunk); border-bottom:1px solid var(--rule); }
+.oc .filter { padding:3px 8px; border:1px solid var(--rule); border-radius:2px; background:var(--paper-card); font-family:var(--fmono); font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-mute); cursor:pointer; }
+.oc .filter.active { background:var(--ink); color:var(--paper); border-color:var(--ink); }
+.oc .fld-list .fld { padding:10px 12px; border-bottom:1px solid var(--rule-soft); }
+.oc .fld-list .fld:last-child { border-bottom:none; }
+.oc .fld-head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.oc .fld-key { font-family:var(--fmono); font-size:11px; color:var(--ink); font-weight:500; }
+.oc .fld-val { font-size:12px; color:var(--ink-soft); margin-top:3px; }
+.oc .fld-evidence { background:var(--paper-sunk); border-radius:2px; padding:6px 8px; font-family:var(--fmono); font-size:11px; color:var(--ink-soft); margin-top:6px; word-break:break-all; }
+.oc .merge-row { display:grid; grid-template-columns:120px 1fr 1fr auto; gap:8px; padding:8px 10px; border-bottom:1px solid var(--rule-soft); align-items:center; font-size:11.5px; }
+.oc .merge-row:last-child { border-bottom:none; }
+.oc .merge-key { font-family:var(--fmono); font-size:11px; color:var(--ink); }
+.oc .merge-old { color:var(--ink-mute); }
+.oc .merge-new { font-weight:500; }
+.oc .merge-act { font-family:var(--fmono); font-size:10px; text-transform:uppercase; letter-spacing:0.06em; }
+.oc .anno { font-family:var(--fmono); font-size:10px; color:var(--ink-mute); }
+.oc .anno-arrow { color:var(--ink); font-weight:500; }
+.oc .seal { display:inline-flex; align-items:center; gap:6px; font-size:11px; }
+.oc .seal::before { content:""; width:8px; height:8px; background:var(--resolved); border-radius:50%; }
+</style>
+<h2 class="sr-only">Admin operations console — seven screen mockups covering masthead and mode bar, setup and run, review and publish progress, left rail with checklist and queue list, queue item fix workspace, recruitment fix workspace, official source resolver, and duplicate merge preview.</h2>
+
+<div class="oc">
+
+<header class="mast">
+  <div>
+    <div class="lbl">Career Copilot · admin</div>
+    <h2 class="title">Scraper operations console</h2>
+  </div>
+  <div style="text-align:right;font-family:var(--fmono);font-size:11px;color:var(--ink-mute);line-height:1.6;">
+    <div><span style="color:var(--ink);font-weight:500;">kavya.iyer</span> · super_admin</div>
+    <div>last sync 14:22 · sat 16 may 2026</div>
+  </div>
+</header>
+
+<nav class="modebar">
+  <div class="modepill">Setup &amp; run <span class="count">52 src</span></div>
+  <div class="modepill active">Review &amp; publish <span class="count">38</span></div>
+</nav>
+
+<section class="scrn">
+  <div class="scrn-head">
+    <h3 class="title">Screen 1 · setup &amp; run</h3>
+    <span class="scrn-tag">mode · setup</span>
+  </div>
+  <div class="stack">
+    <div class="card">
+      <div class="card-head">
+        <h4 class="title">Source</h4>
+        <span class="badge resolved">trusted</span>
+      </div>
+      <div class="card-body stack">
+        <div>
+          <div class="lbl" style="margin-bottom:5px;">Pick verified source</div>
+          <select class="input"><option>UPSC official · upsc.gov.in</option><option>SSC official · ssc.nic.in</option><option>Sarkari Result · aggregator</option></select>
+        </div>
+        <div class="row">
+          <span class="lbl">trust</span>
+          <span class="badge resolved">verified</span>
+          <span class="lbl" style="margin-left:10px;">policy</span>
+          <span class="badge neutral">discovery only</span>
+        </div>
+        <div class="anno">Aggregator data discovers candidates only. Cannot become canonical until paired with official proof.</div>
+      </div>
+      <div class="card-foot">
+        <button class="btn small">Dry scrape</button>
+        <button class="btn primary small">Run live scrape</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h4 class="title">Last run</h4>
+        <span class="row-sub">run_8f3a · 14:08 IST</span>
+      </div>
+      <div class="card-body">
+        <div class="grid2">
+          <div class="field"><div class="field-lbl">extracted</div><div class="field-val"><strong>142</strong> items</div></div>
+          <div class="field"><div class="field-lbl">classified</div><div class="field-val"><strong>142</strong></div><div class="field-sub">A·38 · B·71 · C·33</div></div>
+          <div class="field"><div class="field-lbl">queued</div><div class="field-val"><strong>109</strong></div><div class="field-sub">33 noop · hash match</div></div>
+          <div class="field"><div class="field-lbl">duration</div><div class="field-val"><strong>3m 14s</strong></div><div class="field-sub">1.36s / item</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h4 class="title">Recent runs</h4>
+        <button class="btn ghost small">Last 24h</button>
+      </div>
+      <table class="t">
+        <thead><tr><th style="width:42%;">Source</th><th style="width:18%;">Tier</th><th style="width:14%;">Items</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td><div class="row-ttl">UPSC official</div><div class="row-sub">run_8f3a · 14:08</div></td><td><span class="badge tier-a">A · 38</span></td><td>142</td><td><span class="badge resolved">complete</span></td></tr>
+          <tr><td><div class="row-ttl">SSC official</div><div class="row-sub">run_8f39 · 13:55</div></td><td><span class="badge tier-a">A · 24</span></td><td>87</td><td><span class="badge resolved">complete</span></td></tr>
+          <tr><td><div class="row-ttl">IIT Madras</div><div class="row-sub">run_8f38 · 13:42</div></td><td><span class="badge tier-b">B · 12</span></td><td>16</td><td><span class="badge pending">retry</span></td></tr>
+          <tr><td><div class="row-ttl">Sarkari Result</div><div class="row-sub">run_8f37 · aggregator</div></td><td><span class="badge tier-c">C · 22</span></td><td>49</td><td><span class="badge info">discovery</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="scrn">
+  <div class="scrn-head">
+    <h3 class="title">Screen 2 · review pipeline state</h3>
+    <span class="scrn-tag">progress + context + next action</span>
+  </div>
+  <div class="stack">
+    <div class="card card-body">
+      <div class="lbl" style="margin-bottom:8px;">Pipeline · 4 phases · 12 steps</div>
+      <div class="phase-rail">
+        <div class="phase done">
+          <div class="phase-num">01</div>
+          <div class="phase-name">Discovery</div>
+          <div class="phase-count">3 / 3 done</div>
+        </div>
+        <div class="phase active">
+          <div class="phase-num" style="opacity:0.6;">02</div>
+          <div class="phase-name">Review</div>
+          <div class="phase-count" style="opacity:0.6;">2 / 3 active</div>
+        </div>
+        <div class="phase blocked">
+          <div class="phase-num">03</div>
+          <div class="phase-name">Promote</div>
+          <div class="phase-count">blocked · 1 fix</div>
+        </div>
+        <div class="phase">
+          <div class="phase-num">04</div>
+          <div class="phase-name">Publish &amp; monitor</div>
+          <div class="phase-count">0 / 4 pending</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ctx-strip">
+      <span class="lbl" style="align-self:center;">context</span>
+      <span class="ctx-chip"><span class="ctx-kind">source</span><strong>UPSC official</strong><span style="color:var(--ink-mute);">· verified</span></span>
+      <span class="ctx-chip"><span class="ctx-kind">queue</span><strong>SSC CHSL 2026</strong><span style="color:var(--ink-mute);">· pending</span></span>
+      <span class="ctx-chip"><span class="ctx-kind">recruit</span><strong>none</strong></span>
+    </div>
+
+    <div class="next-action">
+      <div>
+        <div class="lbl" style="margin-bottom:5px;">Next safe action</div>
+        <h4 class="title" style="color:var(--paper);">Confirm suggested official proof</h4>
+        <div style="font-size:12px;color:rgba(250,247,242,0.75);margin-top:4px;">Resolver found a likely notification PDF at 0.78 confidence. Falls between auto (0.85) and manual (0.60).</div>
+      </div>
+      <button class="btn primary">Confirm proof</button>
+    </div>
+  </div>
+</section>
+
+<section class="scrn">
+  <div class="scrn-head">
+    <h3 class="title">Screen 3 · left rail</h3>
+    <span class="scrn-tag">checklist + view + queue list</span>
+  </div>
+  <div class="stack">
+    <div class="card">
+      <div class="card-head">
+        <h4 class="title">Next safe actions</h4>
+        <span class="row-sub">13 steps · 2 blocked</span>
+      </div>
+      <div class="check-row"><span class="num">01</span><div><span class="ctxt">Verify required fields on queue item</span><div class="csub">unverified · official_notification_url, total_vacancies</div></div><span class="badge blocker">blocked</span></div>
+      <div class="check-row"><span class="num">02</span><div><span class="ctxt">Resolve official source if unverified</span><div class="csub">backend gate · official_source_resolved=false</div></div><span class="badge blocker">blocked</span></div>
+      <div class="check-row"><span class="num">03</span><div><span class="ctxt">Promote queue item to recruitment draft</span><div class="csub">unblocks once fields verified</div></div><span class="badge pending">todo</span></div>
+      <div class="check-row"><span class="num">04</span><div><span class="ctxt">Fix recruitment draft blockers</span><div class="csub">downstream</div></div><span class="badge neutral">pending</span></div>
+      <div class="check-row"><span class="num">05</span><div><span class="ctxt">Validate publish readiness</span><div class="csub">downstream</div></div><span class="badge neutral">pending</span></div>
+      <div class="check-row"><span class="num">06</span><div><span class="ctxt">Mark verified · publish</span><div class="csub">downstream</div></div><span class="badge neutral">pending</span></div>
+    </div>
+
+    <div class="card card-body">
+      <div class="lbl" style="margin-bottom:6px;">View</div>
+      <select class="input"><option>Queue review</option><option>Draft fixes</option><option>Validate / verify / publish</option><option>Eligibility ops</option></select>
+      <div class="anno" style="margin-top:8px;">Filters the list below. The progress bar above is the navigation — clicking a phase updates this filter.</div>
+    </div>
+
+    <div class="card">
+      <div class="filter-bar">
+        <span class="filter active">Pending</span>
+        <span class="filter">Approved</span>
+        <span class="filter">Merged</span>
+        <span class="filter">Duplicate</span>
+        <span class="filter">Rejected</span>
+        <span class="filter">All</span>
+      </div>
+      <div class="qlist">
+        <div class="qitem">
+          <div class="row" style="gap:5px;"><span class="badge tier-a">A</span><span class="badge resolved">resolved</span></div>
+          <div class="qttl">UPSC Civil Services Examination 2026 — notification</div>
+          <div class="qsub">upsc · notif 05/2026 · conf 0.91 · quality 87%</div>
+          <div class="qaction">→ ready to promote</div>
+        </div>
+        <div class="qitem selected">
+          <div class="row" style="gap:5px;"><span class="badge tier-a">A</span><span class="badge pending">suggested</span></div>
+          <div class="qttl">SSC Combined Higher Secondary Level 2026 (10+2)</div>
+          <div class="qsub">ssc · notif chsl-2026 · conf 0.78 · quality 71%</div>
+          <div class="qaction">→ confirm suggested proof</div>
+        </div>
+        <div class="qitem">
+          <div class="row" style="gap:5px;"><span class="badge tier-a">A</span><span class="badge blocker">conflict</span></div>
+          <div class="qttl">IBPS PO/MT recruitment 2026 — CRP PO/MT-XV</div>
+          <div class="qsub">ibps · crp-po-mt-xv · conf 0.82</div>
+          <div class="qaction">→ resolve conflict</div>
+        </div>
+        <div class="qitem">
+          <div class="row" style="gap:5px;"><span class="badge tier-a">A</span><span class="badge blocker">unresolved</span></div>
+          <div class="qttl">RBI Grade B officer — DR (general) 2026</div>
+          <div class="qsub">rbi · grade-b-2026 · conf 0.66 · 3 unverified fields</div>
+          <div class="qaction">→ resolve official source</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="scrn">
+  <div class="scrn-head">
+    <h3 class="title">Screen 4 · queue item · fix panel</h3>
+    <span class="scrn-tag">workspace · field evidence</span>
+  </div>
+  <div class="card">
+    <div class="card-head" style="flex-direction:column;align-items:flex-start;gap:6px;">
+      <div class="row" style="gap:5px;"><span class="badge tier-a">A</span><span class="badge pending">suggested proof</span><span class="badge neutral">exam_family ssc</span></div>
+      <h3 class="title" style="font-size:17px;">SSC Combined Higher Secondary Level 2026 (10+2)</h3>
+      <div class="row-sub">queue_id qi_4e29a1 · source ssc.nic.in · added 14:08</div>
+    </div>
+    <div class="card-body stack">
+      <div>
+        <div class="lbl" style="margin-bottom:6px;">Promotion preview</div>
+        <div class="grid2">
+          <div class="field"><div class="field-lbl">resulting status</div><div class="field-val">needs_review</div></div>
+          <div class="field"><div class="field-lbl">organization</div><div class="field-val">link existing · SSC</div></div>
+          <div class="field"><div class="field-lbl">posts</div><div class="field-val">3 will be created</div><div class="field-sub">LDC · JSA · DEO</div></div>
+          <div class="field"><div class="field-lbl">duplicates</div><div class="field-val seal">none found</div></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="lbl" style="margin-bottom:6px;">Field evidence · required before promotion</div>
+        <div class="card fld-list" style="margin-top:6px;">
+          <div class="fld">
+            <div class="fld-head">
+              <span class="fld-key">apply_end_date</span>
+              <span class="badge resolved">verified</span>
+            </div>
+            <div class="fld-val">26 Jun 2026</div>
+            <div class="fld-evidence">ssc.nic.in/notif-chsl-2026 · page 4 · "Last date for receipt of applications: 26.06.2026"</div>
+          </div>
+          <div class="fld">
+            <div class="fld-head">
+              <span class="fld-key">official_notification_url</span>
+              <span class="badge blocker">unverified</span>
+            </div>
+            <div class="fld-val">https://ssc.nic.in/.../Notice_CHSL_2026_01.pdf</div>
+            <div class="row" style="margin-top:8px;">
+              <button class="btn small">Verify</button>
+              <button class="btn small">Reject</button>
+              <input class="input" placeholder="Corrected URL" style="flex:1;min-width:140px;font-size:11.5px;padding:5px 8px;" />
+              <button class="btn small">Correct</button>
+            </div>
+          </div>
+          <div class="fld">
+            <div class="fld-head">
+              <span class="fld-key">total_vacancies</span>
+              <span class="badge info">corrected</span>
+            </div>
+            <div class="fld-val"><span style="text-decoration:line-through;color:var(--ink-mute);">3,500</span> → <strong>3,712</strong></div>
+            <div class="field-sub">corrected by kavya.iyer · 14:18 · evidence: corrigendum-1</div>
+          </div>
+          <div class="fld">
+            <div class="fld-head">
+              <span class="fld-key">requires_domicile</span>
+              <span class="badge pending">per post · unverified</span>
+            </div>
+            <div class="fld-val">post 0 · LDC · false · post 1 · JSA · false · post 2 · DEO · null</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="background:var(--blocker-bg);border:1px solid var(--blocker);border-radius:3px;padding:10px 12px;">
+        <div class="row" style="justify-content:space-between;">
+          <div>
+            <div class="fld-key" style="color:var(--blocker);">Promote blocked</div>
+            <div class="field-sub" style="color:var(--blocker);margin-top:3px;">Verify 1 required field · resolve 1 post-level gap.</div>
+          </div>
+          <button class="btn" disabled style="opacity:0.5;cursor:not-allowed;">Promote to draft</button>
+        </div>
+      </div>
+    </div>
+    <div class="card-foot">
+      <button class="btn ghost small">Reject candidate</button>
+      <button class="btn small">Mark duplicate</button>
+    </div>
+  </div>
+</section>
+
+<section class="scrn">
+  <div class="scrn-head">
+    <h3 class="title">Screen 5 · recruitment · fix panel</h3>
+    <span class="scrn-tag">workspace · validate / verify / publish</span>
+  </div>
+  <div class="card">
+    <div class="card-head" style="flex-direction:column;align-items:flex-start;gap:6px;">
+      <div class="row" style="gap:5px;"><span class="badge tier-a">A</span><span class="badge pending">needs_review</span></div>
+      <h3 class="title" style="font-size:17px;">UPSC Civil Services Examination 2026</h3>
+      <div class="row-sub">recruitment_id rec_91bc2d · publish_status needs_review · 2 blockers</div>
+    </div>
+    <div class="card-body stack">
+      <div class="grid2">
+        <div class="field"><div class="field-lbl">organization</div><div class="field-val">Union Public Service Commission</div><div class="field-sub seal">verified</div></div>
+        <div class="field"><div class="field-lbl">apply window</div><div class="field-val">28 May → 26 Jun 2026</div><div class="field-sub">28 days</div></div>
+        <div class="field"><div class="field-lbl">posts</div><div class="field-val">1 of 1 ingested</div></div>
+        <div class="field"><div class="field-lbl">source provenance</div><div class="field-val seal">linked &amp; verified</div></div>
+      </div>
+
+      <div>
+        <div class="lbl" style="margin-bottom:6px;">Publish blockers · 2</div>
+        <div class="card fld-list">
+          <div class="fld">
+            <div class="fld-head">
+              <span class="fld-key">eligibility_rules_missing</span>
+              <span class="badge blocker">blocker</span>
+            </div>
+            <div class="fld-val">Add age and education criteria to all posts.</div>
+            <div class="row" style="margin-top:8px;">
+              <button class="btn small">Open criteria editor</button>
+            </div>
+          </div>
+          <div class="fld">
+            <div class="fld-head">
+              <span class="fld-key">official_apply_url_missing_while_open</span>
+              <span class="badge blocker">blocker</span>
+            </div>
+            <div class="fld-val">Open recruitment requires official apply URL.</div>
+            <div class="row" style="margin-top:8px;">
+              <input class="input" placeholder="https://upsc.gov.in/..." style="flex:1;min-width:160px;font-size:11.5px;padding:5px 8px;" />
+              <button class="btn small">Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="anno">Once blockers clear, validate-publish runs server-side. Mark verified opens publish gate. Publish triggers eligibility recompute fan-out.</div>
+    </div>
+    <div class="card-foot">
+      <button class="btn small">Validate publish readiness</button>
+      <button class="btn small" disabled style="opacity:0.5;">Mark verified</button>
+      <button class="btn primary small" disabled style="opacity:0.4;">Publish</button>
+    </div>
+  </div>
+</section>
+
+<section class="scrn">
+  <div class="scrn-head">
+    <h3 class="title">Screen 6 · official source resolver</h3>
+    <span class="scrn-tag">inline panel · not a modal</span>
+  </div>
+  <div class="card">
+    <div class="card-head" style="flex-direction:column;align-items:flex-start;gap:4px;">
+      <div class="lbl">Resolve official source</div>
+      <h3 class="title">Link a verified official source</h3>
+      <div class="anno" style="margin-top:2px;">Aggregator candidates cannot be used as official proof. The backend will flip the promotion gate but will not auto-promote.</div>
+    </div>
+    <div class="card-body stack">
+      <div>
+        <div class="lbl" style="margin-bottom:5px;">Verified source</div>
+        <select class="input"><option>UPSC official · upsc.gov.in · official_html</option><option>SSC official · ssc.nic.in · official_pdf</option></select>
+      </div>
+      <div>
+        <div class="lbl" style="margin-bottom:5px;">Official notification URL</div>
+        <input class="input" type="url" value="https://ssc.nic.in/SSCFileServer/PortalManagement/UploadedFiles/Notice_CHSL_2026_01.pdf" />
+      </div>
+      <div>
+        <div class="lbl" style="margin-bottom:5px;">Official apply URL</div>
+        <input class="input" type="url" placeholder="https://..." />
+      </div>
+      <div>
+        <div class="lbl" style="margin-bottom:5px;">Source PDF URL</div>
+        <input class="input" type="url" placeholder="https://..." />
+      </div>
+      <div>
+        <div class="lbl" style="margin-bottom:5px;">Notes</div>
+        <textarea class="input" placeholder="Why this source resolves the official proof requirement"></textarea>
+      </div>
+    </div>
+    <div class="card-foot">
+      <button class="btn small">Cancel</button>
+      <button class="btn primary small">Mark official source resolved</button>
+    </div>
+  </div>
+</section>
+
+<section class="scrn">
+  <div class="scrn-head">
+    <h3 class="title">Screen 7 · duplicate merge preview</h3>
+    <span class="scrn-tag">queue item → existing recruitment</span>
+  </div>
+  <div class="card">
+    <div class="card-head" style="flex-direction:column;align-items:flex-start;gap:4px;">
+      <div class="lbl">Merge into existing recruitment</div>
+      <h3 class="title">Target · UPSC CSE 2026</h3>
+      <div class="anno" style="margin-top:2px;">Existing values are kept by default. Toggle force to overwrite a non-empty field. 3 fields will update.</div>
+    </div>
+    <div class="card-body" style="padding:0;">
+      <div class="merge-row" style="background:var(--paper-sunk);">
+        <span class="lbl">field</span>
+        <span class="lbl">existing</span>
+        <span class="lbl">queue</span>
+        <span class="lbl">decision</span>
+      </div>
+      <div class="merge-row">
+        <span class="merge-key">apply_end_date</span>
+        <span class="merge-old">2026-06-22</span>
+        <span class="merge-new">2026-06-26</span>
+        <span class="badge resolved">update</span>
+      </div>
+      <div class="merge-row">
+        <span class="merge-key">total_vacancies</span>
+        <span class="merge-old">1,056</span>
+        <span class="merge-new">1,061</span>
+        <span class="badge resolved">update</span>
+      </div>
+      <div class="merge-row">
+        <span class="merge-key">official_apply_url</span>
+        <span class="merge-old">upsconline.nic.in/...</span>
+        <span class="merge-new">upsconline.nic.in/...new</span>
+        <span class="badge pending">force ☐</span>
+      </div>
+      <div class="merge-row">
+        <span class="merge-key">notification_date</span>
+        <span class="merge-old">2026-05-12</span>
+        <span class="merge-new">(empty)</span>
+        <span class="badge neutral">skip</span>
+      </div>
+      <div class="merge-row">
+        <span class="merge-key">source_pdf_url</span>
+        <span class="merge-old">(empty)</span>
+        <span class="merge-new">upsc.gov.in/.../cse-2026.pdf</span>
+        <span class="badge resolved">update</span>
+      </div>
+    </div>
+    <div class="card-foot">
+      <button class="btn small">Cancel</button>
+      <button class="btn primary small">Merge 3 fields</button>
+    </div>
+  </div>
+</section>
+
+</div>
