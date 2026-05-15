@@ -41,6 +41,9 @@ class _Query:
         self._mode: str = "select"
         self._update_payload: dict[str, Any] | None = None
         self._insert_payload: dict[str, Any] | None = None
+        self._order_col: str | None = None
+        self._order_desc: bool = False
+        self._range: tuple[int, int] | None = None
 
     # ── builder mutations ─────────────────────────────────────────────
 
@@ -70,6 +73,20 @@ class _Query:
         self._limit = n
         return self
 
+    def order(self, col: str, *, desc: bool = False) -> "_Query":
+        self._order_col = col
+        self._order_desc = desc
+        return self
+
+    def range(self, start: int, end: int) -> "_Query":
+        # PostgREST .range(start, end) is inclusive on both ends.
+        self._range = (start, end)
+        return self
+
+    def gt(self, col: str, val: Any) -> "_Query":
+        self._filters.append(("gt", col, val))
+        return self
+
     # ── runner ────────────────────────────────────────────────────────
 
     def _matches(self, row: dict[str, Any]) -> bool:
@@ -84,6 +101,10 @@ class _Query:
                 else:
                     if row.get(col) != val:
                         return False
+            elif op == "gt":
+                cell = row.get(col)
+                if cell is None or not (cell > val):
+                    return False
             else:
                 raise NotImplementedError(op)
         return True
@@ -92,6 +113,14 @@ class _Query:
         rows = self._store._tables.setdefault(self._table, [])
         if self._mode == "select":
             out = [deepcopy(r) for r in rows if self._matches(r)]
+            if self._order_col is not None:
+                out.sort(
+                    key=lambda r: (r.get(self._order_col) is None, r.get(self._order_col)),
+                    reverse=self._order_desc,
+                )
+            if self._range is not None:
+                start, end = self._range
+                out = out[start : end + 1]
             if self._limit is not None:
                 out = out[: self._limit]
             return _ExecResult(out)
