@@ -723,22 +723,7 @@ async def subjects(user: dict = Depends(get_current_user)):
     }
 
 
-@router_study.get("/weekly-review")
-async def weekly_review(user: dict = Depends(get_current_user)):
-    return {
-        "week_of": (datetime.now(timezone.utc) - timedelta(days=datetime.now(timezone.utc).weekday())).date().isoformat(),
-        "kpis": {
-            "hours_studied": 22.5,
-            "mocks_taken": 3,
-            "focus_streak_days": 5,
-            "topics_closed": 7,
-        },
-        "insights": [
-            "Quant accuracy up 6 pts week-over-week.",
-            "GA freshness slipped — 2 missed days.",
-            "Mock 3 lost 18 min on a single DI set.",
-        ],
-    }
+# Weekly review moved to app.api.study_os (production-grade, Supabase-backed).
 
 
 # ───────────────────────── Accountability ──────────────────────────────────

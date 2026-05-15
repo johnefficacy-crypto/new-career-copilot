@@ -19,8 +19,9 @@ from app.study_os.mission_control import (
     build_task_reasoning_response,
 )
 from app.study_os.plan_preferences import get_plan_preferences, upsert_plan_preferences
-from app.study_os.planner import generate_plan
+from app.study_os.planner import apply_plan, compute_draft_plan, generate_plan
 from app.study_os import mocks as mocks_service
+from app.study_os import weekly_review as weekly_review_service
 
 logger = logging.getLogger("career_copilot.api.study_os")
 
@@ -196,6 +197,181 @@ async def generate_study_plan(user: dict = Depends(get_current_user)) -> dict[st
         logger.exception("plan generation failed for %s", user_id)
         raise HTTPException(
             status_code=500, detail="Plan generation is temporarily unavailable."
+        )
+
+
+# ───────────────────────── Plan draft / apply / changelog ──────────────────
+@router.get("/plan/draft")
+async def get_plan_draft(user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    """Preview today's deterministic plan without touching the active plan."""
+    return compute_draft_plan(get_supabase_admin(), user.get("id"))
+
+
+@router.post("/plan/draft")
+async def post_plan_draft(user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    """Same payload as GET /plan/draft — write-style verb for explicit refresh."""
+    return compute_draft_plan(get_supabase_admin(), user.get("id"))
+
+
+@router.post("/plan/apply")
+async def post_plan_apply(user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    """Apply the deterministic plan candidate to the active plan."""
+    user_id = user.get("id")
+    supabase = get_supabase_admin()
+    try:
+        return apply_plan(supabase, user_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("plan apply failed for %s", user_id)
+        raise HTTPException(status_code=500, detail="Plan apply is temporarily unavailable.")
+
+
+@router.get("/plan/changelog")
+async def get_plan_changelog(user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    """Recent study_adaptation_events for the user's active plan."""
+    user_id = user.get("id")
+    supabase = get_supabase_admin()
+    try:
+        rows = (
+            supabase.table("study_adaptation_events")
+            .select(
+                "id, plan_id, plan_version_id, event_type, trigger_source, "
+                "trigger_payload, change_summary, created_at"
+            )
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(20)
+            .execute()
+            .data
+            or []
+        )
+        return {"items": rows, "count": len(rows)}
+    except Exception:  # noqa: BLE001
+        logger.exception("plan changelog read failed for %s", user_id)
+        return {"items": [], "count": 0}
+
+
+# ───────────────────────────── Topics tree ──────────────────────────────────
+@router.get("/topics")
+async def get_topics(
+    exam_id: str | None = None,
+    subject_id: str | None = None,
+    user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Locked-only topic intelligence — drives the Subjects topic tree."""
+    user_id = user.get("id")
+    supabase = get_supabase_admin()
+    try:
+        from app.exam_intelligence.coverage import verified_pyq_topic_counts
+        from app.exam_intelligence.lookup import resolve_exam_by_id, resolve_exam_by_slug
+        from app.study_os.planner import (
+            _load_locked_coverage,
+            _load_user_signals,
+            _resolve_target_exam,
+        )
+
+        if not exam_id:
+            target = _resolve_target_exam(supabase, user_id)
+            exam_id = target.get("id") if target else None
+        else:
+            target = resolve_exam_by_id(supabase, exam_id) or resolve_exam_by_slug(
+                supabase, exam_id
+            )
+            if target:
+                exam_id = target.get("id")
+
+        if not exam_id:
+            return {
+                "items": [],
+                "exam_id": None,
+                "subject_id": subject_id,
+                "trust_status": "locked",
+            }
+
+        coverage = _load_locked_coverage(supabase, exam_id)
+        if subject_id:
+            coverage = [c for c in coverage if c.get("subject_id") == subject_id]
+
+        pyq_counts = verified_pyq_topic_counts(supabase, exam_id) or {}
+        mastery, error_topics = _load_user_signals(supabase, user_id, exam_id)
+
+        def _next_action(mast, has_err):
+            if mast is None:
+                return "concept_learning"
+            if mast < 45:
+                return "concept_learning"
+            if mast < 75 or has_err:
+                return "retrieval_practice"
+            return "revision"
+
+        items: list[dict[str, Any]] = []
+        for c in coverage:
+            tid = c["topic_id"]
+            mast = mastery.get(tid)
+            has_err = tid in error_topics
+            items.append(
+                {
+                    "subject_id": c.get("subject_id"),
+                    "subject": c.get("subject_name"),
+                    "topic_id": tid,
+                    "topic": c.get("topic_name"),
+                    "parent_topic_id": None,
+                    "mastery_score": mast,
+                    "exam_priority_score": c.get("coverage_priority"),
+                    "is_high_yield": bool(c.get("is_high_yield")),
+                    "verified_pyq_count": int(pyq_counts.get(tid, 0)),
+                    "revision_due": mast is not None and mast >= 75,
+                    "error_pattern_count": 1 if has_err else 0,
+                    "next_action": _next_action(mast, has_err),
+                    "evidence_count": int(pyq_counts.get(tid, 0)),
+                    "trust_status": "locked",
+                }
+            )
+        return {
+            "items": items,
+            "exam_id": exam_id,
+            "subject_id": subject_id,
+            "trust_status": "locked",
+        }
+    except Exception:  # noqa: BLE001
+        logger.exception("topics read failed for %s", user_id)
+        return {
+            "items": [],
+            "exam_id": exam_id,
+            "subject_id": subject_id,
+            "trust_status": "locked",
+        }
+
+
+# ─────────────────────────── Weekly review ──────────────────────────────────
+@router.get("/weekly-review")
+async def weekly_review_read(
+    user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Return the persisted weekly-review snapshot, computing one if absent."""
+    try:
+        return weekly_review_service.get_weekly_review(
+            get_supabase_admin(), user.get("id")
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("weekly_review read failed for %s", user.get("id"))
+        raise HTTPException(
+            status_code=500, detail="Weekly review is temporarily unavailable."
+        )
+
+
+@router.post("/weekly-review/compute")
+async def weekly_review_compute(
+    user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Force-recompute and persist this week's review snapshot."""
+    try:
+        return weekly_review_service.compute_weekly_review(
+            get_supabase_admin(), user.get("id")
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("weekly_review compute failed for %s", user.get("id"))
+        raise HTTPException(
+            status_code=500, detail="Could not recompute weekly review."
         )
 
 
