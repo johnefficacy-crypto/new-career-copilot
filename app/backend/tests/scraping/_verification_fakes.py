@@ -133,7 +133,17 @@ class _Query:
                     updated.append(deepcopy(r))
             return _ExecResult(updated)
         if self._mode == "insert":
-            payload = dict(self._insert_payload or {})
+            raw = self._insert_payload
+            if isinstance(raw, list):
+                inserted: list[dict[str, Any]] = []
+                for entry in raw:
+                    payload = dict(entry)
+                    payload.setdefault("id", str(uuid.uuid4()))
+                    rows.append(payload)
+                    self._store._enforce_constraints(self._table, payload)
+                    inserted.append(deepcopy(payload))
+                return _ExecResult(inserted)
+            payload = dict(raw or {})
             payload.setdefault("id", str(uuid.uuid4()))
             rows.append(payload)
             self._store._enforce_constraints(self._table, payload)
@@ -254,6 +264,8 @@ class FakeSupabase:
         if rec_action not in {
             "await_official_proof", "request_admin_review",
             "promote_eligible", "block_publish", "no_action",
+            # PR2 extension (migration 078):
+            "confirm_suggested_proof",
         }:
             raise ValueError(f"chk_recommended_action: {rec_action!r}")
         trig = row.get("trigger_reason")

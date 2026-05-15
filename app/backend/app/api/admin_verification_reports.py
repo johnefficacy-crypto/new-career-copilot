@@ -17,13 +17,18 @@ partial index from migration 075.
 from __future__ import annotations
 
 import logging
+import time
+from collections import defaultdict
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from app.core.auth import get_current_user
 from app.db.supabase_client import get_supabase_admin
+from app.scraping.verification_gateway import run_resolver_stage
+from app.scraping.verification_policy import RESOLVER_RERUN_LIMITS
+from app.scraping.verification_reports import attach_admin_official_url
 
 
 logger = logging.getLogger("career_copilot.api.admin_verification_reports")
@@ -37,7 +42,43 @@ _ALLOWED_TIER = {"A_HIGH_STAKES", "B_TECHNICAL_CONDITIONAL", "C_STANDARD_LONG_TA
 _ALLOWED_RECOMMENDED = {
     "await_official_proof", "request_admin_review",
     "promote_eligible", "block_publish", "no_action",
+    "confirm_suggested_proof",
 }
+
+
+# ── In-process rate-limit state (PR2 stop-gap) ─────────────────────────
+#
+# Process-local dicts; not durable across restarts. PR2 ships these as
+# a stop-gap so a single instance enforces the rate-limit contract
+# from the spec. A future PR moves them into Redis / Postgres when the
+# service goes multi-instance.
+
+_resolver_last_run_at: dict[str, float] = {}
+_resolver_admin_hourly: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_resolver_rate_limit(report_id: str, admin_id: str) -> None:
+    """Raise 429 if the report cooldown or per-admin hourly cap is hit."""
+    now = time.time()
+    cooldown = RESOLVER_RERUN_LIMITS["per_report_cooldown_seconds"]
+    last = _resolver_last_run_at.get(report_id)
+    if last is not None and (now - last) < cooldown:
+        retry_in = int(cooldown - (now - last))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Resolver cooldown active for this report; retry in {retry_in}s.",
+        )
+    hourly_cap = RESOLVER_RERUN_LIMITS["per_admin_per_hour"]
+    bucket = _resolver_admin_hourly[admin_id]
+    cutoff = now - 3600
+    bucket[:] = [t for t in bucket if t > cutoff]
+    if len(bucket) >= hourly_cap:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Per-admin resolver re-run cap reached ({hourly_cap}/hour).",
+        )
+    bucket.append(now)
+    _resolver_last_run_at[report_id] = now
 
 
 def _require_admin(user: dict = Depends(get_current_user)) -> dict:
@@ -148,3 +189,99 @@ def get_verification_report(
     if not rows:
         raise HTTPException(status_code=404, detail="verification_report not found")
     return rows[0]
+
+
+# ── PR2 mutation endpoints ────────────────────────────────────────────
+
+
+class RunResolverResponse(BaseModel):
+    report_id: str
+    classification_outcome: str
+    resolver_status: str | None
+    resolver_method: str | None
+    resolver_confidence: float | None
+    suggested_count: int
+
+
+@router.post(
+    "/admin/verification-reports/{report_id}/run-resolver",
+    response_model=RunResolverResponse,
+)
+def run_resolver_for_report(
+    report_id: str,
+    admin: dict = Depends(_require_admin),
+) -> RunResolverResponse:
+    """Force a resolver re-run for one report.
+
+    Subject to the per-report cooldown and per-admin hourly cap from
+    ``verification_policy.RESOLVER_RERUN_LIMITS``. A 429 is the
+    cooldown signal — the client should display the retry-in window
+    rather than retry immediately.
+    """
+    admin_id = admin.get("id")
+    if not admin_id:
+        raise HTTPException(status_code=403, detail="admin id missing")
+    _check_resolver_rate_limit(report_id, admin_id)
+
+    supabase = get_supabase_admin()
+    try:
+        result = run_resolver_stage(supabase, report_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="verification_report not found")
+    return RunResolverResponse(
+        report_id=result.report_id or report_id,
+        classification_outcome=result.classification_outcome,
+        resolver_status=result.resolver_status,
+        resolver_method=result.resolver_method,
+        resolver_confidence=result.resolver_confidence,
+        suggested_count=result.suggested_count,
+    )
+
+
+class ConfirmSuggestedProofRequest(BaseModel):
+    chosen_url: str = Field(min_length=1)
+
+
+@router.post("/admin/verification-reports/{report_id}/confirm-suggested-proof")
+def confirm_suggested_proof(
+    report_id: str,
+    payload: ConfirmSuggestedProofRequest = Body(...),
+    _: dict = Depends(_require_admin),
+) -> dict[str, Any]:
+    """Admin confirms one of the suggested URLs.
+
+    The ``chosen_url`` MUST match one of the entries in the report's
+    ``suggested_official_urls`` jsonb — anything else would let an
+    admin bypass the resolver and inject an arbitrary URL, which is
+    explicitly not the contract.
+
+    On success: ``official_resolution_status`` flips to
+    ``admin_attached`` and the original suggestion's method is
+    preserved on the row for the audit trail.
+    """
+    supabase = get_supabase_admin()
+    rows = (
+        supabase.table("recruitment_verification_reports")
+        .select("id, suggested_official_urls, official_resolution_method")
+        .eq("id", report_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="verification_report not found")
+    report = rows[0]
+    suggestions = report.get("suggested_official_urls") or []
+    match = next((u for u in suggestions if u.get("url") == payload.chosen_url), None)
+    if not match:
+        raise HTTPException(
+            status_code=400,
+            detail="chosen_url must match an entry in suggested_official_urls",
+        )
+    method = match.get("method") or report.get("official_resolution_method") or "direct_link"
+    updated = attach_admin_official_url(
+        supabase, report_id,
+        chosen_url=payload.chosen_url, original_method=method,
+    )
+    return updated
