@@ -2,6 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, FileCheck2, Filter, Link as LinkIcon, Search, ShieldAlert, X } from "lucide-react";
 import RecruitmentEditPanel from "../../features/admin/recruitments/RecruitmentEditPanel";
 import RecruitmentTrustActions from "../../features/admin/recruitments/RecruitmentTrustActions";
+import PublishImpactPanel from "../../features/admin/recruitments/PublishImpactPanel";
+import RecomputeStatusPanel from "../../features/admin/recruitments/RecomputeStatusPanel";
+import InlineAuditTimeline from "../../features/admin/shared/InlineAuditTimeline";
 import useAdminAction from "../../features/admin/shared/useAdminAction";
 import { api, getApiBlockingIssues } from "../../lib/api";
 import AdminWorkflowStepper from "../../features/admin/workflow/AdminWorkflowStepper";
@@ -109,6 +112,14 @@ function RecruitmentDrawer({ row, onClose, onAction, onSave, onReload, busyKey }
           <InlineTrustFixes row={row} blockers={row.blocking_issues || []} onAfterFix={onReload} />
         </div>
 
+        <div className="mt-5">
+          <PublishImpactPanel recruitmentId={row.id} />
+        </div>
+
+        <div className="mt-5">
+          <RecomputeStatusPanel recruitmentId={row.id} recruitmentName={row.name} />
+        </div>
+
         <section className="mt-5 soft-card rounded-2xl p-4">
           <h3 className="font-semibold">Review notes and edits</h3>
           <div className="mt-2 rounded-xl border border-border bg-white/60 p-3 text-sm text-muted-foreground">
@@ -126,6 +137,10 @@ function RecruitmentDrawer({ row, onClose, onAction, onSave, onReload, busyKey }
             <div><dt className="text-xs uppercase tracking-widest text-muted-foreground">Published at</dt><dd>{row.published_at || "-"}</dd></div>
           </dl>
         </section>
+
+        <div className="mt-5">
+          <InlineAuditTimeline entityType="recruitment" entityId={row.id} title="Recruitment audit timeline" />
+        </div>
       </aside>
     </div>
   );
