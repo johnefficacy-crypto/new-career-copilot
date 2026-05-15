@@ -1,0 +1,1862 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Recruitment Verification Gateway — Admin Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT,WONK@9..144,300..900,0..100,0..1&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #FAF7F2;
+    --paper-card: #FFFEFB;
+    --paper-sunk: #F2EDE3;
+    --ink: #1A1815;
+    --ink-soft: #4A4640;
+    --ink-mute: #7A736A;
+    --rule: #D8D2C4;
+    --rule-soft: #E8E2D4;
+
+    --tier-a: #8B1A1A;
+    --tier-a-bg: #F5E6E6;
+    --tier-b: #8B6914;
+    --tier-b-bg: #F5EDD6;
+    --tier-c: #3D5A2E;
+    --tier-c-bg: #E8EFE0;
+
+    --blocker: #B83227;
+    --blocker-bg: #FBE6E3;
+    --resolved: #2F6B3E;
+    --resolved-bg: #E2EDE5;
+    --pending: #8B6914;
+    --pending-bg: #F5EDD6;
+    --info: #1E3A5F;
+    --info-bg: #E2E8EF;
+    --neutral: #4A4640;
+    --neutral-bg: #ECE6D8;
+
+    --font-display: 'Fraunces', Georgia, serif;
+    --font-body: 'IBM Plex Sans', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--paper); color: var(--ink); font-family: var(--font-body); font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+  body { min-height: 100vh; }
+  a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+
+  /* === MASTHEAD === */
+  .masthead {
+    border-bottom: 2px solid var(--ink);
+    padding: 14px 32px 12px;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: end;
+    gap: 24px;
+    background: var(--paper);
+  }
+  .masthead h1 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: 28px;
+    letter-spacing: -0.02em;
+    font-variation-settings: "SOFT" 30, "WONK" 1, "opsz" 144;
+    line-height: 1;
+  }
+  .masthead .deck {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--ink-mute);
+    padding-bottom: 4px;
+  }
+  .masthead .admin-meta {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-mute);
+    text-align: right;
+    line-height: 1.6;
+  }
+  .masthead .admin-meta strong { color: var(--ink); font-weight: 500; }
+
+  /* === MODE BAR === */
+  .modebar {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--rule);
+    padding: 0 32px;
+    background: var(--paper);
+    overflow-x: auto;
+  }
+  .mode-pill {
+    padding: 14px 20px;
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: -0.005em;
+    color: var(--ink-mute);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    white-space: nowrap;
+  }
+  .mode-pill.active { color: var(--ink); border-bottom-color: var(--ink); }
+  .mode-pill .count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    margin-left: 6px;
+    color: var(--ink-mute);
+    background: var(--paper-sunk);
+    padding: 1px 6px;
+    border-radius: 2px;
+  }
+  .mode-pill.active .count { background: var(--ink); color: var(--paper); }
+
+  .demo-screens {
+    margin-left: auto;
+    display: flex;
+    gap: 0;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--ink-mute);
+  }
+  .demo-screens .label { padding-right: 12px; }
+  .demo-screens button {
+    padding: 8px 10px;
+    color: var(--ink-mute);
+    border-left: 1px solid var(--rule);
+    font-family: inherit;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .demo-screens button:hover, .demo-screens button.active { color: var(--ink); background: var(--paper-sunk); }
+
+  /* === LAYOUT === */
+  .screen { display: none; padding: 24px 32px 80px; }
+  .screen.active { display: block; }
+
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .section-header h2 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: 22px;
+    font-variation-settings: "SOFT" 20, "opsz" 144;
+    letter-spacing: -0.015em;
+  }
+  .section-header .meta {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  /* === BADGES === */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 3px 8px;
+    border-radius: 2px;
+    line-height: 1.4;
+    font-weight: 500;
+  }
+  .badge::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.7;
+  }
+  .badge.tier-a { background: var(--tier-a-bg); color: var(--tier-a); }
+  .badge.tier-b { background: var(--tier-b-bg); color: var(--tier-b); }
+  .badge.tier-c { background: var(--tier-c-bg); color: var(--tier-c); }
+  .badge.blocker { background: var(--blocker-bg); color: var(--blocker); }
+  .badge.resolved { background: var(--resolved-bg); color: var(--resolved); }
+  .badge.pending { background: var(--pending-bg); color: var(--pending); }
+  .badge.info { background: var(--info-bg); color: var(--info); }
+  .badge.neutral { background: var(--neutral-bg); color: var(--neutral); }
+  .badge.plain { background: var(--paper-sunk); color: var(--ink-soft); }
+
+  /* === CARDS === */
+  .card {
+    background: var(--paper-card);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+  }
+  .card-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .card-header h3 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: 15px;
+    letter-spacing: -0.005em;
+  }
+  .card-body { padding: 16px; }
+  .card-footer {
+    padding: 10px 16px;
+    border-top: 1px solid var(--rule);
+    background: var(--paper-sunk);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  /* === BUTTONS === */
+  .btn {
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 8px 14px;
+    border-radius: 3px;
+    border: 1px solid var(--rule);
+    background: var(--paper-card);
+    color: var(--ink);
+    transition: all 0.12s;
+    white-space: nowrap;
+  }
+  .btn:hover { background: var(--paper-sunk); border-color: var(--ink-soft); }
+  .btn.primary {
+    background: var(--ink);
+    color: var(--paper);
+    border-color: var(--ink);
+  }
+  .btn.primary:hover { background: var(--ink-soft); }
+  .btn.danger {
+    background: var(--blocker);
+    color: var(--paper);
+    border-color: var(--blocker);
+  }
+  .btn.ghost { background: transparent; border-color: transparent; color: var(--ink-soft); }
+  .btn.ghost:hover { color: var(--ink); background: var(--paper-sunk); }
+  .btn.small { padding: 5px 10px; font-size: 12px; }
+
+  /* === SETUP & RUN === */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 16px; }
+
+  table.run-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  table.run-table th {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-mute);
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--rule);
+    font-weight: 500;
+  }
+  table.run-table td {
+    padding: 12px;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+  }
+  table.run-table tr:hover td { background: var(--paper-sunk); }
+  table.run-table .row-id { font-family: var(--font-mono); font-size: 11px; color: var(--ink-mute); }
+  table.run-table .row-title { font-weight: 500; line-height: 1.3; }
+  table.run-table .row-sub { font-size: 11px; color: var(--ink-mute); margin-top: 2px; font-family: var(--font-mono); }
+
+  /* === REVIEW & PUBLISH — TWO COLUMN === */
+  .review-layout {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    gap: 0;
+    border: 1px solid var(--rule);
+    background: var(--paper-card);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .queue-list {
+    border-right: 1px solid var(--rule);
+    background: var(--paper);
+    max-height: 720px;
+    overflow-y: auto;
+  }
+  .queue-filter {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--paper-card);
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .queue-filter button {
+    padding: 3px 7px;
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    color: var(--ink-mute);
+    background: var(--paper);
+  }
+  .queue-filter button.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+  .queue-item {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--rule-soft);
+    cursor: pointer;
+    position: relative;
+  }
+  .queue-item.selected { background: var(--paper-card); border-left: 3px solid var(--ink); padding-left: 13px; }
+  .queue-item:hover:not(.selected) { background: var(--paper-sunk); }
+  .queue-item .qi-top { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+  .queue-item .qi-title { font-weight: 500; font-size: 13px; line-height: 1.3; margin-bottom: 2px; }
+  .queue-item .qi-org { font-size: 11px; color: var(--ink-mute); font-family: var(--font-mono); }
+  .queue-item .qi-action {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--ink-soft);
+    margin-top: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* === VERIFICATION REPORT DETAIL === */
+  .report-pane { padding: 24px 28px; background: var(--paper-card); }
+  .report-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 20px;
+  }
+  .report-head h2 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: 24px;
+    letter-spacing: -0.015em;
+    font-variation-settings: "SOFT" 30, "opsz" 144;
+    line-height: 1.15;
+    margin-bottom: 8px;
+    max-width: 600px;
+  }
+  .report-head .head-meta {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-mute);
+  }
+  .report-head .head-meta span { margin-right: 14px; }
+  .report-head .head-actions { display: flex; gap: 6px; }
+
+  /* primary action card */
+  .current-action {
+    background: var(--ink);
+    color: var(--paper);
+    padding: 18px 20px;
+    border-radius: 4px;
+    margin-bottom: 20px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 16px;
+    align-items: center;
+  }
+  .current-action .ca-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--paper-sunk);
+    margin-bottom: 6px;
+  }
+  .current-action h3 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: 20px;
+    letter-spacing: -0.01em;
+    margin-bottom: 4px;
+  }
+  .current-action p { font-size: 13px; color: var(--paper-sunk); line-height: 1.45; }
+  .current-action .btn.primary {
+    background: var(--paper);
+    color: var(--ink);
+    border-color: var(--paper);
+    font-weight: 600;
+  }
+
+  /* report grid */
+  .report-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .report-field {
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 14px 16px;
+    background: var(--paper);
+  }
+  .report-field .rf-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--ink-mute);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .report-field .rf-value {
+    font-size: 14px;
+    color: var(--ink);
+    line-height: 1.4;
+  }
+  .report-field .rf-value .strong { font-weight: 600; }
+  .report-field .rf-sub {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-mute);
+    margin-top: 6px;
+  }
+
+  /* official proof card variants */
+  .proof-card { padding: 16px; border: 1px solid var(--rule); border-radius: 3px; background: var(--paper); }
+  .proof-card.resolved { border-color: var(--resolved); background: var(--resolved-bg); }
+  .proof-card.suggested { border-color: var(--pending); background: var(--pending-bg); }
+  .proof-card.unresolved { border-color: var(--blocker); background: var(--blocker-bg); }
+  .proof-card .pc-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .proof-card .pc-title h4 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: 16px;
+  }
+  .proof-card .pc-meta {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-soft);
+    margin-bottom: 10px;
+  }
+  .proof-card .pc-meta div { margin-bottom: 3px; }
+  .proof-card .pc-evidence {
+    background: var(--paper-card);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    padding: 8px 10px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    word-break: break-all;
+    margin-bottom: 8px;
+  }
+
+  /* lists in report */
+  .rlist { list-style: none; }
+  .rlist li {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--rule-soft);
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 10px;
+    align-items: center;
+  }
+  .rlist li:last-child { border-bottom: none; }
+  .rlist .li-label { font-weight: 500; }
+  .rlist .li-sub { font-family: var(--font-mono); font-size: 11px; color: var(--ink-mute); margin-top: 2px; }
+
+  /* conflict pair */
+  .conflict-row { padding: 14px 0; border-bottom: 1px solid var(--rule-soft); }
+  .conflict-row:last-child { border-bottom: none; }
+  .conflict-row .cf-head { display: flex; justify-content: space-between; margin-bottom: 8px; }
+  .conflict-row .cf-key { font-weight: 500; font-size: 13px; }
+  .conflict-row .cf-id { font-family: var(--font-mono); font-size: 10px; color: var(--ink-mute); }
+  .conflict-row .cf-values { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .conflict-row .cf-val {
+    padding: 10px 12px;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    border-radius: 2px;
+    font-size: 12px;
+  }
+  .conflict-row .cf-val.aggregator { border-style: dashed; }
+  .conflict-row .cf-val.official { border-color: var(--info); }
+  .conflict-row .cf-val .cf-src {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-mute);
+    margin-bottom: 4px;
+  }
+
+  /* drawer */
+  .drawer-trigger {
+    padding: 10px 14px;
+    border: 1px dashed var(--rule);
+    border-radius: 3px;
+    background: var(--paper);
+    text-align: left;
+    width: 100%;
+    margin-top: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--ink-soft);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+  }
+  .drawer-trigger:hover { background: var(--paper-sunk); }
+  .drawer-trigger .arrow { font-size: 14px; }
+
+  /* === BULK PREVIEW === */
+  .bulk-summary {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .bulk-stat {
+    padding: 16px;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    background: var(--paper-card);
+  }
+  .bulk-stat .bs-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--ink-mute);
+    margin-bottom: 8px;
+  }
+  .bulk-stat .bs-value {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: 36px;
+    line-height: 1;
+    font-variation-settings: "opsz" 144;
+  }
+  .bulk-stat.eligible .bs-value { color: var(--resolved); }
+  .bulk-stat.blocked .bs-value { color: var(--blocker); }
+
+  .bulk-list { background: var(--paper-card); border: 1px solid var(--rule); border-radius: 3px; }
+  .bulk-list-head {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--paper-sunk);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .bulk-list-head h3 { font-family: var(--font-display); font-weight: 500; font-size: 14px; }
+
+  .blocker-row {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--rule-soft);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 16px;
+    align-items: center;
+  }
+  .blocker-row:last-child { border-bottom: none; }
+  .blocker-row .br-title { font-weight: 500; font-size: 13px; }
+  .blocker-row .br-meta { font-family: var(--font-mono); font-size: 11px; color: var(--ink-mute); margin-top: 2px; }
+  .blocker-row .br-reason {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--blocker);
+    margin-top: 4px;
+  }
+
+  /* === BATCH ALERT === */
+  .batch-alert {
+    border: 2px solid var(--pending);
+    background: var(--pending-bg);
+    border-radius: 4px;
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .batch-alert h2 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: 22px;
+    letter-spacing: -0.01em;
+    margin-bottom: 6px;
+  }
+  .batch-alert .ba-source {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-bottom: 16px;
+  }
+  .batch-alert .ba-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+    background: var(--paper-card);
+    border-radius: 3px;
+    padding: 14px;
+  }
+  .batch-alert .ba-stat .bn { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-mute); margin-bottom: 4px; }
+  .batch-alert .ba-stat .bv { font-family: var(--font-display); font-size: 24px; font-weight: 400; }
+  .batch-alert .ba-actions { display: flex; gap: 8px; }
+
+  /* === OVERRIDE MODAL === */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(26, 24, 21, 0.55);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 24px;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--paper-card);
+    border: 1px solid var(--ink);
+    border-radius: 4px;
+    width: 100%;
+    max-width: 640px;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .modal-head {
+    padding: 18px 22px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .modal-head h2 { font-family: var(--font-display); font-weight: 500; font-size: 18px; }
+  .modal-body { padding: 20px 22px; }
+  .modal-foot {
+    padding: 14px 22px;
+    border-top: 1px solid var(--rule);
+    background: var(--paper-sunk);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .form-row { margin-bottom: 16px; }
+  .form-row label {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--ink-mute);
+    margin-bottom: 6px;
+  }
+  .form-row input[type="text"],
+  .form-row input[type="url"],
+  .form-row textarea,
+  .form-row select {
+    width: 100%;
+    padding: 9px 11px;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    background: var(--paper);
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--ink);
+  }
+  .form-row textarea { min-height: 80px; resize: vertical; font-family: var(--font-body); }
+  .form-row input:focus, .form-row textarea:focus, .form-row select:focus {
+    outline: none;
+    border-color: var(--ink);
+  }
+
+  .radio-group { display: grid; gap: 6px; }
+  .radio-group label {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--ink);
+    letter-spacing: 0;
+    text-transform: none;
+    margin-bottom: 0;
+  }
+  .radio-group label:hover { background: var(--paper-sunk); }
+  .radio-group label input { margin-top: 3px; }
+  .radio-group .rg-sub { font-family: var(--font-mono); font-size: 10px; color: var(--ink-mute); margin-top: 2px; }
+
+  /* utility */
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .stack > * + * { margin-top: 12px; }
+  .mb-2 { margin-bottom: 16px; }
+  .mb-3 { margin-bottom: 24px; }
+  .mt-2 { margin-top: 16px; }
+  .tn { font-family: var(--font-mono); font-size: 11px; color: var(--ink-mute); }
+  .tinylabel { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-mute); }
+
+  /* responsive */
+  @media (max-width: 1100px) {
+    .review-layout { grid-template-columns: 1fr; }
+    .queue-list { max-height: 400px; }
+    .report-grid { grid-template-columns: 1fr; }
+    .bulk-summary { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ MASTHEAD ============ -->
+<header class="masthead">
+  <div>
+    <div class="deck">Recruitment Verification Gateway</div>
+    <h1>Operations Console</h1>
+  </div>
+  <div></div>
+  <div class="admin-meta">
+    <div><strong>kavya.iyer</strong> · super_admin</div>
+    <div>last sync 14:22:08 · sat 16 may 2026</div>
+  </div>
+</header>
+
+<!-- ============ MODE BAR ============ -->
+<nav class="modebar">
+  <button class="mode-pill" data-screen="setup">Setup &amp; Run</button>
+  <button class="mode-pill active" data-screen="review">Review &amp; Publish <span class="count">38</span></button>
+  <div class="demo-screens">
+    <span class="label">Demo screens</span>
+    <button data-screen="report">Report detail</button>
+    <button data-screen="bulk">Bulk preview</button>
+    <button data-screen="batch">Batch alert</button>
+    <button data-screen="drawer">Workflow drawer</button>
+    <button onclick="openOverride()">Override modal</button>
+  </div>
+</nav>
+
+<!-- ============ SCREEN 1: SETUP & RUN ============ -->
+<section class="screen" id="screen-setup">
+  <div class="section-header">
+    <h2>Setup &amp; Run</h2>
+    <div class="meta">52 sources · 4 active runs · last hour</div>
+  </div>
+
+  <div class="grid-2 mb-3">
+    <!-- Source selector -->
+    <div class="card">
+      <div class="card-header">
+        <h3>Source</h3>
+        <span class="badge resolved">trusted</span>
+      </div>
+      <div class="card-body stack">
+        <div class="form-row">
+          <label>Source</label>
+          <select>
+            <option>UPSC official · upsc.gov.in</option>
+            <option>SSC official · ssc.nic.in</option>
+            <option>IBPS official · ibps.in</option>
+            <option>Sarkari Result · aggregator</option>
+          </select>
+        </div>
+        <div class="row">
+          <span class="tinylabel">trust</span>
+          <span class="badge resolved">verified</span>
+          <span class="tinylabel" style="margin-left:16px;">aggregator policy</span>
+          <span class="badge plain">discovery only</span>
+        </div>
+        <div class="tn">Aggregator data may be used to discover candidates but cannot become canonical truth. Tier A requires official source resolution.</div>
+      </div>
+      <div class="card-footer">
+        <button class="btn ghost small">View source registry →</button>
+        <button class="btn primary small">Run live scrape</button>
+        <button class="btn small">Dry scrape</button>
+      </div>
+    </div>
+
+    <!-- Recent run summary -->
+    <div class="card">
+      <div class="card-header">
+        <h3>Last run</h3>
+        <span class="tn">run_8f3a · 14:08:42 IST</span>
+      </div>
+      <div class="card-body">
+        <div class="report-grid" style="gap: 10px; margin-bottom: 12px;">
+          <div class="report-field">
+            <div class="rf-label">extracted</div>
+            <div class="rf-value"><span class="strong">142</span> recruitments</div>
+          </div>
+          <div class="report-field">
+            <div class="rf-label">classified</div>
+            <div class="rf-value"><span class="strong">142</span></div>
+            <div class="rf-sub">A: 38 · B: 71 · C: 33</div>
+          </div>
+          <div class="report-field">
+            <div class="rf-label">reports created</div>
+            <div class="rf-value"><span class="strong">109</span></div>
+            <div class="rf-sub">33 noop (hash match)</div>
+          </div>
+          <div class="report-field">
+            <div class="rf-label">duration</div>
+            <div class="rf-value"><span class="strong">3m 14s</span></div>
+            <div class="rf-sub">avg 1.36s / item</div>
+          </div>
+        </div>
+        <div class="tn">Resolver, consensus, and complexity stages run inline in sync mode (<code style="font-family:var(--font-mono);">GATEWAY_EXECUTION_MODE = "sync"</code>).</div>
+      </div>
+      <div class="card-footer">
+        <button class="btn ghost small">Open run detail</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent runs table -->
+  <div class="card">
+    <div class="card-header">
+      <h3>Recent runs</h3>
+      <div class="row">
+        <button class="btn ghost small">Last 24h</button>
+        <button class="btn ghost small">All sources</button>
+      </div>
+    </div>
+    <table class="run-table">
+      <thead>
+        <tr>
+          <th style="width: 30%;">Run / source</th>
+          <th>Tier split</th>
+          <th>Extracted</th>
+          <th>Reports</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <div class="row-title">UPSC official</div>
+            <div class="row-sub">run_8f3a · 14:08</div>
+          </td>
+          <td><span class="badge tier-a">A · 38</span></td>
+          <td>142</td>
+          <td>109 created · 33 noop</td>
+          <td><span class="badge resolved">complete</span></td>
+          <td><button class="btn ghost small">→</button></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="row-title">SSC official</div>
+            <div class="row-sub">run_8f39 · 13:55</div>
+          </td>
+          <td><span class="badge tier-a">A · 24</span></td>
+          <td>87</td>
+          <td>62 created · 25 noop</td>
+          <td><span class="badge resolved">complete</span></td>
+          <td><button class="btn ghost small">→</button></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="row-title">IIT Madras careers</div>
+            <div class="row-sub">run_8f38 · 13:42</div>
+          </td>
+          <td>
+            <span class="badge tier-b">B · 12</span>
+            <span class="badge tier-c">C · 4</span>
+          </td>
+          <td>16</td>
+          <td>16 created</td>
+          <td><span class="badge pending">resolver retry</span></td>
+          <td><button class="btn ghost small">→</button></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="row-title">Sarkari Result</div>
+            <div class="row-sub">run_8f37 · 13:18 · aggregator</div>
+          </td>
+          <td>
+            <span class="badge tier-a">A · 19</span>
+            <span class="badge tier-b">B · 8</span>
+            <span class="badge tier-c">C · 22</span>
+          </td>
+          <td>49</td>
+          <td>discovery only</td>
+          <td><span class="badge info">discovery</span></td>
+          <td><button class="btn ghost small">→</button></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="row-title">Defence Recruitment</div>
+            <div class="row-sub">run_8f36 · 12:55</div>
+          </td>
+          <td><span class="badge tier-a">A · 7</span></td>
+          <td>7</td>
+          <td>7 created</td>
+          <td><span class="badge blocker">3 unresolved</span></td>
+          <td><button class="btn ghost small">→</button></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ SCREEN 2: REVIEW & PUBLISH (DEFAULT) ============ -->
+<section class="screen active" id="screen-review">
+  <div class="section-header">
+    <h2>Review &amp; Publish</h2>
+    <div class="meta">38 active reports · 12 blockers · 3 conflicts</div>
+  </div>
+
+  <div class="review-layout">
+    <!-- LEFT: QUEUE LIST -->
+    <aside class="queue-list">
+      <div class="queue-filter">
+        <button class="active">all</button>
+        <button>tier a</button>
+        <button>tier b</button>
+        <button>tier c</button>
+        <button>blockers</button>
+        <button>conflicts</button>
+        <button>stale</button>
+      </div>
+
+      <div class="queue-item">
+        <div class="qi-top">
+          <span class="badge tier-a">A</span>
+          <span class="badge resolved">official resolved</span>
+        </div>
+        <div class="qi-title">UPSC Civil Services Examination 2026 — Notification</div>
+        <div class="qi-org">upsc · notif 05/2026</div>
+        <div class="qi-action">→ promote eligible</div>
+      </div>
+
+      <div class="queue-item selected">
+        <div class="qi-top">
+          <span class="badge tier-a">A</span>
+          <span class="badge pending">suggested proof</span>
+        </div>
+        <div class="qi-title">SSC Combined Higher Secondary Level 2026 (10+2)</div>
+        <div class="qi-org">ssc · notif chsl-2026</div>
+        <div class="qi-action">→ confirm suggested proof</div>
+      </div>
+
+      <div class="queue-item">
+        <div class="qi-top">
+          <span class="badge tier-a">A</span>
+          <span class="badge blocker">conflict</span>
+        </div>
+        <div class="qi-title">IBPS PO/MT Recruitment 2026 — CRP PO/MT-XV</div>
+        <div class="qi-org">ibps · crp-po-mt-xv</div>
+        <div class="qi-action">→ resolve conflict</div>
+      </div>
+
+      <div class="queue-item">
+        <div class="qi-top">
+          <span class="badge tier-a">A</span>
+          <span class="badge blocker">unresolved</span>
+        </div>
+        <div class="qi-title">RBI Grade B Officer — DR (General) 2026</div>
+        <div class="qi-org">rbi · grade-b-2026</div>
+        <div class="qi-action">→ await official proof</div>
+      </div>
+
+      <div class="queue-item">
+        <div class="qi-top">
+          <span class="badge tier-b">B</span>
+          <span class="badge blocker">publish blocker</span>
+        </div>
+        <div class="qi-title">IIT Madras — Assistant Professor (GATE-based, Domicile relaxation)</div>
+        <div class="qi-org">iitm · ap-2026-15</div>
+        <div class="qi-action">→ block publish: missing GATE rule</div>
+      </div>
+
+      <div class="queue-item">
+        <div class="qi-top">
+          <span class="badge tier-b">B</span>
+          <span class="badge resolved">official resolved</span>
+        </div>
+        <div class="qi-title">NTPC Engineer Trainee 2026 (Mechanical, Electrical, Civil)</div>
+        <div class="qi-org">ntpc · et-2026</div>
+        <div class="qi-action">→ promote eligible</div>
+      </div>
+
+      <div class="queue-item">
+        <div class="qi-top">
+          <span class="badge tier-a">A</span>
+          <span class="badge pending">stale source</span>
+        </div>
+        <div class="qi-title">Railways NTPC CEN-01/2026 — Corrigendum 2</div>
+        <div class="qi-org">rrb · cen-01-2026</div>
+        <div class="qi-action">→ await corrigendum</div>
+      </div>
+
+      <div class="queue-item">
+        <div class="qi-top">
+          <span class="badge tier-c">C</span>
+          <span class="badge resolved">classified</span>
+        </div>
+        <div class="qi-title">Pune Municipal Corp · Junior Engineer (Civil) · 12 posts</div>
+        <div class="qi-org">pmc · je-civ-2026</div>
+        <div class="qi-action">→ promote eligible</div>
+      </div>
+
+      <div class="queue-item">
+        <div class="qi-top">
+          <span class="badge tier-b">B</span>
+          <span class="badge neutral">consensus pending</span>
+        </div>
+        <div class="qi-title">ISRO Scientist/Engineer SC — Electronics, Mechanical, CS</div>
+        <div class="qi-org">isro · ese-sc-2026</div>
+        <div class="qi-action">→ request admin review</div>
+      </div>
+
+      <div class="queue-item">
+        <div class="qi-top">
+          <span class="badge tier-a">A</span>
+          <span class="badge plain">backfilled</span>
+        </div>
+        <div class="qi-title">Maharashtra PSC State Service 2025 (backfill)</div>
+        <div class="qi-org">mpsc · sse-2025</div>
+        <div class="qi-action">→ request admin review</div>
+      </div>
+    </aside>
+
+    <!-- RIGHT: REPORT PANE -->
+    <div class="report-pane">
+      <div class="report-head">
+        <div>
+          <h2>SSC Combined Higher Secondary Level 2026 (10+2)</h2>
+          <div class="head-meta">
+            <span>report_id <strong>rpt_4e29a1</strong></span>
+            <span>chain_root <strong>rpt_4e29a1</strong></span>
+            <span>v<strong>2</strong></span>
+            <span>created 13:55</span>
+          </div>
+          <div class="row" style="margin-top: 10px;">
+            <span class="badge tier-a">A high stakes</span>
+            <span class="badge plain">exam_family ssc</span>
+            <span class="badge pending">classified</span>
+            <span class="badge resolved">fresh</span>
+          </div>
+        </div>
+        <div class="head-actions">
+          <button class="btn ghost small">Reject</button>
+          <button class="btn small">Re-run resolver</button>
+        </div>
+      </div>
+
+      <!-- PRIMARY ACTION -->
+      <div class="current-action">
+        <div>
+          <div class="ca-label">Current blocker · 1 of 1</div>
+          <h3>Confirm suggested official proof</h3>
+          <p>Resolver found a likely official notification page via source-registry crawl. Confidence 0.78 — falls between auto-resolve (0.85) and manual (0.60).</p>
+        </div>
+        <div>
+          <button class="btn primary">Confirm proof</button>
+        </div>
+      </div>
+
+      <!-- OFFICIAL PROOF -->
+      <div class="proof-card suggested mb-3">
+        <div class="pc-title">
+          <h4>Official Proof</h4>
+          <span class="badge pending">suggested</span>
+        </div>
+        <div class="pc-meta">
+          <div>method · source_registry · career_crawl</div>
+          <div>confidence · 0.78</div>
+          <div>host · ssc.nic.in</div>
+        </div>
+        <div class="pc-evidence">https://ssc.nic.in/SSCFileServer/PortalManagement/UploadedFiles/Notice_CHSL_2026_01.pdf</div>
+        <div class="row">
+          <button class="btn primary small">Confirm proof</button>
+          <button class="btn small">View evidence</button>
+          <button class="btn ghost small">Attach different URL</button>
+        </div>
+      </div>
+
+      <!-- HIGH-RISK FIELDS -->
+      <div class="report-grid">
+        <div class="report-field">
+          <div class="rf-label">
+            <span>notification number</span>
+            <span class="badge resolved">verified</span>
+          </div>
+          <div class="rf-value">CHSL-2026/01</div>
+          <div class="rf-sub">2 sources agree · ssc.nic.in, careers.sarkariresult.com</div>
+        </div>
+        <div class="report-field">
+          <div class="rf-label">
+            <span>apply window</span>
+            <span class="badge resolved">verified</span>
+          </div>
+          <div class="rf-value">28 May 2026 → 26 Jun 2026</div>
+          <div class="rf-sub">valid_until 26 Jun 2026</div>
+        </div>
+        <div class="report-field">
+          <div class="rf-label">
+            <span>total vacancies</span>
+            <span class="badge resolved">verified</span>
+          </div>
+          <div class="rf-value">3,712 posts</div>
+          <div class="rf-sub">LDC · JSA · DEO</div>
+        </div>
+        <div class="report-field">
+          <div class="rf-label">
+            <span>age limits</span>
+            <span class="badge resolved">verified</span>
+          </div>
+          <div class="rf-value">18 – 27 years</div>
+          <div class="rf-sub">cat. relaxation: SC/ST +5 · OBC +3 · PwBD +10</div>
+        </div>
+      </div>
+
+      <!-- RISK FLAGS -->
+      <div class="card mb-2">
+        <div class="card-header">
+          <h3>Risk flags</h3>
+          <span class="tn">3 flags · 0 promotion blockers</span>
+        </div>
+        <ul class="rlist" style="padding: 0 16px;">
+          <li>
+            <span class="badge pending">warning</span>
+            <div>
+              <div class="li-label">Category relaxation rules detected</div>
+              <div class="li-sub">field_key=category_relaxation · evidence_summary.posts.0.age_relaxation</div>
+            </div>
+            <span class="tn">canonical rule exists</span>
+          </li>
+          <li>
+            <span class="badge info">conditional</span>
+            <div>
+              <div class="li-label">PwBD horizontal reservation</div>
+              <div class="li-sub">field_key=pwbd_reservation · publish allowed if profile state handled</div>
+            </div>
+            <span class="tn">handled</span>
+          </li>
+          <li>
+            <span class="badge pending">warning</span>
+            <div>
+              <div class="li-label">Ex-serviceman rules referenced in notification</div>
+              <div class="li-sub">field_key=ex_serviceman · evidence_summary.posts.0.es_relaxation</div>
+            </div>
+            <span class="tn">advisory only</span>
+          </li>
+        </ul>
+      </div>
+
+      <!-- COLLAPSED WORKFLOW DRAWER -->
+      <button class="drawer-trigger">
+        <span>Workflow details · full checklist · audit trail · 14 steps</span>
+        <span class="arrow">→</span>
+      </button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SCREEN 3: REPORT DETAIL (conflict variant) ============ -->
+<section class="screen" id="screen-report">
+  <div class="section-header">
+    <h2>Verification Report — Conflict state</h2>
+    <div class="meta">demo: Tier A conflict requiring override</div>
+  </div>
+
+  <div class="review-layout">
+    <aside class="queue-list">
+      <div class="queue-filter">
+        <button>all</button>
+        <button class="active">conflicts</button>
+      </div>
+      <div class="queue-item selected">
+        <div class="qi-top">
+          <span class="badge tier-a">A</span>
+          <span class="badge blocker">conflict</span>
+        </div>
+        <div class="qi-title">IBPS PO/MT Recruitment 2026 — CRP PO/MT-XV</div>
+        <div class="qi-org">ibps · crp-po-mt-xv</div>
+        <div class="qi-action">→ resolve conflict</div>
+      </div>
+    </aside>
+
+    <div class="report-pane">
+      <div class="report-head">
+        <div>
+          <h2>IBPS PO/MT Recruitment 2026 — CRP PO/MT-XV</h2>
+          <div class="head-meta">
+            <span>report_id <strong>rpt_5b8c2f</strong></span>
+            <span>v<strong>3</strong></span>
+            <span>chain head · 2 prior versions</span>
+          </div>
+          <div class="row" style="margin-top: 10px;">
+            <span class="badge tier-a">A high stakes</span>
+            <span class="badge plain">exam_family banking</span>
+            <span class="badge blocker">conflict</span>
+            <span class="badge resolved">fresh</span>
+          </div>
+        </div>
+        <div class="head-actions">
+          <button class="btn ghost small">Reject report</button>
+          <button class="btn small">Re-run consensus</button>
+        </div>
+      </div>
+
+      <div class="current-action">
+        <div>
+          <div class="ca-label">Current blocker · 1 of 2</div>
+          <h3>Resolve consensus conflict</h3>
+          <p>Two official sources disagree on apply_end_date. Likely corrigendum issued after initial notification. Override required to promote.</p>
+        </div>
+        <div>
+          <button class="btn primary" onclick="openOverride()">Resolve conflict</button>
+        </div>
+      </div>
+
+      <!-- CONFLICTS -->
+      <div class="card mb-3">
+        <div class="card-header">
+          <h3>Open conflicts</h3>
+          <span class="tn">2 conflicts · 0 resolved</span>
+        </div>
+        <div class="card-body" style="padding: 0 16px;">
+          <div class="conflict-row">
+            <div class="cf-head">
+              <div>
+                <div class="cf-key">apply_end_date</div>
+                <div class="cf-id">conflict_id · cf_8e3a91</div>
+              </div>
+              <span class="badge blocker">open</span>
+            </div>
+            <div class="cf-values">
+              <div class="cf-val official">
+                <div class="cf-src">official · ibps.in/notif-pdf</div>
+                <div><strong>30 Jun 2026</strong></div>
+                <div class="tn" style="margin-top:4px;">extracted 14:08</div>
+              </div>
+              <div class="cf-val official">
+                <div class="cf-src">official · ibps.in/corrigendum-1</div>
+                <div><strong>15 Jul 2026</strong></div>
+                <div class="tn" style="margin-top:4px;">extracted 14:08 · dated 12 May 2026</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="conflict-row">
+            <div class="cf-head">
+              <div>
+                <div class="cf-key">total_vacancies</div>
+                <div class="cf-id">conflict_id · cf_8e3a92</div>
+              </div>
+              <span class="badge blocker">open</span>
+            </div>
+            <div class="cf-values">
+              <div class="cf-val official">
+                <div class="cf-src">official · ibps.in/notif-pdf</div>
+                <div><strong>4,135 posts</strong></div>
+              </div>
+              <div class="cf-val aggregator">
+                <div class="cf-src">aggregator · sarkariresult</div>
+                <div><strong>4,500 posts</strong></div>
+                <div class="tn" style="margin-top:4px;">aggregator value cannot become canonical</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="card-footer">
+          <button class="btn ghost small">View conflict history</button>
+          <button class="btn small" onclick="openOverride()">Override conflict</button>
+        </div>
+      </div>
+
+      <!-- OFFICIAL PROOF (RESOLVED VARIANT) -->
+      <div class="proof-card resolved mb-3">
+        <div class="pc-title">
+          <h4>Official Proof</h4>
+          <span class="badge resolved">auto resolved · 0.94</span>
+        </div>
+        <div class="pc-meta">
+          <div>method · direct_link</div>
+          <div>host · ibps.in</div>
+          <div>resolved at 14:08:14</div>
+        </div>
+        <div class="pc-evidence">https://www.ibps.in/wp-content/uploads/CRP_PO_MT_XV_Notification_2026.pdf</div>
+        <div class="row">
+          <button class="btn small">View evidence chain</button>
+          <button class="btn ghost small">Reject &amp; reattach</button>
+        </div>
+      </div>
+
+      <button class="drawer-trigger" onclick="showScreen('drawer')">
+        <span>Workflow details · 14 steps · 2 overrides in history</span>
+        <span class="arrow">→</span>
+      </button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SCREEN 4: BULK PREVIEW ============ -->
+<section class="screen" id="screen-bulk">
+  <div class="section-header">
+    <h2>Bulk action · Dry run</h2>
+    <div class="meta">50 selected · action: bulk_promote</div>
+  </div>
+
+  <div class="bulk-summary">
+    <div class="bulk-stat">
+      <div class="bs-label">selected</div>
+      <div class="bs-value">50</div>
+    </div>
+    <div class="bulk-stat eligible">
+      <div class="bs-label">eligible</div>
+      <div class="bs-value">42</div>
+    </div>
+    <div class="bulk-stat blocked">
+      <div class="bs-label">blocked</div>
+      <div class="bs-value">8</div>
+    </div>
+    <div class="bulk-stat">
+      <div class="bs-label">tier split</div>
+      <div class="bs-value" style="font-size: 20px; line-height: 1.4;">A·18 · B·24 · C·8</div>
+    </div>
+  </div>
+
+  <div class="bulk-list mb-3">
+    <div class="bulk-list-head">
+      <h3>Blocked items · 8</h3>
+      <div class="row">
+        <span class="tn">grouped by reason_code</span>
+        <button class="btn ghost small">Export CSV</button>
+      </div>
+    </div>
+
+    <div class="blocker-row">
+      <div>
+        <div class="br-title">RBI Grade B Officer — DR (General) 2026</div>
+        <div class="br-meta">verification_report · rpt_3d92b1 · Tier A</div>
+        <div class="br-reason">official_proof_missing · promotion_blocker</div>
+      </div>
+      <button class="btn small">Open</button>
+    </div>
+
+    <div class="blocker-row">
+      <div>
+        <div class="br-title">IIT Madras — Assistant Professor (GATE)</div>
+        <div class="br-meta">verification_report · rpt_2a44c9 · Tier B</div>
+        <div class="br-reason">eligibility_rule_missing · publish_blocker · field_key=gate_score</div>
+      </div>
+      <button class="btn small">Open</button>
+    </div>
+
+    <div class="blocker-row">
+      <div>
+        <div class="br-title">IBPS PO/MT Recruitment 2026 — CRP PO/MT-XV</div>
+        <div class="br-meta">verification_report · rpt_5b8c2f · Tier A</div>
+        <div class="br-reason">consensus_conflict_unresolved · promotion_blocker</div>
+      </div>
+      <button class="btn small">Open</button>
+    </div>
+
+    <div class="blocker-row">
+      <div>
+        <div class="br-title">Defence — Indian Coast Guard Yantrik 02/2026</div>
+        <div class="br-meta">verification_report · rpt_9e21f3 · Tier A</div>
+        <div class="br-reason">official_proof_missing · promotion_blocker</div>
+      </div>
+      <button class="btn small">Open</button>
+    </div>
+
+    <div class="blocker-row">
+      <div>
+        <div class="br-title">BHEL Engineer Trainee 2026 (GATE-based)</div>
+        <div class="br-meta">verification_report · rpt_7c11d4 · Tier B</div>
+        <div class="br-reason">eligibility_rule_missing · publish_blocker · field_key=gate_score, discipline_required</div>
+      </div>
+      <button class="btn small">Open</button>
+    </div>
+
+    <div class="blocker-row">
+      <div>
+        <div class="br-title">Karnataka State Police Constable 2026</div>
+        <div class="br-meta">verification_report · rpt_4b88e2 · Tier A</div>
+        <div class="br-reason">consensus_conflict_unresolved · promotion_blocker · field=total_vacancies</div>
+      </div>
+      <button class="btn small">Open</button>
+    </div>
+
+    <div class="blocker-row">
+      <div>
+        <div class="br-title">IIT Bombay — Junior Research Fellow (PhD track)</div>
+        <div class="br-meta">verification_report · rpt_6f33a8 · Tier B</div>
+        <div class="br-reason">eligibility_rule_missing · publish_blocker · field_key=discipline_required, experience</div>
+      </div>
+      <button class="btn small">Open</button>
+    </div>
+
+    <div class="blocker-row">
+      <div>
+        <div class="br-title">SAIL Management Trainee (Technical) 2026</div>
+        <div class="br-meta">verification_report · rpt_8a99b6 · Tier B</div>
+        <div class="br-reason">eligibility_rule_missing · publish_blocker · field_key=gate_score</div>
+      </div>
+      <button class="btn small">Open</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <div class="row" style="justify-content: space-between;">
+        <div>
+          <div class="tinylabel" style="margin-bottom: 4px;">Apply mutation</div>
+          <div class="tn">Bulk apply will promote 42 eligible items. 8 blocked items remain unchanged.</div>
+        </div>
+        <div class="row">
+          <button class="btn">Cancel</button>
+          <button class="btn primary">Apply to 42 eligible</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SCREEN 5: BATCH ALERT ============ -->
+<section class="screen" id="screen-batch">
+  <div class="section-header">
+    <h2>Reverification Batches</h2>
+    <div class="meta">2 unacknowledged · mass-corrigendum protection</div>
+  </div>
+
+  <div class="batch-alert">
+    <div class="row" style="margin-bottom: 8px;">
+      <span class="badge pending">mass change detected</span>
+      <span class="badge tier-a">tier a</span>
+    </div>
+    <h2>SSC — 47 reports affected by source change</h2>
+    <div class="ba-source">source · ssc.nic.in · trigger_reason · source_hash_changed · 14:18 IST</div>
+
+    <div class="ba-stats">
+      <div class="ba-stat">
+        <div class="bn">total affected</div>
+        <div class="bv">47</div>
+      </div>
+      <div class="ba-stat">
+        <div class="bn">flipped to needs_reverification</div>
+        <div class="bv">25</div>
+      </div>
+      <div class="ba-stat">
+        <div class="bn">pending_reverification_batch</div>
+        <div class="bv">22</div>
+      </div>
+    </div>
+
+    <div class="tn" style="margin-bottom: 12px;">First 25 reports already in admin attention queue. Remaining 22 held in batch state to prevent flooding. Acknowledge to release in throttled chunks.</div>
+
+    <div class="ba-actions">
+      <button class="btn primary">Acknowledge &amp; release 22</button>
+      <button class="btn">Open affected list</button>
+      <button class="btn ghost">Snooze 1h</button>
+    </div>
+  </div>
+
+  <div class="card mb-2">
+    <div class="card-header">
+      <h3>Recent batches · last 7 days</h3>
+    </div>
+    <table class="run-table">
+      <thead>
+        <tr>
+          <th>Source</th>
+          <th>Trigger</th>
+          <th>Affected</th>
+          <th>Flipped</th>
+          <th>Pending</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <div class="row-title">ssc.nic.in</div>
+            <div class="row-sub">14:18 today</div>
+          </td>
+          <td><span class="tn">source_hash_changed</span></td>
+          <td>47</td>
+          <td>25</td>
+          <td>22</td>
+          <td><span class="badge pending">unacknowledged</span></td>
+          <td><button class="btn ghost small">→</button></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="row-title">rrb.nic.in</div>
+            <div class="row-sub">08:42 today</div>
+          </td>
+          <td><span class="tn">corrigendum_detected</span></td>
+          <td>12</td>
+          <td>12</td>
+          <td>0</td>
+          <td><span class="badge pending">unacknowledged</span></td>
+          <td><button class="btn ghost small">→</button></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="row-title">upsc.gov.in</div>
+            <div class="row-sub">yesterday 17:30</div>
+          </td>
+          <td><span class="tn">canonical_field_edited</span></td>
+          <td>6</td>
+          <td>6</td>
+          <td>0</td>
+          <td><span class="badge resolved">ack · vinay.r</span></td>
+          <td><button class="btn ghost small">→</button></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="row-title">ibps.in</div>
+            <div class="row-sub">14 May 11:08</div>
+          </td>
+          <td><span class="tn">source_trust_changed</span></td>
+          <td>3</td>
+          <td>3</td>
+          <td>0</td>
+          <td><span class="badge resolved">ack · kavya.i</span></td>
+          <td><button class="btn ghost small">→</button></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ SCREEN 6: WORKFLOW DRAWER ============ -->
+<section class="screen" id="screen-drawer">
+  <div class="section-header">
+    <h2>Workflow Details Drawer</h2>
+    <div class="meta">full audit trail · hidden from default review pane</div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h3>IBPS PO/MT Recruitment 2026 — full workflow checklist</h3>
+      <div class="row">
+        <span class="badge tier-a">A</span>
+        <span class="badge blocker">conflict</span>
+      </div>
+    </div>
+    <div class="card-body" style="padding: 0;">
+      <ul class="rlist" style="padding: 0 20px;">
+        <li>
+          <span class="badge resolved">done</span>
+          <div>
+            <div class="li-label">scrape_queue insert</div>
+            <div class="li-sub">14:08:11 · queue_id qi_8f3a_0042</div>
+          </div>
+          <span class="tn">automated</span>
+        </li>
+        <li>
+          <span class="badge resolved">done</span>
+          <div>
+            <div class="li-label">classified · A_HIGH_STAKES · banking</div>
+            <div class="li-sub">14:08:11 · recruitment_classifier.py</div>
+          </div>
+          <span class="tn">rule-based</span>
+        </li>
+        <li>
+          <span class="badge resolved">done</span>
+          <div>
+            <div class="li-label">verification report created · v1</div>
+            <div class="li-sub">14:08:12 · trigger_reason=initial_scrape · chain_root=rpt_5b8c2f</div>
+          </div>
+          <span class="tn">RPC</span>
+        </li>
+        <li>
+          <span class="badge resolved">done</span>
+          <div>
+            <div class="li-label">official resolver · L1 direct_link · confidence 0.94</div>
+            <div class="li-sub">14:08:14 · official_resolution_status=auto_resolved · ibps.in</div>
+          </div>
+          <span class="tn">automated</span>
+        </li>
+        <li>
+          <span class="badge resolved">done</span>
+          <div>
+            <div class="li-label">consensus engine · 15 high-risk fields compared</div>
+            <div class="li-sub">14:08:18 · 13 verified · 2 conflicts</div>
+          </div>
+          <span class="tn">automated</span>
+        </li>
+        <li>
+          <span class="badge blocker">open</span>
+          <div>
+            <div class="li-label">conflict · apply_end_date · cf_8e3a91</div>
+            <div class="li-sub">official ibps.in vs official ibps.in corrigendum-1</div>
+          </div>
+          <span class="tn">needs admin</span>
+        </li>
+        <li>
+          <span class="badge blocker">open</span>
+          <div>
+            <div class="li-label">conflict · total_vacancies · cf_8e3a92</div>
+            <div class="li-sub">official vs aggregator (aggregator rejected by policy)</div>
+          </div>
+          <span class="tn">auto-resolvable</span>
+        </li>
+        <li>
+          <span class="badge pending">queued</span>
+          <div>
+            <div class="li-label">eligibility complexity scan</div>
+            <div class="li-sub">deferred until consensus resolved</div>
+          </div>
+          <span class="tn">stage 4</span>
+        </li>
+        <li>
+          <span class="badge plain">pending</span>
+          <div>
+            <div class="li-label">promotion gate check</div>
+            <div class="li-sub">blocked: consensus_conflict_unresolved</div>
+          </div>
+          <span class="tn">stage 5</span>
+        </li>
+        <li>
+          <span class="badge plain">pending</span>
+          <div>
+            <div class="li-label">draft promotion</div>
+            <div class="li-sub">downstream</div>
+          </div>
+          <span class="tn">manual</span>
+        </li>
+        <li>
+          <span class="badge plain">pending</span>
+          <div>
+            <div class="li-label">validate &amp; verify (admin_trust.py)</div>
+            <div class="li-sub">downstream</div>
+          </div>
+          <span class="tn">manual</span>
+        </li>
+        <li>
+          <span class="badge plain">pending</span>
+          <div>
+            <div class="li-label">publish gate</div>
+            <div class="li-sub">downstream</div>
+          </div>
+          <span class="tn">manual</span>
+        </li>
+        <li>
+          <span class="badge plain">pending</span>
+          <div>
+            <div class="li-label">eligibility recompute &amp; alerts</div>
+            <div class="li-sub">downstream</div>
+          </div>
+          <span class="tn">automated</span>
+        </li>
+      </ul>
+    </div>
+    <div class="card-footer">
+      <span class="tn">14 steps · last update 14:08:18 · updated_by gateway</span>
+      <button class="btn ghost small">Export trace</button>
+      <button class="btn small">Re-run from stage</button>
+    </div>
+  </div>
+
+  <div class="grid-2 mt-2">
+    <div class="card">
+      <div class="card-header">
+        <h3>Chain history</h3>
+        <span class="tn">chain_root rpt_5b8c2f · 3 versions</span>
+      </div>
+      <div class="card-body" style="padding: 0;">
+        <ul class="rlist" style="padding: 0 16px;">
+          <li>
+            <span class="badge resolved">v3</span>
+            <div>
+              <div class="li-label">current · classified → conflict</div>
+              <div class="li-sub">14:08:18 · trigger=corrigendum_detected</div>
+            </div>
+            <span class="tn">active</span>
+          </li>
+          <li>
+            <span class="badge plain">v2</span>
+            <div>
+              <div class="li-label">superseded</div>
+              <div class="li-sub">13:42:08 · trigger=resubmission · hash drift</div>
+            </div>
+            <span class="tn">closed</span>
+          </li>
+          <li>
+            <span class="badge plain">v1</span>
+            <div>
+              <div class="li-label">initial</div>
+              <div class="li-sub">11:18:44 · trigger=initial_scrape</div>
+            </div>
+            <span class="tn">closed</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>Override history</h3>
+        <span class="tn">recruitment_verification_overrides · 2 entries</span>
+      </div>
+      <div class="card-body" style="padding: 0;">
+        <ul class="rlist" style="padding: 0 16px;">
+          <li>
+            <span class="badge resolved">applied</span>
+            <div>
+              <div class="li-label">apply_start_date · scope=field</div>
+              <div class="li-sub">13:48 · vinay.r · "Corrigendum-1 supersedes initial date"</div>
+            </div>
+            <span class="tn">v2</span>
+          </li>
+          <li>
+            <span class="badge resolved">applied</span>
+            <div>
+              <div class="li-label">total_vacancies · scope=field</div>
+              <div class="li-sub">11:25 · kavya.i · "Aggregator value rejected"</div>
+            </div>
+            <span class="tn">v1</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ OVERRIDE MODAL ============ -->
+<div class="modal-backdrop" id="override-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <div>
+        <div class="tinylabel" style="margin-bottom: 4px;">admin_override_conflict</div>
+        <h2>Resolve conflict · apply_end_date</h2>
+      </div>
+      <button class="btn ghost small" onclick="closeOverride()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="tn" style="margin-bottom: 16px;">
+        conflict_id <strong>cf_8e3a91</strong> · field_path <code style="font-family:var(--font-mono);">apply_end_date</code> · report_id rpt_5b8c2f
+      </div>
+
+      <div class="form-row">
+        <label>Chosen value · pick one official source</label>
+        <div class="radio-group">
+          <label>
+            <input type="radio" name="chosen" value="initial">
+            <div>
+              <div><strong>30 Jun 2026</strong></div>
+              <div class="rg-sub">official · ibps.in/notif-pdf · extracted 14:08</div>
+            </div>
+          </label>
+          <label>
+            <input type="radio" name="chosen" value="corrigendum" checked>
+            <div>
+              <div><strong>15 Jul 2026</strong></div>
+              <div class="rg-sub">official · ibps.in/corrigendum-1 · dated 12 May 2026</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <label>Override scope</label>
+        <div class="radio-group">
+          <label>
+            <input type="radio" name="scope" value="field" checked>
+            <div>
+              <div><strong>field</strong></div>
+              <div class="rg-sub">override only this conflicting field</div>
+            </div>
+          </label>
+          <label>
+            <input type="radio" name="scope" value="recruitment">
+            <div>
+              <div><strong>recruitment</strong></div>
+              <div class="rg-sub">accept selected version for whole recruitment</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <label>Reason</label>
+        <textarea placeholder="Required. e.g., Official corrigendum-1 supersedes earlier PDF — apply window extended.">Official corrigendum-1 dated 12 May 2026 supersedes earlier PDF. Apply window extended to 15 Jul 2026.</textarea>
+      </div>
+
+      <div class="form-row">
+        <label>Evidence URL</label>
+        <input type="url" value="https://www.ibps.in/wp-content/uploads/Corrigendum_1_CRP_PO_MT_XV.pdf">
+      </div>
+
+      <div class="tn" style="border-top: 1px solid var(--rule); padding-top: 12px;">
+        Override creates audit row in <code style="font-family:var(--font-mono);">recruitment_verification_overrides</code>. Conflict status flips to <code style="font-family:var(--font-mono);">resolved_by_admin</code>. Promotion gate accepts.
+      </div>
+    </div>
+    <div class="modal-foot">
+      <div class="tn">reviewer · kavya.iyer · super_admin</div>
+      <div class="row">
+        <button class="btn" onclick="closeOverride()">Cancel</button>
+        <button class="btn primary" onclick="closeOverride()">Apply override</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function showScreen(name) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById('screen-' + name).classList.add('active');
+
+    document.querySelectorAll('.mode-pill').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.demo-screens button').forEach(b => b.classList.remove('active'));
+
+    const modeBtn = document.querySelector(`.mode-pill[data-screen="${name}"]`);
+    if (modeBtn) modeBtn.classList.add('active');
+
+    const demoBtn = document.querySelector(`.demo-screens button[data-screen="${name}"]`);
+    if (demoBtn) demoBtn.classList.add('active');
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  document.querySelectorAll('[data-screen]').forEach(btn => {
+    btn.addEventListener('click', () => showScreen(btn.dataset.screen));
+  });
+
+  function openOverride() { document.getElementById('override-modal').classList.add('open'); }
+  function closeOverride() { document.getElementById('override-modal').classList.remove('open'); }
+
+  document.getElementById('override-modal').addEventListener('click', e => {
+    if (e.target.id === 'override-modal') closeOverride();
+  });
+</script>
+</body>
+</html>
