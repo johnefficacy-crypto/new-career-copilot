@@ -2,12 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Plus, Trophy, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
 import { api } from "../../lib/api";
 import MockCorrectionPreview from "../../features/study/components/MockCorrectionPreview";
-import { Card, Eyebrow, PageHeader, Pill, SectionHeader, StatusDot } from "../../shared/ui/studyos";
+import { Card, Drawer, Eyebrow, PageHeader, Pill, SectionHeader, StatusDot } from "../../shared/ui/studyos";
 
-// Error-type tagging is not part of the current mock-logging contract.
-// These categories render as a "not connected" preview so the panel never
-// fabricates per-question error data the backend does not track.
-const ERROR_TYPES = ["Concept gap", "Calculation slip", "Time pressure", "Misread", "Guesswork"];
+const ERROR_TYPES = ["concept_gap", "calculation_slip", "time_pressure", "misread", "guesswork"];
 
 const REVIEW_OPTIONS = [
   { v: "unreviewed", l: "Unreviewed", tone: "amber" },
@@ -19,8 +16,14 @@ export default function Mocks() {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
-  // Review status is tracked locally — there is no review-state endpoint yet.
-  const [reviewState, setReviewState] = useState({});
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewForm, setReviewForm] = useState({
+    review_status: "reviewed",
+    notes: "",
+    errorTags: {}, // { concept_gap: count, ... }
+  });
+  const [correctionTasks, setCorrectionTasks] = useState([]);
   const [form, setForm] = useState({
     name: "", exam_slug: "ssc-cgl-2026", score: "", max_score: 200,
     duration_min: 60, attempted: "", correct: "", weak: "",
@@ -65,11 +68,54 @@ export default function Mocks() {
   }, [items]);
 
   const selected = items.find((m) => m.id === selectedId) || null;
-  const selectedReview = (selected && reviewState[selected.id]) || "unreviewed";
+  const selectedReview = selected?.review_status || "unreviewed";
 
-  function setSelectedReview(value) {
+  function openReviewDrawer() {
     if (!selected) return;
-    setReviewState((prev) => ({ ...prev, [selected.id]: value }));
+    setReviewForm({
+      review_status: selected.review_status || "reviewed",
+      notes: selected.notes || "",
+      errorTags: selected.error_types || {},
+    });
+    setCorrectionTasks([]);
+    setReviewOpen(true);
+  }
+
+  function bumpErrorTag(key) {
+    setReviewForm((prev) => ({
+      ...prev,
+      errorTags: { ...prev.errorTags, [key]: (prev.errorTags[key] || 0) + 1 },
+    }));
+  }
+
+  function clearErrorTag(key) {
+    setReviewForm((prev) => {
+      const next = { ...prev.errorTags };
+      delete next[key];
+      return { ...prev, errorTags: next };
+    });
+  }
+
+  async function saveReview(generateCorrections) {
+    if (!selected) return;
+    setReviewBusy(true);
+    try {
+      const payload = {
+        review_status: generateCorrections ? "correction" : reviewForm.review_status,
+        notes: reviewForm.notes || null,
+        error_types: Object.keys(reviewForm.errorTags).length ? reviewForm.errorTags : null,
+      };
+      await api.post(`/api/study/mocks/${selected.id}/review`, payload);
+      if (generateCorrections) {
+        const out = await api.post(`/api/study/mocks/${selected.id}/correction-tasks`, {});
+        setCorrectionTasks(Array.isArray(out?.items) ? out.items : []);
+      }
+      await load();
+    } catch (e) {
+      if (process.env.NODE_ENV !== "production") console.error(e);
+    } finally {
+      setReviewBusy(false);
+    }
   }
 
   return (
@@ -124,7 +170,7 @@ export default function Mocks() {
             <ul className="px-3 py-3">
               {items.map((m) => {
                 const active = m.id === selectedId;
-                const rs = reviewState[m.id] || "unreviewed";
+                const rs = m.review_status || "unreviewed";
                 return (
                   <li key={m.id}>
                     <button
@@ -179,24 +225,29 @@ export default function Mocks() {
                   />
                   <div className="rule pt-3">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <Eyebrow>Review status</Eyebrow>
-                      <Pill tone="dusk">Tracked on this device</Pill>
+                      <Eyebrow>Review status · server-backed</Eyebrow>
+                      <button
+                        type="button"
+                        className="btn btn-primary text-xs"
+                        onClick={openReviewDrawer}
+                        data-testid="open-review-drawer"
+                      >
+                        Review mock
+                      </button>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Review status">
                       {REVIEW_OPTIONS.map((opt) => (
-                        <button
+                        <span
                           key={opt.v}
-                          type="button"
                           aria-pressed={selectedReview === opt.v}
-                          onClick={() => setSelectedReview(opt.v)}
                           className={`px-3 py-1.5 rounded-full text-xs font-semibold transition border ${
                             selectedReview === opt.v
                               ? "bg-[#2E2218] text-[#F3EADB] border-[#2E2218]"
-                              : "bg-white/70 text-clay-700 border-[#E7DECB] hover:bg-[#F3EADB]"
+                              : "bg-white/70 text-clay-700 border-[#E7DECB]"
                           }`}
                         >
                           {opt.l}
-                        </button>
+                        </span>
                       ))}
                     </div>
                   </div>
@@ -220,29 +271,44 @@ export default function Mocks() {
                   )}
                 </Card>
 
-                {/* Error type panel — not connected */}
+                {/* Error type panel — server-backed via mock review */}
                 <Card>
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <AlertTriangle className="h-4 w-4 text-clay-600" aria-hidden="true" />
                       <Eyebrow>Error patterns</Eyebrow>
                     </div>
-                    <span className="stamp stamp-notcon">Not connected</span>
+                    {selected.error_types && Object.keys(selected.error_types).length ? (
+                      <span className="stamp stamp-live">Tagged</span>
+                    ) : (
+                      <span className="stamp stamp-preview">Awaiting review</span>
+                    )}
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {ERROR_TYPES.map((e) => (
-                      <span
-                        key={e}
-                        className="pill pill-outline text-[10px]"
-                      >
-                        {e}
-                      </span>
-                    ))}
-                  </div>
-                  <p className="mt-3 text-[11px] text-clay-700">
-                    Per-question error tagging needs review tooling — these categories are shown as a
-                    static example, not live data.
-                  </p>
+                  {selected.error_types && Object.keys(selected.error_types).length ? (
+                    <ul className="mt-3 space-y-1 text-[12px]">
+                      {Object.entries(selected.error_types).map(([k, v]) => (
+                        <li key={k} className="flex justify-between">
+                          <span className="capitalize">{String(k).replace(/_/g, " ")}</span>
+                          <span className="num-mono">{v}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <>
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {ERROR_TYPES.map((e) => (
+                          <span key={e} className="pill pill-outline text-[10px] capitalize">
+                            {e.replace(/_/g, " ")}
+                          </span>
+                        ))}
+                      </div>
+                      <p className="mt-3 text-[11px] text-clay-700">
+                        Tag your errors in the review drawer — counts persist server-side and feed
+                        next-week adaptation. Automatic answer-sheet parsing is{" "}
+                        <span className="stamp stamp-notcon">Not connected</span>.
+                      </p>
+                    </>
+                  )}
                 </Card>
 
                 {/* Correction task preview */}
@@ -258,6 +324,107 @@ export default function Mocks() {
           </div>
         </div>
       )}
+
+      <Drawer
+        open={reviewOpen}
+        onClose={() => setReviewOpen(false)}
+        title={selected ? `Review · ${selected.test_name || selected.name || "mock"}` : "Review mock"}
+        width={460}
+      >
+        {selected ? (
+          <div className="space-y-4" data-testid="review-mock-drawer">
+            <div className="space-y-1.5">
+              <Eyebrow>Status</Eyebrow>
+              <div className="flex flex-wrap gap-1.5">
+                {REVIEW_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.v}
+                    type="button"
+                    onClick={() => setReviewForm((p) => ({ ...p, review_status: opt.v }))}
+                    aria-pressed={reviewForm.review_status === opt.v}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold transition border ${
+                      reviewForm.review_status === opt.v
+                        ? "bg-[#2E2218] text-[#F3EADB] border-[#2E2218]"
+                        : "bg-white/70 text-clay-700 border-[#E7DECB] hover:bg-[#F3EADB]"
+                    }`}
+                  >
+                    {opt.l}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Eyebrow>Error tags · click to count</Eyebrow>
+              <div className="flex flex-wrap gap-1.5">
+                {ERROR_TYPES.map((e) => {
+                  const count = reviewForm.errorTags[e] || 0;
+                  return (
+                    <button
+                      key={e}
+                      type="button"
+                      onClick={() => bumpErrorTag(e)}
+                      onContextMenu={(ev) => {
+                        ev.preventDefault();
+                        clearErrorTag(e);
+                      }}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition ${
+                        count ? "bg-[#F3EADB] border-[#2E2218]" : "bg-white/70 border-[#E7DECB]"
+                      }`}
+                      title="Click to bump · right-click to clear"
+                    >
+                      <span className="capitalize">{e.replace(/_/g, " ")}</span>
+                      {count ? <span className="ml-1.5 num-mono">×{count}</span> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Eyebrow>Notes</Eyebrow>
+              <textarea
+                className="w-full rounded-xl border border-[#E7DECB] bg-white/85 p-2.5 text-[13px]"
+                rows={3}
+                value={reviewForm.notes}
+                onChange={(e) => setReviewForm((p) => ({ ...p, notes: e.target.value }))}
+                placeholder="What went wrong? What will you change next time?"
+              />
+            </div>
+
+            {correctionTasks.length ? (
+              <div className="rounded-xl bg-clay-50 p-3">
+                <Eyebrow>Generated correction tasks</Eyebrow>
+                <ul className="mt-2 space-y-1 text-[12px]">
+                  {correctionTasks.map((t) => (
+                    <li key={t.id}>· {t.title}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-[#E7DECB]">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => saveReview(false)}
+                disabled={reviewBusy}
+              >
+                {reviewBusy ? "Saving…" : "Save review"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => saveReview(true)}
+                disabled={reviewBusy}
+                data-testid="generate-correction-tasks"
+              >
+                {reviewBusy ? "Generating…" : "Save + add correction tasks"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </Drawer>
 
       {open && (
         <div className="fixed inset-0 z-50 grid place-items-center drawer-bg p-4">

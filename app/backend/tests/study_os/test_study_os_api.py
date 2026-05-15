@@ -66,6 +66,15 @@ def test_task_reasoning_returns_detail_for_owned_task():
         "update_signals", "planner_action",
     }
     assert body["safe_user_copy"]
+    # reasoning_trace[] — server-derived structured layer-by-layer evidence
+    trace = body["reasoning_trace"]
+    assert isinstance(trace, list) and len(trace) >= 1
+    for row in trace:
+        assert set(row.keys()) == {
+            "layer", "rule_key", "label", "evidence_id", "confidence", "status"
+        }
+        assert row["layer"] in {"user", "exam", "competition", "engine", "plan"}
+        assert row["status"] in {"locked", "live", "partial", "preview"}
 
 
 def test_task_reasoning_404_for_unknown_task():

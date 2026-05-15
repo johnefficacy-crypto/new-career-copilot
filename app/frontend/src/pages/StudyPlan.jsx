@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { Sparkles } from "lucide-react";
+import { Sparkles, ArrowRight } from "lucide-react";
 import { api } from "../lib/api";
-import { Card, Eyebrow, PageHeader, Pill, SectionHeader, StatusDot } from "../shared/ui/studyos";
+import { Card, Drawer, Eyebrow, PageHeader, Pill, SectionHeader, StatusDot } from "../shared/ui/studyos";
+import PlanChangeLogCard from "../features/study/components/PlanChangeLogCard";
 
 const STATUS_TONE = {
   completed: "sage",
@@ -43,6 +44,11 @@ export default function StudyPlan() {
   const [focus, setFocus] = useState({ total_hours_7d: 0, week: [] });
   const [review, setReview] = useState(null);
   const [err, setErr] = useState("");
+  const [draft, setDraft] = useState(null);
+  const [draftLoading, setDraftLoading] = useState(false);
+  const [draftOpen, setDraftOpen] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     api
@@ -60,7 +66,34 @@ export default function StudyPlan() {
       .get("/api/study/weekly-review")
       .then((d) => setReview(d || null))
       .catch(() => setReview(null));
-  }, []);
+  }, [reloadKey]);
+
+  async function previewRegenerate() {
+    setDraftLoading(true);
+    setDraftOpen(true);
+    try {
+      const d = await api.get("/api/study/plan/draft");
+      setDraft(d || null);
+    } catch (e) {
+      setDraft({ generated: false, reason: "error", error: e?.message });
+    } finally {
+      setDraftLoading(false);
+    }
+  }
+
+  async function applyDraft() {
+    setApplying(true);
+    try {
+      await api.post("/api/study/plan/apply", {});
+      setDraftOpen(false);
+      setDraft(null);
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      if (process.env.NODE_ENV !== "production") console.error(e);
+    } finally {
+      setApplying(false);
+    }
+  }
 
   async function toggle(t) {
     const nextStatus = t.status === "completed" ? "planned" : "completed";
@@ -121,8 +154,13 @@ export default function StudyPlan() {
             <div className="mb-2 flex justify-end">
               <StatusDot state="live" label="" />
             </div>
-            <button className="btn btn-primary">
-              <Sparkles className="h-3.5 w-3.5" /> Regenerate with AI
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={previewRegenerate}
+              data-testid="preview-regenerate-btn"
+            >
+              <Sparkles className="h-3.5 w-3.5" /> Preview regenerated plan
             </button>
           </div>
         }
@@ -282,6 +320,122 @@ export default function StudyPlan() {
             {(review?.corrections || [])[0] || "Complete tasks to generate correction insights."}
           </div>
         </Card>
+      </div>
+
+      <PlanChangeLogCard />
+
+      <Drawer
+        open={draftOpen}
+        onClose={() => setDraftOpen(false)}
+        title="Preview regenerated plan"
+        width={520}
+      >
+        {draftLoading ? (
+          <p className="text-sm text-clay-700">Computing draft plan…</p>
+        ) : !draft ? (
+          <p className="text-sm text-clay-700">No draft to preview.</p>
+        ) : !draft.generated ? (
+          <div className="space-y-3">
+            <p className="text-sm text-clay-700">
+              Cannot regenerate right now.
+            </p>
+            <p className="text-xs num-mono text-clay-700">{draft.reason || "unknown"}</p>
+            {draft.reason === "no_locked_coverage" ? (
+              <p className="text-[12px] text-clay-700">
+                Locked topic coverage is required before the planner can produce a plan. Ask an
+                admin to lock topics in /admin/exam-intelligence.
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <DraftDiff draft={draft} onApply={applyDraft} applying={applying} />
+        )}
+      </Drawer>
+    </div>
+  );
+}
+
+function DraftDiff({ draft, onApply, applying }) {
+  const changes = draft.changes || { added: [], removed: [], unchanged_count: 0 };
+  const risk = draft.risk_level || "low";
+  const before = draft.before_tasks || [];
+  const after = draft.after_tasks || [];
+  return (
+    <div className="space-y-5" data-testid="plan-draft-diff">
+      <div className="flex flex-wrap items-center gap-2">
+        <Pill tone="ink">{draft.exam_name || draft.exam || "Plan"}</Pill>
+        <Pill tone={risk === "high" ? "rose" : risk === "medium" ? "amber" : "sage"}>
+          {risk} risk
+        </Pill>
+        <Pill tone="dusk">{after.length} tasks</Pill>
+        {draft.competition_pressure && draft.competition_pressure !== "unknown" ? (
+          <Pill tone="clay">pressure · {draft.competition_pressure}</Pill>
+        ) : null}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-xl border border-[#E7DECB] bg-white/60 p-3">
+          <Eyebrow>Before</Eyebrow>
+          <p className="text-[11.5px] text-clay-700 mt-1">{before.length} tasks</p>
+          <ul className="mt-2 space-y-1">
+            {before.length === 0 ? (
+              <li className="text-[11.5px] text-clay-700">No active plan yet.</li>
+            ) : (
+              before.slice(0, 8).map((t) => (
+                <li key={t.topic_id || t.title} className="text-[12px] text-clay-800">
+                  · {t.title}
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+        <div className="rounded-xl border border-[#2E2218] bg-white/80 p-3">
+          <Eyebrow>After</Eyebrow>
+          <p className="text-[11.5px] text-clay-700 mt-1">{after.length} tasks</p>
+          <ul className="mt-2 space-y-1">
+            {after.slice(0, 8).map((t) => (
+              <li key={t.topic_id || t.title} className="text-[12px] text-clay-800">
+                · {t.title}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      <div>
+        <Eyebrow>Changes</Eyebrow>
+        <div className="mt-2 space-y-2 text-[12px]">
+          <p>
+            <span className="num-mono text-clay-700">added</span>{" "}
+            <span className="text-sage-700 font-semibold">{changes.added_count}</span> ·{" "}
+            <span className="num-mono text-clay-700">removed</span>{" "}
+            <span className="text-rose-700 font-semibold">{changes.removed_count}</span> ·{" "}
+            <span className="num-mono text-clay-700">unchanged</span>{" "}
+            <span className="font-semibold">{changes.unchanged_count}</span>
+          </p>
+          {(changes.added || []).slice(0, 5).map((t) => (
+            <div key={`a-${t.topic_id || t.title}`} className="text-clay-800">
+              <ArrowRight className="inline h-3 w-3 text-sage-600" /> add · {t.title}
+            </div>
+          ))}
+          {(changes.removed || []).slice(0, 5).map((t) => (
+            <div key={`r-${t.topic_id || t.title}`} className="text-clay-700">
+              · drop · {t.title}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex justify-end gap-2 pt-2 border-t border-[#E7DECB]">
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={onApply}
+          disabled={applying}
+          data-testid="apply-draft-btn"
+        >
+          {applying ? "Applying…" : "Apply"}
+        </button>
       </div>
     </div>
   );

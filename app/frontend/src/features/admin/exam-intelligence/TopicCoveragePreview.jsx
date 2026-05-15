@@ -35,9 +35,10 @@ function actionClasses(tone) {
   return "border-clay-200 text-clay-700 hover:bg-clay-50";
 }
 
-export default function TopicCoveragePreview({ items, onReview, busyRowId }) {
+export default function TopicCoveragePreview({ items, onReview, onEdit, busyRowId }) {
   const rows = Array.isArray(items) ? items : [];
   const interactive = typeof onReview === "function";
+  const editable = typeof onEdit === "function";
 
   return (
     <div className="space-y-3" data-testid="topic-coverage-preview">
@@ -125,6 +126,17 @@ export default function TopicCoveragePreview({ items, onReview, busyRowId }) {
                     {interactive ? (
                       <td className="px-4 py-2">
                         <div className="flex flex-wrap gap-1.5">
+                          {editable ? (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => onEdit(c)}
+                              className="text-[11px] rounded-full border border-clay-200 bg-white text-clay-700 px-2 py-1 disabled:opacity-50"
+                              data-testid={`coverage-edit-${c.id}`}
+                            >
+                              Edit
+                            </button>
+                          ) : null}
                           {transitions.length ? (
                             transitions.map((t) => (
                               <button

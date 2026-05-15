@@ -557,6 +557,52 @@ def review_topic_coverage(
     return updated[0]
 
 
+# ─── 3d. Topic coverage data-field edit (admin-only) ──────────────────────
+class CoverageEditBody(BaseModel):
+    coverage_depth: str | None = Field(default=None, max_length=64)
+    expected_difficulty: str | None = Field(default=None, max_length=64)
+    exam_priority_score: float | None = Field(default=None, ge=0, le=100)
+    is_high_yield: bool | None = None
+    confidence_score: float | None = Field(default=None, ge=0, le=1)
+    source_basis: str | None = Field(default=None, max_length=128)
+    reviewer_notes: str | None = Field(default=None, max_length=500)
+
+
+@router.patch("/topic-coverage/{row_id}")
+def edit_topic_coverage(
+    row_id: str,
+    body: CoverageEditBody = Body(...),
+    admin: dict = Depends(require_permission(ADMIN_PERM)),
+) -> dict[str, Any]:
+    """Edit a coverage row's intelligence fields without changing lifecycle.
+
+    Lifecycle moves (``draft``/``pending_review``/``reviewed``/``locked``/
+    ``rejected``) use ``PATCH /topic-coverage/{id}/review``. This endpoint
+    is for the underlying intelligence fields the reviewer is grading.
+    Records the reviewer id and ``reviewed_at`` so the lock audit trail
+    stays meaningful even when the lifecycle bit isn't moving.
+    """
+    sb = get_supabase_admin()
+    patch: dict[str, Any] = body.model_dump(exclude_unset=True, exclude_none=True)
+    if not patch:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    patch["reviewed_by"] = admin.get("id")
+    patch["reviewed_at"] = _now_iso()
+    updated = _safe(
+        lambda: (
+            sb.table("exam_topic_coverage")
+            .update(patch)
+            .eq("id", row_id)
+            .execute()
+            .data
+        ),
+        default=None,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Coverage row not found")
+    return updated[0]
+
+
 # ─── 4. Mark review status ────────────────────────────────────────────────
 class ReviewBody(BaseModel):
     reviewer_status: str = Field(..., pattern="^(pending|verified|rejected|needs_correction)$")

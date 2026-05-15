@@ -16,9 +16,18 @@ const CHANNELS = [
   { key: "update_signals", label: "Updates" },
 ];
 
+const TRACE_LAYER_TONE = {
+  user: "bg-sage-50 text-sage-800 border-sage-200",
+  exam: "bg-clay-50 text-clay-800 border-clay-200",
+  competition: "bg-dusk-50 text-dusk-800 border-dusk-200",
+  engine: "bg-amber-50 text-amber-800 border-amber-200",
+  plan: "bg-white text-clay-800 border-clay-200",
+};
+
 function DetailView({ detail }) {
   const r = detail.reasoning || {};
   const evidence = Array.isArray(detail.evidence) ? detail.evidence : [];
+  const trace = Array.isArray(detail.reasoning_trace) ? detail.reasoning_trace : [];
   return (
     <div
       className="mt-2 rounded-xl bg-clay-50 p-3 text-xs space-y-2"
@@ -41,6 +50,29 @@ function DetailView({ detail }) {
         <div className="text-muted-foreground">
           <span className="font-semibold text-clay-700">Planner · </span>
           {r.planner_action}
+        </div>
+      ) : null}
+      {trace.length ? (
+        <div className="pt-1.5 space-y-1" data-testid="reasoning-trace">
+          <div className="text-[10px] uppercase tracking-wider text-clay-700">Reasoning trace</div>
+          {trace.map((row, i) => (
+            <div
+              key={`${row.rule_key}-${i}`}
+              className={`flex items-start gap-2 rounded-md border px-2 py-1 ${
+                TRACE_LAYER_TONE[row.layer] || "bg-white border-clay-200"
+              }`}
+            >
+              <span className="num-mono text-[9px] uppercase tracking-wider shrink-0">
+                {row.layer}
+              </span>
+              <span className="flex-1">{row.label}</span>
+              {row.confidence != null ? (
+                <span className="num-mono text-[9px] shrink-0">
+                  {Math.round(row.confidence * 100)}%
+                </span>
+              ) : null}
+            </div>
+          ))}
         </div>
       ) : null}
       {evidence.length ? (

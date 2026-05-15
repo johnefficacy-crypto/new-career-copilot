@@ -31,6 +31,7 @@ from app.api.admin_persona import router as admin_persona_router
 from app.api.admin_scrape import router as admin_scrape_router
 from app.api.auth import router as auth_router
 from app.api.admin_trust import router as admin_trust_router
+from app.api.evidence import router as evidence_router
 from app.api.exam_intelligence import router as exam_intelligence_router
 from app.api.canonical import router as canonical_router
 from app.api.eligibility import router as eligibility_router
@@ -165,6 +166,7 @@ api.include_router(admin_trust_router)
 api.include_router(admin_persona_router)  # PR4 admin persona controls
 api.include_router(admin_exam_intel_router)  # PR5 admin exam intelligence review
 api.include_router(exam_intelligence_router)  # PR5 verified-only exam intelligence reads
+api.include_router(evidence_router)  # universal evidence-drawer source endpoint
 api.include_router(payments_router)  # razorpay + plans
 api.include_router(persona_router)  # internal aspirant persona v1
 api.include_router(persona_questions_router)  # PR2 progressive tiny questions

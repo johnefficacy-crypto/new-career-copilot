@@ -259,6 +259,99 @@ def build_task_reasoning_detail(
             }
         )
 
+    # ── reasoning_trace[] ─────────────────────────────────────────────────
+    # One row per intelligence layer that contributed to scheduling this
+    # task. Status is `locked` only when the contributing evidence has
+    # passed admin review; everything else is `partial` or `preview` so the
+    # UI can colour-code without computing trust on its own.
+    why = task.get("why_this_task") if isinstance(task.get("why_this_task"), dict) else {}
+    trace: list[dict[str, Any]] = []
+
+    trace.append(
+        {
+            "layer": "user",
+            "rule_key": "task_status",
+            "label": f"Task currently {status}.",
+            "evidence_id": task.get("id"),
+            "confidence": 1.0,
+            "status": "live",
+        }
+    )
+
+    if size:
+        trace.append(
+            {
+                "layer": "user",
+                "rule_key": "preferred_task_size",
+                "label": f"Study policy favours {size} blocks.",
+                "evidence_id": None,
+                "confidence": 1.0,
+                "status": "live",
+            }
+        )
+
+    if matched_topic:
+        trace.append(
+            {
+                "layer": "exam",
+                "rule_key": "locked_topic_coverage",
+                "label": f"{matched_topic.get('topic')} is a locked priority topic for your exam.",
+                "evidence_id": matched_topic.get("coverage_id") or matched_topic.get("id"),
+                "confidence": _confidence_value(matched_topic),
+                "status": "locked",
+            }
+        )
+
+    pyq_count = why.get("verified_pyq_count")
+    if pyq_count:
+        trace.append(
+            {
+                "layer": "exam",
+                "rule_key": "verified_pyq_count",
+                "label": f"{int(pyq_count)} verified PYQ appearance(s).",
+                "evidence_id": None,
+                "confidence": min(1.0, float(pyq_count) / 5.0),
+                "status": "locked",
+            }
+        )
+
+    pressure = why.get("competition_pressure")
+    if pressure and pressure != "unknown":
+        trace.append(
+            {
+                "layer": "competition",
+                "rule_key": "cycle_pressure_level",
+                "label": f"Competition pressure for this cycle is {pressure}.",
+                "evidence_id": None,
+                "confidence": 0.8 if pressure == "high" else 0.5,
+                "status": "partial",
+            }
+        )
+
+    priority_score = why.get("priority_score")
+    if priority_score is not None:
+        trace.append(
+            {
+                "layer": "engine",
+                "rule_key": "priority_score",
+                "label": f"Planner priority score {round(float(priority_score), 1)}.",
+                "evidence_id": None,
+                "confidence": min(1.0, max(0.0, float(priority_score) / 100.0)),
+                "status": "live",
+            }
+        )
+
+    trace.append(
+        {
+            "layer": "plan",
+            "rule_key": "planner_action",
+            "label": planner_action,
+            "evidence_id": task.get("id"),
+            "confidence": 1.0,
+            "status": "live",
+        }
+    )
+
     return {
         "task_id": task.get("id"),
         "task_title": (
@@ -275,6 +368,21 @@ def build_task_reasoning_detail(
             "update_signals": update_signals,
             "planner_action": planner_action,
         },
+        "reasoning_trace": trace,
         "evidence": evidence,
         "safe_user_copy": _detail_safe_copy(task, matched_topic, task_type),
     }
+
+
+def _confidence_value(matched_topic: dict[str, Any]) -> float:
+    """Clamp a locked-coverage confidence score to [0, 1]."""
+    raw = matched_topic.get("confidence_score")
+    try:
+        if raw is None:
+            return 0.9
+        val = float(raw)
+        if val > 1:
+            val = val / 100.0
+        return max(0.0, min(1.0, val))
+    except (TypeError, ValueError):
+        return 0.9
