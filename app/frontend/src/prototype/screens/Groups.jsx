@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { COMMUNITY_USERS, STUDY_GROUPS, STUDY_ROOM_SESSIONS } from "../data/community";
 import {
   Avatar, Card, EmptyState, Eyebrow, FooterStrip, MiniBar, PageHeader, Pill,
-  PrototypePage, SectionHeader, SourceTrustStamp, StatusDot, Tabs, UserBadge,
+  PrototypePage, SectionHeader, SourceTrustStamp, Tabs, UserBadge,
 } from "../ui";
 
 function GroupListCard({ g, active, onPick }) {

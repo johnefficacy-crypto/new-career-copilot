@@ -1,6 +1,6 @@
 import React from "react";
 import {
-  Eyebrow as _Eyebrow,
+  Eyebrow as BaseEyebrow,
   Pill,
   Chip,
   ProvenanceChips,
@@ -34,9 +34,9 @@ import { MARKET_CATEGORIES } from "./data/market";
 // primitive expects a `dark` boolean.
 export function Eyebrow({ tone, dark, children, className }) {
   return (
-    <_Eyebrow dark={dark || tone === "dark"} className={className}>
+    <BaseEyebrow dark={dark || tone === "dark"} className={className}>
       {children}
-    </_Eyebrow>
+    </BaseEyebrow>
   );
 }
 
