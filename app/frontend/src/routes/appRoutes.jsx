@@ -18,11 +18,13 @@ import Subjects from "../pages/study/Subjects";
 import WeeklyReview from "../pages/study/WeeklyReview";
 import StudyCompare from "../pages/study/Compare";
 import CommunityScreen from "../features/community/CommunityScreen";
+import StudyGroupsScreen from "../features/community/StudyGroupsScreen";
+import PartnersScreen from "../features/community/PartnersScreen";
+import MentorsScreen from "../features/community/MentorsScreen";
+import ResourcesScreen from "../features/community/ResourcesScreen";
 import Marketplace from "../pages/Marketplace";
 import ResourceDetail from "../pages/ResourceDetail";
-import Mentors from "../pages/Mentors";
 import MentorDetail from "../pages/MentorDetail";
-import Accountability from "../pages/Accountability";
 import AIChat from "../pages/AIChat";
 import Notifications from "../pages/Notifications";
 import NotificationPreferences from "../pages/NotificationPreferences";
@@ -49,11 +51,14 @@ export const appRouteElements = (
       <Route path="/app/community/:spaceId" element={<CommunityScreen />} />
       <Route path="/app/community/:spaceId/:channelId" element={<CommunityScreen />} />
       <Route path="/app/community/:spaceId/:channelId/:threadId" element={<CommunityScreen />} />
+      <Route path="/app/groups" element={<StudyGroupsScreen />} />
+      <Route path="/app/partners" element={<PartnersScreen />} />
+      <Route path="/app/resources" element={<ResourcesScreen />} />
       <Route path="/app/marketplace" element={<Marketplace />} />
       <Route path="/app/marketplace/:id" element={<ResourceDetail />} />
-      <Route path="/app/mentors" element={<Mentors />} />
+      <Route path="/app/mentors" element={<MentorsScreen />} />
       <Route path="/app/mentors/:id" element={<MentorDetail />} />
-      <Route path="/app/accountability" element={<Accountability />} />
+      <Route path="/app/accountability" element={<PartnersScreen />} />
       <Route path="/app/ai" element={<AIChat />} />
       <Route path="/app/notifications" element={<Notifications />} />
       <Route path="/app/notifications/preferences" element={<NotificationPreferences />} />
