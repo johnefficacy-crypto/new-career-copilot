@@ -173,6 +173,16 @@ def discover_aggregator_detail_urls(
         parsed = urlparse(absolute)
         if parsed.scheme not in {"http", "https"}:
             continue
+        # Cloudflare's scrape-shield rewrites some links into
+        # ``/cdn-cgi/content?...`` (and ``/cdn-cgi/l/email-protection``)
+        # decoys that resolve to the same content but with an unstable,
+        # opaque URL. Queueing those breaks evidence traceability,
+        # poisons URL-based dedup, and makes admin re-fetch impossible.
+        # Drop them at discovery — the real anchor for the same notice
+        # is almost always present elsewhere on the listing.
+        if parsed.path.startswith("/cdn-cgi/"):
+            result.stats["cloudflare_filtered"] = result.stats.get("cloudflare_filtered", 0) + 1
+            continue
         target_host = _host(absolute)
         if allowed:
             if target_host not in allowed:
