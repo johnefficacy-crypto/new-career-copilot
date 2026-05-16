@@ -19,6 +19,7 @@ import {
 } from "../../shared/ui/studyos";
 import { api } from "../../lib/api";
 import { useAuth } from "../../lib/authContext";
+import useApiAction from "../../lib/hooks/useApiAction";
 import {
   COMMUNITY_SPACES as SEED_SPACES,
   COMMUNITY_USERS as SEED_USERS,
@@ -27,6 +28,18 @@ import {
   FLAIRS,
   rulesKeyFor,
 } from "./data";
+
+// Channel creation hits the deprecated seed-only /spaces/{id}/channels handler.
+// Until it migrates to community_runtime (P1 from audit-p0-fixes.md), don't
+// expose a button that creates channels which never persist.
+const CHANNEL_CREATION_ENABLED = false;
+
+function parseTime(s) {
+  // Backend createdAt is ISO; seed createdAt is "4h"/"2d"/etc. Parse loosely.
+  if (!s) return 0;
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? 0 : t;
+}
 
 // Production port of docs/reference/UI_claude-code/screen-community.jsx.
 // Spaces rail (vertical) → Channels rail → Channel header + rules ribbon →
@@ -69,11 +82,13 @@ export default function CommunityScreen() {
   }, [refreshSpaces]);
 
   // After picking a channel, fetch its threads from the runtime endpoint so
-  // votes / newly-created threads / replies show up live.
-  const refreshChannelThreads = useCallback(async (cid) => {
+  // votes / newly-created threads / replies show up live. Sort is passed
+  // through so backend filters like `unanswered` work against the full set
+  // instead of a hot-only slice.
+  const refreshChannelThreads = useCallback(async (cid, sortKey = "hot") => {
     if (!cid) return;
     try {
-      const d = await api.get(`/api/community/channels/${cid}/threads?sort=hot`);
+      const d = await api.get(`/api/community/channels/${cid}/threads?sort=${encodeURIComponent(sortKey)}`);
       if (Array.isArray(d?.items)) {
         setThreadsByChannel((prev) => ({ ...prev, [cid]: d.items }));
       }
@@ -81,8 +96,8 @@ export default function CommunityScreen() {
   }, []);
 
   useEffect(() => {
-    if (channelId) refreshChannelThreads(channelId);
-  }, [channelId, refreshChannelThreads]);
+    if (channelId) refreshChannelThreads(channelId, sort);
+  }, [channelId, sort, refreshChannelThreads]);
 
   const space = useMemo(() => spaces.find((s) => s.id === spaceId) || spaces[0], [spaces, spaceId]);
   const channel = useMemo(
@@ -92,31 +107,25 @@ export default function CommunityScreen() {
   const threads = useMemo(() => threadsByChannel[channel?.id] || [], [threadsByChannel, channel]);
   const thread = useMemo(() => (threadId ? threads.find((t) => t.id === threadId) : null), [threadId, threads]);
 
-  // Keep URL in sync with active space/channel/thread for shareability.
-  useEffect(() => {
-    if (!space || !channel) return;
-    const wanted = thread
-      ? `/app/community/${space.id}/${channel.id}/${thread.id}`
-      : `/app/community/${space.id}/${channel.id}`;
-    if (window.location.pathname !== wanted) {
-      navigate(wanted, { replace: true });
-    }
-  }, [space, channel, thread, navigate]);
+  // URL updates are driven by user actions (pick/open/close), not by derived
+  // state. The previous effect ran on every render that updated `spaces`/
+  // `threads`, calling navigate(...,{replace:true}) and clobbering user-typed
+  // URLs as soon as data refreshed.
 
   function pickSpace(s) {
     setSpaceId(s.id);
     setChannelId(s.channels[0].id);
-    if (threadId) navigate(`/app/community/${s.id}/${s.channels[0].id}`);
+    navigate(`/app/community/${s.id}/${s.channels[0].id}`);
   }
   function pickChannel(c) {
     setChannelId(c.id);
-    if (threadId) navigate(`/app/community/${space.id}/${c.id}`);
+    if (space) navigate(`/app/community/${space.id}/${c.id}`);
   }
   function openThread(t) {
-    navigate(`/app/community/${space.id}/${channel.id}/${t.id}`);
+    if (space && channel) navigate(`/app/community/${space.id}/${channel.id}/${t.id}`);
   }
   function closeThread() {
-    navigate(`/app/community/${space.id}/${channel.id}`);
+    if (space && channel) navigate(`/app/community/${space.id}/${channel.id}`);
   }
 
   const sortedThreads = useMemo(() => sortThreads(threads, sort, users), [threads, sort, users]);
@@ -216,7 +225,11 @@ function sortThreads(list, sort, users) {
   const arr = [...list];
   switch (sort) {
     case "new":
-      return arr.sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
+      return arr.sort(
+        (a, b) =>
+          Number(!!b.pinned) - Number(!!a.pinned) ||
+          parseTime(b.createdAt) - parseTime(a.createdAt),
+      );
     case "top":
       return arr.sort((a, b) => (b.upvotes || 0) - (a.upvotes || 0));
     case "verified":
@@ -338,7 +351,7 @@ function ChannelsRail({ space, activeId, onPick, isAdmin, onCreateChannel }) {
         {grouped.quiet.length > 0 ? (
           <RailGroup title="Quiet" channels={grouped.quiet} activeId={activeId} onPick={onPick} space={space} muted />
         ) : null}
-        {isAdmin ? (
+        {isAdmin && CHANNEL_CREATION_ENABLED ? (
           <button
             type="button"
             onClick={onCreateChannel}
@@ -357,10 +370,10 @@ function ChannelsRail({ space, activeId, onPick, isAdmin, onCreateChannel }) {
       <div className="px-3 py-3 border-t border-[#E7DECB] bg-[#F3EADB]/40">
         <div className="num-mono text-[9.5px] text-[#A68057] tracking-[0.18em] mb-1.5">QUICK JUMP</div>
         <div className="flex flex-col gap-1.5">
-          <QuickLink to="/app/community/general/g-groups" icon="◇" label="Find a study group" badge="12 active" />
-          <QuickLink to="/app/accountability" icon="↔" label="Accountability partner" badge="34d streak" />
-          <QuickLink to="/app/mentors" icon="◊" label="Mentor sessions" badge="4 this week" />
-          <QuickLink to="/app/marketplace" icon="≣" label="Resource library" />
+          <QuickLink to="/app/groups" icon="◇" label="Find a study group" />
+          <QuickLink to="/app/partners" icon="↔" label="Accountability partner" />
+          <QuickLink to="/app/mentors" icon="◊" label="Mentor sessions" />
+          <QuickLink to="/app/resources" icon="≣" label="Resource library" />
         </div>
       </div>
     </aside>
@@ -538,32 +551,49 @@ function ThreadCard({ thread, users, channelId, onOpen, onVoted }) {
       ? thread.netVotes
       : (thread.upvotes || 0) - (thread.downvotes || 0),
   );
+  const { run } = useApiAction();
 
   async function vote(direction) {
     const wanted = localVote === direction ? 0 : direction;
     const delta = wanted - localVote;
-    setLocalVote(wanted);
-    setLocalNet((v) => v + delta);
-    try {
-      const d = await api.post(
-        `/api/community/channels/${channelId}/threads/${thread.id}/vote`,
-        { direction },
-      );
-      if (d) {
-        if (typeof d.netVotes === "number") setLocalNet(d.netVotes);
-        if (typeof d.yourVote === "number") setLocalVote(d.yourVote);
-      }
+    const prevVote = localVote;
+    const prevNet = localNet;
+    const r = await run({
+      action: () =>
+        api.post(`/api/community/channels/${channelId}/threads/${thread.id}/vote`, { direction }),
+      optimistic: () => {
+        setLocalVote(wanted);
+        setLocalNet((v) => v + delta);
+      },
+      rollback: () => {
+        setLocalVote(prevVote);
+        setLocalNet(prevNet);
+      },
+      errorMessage: "Could not record vote.",
+    });
+    if (r.ok && r.data) {
+      if (typeof r.data.netVotes === "number") setLocalNet(r.data.netVotes);
+      if (typeof r.data.yourVote === "number") setLocalVote(r.data.yourVote);
       onVoted && onVoted();
-    } catch {
-      // optimistic state already applied; ignore network errors
+    }
+  }
+
+  function handleCardKeyDown(e) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onOpen();
     }
   }
 
   return (
     <article
       onClick={onOpen}
+      onKeyDown={handleCardKeyDown}
+      role="link"
+      tabIndex={0}
+      aria-label={`Open thread: ${thread.title}`}
       data-testid={`thread-card-${thread.id}`}
-      className={`rounded-xl border bg-white/70 hover:bg-white hover:border-[#A68057] transition cursor-pointer flex gap-0 overflow-hidden ${
+      className={`rounded-xl border bg-white/70 hover:bg-white hover:border-[#A68057] transition cursor-pointer flex gap-0 overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A68057] ${
         isOfficial ? "border-[#4E3A29]" : thread.pinned ? "border-[#94B28A]" : "border-[#E7DECB]"
       }`}
       style={isOfficial ? { background: "linear-gradient(180deg, #FBF8F2 0%, #FBF6EF 100%)" } : {}}
@@ -650,13 +680,14 @@ function ThreadDetail({ thread, channel, users, onBack, onChanged }) {
   const u = users[thread.author] || { name: thread.author };
   const flair = FLAIRS[thread.flair];
   const [liveThread, setLiveThread] = useState(thread);
-  const replies = liveThread.topReplies || liveThread.replies_list || thread.topReplies || [];
+  const replies = liveThread.topReplies || thread.topReplies || [];
   const [vote, setVote] = useState(liveThread.youVoted || 0);
   const [netVotes, setNetVotes] = useState(
     liveThread.netVotes != null
       ? liveThread.netVotes
       : (liveThread.upvotes || 0) - (liveThread.downvotes || 0),
   );
+  const { run } = useApiAction();
 
   const refreshThread = useCallback(async () => {
     if (!channel?.id || !thread.id) return;
@@ -678,19 +709,26 @@ function ThreadDetail({ thread, channel, users, onBack, onChanged }) {
   async function castVote(direction) {
     const wanted = vote === direction ? 0 : direction;
     const delta = wanted - vote;
-    setVote(wanted);
-    setNetVotes((v) => v + delta);
-    try {
-      const d = await api.post(
-        `/api/community/channels/${channel.id}/threads/${thread.id}/vote`,
-        { direction },
-      );
-      if (d) {
-        if (typeof d.netVotes === "number") setNetVotes(d.netVotes);
-        if (typeof d.yourVote === "number") setVote(d.yourVote);
-      }
+    const prevVote = vote;
+    const prevNet = netVotes;
+    const r = await run({
+      action: () =>
+        api.post(`/api/community/channels/${channel.id}/threads/${thread.id}/vote`, { direction }),
+      optimistic: () => {
+        setVote(wanted);
+        setNetVotes((v) => v + delta);
+      },
+      rollback: () => {
+        setVote(prevVote);
+        setNetVotes(prevNet);
+      },
+      errorMessage: "Could not record vote.",
+    });
+    if (r.ok && r.data) {
+      if (typeof r.data.netVotes === "number") setNetVotes(r.data.netVotes);
+      if (typeof r.data.yourVote === "number") setVote(r.data.yourVote);
       onChanged && onChanged();
-    } catch {}
+    }
   }
 
   return (
@@ -885,23 +923,34 @@ function ReplyItem({ reply, users, channelId, threadId, isFirst, onChanged }) {
   const isVerified = u?.badge && (u.badge.kind === "topper" || u.badge.kind === "officer");
   const [vote, setVote] = useState(reply.youVoted || 0);
   const [net, setNet] = useState(reply.netVotes != null ? reply.netVotes : reply.upvotes || 0);
+  const { run } = useApiAction();
 
   async function castVote(direction) {
     const wanted = vote === direction ? 0 : direction;
     const delta = wanted - vote;
-    setVote(wanted);
-    setNet((v) => v + delta);
-    try {
-      const d = await api.post(
-        `/api/community/channels/${channelId}/threads/${threadId}/replies/${reply.id}/vote`,
-        { direction },
-      );
-      if (d) {
-        if (typeof d.netVotes === "number") setNet(d.netVotes);
-        if (typeof d.yourVote === "number") setVote(d.yourVote);
-      }
+    const prevVote = vote;
+    const prevNet = net;
+    const r = await run({
+      action: () =>
+        api.post(
+          `/api/community/channels/${channelId}/threads/${threadId}/replies/${reply.id}/vote`,
+          { direction },
+        ),
+      optimistic: () => {
+        setVote(wanted);
+        setNet((v) => v + delta);
+      },
+      rollback: () => {
+        setVote(prevVote);
+        setNet(prevNet);
+      },
+      errorMessage: "Could not record vote.",
+    });
+    if (r.ok && r.data) {
+      if (typeof r.data.netVotes === "number") setNet(r.data.netVotes);
+      if (typeof r.data.yourVote === "number") setVote(r.data.yourVote);
       onChanged && onChanged();
-    } catch {}
+    }
   }
 
   return (
@@ -967,17 +1016,6 @@ function ReplyComposer({ channelId, threadId, onPosted }) {
     <div className="rounded-xl border border-[#E7DECB] bg-white/80" data-testid="reply-composer">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-[#E7DECB] text-[10.5px] text-clay-700">
         <span className="num-mono uppercase tracking-[0.18em]">Markdown supported</span>
-        <span className="ml-auto flex gap-1">
-          {["B", "I", "“ ”", "</>", "·"].map((g) => (
-            <button
-              key={g}
-              type="button"
-              className="w-6 h-6 rounded hover:bg-[#F3EADB] text-clay-700 font-semibold text-[11px]"
-            >
-              {g}
-            </button>
-          ))}
-        </span>
       </div>
       <textarea
         rows="3"
@@ -992,12 +1030,6 @@ function ReplyComposer({ channelId, threadId, onPosted }) {
           {error ? <span className="text-[#7A3925]">{error}</span> : "Be calm. No pile-ons. Verified Topper answers may be promoted to the top."}
         </span>
         <div className="flex gap-2">
-          <button
-            type="button"
-            className="text-[11px] px-2.5 py-1 rounded-full border border-[#E7DECB] text-clay-700 font-semibold"
-          >
-            Preview
-          </button>
           <button
             type="button"
             onClick={submit}

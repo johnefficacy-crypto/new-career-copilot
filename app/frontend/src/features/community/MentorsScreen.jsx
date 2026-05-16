@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Avatar,
   Drawer,
@@ -42,10 +42,14 @@ function adaptMentor(m, idx = 0) {
   };
 }
 
+// Apply the adapter to seed so derived fields like `badge`/`color`/`served`
+// stay consistent whether the mentor came from the API or fixtures.
+const SEED_MENTORS = MENTORS.map((m, i) => adaptMentor(m, i));
+
 export default function MentorsScreen() {
   const [view, setView] = useState("browse");
   const [activeMentor, setActiveMentor] = useState(null);
-  const [mentors, setMentors] = useState(MENTORS);
+  const [mentors, setMentors] = useState(SEED_MENTORS);
   const [sessions, setSessions] = useState(MENTOR_SESSIONS);
   const [earnings, setEarnings] = useState(MENTOR_EARNINGS);
 
@@ -129,7 +133,11 @@ export default function MentorsScreen() {
       )}
 
       {activeMentor ? (
-        <MentorProfileDrawer mentor={activeMentor} onClose={() => setActiveMentor(null)} />
+        <MentorProfileDrawer
+          mentor={activeMentor}
+          sessions={sessions}
+          onClose={() => setActiveMentor(null)}
+        />
       ) : null}
     </div>
   );
@@ -309,7 +317,11 @@ function BookingFlow() {
   );
 }
 
-function MentorProfileDrawer({ mentor, onClose }) {
+function MentorProfileDrawer({ mentor, sessions, onClose }) {
+  const mine = useMemo(
+    () => (Array.isArray(sessions) ? sessions.filter((s) => s.mentorId === mentor.id) : []),
+    [sessions, mentor.id],
+  );
   return (
     <Drawer open onClose={onClose} title="Mentor profile" width={520}>
       <div className="flex items-center gap-3" data-testid={`mentor-drawer-${mentor.id}`}>
@@ -334,8 +346,8 @@ function MentorProfileDrawer({ mentor, onClose }) {
       <div className="mt-4">
         <Eyebrow>Topics</Eyebrow>
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {mentor.topics.map((t, i) => (
-            <Pill key={i} tone="outline">
+          {mentor.topics.map((t) => (
+            <Pill key={t} tone="outline">
               {t}
             </Pill>
           ))}
@@ -350,34 +362,24 @@ function MentorProfileDrawer({ mentor, onClose }) {
         <div className="text-[12px] text-clay-700 mt-1">
           60–90 min · Daily.co or Jitsi · scheduled by mentor
         </div>
-        <div className="mt-3 flex gap-2 flex-wrap">
-          <button
-            type="button"
-            className="text-[12px] px-3 py-1.5 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold"
-          >
-            Request 1:1
-          </button>
-          <button
-            type="button"
-            className="text-[12px] px-3 py-1.5 rounded-full border border-[#E7DECB] text-clay-700 font-semibold"
-          >
-            View public sessions
-          </button>
-        </div>
+        <p className="text-[11px] italic text-clay-700 mt-2">
+          1:1 requests open after a public session is booked.
+        </p>
       </div>
 
       <div className="mt-4">
         <Eyebrow>Public sessions</Eyebrow>
         <ul className="mt-2 space-y-2">
-          {MENTOR_SESSIONS.filter((s) => s.mentorId === mentor.id).map((s) => (
+          {mine.map((s) => (
             <li key={s.id} className="rounded-lg border border-[#E7DECB] bg-white/70 p-3">
               <div className="font-heading text-[13.5px]">{s.title}</div>
               <div className="num-mono text-[10.5px] text-clay-700 mt-0.5">
-                {s.at} · {s.duration} · ₹{s.price}
+                {s.at ? `${s.at} · ` : ""}
+                {s.duration} · ₹{s.price}
               </div>
             </li>
           ))}
-          {MENTOR_SESSIONS.filter((s) => s.mentorId === mentor.id).length === 0 ? (
+          {mine.length === 0 ? (
             <li className="rounded-lg border border-dashed border-[#D6C9AC] bg-[#FBF8F2] p-3 text-center text-[12px] text-clay-700">
               No public sessions scheduled.
             </li>
@@ -399,6 +401,18 @@ function Mini({ k, v }) {
 
 function MentorEarningsView({ earnings = MENTOR_EARNINGS }) {
   const E = earnings;
+  const completed = E.completed || 0;
+  const total = E.total || 0;
+  const avgPerSession = completed > 0 ? Math.round(total / completed) : 0;
+  const yAxisMax = useMemo(() => {
+    const maxV = E.monthly?.reduce?.((m, x) => Math.max(m, x.v || 0), 0) || 0;
+    // Round up to the nearest 2k above the max, minimum 14k for empty mentor mode.
+    return Math.max(14000, Math.ceil(maxV / 2000) * 2000);
+  }, [E.monthly]);
+  const yTicks = useMemo(() => {
+    const step = yAxisMax / 4;
+    return [0, step, step * 2, step * 3].map((v) => Math.round(v));
+  }, [yAxisMax]);
   return (
     <div className="space-y-6" data-testid="mentor-earnings">
       <Card>
@@ -408,15 +422,15 @@ function MentorEarningsView({ earnings = MENTOR_EARNINGS }) {
           sub="Visible only to you. Payment-provider payouts are shown only after settlement data is recorded."
         />
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          <KPI k="Sessions completed" v={E.completed} sub="all time" />
-          <KPI k="Aspirants served" v={E.served} sub="unique users" />
-          <KPI k="Average rating" v={`★ ${E.avgRating}`} sub="out of 5" />
-          <KPI k="Total earned" v={`₹${E.total.toLocaleString()}`} sub="all time" />
-          <KPI k="Pending payout" v={`₹${E.pending.toLocaleString()}`} sub="awaiting settlement" tone="amber" />
+          <KPI k="Sessions completed" v={completed} sub="all time" />
+          <KPI k="Aspirants served" v={E.served || 0} sub="unique users" />
+          <KPI k="Average rating" v={`★ ${E.avgRating ?? "—"}`} sub="out of 5" />
+          <KPI k="Total earned" v={`₹${total.toLocaleString()}`} sub="all time" />
+          <KPI k="Pending payout" v={`₹${(E.pending || 0).toLocaleString()}`} sub="awaiting settlement" tone="amber" />
           <KPI
             k="Avg per session"
-            v={`₹${Math.round(E.total / E.completed).toLocaleString()}`}
-            sub="after 20% platform"
+            v={`₹${avgPerSession.toLocaleString()}`}
+            sub={completed > 0 ? "after 20% platform" : "no sessions yet"}
           />
         </div>
       </Card>
@@ -424,41 +438,41 @@ function MentorEarningsView({ earnings = MENTOR_EARNINGS }) {
       <Card>
         <SectionHeader eyebrow="Monthly earnings · last 6" title="Trend." right={<StatusDot state="partial" />} />
         <svg viewBox="0 0 720 180" className="w-full h-[180px]" aria-label="Monthly mentor earnings">
-          {[0, 4000, 8000, 12000].map((y, i) => (
-            <g key={i}>
-              <line x1="50" y1={150 - (y / 14000) * 120} x2="700" y2={150 - (y / 14000) * 120} stroke="#EFE7D4" />
+          {yTicks.map((y) => (
+            <g key={y}>
+              <line x1="50" y1={150 - (y / yAxisMax) * 120} x2="700" y2={150 - (y / yAxisMax) * 120} stroke="#EFE7D4" />
               <text
                 x="42"
-                y={150 - (y / 14000) * 120}
+                y={150 - (y / yAxisMax) * 120}
                 textAnchor="end"
                 dominantBaseline="central"
                 fontFamily="JetBrains Mono"
                 fontSize="9.5"
                 fill="#6C5038"
               >
-                {y === 0 ? "0" : `${y / 1000}k`}
+                {y === 0 ? "0" : `${(y / 1000).toFixed(0)}k`}
               </text>
             </g>
           ))}
-          {E.monthly.map((m, i) => (
-            <g key={i}>
+          {(E.monthly || []).map((m, i) => (
+            <g key={m.m || i}>
               <rect
                 x={70 + i * 108}
-                y={150 - (m.v / 14000) * 120}
+                y={150 - ((m.v || 0) / yAxisMax) * 120}
                 width="60"
-                height={(m.v / 14000) * 120}
+                height={((m.v || 0) / yAxisMax) * 120}
                 fill={m.pending ? "#BE9C6B" : "#54794E"}
                 rx="4"
               />
               <text
                 x={100 + i * 108}
-                y={150 - (m.v / 14000) * 120 - 6}
+                y={150 - ((m.v || 0) / yAxisMax) * 120 - 6}
                 textAnchor="middle"
                 fontFamily="JetBrains Mono"
                 fontSize="10"
                 fill="#2E2218"
               >
-                ₹{(m.v / 1000).toFixed(1)}k
+                ₹{((m.v || 0) / 1000).toFixed(1)}k
               </text>
               <text
                 x={100 + i * 108}
