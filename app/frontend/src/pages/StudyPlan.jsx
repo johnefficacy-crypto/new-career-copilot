@@ -282,7 +282,7 @@ export default function StudyPlan() {
           <SectionHeader
             eyebrow="Truth panel · week"
             dark
-            title={hasReview ? `Studied ${review.hours_studied || 0}h this week.` : "No weekly review data yet"}
+            title={hasReview ? `Studied ${review.hours_studied != null ? review.hours_studied : "—"}h this week.` : "No weekly review data yet"}
           />
           <ul className="space-y-3 text-sm">
             {[

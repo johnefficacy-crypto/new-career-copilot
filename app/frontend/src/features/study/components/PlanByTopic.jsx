@@ -87,11 +87,18 @@ export default function PlanByTopic() {
           No tasks scheduled this week yet. Once a plan is generated, this panel
           will show the per-subject split.
         </p>
+      ) : totalHours === 0 && maxMinutes === 0 ? (
+        <p className="text-[12.5px] text-clay-700" data-testid="plan-by-topic-unallocated">
+          Hours not yet allocated to subjects. Subjects below appear in the plan
+          but have no scheduled minutes for this week — they will fill in after
+          your next plan regeneration.
+        </p>
       ) : (
         <ul className="space-y-3">
           {items.map((s) => {
             const sourceMeta = SOURCE_LABEL[s.source] || SOURCE_LABEL.weakness_map;
             const pct = maxMinutes ? (s.planned_minutes || 0) / maxMinutes : 0;
+            const unallocated = s.weight == null && s.planned_minutes == null;
             return (
               <li
                 key={s.subject_id || s.subject_name}
@@ -117,7 +124,9 @@ export default function PlanByTopic() {
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="num-mono text-[11px] text-clay-700">
-                    {s.planned_hours ?? 0}h · {Math.round((s.weight || 0) * 100)}%
+                    {unallocated
+                      ? "not in this week"
+                      : `${s.planned_hours ?? 0}h · ${Math.round((s.weight || 0) * 100)}%`}
                   </span>
                   <Pill tone={sourceMeta.tone}>{sourceMeta.label}</Pill>
                   {s.trust_status === "locked" ? (

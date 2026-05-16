@@ -28,10 +28,10 @@ const COMPONENT_LABELS = {
 };
 
 function rankBandTone(band) {
-  if (band === "ahead") return "green";
-  if (band === "on_track") return "amber";
+  if (band === "ahead") return "sage";
+  if (band === "on_track") return "ink";
   if (band === "behind") return "rose";
-  return "stone";
+  return "outline";
 }
 
 function rankBandLabel(band) {
@@ -172,7 +172,7 @@ export default function StudyCompare() {
                 >
                   <span className="text-clay-700">{label}</span>
                   <div className="flex items-center gap-2 min-w-[140px]">
-                    <MiniBar value={Number(components[k] || 0)} />
+                    <MiniBar pct={Number(components[k] || 0)} />
                     <span className="num-mono w-[44px] text-right text-clay-800">
                       {pct(components[k])}
                     </span>
