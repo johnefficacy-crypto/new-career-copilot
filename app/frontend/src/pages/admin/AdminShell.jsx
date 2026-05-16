@@ -9,7 +9,6 @@ import { useAuth } from "../../lib/authContext";
 
 const OPERATIONS_NAV = [
   { to: "/admin/operations", label: "Operations Console", icon: LayoutGrid, end: true, testId: "admin-nav-operations" },
-  { to: "/admin/verification-gateway", label: "Verification Gateway", icon: ShieldCheck, testId: "admin-nav-verification-gateway" },
   { to: "/admin/sources", label: "Source Registry", icon: Database, testId: "admin-nav-source-registry" },
   { to: "/admin/scraper", label: "Scrape Runs", icon: Radar, testId: "admin-nav-scraper-monitor" },
   { to: "/admin/recruitments", label: "Recruitments", icon: FileSearch, testId: "admin-nav-recruitments" },
