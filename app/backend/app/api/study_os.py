@@ -25,6 +25,7 @@ from app.study_os import plan_by_subject as plan_by_subject_service
 from app.study_os import plan_timeline as plan_timeline_service
 from app.study_os import subjects as subjects_service
 from app.study_os import weekly_review as weekly_review_service
+from app.study_os import report_cards as report_cards_service
 
 logger = logging.getLogger("career_copilot.api.study_os")
 
@@ -438,6 +439,52 @@ async def weekly_review_compute(
         raise HTTPException(
             status_code=500, detail="Could not recompute weekly review."
         )
+
+
+
+@router.get("/report-card")
+async def report_card_read(
+    period: str = "weekly",
+    date: str | None = None,
+    user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    from datetime import datetime, timezone
+
+    anchor = datetime.now(timezone.utc).date() if not date else datetime.fromisoformat(date).date()
+    try:
+        return report_cards_service.get_report_card(get_supabase_admin(), user.get("id"), period, anchor)
+    except Exception:
+        logger.exception("report_card read failed for %s", user.get("id"))
+        raise HTTPException(status_code=500, detail="Report card is temporarily unavailable.")
+
+
+@router.post("/report-card/compute")
+async def report_card_compute(
+    period: str = "weekly",
+    date: str | None = None,
+    user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    from datetime import datetime, timezone
+
+    anchor = datetime.now(timezone.utc).date() if not date else datetime.fromisoformat(date).date()
+    try:
+        return report_cards_service.compute_report_card(get_supabase_admin(), user.get("id"), period, anchor)
+    except Exception:
+        logger.exception("report_card compute failed for %s", user.get("id"))
+        raise HTTPException(status_code=500, detail="Could not recompute report card.")
+
+
+@router.get("/report-card/history")
+async def report_card_history(
+    period: str = "weekly",
+    limit: int = 12,
+    user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    try:
+        return {"items": report_cards_service.history(get_supabase_admin(), user.get("id"), period, limit)}
+    except Exception:
+        logger.exception("report_card history failed for %s", user.get("id"))
+        raise HTTPException(status_code=500, detail="Report card history is temporarily unavailable.")
 
 
 # ─────────────────────────────── Mocks ──────────────────────────────────────
