@@ -379,11 +379,11 @@ details > summary::-webkit-details-marker { display: none; }
   width: 100%; text-align: left; transition: background 160ms, color 160ms;
 }
 .nav-link:hover { background: #F1E1CD; color: #2E2218; }
-.nav-link.active { background: #2E2218; color: #F3EADB; font-weight: 600; }
-.nav-link.active .nav-glyph { color: #D6BC93; }
+.nav-link.active { background: #FFFDF9; color: #2E2218; border: 1px solid #D9C7A7; font-weight: 600; }
+.nav-link.active .nav-glyph { color: #A68057; }
 .nav-link-admin:hover { background: #DDDAE3; color: #221D2A; }
-.nav-link-admin.active { background: #31293B; color: #F2F1F4; }
-.nav-link-admin.active .nav-glyph { color: #B7B0C4; }
+.nav-link-admin.active { background: #F7F4FB; color: #221D2A; border: 1px solid #CFC6E0; }
+.nav-link-admin.active .nav-glyph { color: #7C7097; }
 .nav-section {
   font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase;
   color: #A68057; padding: 14px 12px 6px; font-weight: 600;

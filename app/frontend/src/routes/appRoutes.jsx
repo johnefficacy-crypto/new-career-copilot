@@ -37,7 +37,7 @@ import NotificationPreferences from "../pages/NotificationPreferences";
 import Pricing from "../pages/Pricing";
 
 export const appRouteElements = (
-  <Route element={<ProtectedRoute><DashShell /></ProtectedRoute>}>
+  <Route element={<ProtectedRoute requireBackend><DashShell /></ProtectedRoute>}>
     <Route element={<RouteErrorBoundary />}>
       <Route path="/app" element={<Dashboard />} />
       <Route path="/app/today" element={<Today />} />

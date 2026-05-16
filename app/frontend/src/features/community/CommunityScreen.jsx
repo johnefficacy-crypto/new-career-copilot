@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   Avatar,
   ChannelIcon,
@@ -138,14 +138,16 @@ export default function CommunityScreen() {
       className="flex overflow-hidden"
       style={{ height: "calc(100vh - 60px)" }}
     >
-      <SpacesRail spaces={spaces} activeId={space?.id} onPick={pickSpace} />
-      <ChannelsRail
+      <section className="w-[286px] border-r border-[#E7DECB] bg-[#FBF4E8] flex flex-col shrink-0">
+        <CommunityTopNav spaces={spaces} activeId={space?.id} onPick={pickSpace} />
+        <ChannelsRail
         space={space}
         activeId={channel?.id}
         onPick={pickChannel}
         isAdmin={isAdmin}
         onCreateChannel={() => setNewChannelOpen(true)}
       />
+      </section>
 
       <section className="flex-1 min-w-0 flex flex-col bg-[#FBF6EF]">
         <ChannelHeader space={space} channel={channel} onCompose={() => setComposerOpen(true)} />
@@ -257,46 +259,30 @@ function isVerifiedAuthor(users, t) {
   return ["topper", "officer", "admin"].includes(u.badge.kind);
 }
 
-/* ─── Spaces rail ──────────────────────────────────────────────────────── */
-function SpacesRail({ spaces, activeId, onPick }) {
+function CommunityTopNav({ spaces, activeId, onPick }) {
   return (
-    <aside className="w-[64px] bg-[#F3EADB] border-r border-[#E7DECB] flex flex-col items-center py-4 gap-2 overflow-y-auto shrink-0">
-      <div className="num-mono text-[9px] text-[#A68057] tracking-[0.18em] mb-1">SPACES</div>
-      {spaces.map((s) => {
-        const totalUnread = s.channels.reduce((a, c) => a + (c.unread || 0), 0);
-        return (
+    <div className="px-3 pt-3 pb-2 border-b border-[#E7DECB] bg-[#F8EFE2]">
+      <div className="flex items-center justify-between mb-2">
+        <div className="num-mono text-[10px] tracking-[0.16em] text-[#8A6A45] uppercase">Community spaces</div>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {spaces.map((s) => (
           <button
             key={s.id}
-            onClick={() => onPick(s)}
-            className="relative group"
-            title={s.name}
-            data-testid={`space-${s.id}`}
             type="button"
+            onClick={() => onPick(s)}
+            data-testid={`space-chip-${s.id}`}
+            className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition ${
+              activeId === s.id
+                ? "bg-[#FFFDF9] text-[#2E2218] border-[#D9C7A7]"
+                : "bg-transparent text-clay-700 border-[#E7DECB] hover:bg-[#F3EADB]"
+            }`}
           >
-            <SpaceIcon space={s} size={44} active={activeId === s.id} />
-            {totalUnread > 0 ? (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#4E3A29] text-[#F3EADB] text-[9px] font-bold flex items-center justify-center num-mono">
-                {totalUnread}
-              </span>
-            ) : null}
-            <span className="absolute left-[52px] top-1/2 -translate-y-1/2 px-2 py-1 rounded-md bg-[#4E3A29] text-[#F3EADB] text-[10.5px] whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition z-10">
-              {s.name}
-            </span>
+            {s.glyph} {s.name}
           </button>
-        );
-      })}
-      <div className="mt-1 h-px w-8 bg-[#D6C9AC]" />
-      <button
-        type="button"
-        className="w-11 h-11 rounded-xl border border-dashed border-[#A68057] text-[#6C5038] flex items-center justify-center hover:bg-[#FBF6EF]"
-        title="Browse all spaces"
-        aria-label="Browse all spaces"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-        </svg>
-      </button>
-    </aside>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -309,7 +295,7 @@ function ChannelsRail({ space, activeId, onPick, isAdmin, onCreateChannel }) {
     quiet: space.channels.filter((c) => !c.lockedAdminWrite && (c.unread || 0) === 0),
   };
   return (
-    <aside className="w-[252px] border-r border-[#E7DECB] bg-[#FBF4E8] flex flex-col shrink-0">
+    <div className="flex-1 min-h-0 flex flex-col">
       <div className="px-4 pt-4 pb-3 border-b border-[#E7DECB]">
         <div className="flex items-center gap-3">
           <SpaceIcon space={space} size={36} active />
@@ -366,17 +352,7 @@ function ChannelsRail({ space, activeId, onPick, isAdmin, onCreateChannel }) {
           </button>
         ) : null}
       </div>
-
-      <div className="px-3 py-3 border-t border-[#E7DECB] bg-[#F3EADB]/40">
-        <div className="num-mono text-[9.5px] text-[#A68057] tracking-[0.18em] mb-1.5">QUICK JUMP</div>
-        <div className="flex flex-col gap-1.5">
-          <QuickLink to="/app/groups" icon="◇" label="Find a study group" />
-          <QuickLink to="/app/partners" icon="↔" label="Accountability partner" />
-          <QuickLink to="/app/mentors" icon="◊" label="Mentor sessions" />
-          <QuickLink to="/app/resources" icon="≣" label="Resource library" />
-        </div>
-      </div>
-    </aside>
+    </div>
   );
 }
 
@@ -418,7 +394,7 @@ function RailGroup({ title, channels, activeId, onPick, space, muted }) {
             </span>
             <span
               className={`block text-[10px] num-mono ${
-                activeId === ch.id ? "text-[#D6BC93]" : muted ? "text-[#C9B68F]" : "text-[#A68057]"
+                activeId === ch.id ? "text-clay-700" : muted ? "text-[#C9B68F]" : "text-[#A68057]"
               }`}
             >
               {ch.members ? `${ch.members.toLocaleString()} · ` : ""}
@@ -428,7 +404,7 @@ function RailGroup({ title, channels, activeId, onPick, space, muted }) {
           {ch.unread > 0 ? (
             <span
               className={`min-w-[20px] h-[18px] px-1.5 rounded-full text-[9.5px] font-bold flex items-center justify-center num-mono ${
-                activeId === ch.id ? "bg-[#D6BC93] text-[#2E2218]" : "bg-[#4E3A29] text-[#F3EADB]"
+                activeId === ch.id ? "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]" : "bg-[#4E3A29] text-[#F3EADB]"
               }`}
             >
               {ch.unread}
@@ -437,19 +413,6 @@ function RailGroup({ title, channels, activeId, onPick, space, muted }) {
         </button>
       ))}
     </div>
-  );
-}
-
-function QuickLink({ to, icon, label, badge }) {
-  return (
-    <Link
-      to={to}
-      className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-[#F3EADB] text-[11.5px] text-[#3a2e22]"
-    >
-      <span className="w-5 text-center text-[14px] text-[#A68057]">{icon}</span>
-      <span className="flex-1">{label}</span>
-      {badge ? <span className="num-mono text-[9.5px] text-clay-700">{badge}</span> : null}
-    </Link>
   );
 }
 
@@ -525,7 +488,7 @@ function ThreadToolbar({ sort, onSort, channel, count }) {
             onClick={() => onSort(s.v)}
             data-testid={`sort-${s.v}`}
             className={`px-3 py-1 rounded-full text-[11.5px] font-semibold ${
-              sort === s.v ? "bg-[#4E3A29] text-[#F3EADB]" : "text-clay-700 hover:bg-[#E7D6BA]"
+              sort === s.v ? "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]" : "text-clay-700 hover:bg-[#E7D6BA]"
             }`}
           >
             {s.label}
@@ -877,26 +840,14 @@ function ThreadDetail({ thread, channel, users, onBack, onChanged }) {
 function ReplySection({ replies, thread, channel, users, onChanged }) {
   return (
     <div className="mt-6">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-2">
         <div className="font-heading text-[18px]">{thread.replies || 0} replies</div>
-        <div className="flex gap-1 bg-[#F3EADB] p-1 rounded-full border border-[#E7DECB]">
-          {["Top", "New", "Verified"].map((s, i) => (
-            <button
-              key={s}
-              type="button"
-              className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
-                i === 0 ? "bg-[#4E3A29] text-[#F3EADB]" : "text-clay-700"
-              }`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
+        <div className="num-mono text-[10.5px] text-clay-700">Telegram-style thread</div>
       </div>
 
       <ReplyComposer channelId={channel?.id} threadId={thread.id} onPosted={onChanged} />
 
-      <ul className="mt-5 space-y-3">
+      <ul className="mt-4 space-y-2">
         {replies.map((r, i) => (
           <ReplyItem
             key={r.id}
@@ -954,34 +905,28 @@ function ReplyItem({ reply, users, channelId, threadId, isFirst, onChanged }) {
   }
 
   return (
-    <li
-      data-testid={`reply-${reply.id}`}
-      className={`rounded-xl border p-4 flex gap-4 ${
-        isVerified ? "border-[#94B28A] bg-[#F0F5EF]/40" : "border-[#E7DECB] bg-white/60"
-      }`}
-    >
-      <VoteColumn
-        count={net}
-        voted={vote === 1 ? 1 : vote === -1 ? -1 : null}
-        onVote={(d) => castVote(d)}
-      />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <UserChip user={u} time={reply.createdAt || "2h"} compact />
-          {isVerified && isFirst ? (
-            <span className="pill pill-sage" style={{ fontSize: 9.5 }}>
-              Top verified answer
-            </span>
-          ) : null}
+    <li data-testid={`reply-${reply.id}`} className="flex gap-2.5 items-start">
+      <Avatar user={u} size={28} />
+      <div className="min-w-0 max-w-[86%]">
+        <div
+          className={`rounded-2xl px-3 py-2 border ${
+            isVerified ? "bg-[#F0F5EF] border-[#B9CFAF]" : "bg-white border-[#E7DECB]"
+          }`}
+        >
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-[11.5px] font-semibold text-[#2E2218] truncate">{u.name}</span>
+            {isVerified && isFirst ? <span className="text-[9.5px] text-[#54794E]">verified</span> : null}
+          </div>
+          <p className="text-[13px] text-[#2E2218] whitespace-pre-wrap leading-[1.5]">{reply.body}</p>
         </div>
-        <p className="text-[13.5px] text-[#2E2218] mt-2 leading-[1.6] whitespace-pre-wrap">
-          {reply.body}
-        </p>
-        <div className="mt-2.5 flex items-center gap-3 text-[10.5px] text-clay-700">
-          <button type="button" className="hover:text-clay-900">Reply</button>
-          <button type="button" className="hover:text-clay-900">Save</button>
-          <button type="button" className="hover:text-clay-900">Share</button>
-          <button type="button" className="ml-auto hover:text-clay-900">Report</button>
+        <div className="mt-1 px-1 flex items-center gap-3 text-[10px] text-clay-700">
+          <span className="num-mono">{reply.createdAt || "2h"}</span>
+          <button type="button" onClick={() => castVote(1)} className="hover:text-clay-900">
+            👍 {Math.max(0, net)}
+          </button>
+          <button type="button" onClick={() => castVote(-1)} className="hover:text-clay-900">
+            👎
+          </button>
         </div>
       </div>
     </li>
@@ -1013,33 +958,28 @@ function ReplyComposer({ channelId, threadId, onPosted }) {
   }
 
   return (
-    <div className="rounded-xl border border-[#E7DECB] bg-white/80" data-testid="reply-composer">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-[#E7DECB] text-[10.5px] text-clay-700">
-        <span className="num-mono uppercase tracking-[0.18em]">Markdown supported</span>
-      </div>
+    <div className="rounded-2xl border border-[#E7DECB] bg-white" data-testid="reply-composer">
       <textarea
-        rows="3"
+        rows="2"
         value={body}
         onChange={(e) => setBody(e.target.value)}
-        placeholder="Share your thought, ask a follow-up, or post a counter-point…"
+        placeholder="Write a reply…"
         className="block w-full px-3 py-2.5 text-[13px] bg-transparent outline-none resize-none placeholder:text-[#A68057]"
         data-testid="reply-body"
       />
-      <div className="flex items-center justify-between px-3 py-2 border-t border-[#E7DECB] gap-3 flex-wrap">
-        <span className="text-[10.5px] text-clay-700 flex-1">
-          {error ? <span className="text-[#7A3925]">{error}</span> : "Be calm. No pile-ons. Verified Topper answers may be promoted to the top."}
+      <div className="flex items-center justify-between px-3 py-2 border-t border-[#E7DECB]">
+        <span className="text-[10.5px] text-clay-700 truncate">
+          {error ? <span className="text-[#7A3925]">{error}</span> : "Keep it helpful."}
         </span>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={submit}
-            disabled={posting || !body.trim()}
-            className="text-[11px] px-3 py-1 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold disabled:opacity-50"
-            data-testid="reply-submit"
-          >
-            {posting ? "Posting…" : "Post reply"}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={posting || !body.trim()}
+          className="text-[11px] px-3 py-1 rounded-full bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7] font-semibold disabled:opacity-50"
+          data-testid="reply-submit"
+        >
+          {posting ? "Sending…" : "Send"}
+        </button>
       </div>
     </div>
   );
