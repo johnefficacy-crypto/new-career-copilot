@@ -12,6 +12,11 @@ export default function AdminCommunity() {
     api.get("/api/admin/community/flags").then((d) => setItems(d.items || [])).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
+  async function resolveFlag(id, action) {
+    await api.post(`/api/admin/community/flags/${id}`, { action });
+    setItems((prev) => prev.filter((flag) => flag.id !== id));
+  }
+
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return items;
@@ -52,8 +57,8 @@ export default function AdminCommunity() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button className="btn btn-ghost text-xs">Dismiss</button>
-                  <button className="btn btn-primary text-xs">Hide thread</button>
+                  <button className="btn btn-ghost text-xs" onClick={() => resolveFlag(flag.id, "dismiss")}>Dismiss</button>
+                  <button className="btn btn-primary text-xs" onClick={() => resolveFlag(flag.id, "hide")}>Hide thread</button>
                 </div>
               </div>
             </article>

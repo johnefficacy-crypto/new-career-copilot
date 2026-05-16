@@ -74,7 +74,7 @@ export default function ResourcesScreen() {
       <PageHeader
         eyebrow="Resource library"
         title="Free, source-tagged resources — never silently 'recommended'."
-        sub="Every resource carries a source-trust label. Verified-by-Topper is admin-granted. Pirated material is removed, regardless of upvotes."
+        sub="Every resource carries a source label. Community submissions stay pending until reviewed; reported material goes to moderation."
         right={
           <button
             type="button"
@@ -113,7 +113,7 @@ export default function ResourcesScreen() {
                 <span className="num-mono text-[10.5px] text-clay-700">Sort:</span>
                 <Pill tone="ink">Top</Pill>
                 <Pill tone="outline">New</Pill>
-                <Pill tone="outline">Verified-by-Topper</Pill>
+                <Pill tone="outline">Topper review</Pill>
               </div>
             </div>
           </Card>
@@ -217,12 +217,12 @@ function FilterSidebar({ type, setType, trust, setTrust, exam, setExam }) {
       </Card>
 
       <Card className="!bg-[#F0F5EF] !border-[#B9CFAF]">
-        <Eyebrow>Verified-by-Topper</Eyebrow>
+        <Eyebrow>Topper review flag</Eyebrow>
         <div className="font-heading text-[15px] mt-1 text-[#33482F]">
-          Admin grants this flag after a Verified Topper signs off on the resource.
+          Shown only when moderation records a Topper review on the resource.
         </div>
         <p className="text-[11.5px] text-[#33482F] mt-1">
-          It does not mean the resource is perfect — it means a Topper read it.
+          It does not mean the resource is perfect — it means the review provenance exists.
         </p>
       </Card>
     </aside>
@@ -357,12 +357,13 @@ function ContributeDrawer({ onClose, onContributed }) {
     exam: "UPSC CSE",
     subject: "Meta",
     sourceTrust: "community",
+    sourceUrl: "",
     size: "link",
   });
   const [submitting, setSubmitting] = useState(false);
 
   async function submit() {
-    if (form.title.trim().length < 4) return;
+    if (form.title.trim().length < 4 || !form.sourceUrl.trim()) return;
     setSubmitting(true);
     try {
       await api.post("/api/community/resources", form);
@@ -433,8 +434,18 @@ function ContributeDrawer({ onClose, onContributed }) {
             />
           </div>
         </div>
+        <div>
+          <Eyebrow>Source URL</Eyebrow>
+          <input
+            value={form.sourceUrl}
+            onChange={(e) => setForm({ ...form, sourceUrl: e.target.value })}
+            placeholder="https://..."
+            className="mt-2 w-full px-3 py-2 rounded-lg border border-[#E7DECB] bg-white/70 text-[13px]"
+            data-testid="resource-source-url"
+          />
+        </div>
         <div className="rounded-lg bg-[#F0F5EF] border border-[#B9CFAF] p-3 text-[11.5px] text-[#33482F]">
-          <strong>Before posting:</strong> attach the source or link in the title. Pirated paid material is removed regardless of upvotes.
+          <strong>Before posting:</strong> use the original source link. Reported or unverified material is held for review.
         </div>
         <div className="flex justify-end gap-2">
           <button
@@ -447,7 +458,7 @@ function ContributeDrawer({ onClose, onContributed }) {
           <button
             type="button"
             onClick={submit}
-            disabled={submitting || form.title.trim().length < 4}
+            disabled={submitting || form.title.trim().length < 4 || !form.sourceUrl.trim()}
             data-testid="resource-contribute-submit"
             className="px-4 py-2 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold text-[12px] disabled:opacity-50"
           >

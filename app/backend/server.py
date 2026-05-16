@@ -37,6 +37,7 @@ from app.api.admin_verification_reports import router as admin_verification_repo
 from app.api.evidence import router as evidence_router
 from app.api.exam_intelligence import router as exam_intelligence_router
 from app.api.canonical import router as canonical_router
+from app.api.community_runtime import router as community_runtime_router
 from app.api.community_people import router as community_people_router
 from app.api.eligibility import router as eligibility_router
 from app.api.notifications import router as notifications_router
@@ -181,6 +182,7 @@ api.include_router(persona_questions_router)  # PR2 progressive tiny questions
 api.include_router(study_os_router)  # PR3 Study OS Mission Control — before canonical so /study/mission-control wins
 api.include_router(study_compare_router)  # Study OS comparison + social + verification
 api.include_router(onboarding_unified_router)  # unified guided onboarding — before placeholders
+api.include_router(community_runtime_router)  # durable community/social routes — must precede canonical seed fallbacks
 api.include_router(canonical_router)  # canonical Supabase routes — must precede placeholders
 api.include_router(community_people_router)  # community-people: groups, partner, mentors, resources
 api.include_router(placeholders_router)

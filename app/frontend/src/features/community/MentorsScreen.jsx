@@ -60,8 +60,8 @@ export default function MentorsScreen() {
     <div className="space-y-6" data-testid="mentors-page">
       <PageHeader
         eyebrow="Mentors · 1:n sessions"
-        title="Learn from verified Toppers, Officers, and mentors — calmly priced."
-        sub="Sessions are scheduled live calls (Daily.co / Jitsi). ₹99–₹299. Mentors are admin-verified before listing. Refunds if a session is cancelled."
+        title="Learn from reviewed mentors — with bookings recorded to your account."
+        sub="Sessions are scheduled calls. Prices come from listed mentor offerings; payment and refund handling begin only after a slot is confirmed."
         right={
           <div className="flex gap-1 bg-[#F3EADB] p-1 rounded-full border border-[#E7DECB]">
             <button
@@ -201,7 +201,7 @@ function MentorsGrid({ mentors, onPick }) {
       <div className="px-7 pt-6 pb-3 flex items-end justify-between flex-wrap gap-3">
         <div>
           <Eyebrow>Mentor directory</Eyebrow>
-          <h2 className="font-heading text-[22px] mt-1">{mentors.length} verified mentors.</h2>
+          <h2 className="font-heading text-[22px] mt-1">{mentors.length} listed mentors.</h2>
         </div>
         <div className="flex gap-2 flex-wrap">
           <Pill tone="outline">All</Pill>
@@ -254,13 +254,13 @@ function BookingFlow() {
     <Card>
       <SectionHeader
         eyebrow="How booking works"
-        title="No surprises. Refunds if a session is cancelled."
-        sub="Payment via Razorpay. Mentor gets 80% · platform 20%. You get a refund if the mentor cancels. Sessions you join contribute to your study analytics."
+        title="Session requests are confirmed before payment."
+        sub="Bookings are recorded against your account. Paid checkout and refund handling are completed only after the mentor confirms the slot."
       />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-2">
         {[
           { k: "01 · Pick", v: "Choose a session or DM mentor", icon: "◐" },
-          { k: "02 · Pay", v: "₹99–₹299 · UPI/card", icon: "⟐" },
+          { k: "02 · Confirm", v: "Mentor accepts or proposes a time", icon: "⟐" },
           { k: "03 · Join", v: "Embedded Daily.co/Jitsi room", icon: "◊" },
           { k: "04 · Log", v: "Hours auto-feed your plan", icon: "↻" },
         ].map((s, i) => (
@@ -373,14 +373,14 @@ function MentorEarningsView({ earnings = MENTOR_EARNINGS }) {
         <SectionHeader
           eyebrow="Mentor mode · your earnings"
           title="The honest view of your impact and income."
-          sub="Visible only to you. Payouts via Razorpay every 4 weeks."
+          sub="Visible only to you. Payment-provider payouts are shown only after settlement data is recorded."
         />
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <KPI k="Sessions completed" v={E.completed} sub="all time" />
           <KPI k="Aspirants served" v={E.served} sub="unique users" />
           <KPI k="Average rating" v={`★ ${E.avgRating}`} sub="out of 5" />
           <KPI k="Total earned" v={`₹${E.total.toLocaleString()}`} sub="all time" />
-          <KPI k="Pending payout" v={`₹${E.pending.toLocaleString()}`} sub="next May 30" tone="amber" />
+          <KPI k="Pending payout" v={`₹${E.pending.toLocaleString()}`} sub="awaiting settlement" tone="amber" />
           <KPI
             k="Avg per session"
             v={`₹${Math.round(E.total / E.completed).toLocaleString()}`}
@@ -390,7 +390,7 @@ function MentorEarningsView({ earnings = MENTOR_EARNINGS }) {
       </Card>
 
       <Card>
-        <SectionHeader eyebrow="Monthly earnings · last 6" title="Trend." right={<StatusDot state="live" />} />
+        <SectionHeader eyebrow="Monthly earnings · last 6" title="Trend." right={<StatusDot state="partial" />} />
         <svg viewBox="0 0 720 180" className="w-full h-[180px]" aria-label="Monthly mentor earnings">
           {[0, 4000, 8000, 12000].map((y, i) => (
             <g key={i}>
@@ -442,13 +442,13 @@ function MentorEarningsView({ earnings = MENTOR_EARNINGS }) {
             </g>
           ))}
         </svg>
-        <div className="text-[10.5px] text-clay-700 mt-1">* pending payout · scheduled May 30</div>
+        <div className="text-[10.5px] text-clay-700 mt-1">* pending payout · awaiting settlement</div>
       </Card>
 
       <Card padded={false}>
         <div className="px-7 pt-6 pb-3">
           <Eyebrow>Payout history</Eyebrow>
-          <h2 className="font-heading text-[20px] mt-1">Razorpay transfers.</h2>
+          <h2 className="font-heading text-[20px] mt-1">Settlement history.</h2>
         </div>
         <div className="px-2 overflow-x-auto">
           <table className="tbl">

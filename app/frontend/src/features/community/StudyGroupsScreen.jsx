@@ -601,7 +601,7 @@ function FindPartnersStrip() {
         </a>
       </div>
       <div className="mt-3 num-mono text-[10.5px] text-[#33482F]/80 flex items-center gap-2">
-        <StatusDot state="live" label="" /> partner & group services live · /api/community/groups
+        <StatusDot state="live" label="" /> partner & group services synced · /api/community/groups
       </div>
     </Card>
   );

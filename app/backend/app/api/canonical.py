@@ -1641,9 +1641,12 @@ async def list_mentors(exam: str | None = Query(default=None)):
     rows = _safe(lambda: q.execute().data, default=[]) or []
     items = []
     for p in rows:
-        all_exams = sorted({tag for c in (p.get("courses") or []) for tag in (c.get("exam_tags") or [])})
+        courses = p.get("courses") or []
+        all_exams = sorted({tag for c in courses for tag in (c.get("exam_tags") or [])})
         if exam and exam not in all_exams:
             continue
+        prices = [c.get("price_inr") for c in courses if c.get("price_inr") is not None]
+        ratings = [c.get("avg_rating") for c in courses if c.get("avg_rating")]
         items.append(
             {
                 "id": p.get("id"),
@@ -1652,7 +1655,10 @@ async def list_mentors(exam: str | None = Query(default=None)):
                 "bio": p.get("instructor_bio"),
                 "exams": all_exams,
                 "avatar": p.get("avatar_url"),
-                "sessions": len(p.get("courses") or []),
+                "sessions": len(courses),
+                "price_per_hour": min(prices) if prices else 0,
+                "rating": round(sum(ratings) / len(ratings), 2) if ratings else 0,
+                "languages": p.get("languages") or ["English"],
             }
         )
     return {"items": items}
@@ -1677,6 +1683,8 @@ async def mentor_detail(mid: str):
         raise HTTPException(status_code=404, detail="Mentor not found")
     p = rows[0]
     courses = p.get("courses") or []
+    prices = [c.get("price_inr") for c in courses if c.get("price_inr") is not None]
+    ratings = [c.get("avg_rating") for c in courses if c.get("avg_rating")]
     return {
         "id": p["id"],
         "name": p.get("full_name"),
@@ -1686,6 +1694,11 @@ async def mentor_detail(mid: str):
         "exams": sorted({t for c in courses for t in (c.get("exam_tags") or [])}),
         "courses": courses,
         "sessions": sum((c.get("total_enrollments") or 0) for c in courses),
+        "price_per_hour": min(prices) if prices else 0,
+        "rating": round(sum(ratings) / len(ratings), 2) if ratings else 0,
+        "languages": p.get("languages") or ["English"],
+        "availability": [],
+        "testimonials": [],
     }
 
 
