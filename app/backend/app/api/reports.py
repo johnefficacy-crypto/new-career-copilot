@@ -32,6 +32,7 @@ REPORT_TYPES = {
     "mock_analytics",
     "study_log",
     "subject_mastery",
+    "report_card",
 }
 FORMATS = {"pdf", "csv", "json"}
 
@@ -143,6 +144,17 @@ def _gen_mock_analytics(sb, user_id: str, params: dict) -> tuple[list[dict], lis
     return rows, columns
 
 
+
+
+def _gen_report_card(sb, user_id: str, params: dict) -> tuple[list[dict], list[str]]:
+    q = sb.table("study_report_cards").select("*").eq("user_id", user_id)
+    period = (params or {}).get("period")
+    if period:
+        q = q.eq("period_type", period)
+    rows = q.order("period_start", desc=True).limit(120).execute().data or []
+    columns = list(rows[0].keys()) if rows else ["id", "period_type", "period_start", "scores"]
+    return rows, columns
+
 def _gen_weekly_summary(sb, user_id: str, params: dict) -> tuple[list[dict], list[str]]:
     rows = (
         sb.table("weekly_reviews")
@@ -165,6 +177,7 @@ GENERATORS = {
     "mock_analytics": _gen_mock_analytics,
     "study_log": _gen_study_log,
     "subject_mastery": _gen_subject_mastery,
+    "report_card": _gen_report_card,
 }
 
 
