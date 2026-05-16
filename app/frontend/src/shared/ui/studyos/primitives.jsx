@@ -117,7 +117,7 @@ export function StatusDot({ state = "preview", label }) {
 // pass padded={false} to control padding per-section.
 export function StudyCard({ children, className = "", padded = true, ...rest }) {
   return (
-    <section className={`soft-card grain relative overflow-hidden rounded-[18px] ${className}`} {...rest}>
+    <section className={`soft-card grain relative overflow-hidden rounded-lg ${className}`} {...rest}>
       {padded ? <div className="px-7 py-6">{children}</div> : children}
     </section>
   );
@@ -125,12 +125,12 @@ export function StudyCard({ children, className = "", padded = true, ...rest }) 
 
 export function SectionHeader({ eyebrow, title, sub, right, dark = false }) {
   return (
-    <div className="flex items-end justify-between gap-6 mb-4">
-      <div>
+    <div className="flex items-end justify-between gap-4 mb-4 flex-wrap">
+      <div className="min-w-0">
         {eyebrow ? <Eyebrow dark={dark}>{eyebrow}</Eyebrow> : null}
         {title ? (
           <h2
-            className={`font-heading text-[22px] mt-1 leading-tight ${
+            className={`font-heading text-[20px] sm:text-[22px] mt-1 leading-tight ${
               dark ? "text-[#F3EADB]" : "text-clay-900"
             }`}
           >
@@ -164,11 +164,11 @@ export const Card = StudyCard;
 // Page-level header — ported from the prototype `PageHeader`.
 export function PageHeader({ eyebrow, title, sub, right }) {
   return (
-    <header className="flex items-end justify-between gap-6 flex-wrap mb-6">
-      <div>
+    <header className="flex items-end justify-between gap-5 flex-wrap mb-6 border-b border-[#E7DECB] pb-5">
+      <div className="min-w-0">
         {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}
         {title ? (
-          <h1 className="font-heading text-[36px] mt-2 leading-[1.05]">{title}</h1>
+          <h1 className="font-heading text-[28px] sm:text-[34px] mt-2 leading-[1.08] max-w-[18ch]">{title}</h1>
         ) : null}
         {sub ? <p className="text-[14px] text-clay-700 mt-2 max-w-[70ch]">{sub}</p> : null}
       </div>
@@ -180,13 +180,13 @@ export function PageHeader({ eyebrow, title, sub, right }) {
 // Inline pill tab strip — ported from the prototype `Tabs`.
 export function Tabs({ value, onChange, options = [] }) {
   return (
-    <div className="flex flex-wrap gap-1 bg-[#F3EADB] p-1 rounded-full border border-[#E7DECB] w-fit">
+    <div className="flex flex-wrap gap-1 bg-[#F3EADB] p-1 rounded-lg border border-[#E7DECB] w-fit">
       {options.map((o) => (
         <button
           key={o.value}
           type="button"
           onClick={() => onChange && onChange(o.value)}
-          className={`px-3.5 py-1.5 rounded-full text-[12px] font-semibold transition ${
+          className={`px-3.5 py-1.5 rounded-md text-[12px] font-semibold transition ${
             value === o.value
               ? "bg-[#4E3A29] text-[#F3EADB]"
               : "text-clay-700 hover:bg-[#E7D6BA]"
@@ -203,7 +203,7 @@ export function Tabs({ value, onChange, options = [] }) {
 // Dashed empty-state panel — ported from the prototype `EmptyState`.
 export function StudyEmptyState({ icon, title, body, cta }) {
   return (
-    <div className="rounded-xl border border-dashed border-[#D6C9AC] bg-[#FBF8F2] p-8 text-center">
+    <div className="rounded-lg border border-dashed border-[#D6C9AC] bg-[#FBF8F2] p-8 text-center">
       <div className="text-[28px] mb-2">{icon || "·"}</div>
       {title ? <div className="font-heading text-[18px] text-clay-900">{title}</div> : null}
       {body ? (
@@ -250,7 +250,7 @@ export function Drawer({ open, onClose, title, children, width = 480 }) {
             type="button"
             onClick={onClose}
             aria-label="Close drawer"
-            className="text-clay-700 hover:text-clay-900"
+            className="grid h-8 w-8 place-items-center rounded-md text-clay-700 hover:bg-[#F3EADB] hover:text-clay-900"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path

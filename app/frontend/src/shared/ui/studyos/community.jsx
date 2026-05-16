@@ -31,7 +31,8 @@ export function Avatar({ user = {}, size = 28 }) {
         fontSize: size * 0.42,
         flex: "0 0 auto",
         lineHeight: 1,
-        letterSpacing: -0.5,
+        letterSpacing: 0,
+        boxShadow: "inset 0 0 0 1px rgba(255,253,248,0.42), 0 1px 2px rgba(46,34,24,0.12)",
       }}
     >
       {initials}
@@ -151,7 +152,7 @@ export function VoteColumn({ count, vertical = true, voted, onVote }) {
         <button
           type="button"
           onClick={() => onVote && onVote(1)}
-          className={`px-1.5 py-0.5 rounded ${voted === 1 ? "bg-[#54794E] text-[#F0F5EF]" : "text-clay-700 hover:bg-[#F3EADB]"}`}
+          className={`px-1.5 py-0.5 rounded-md transition ${voted === 1 ? "bg-[#54794E] text-[#F0F5EF]" : "text-clay-700 hover:bg-[#F3EADB]"}`}
           aria-label="Upvote"
         >
           <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
@@ -162,7 +163,7 @@ export function VoteColumn({ count, vertical = true, voted, onVote }) {
         <button
           type="button"
           onClick={() => onVote && onVote(-1)}
-          className={`px-1.5 py-0.5 rounded ${voted === -1 ? "bg-[#7A3925] text-[#F2DDD6]" : "text-clay-700 hover:bg-[#F3EADB]"}`}
+          className={`px-1.5 py-0.5 rounded-md transition ${voted === -1 ? "bg-[#7A3925] text-[#F2DDD6]" : "text-clay-700 hover:bg-[#F3EADB]"}`}
           aria-label="Downvote"
         >
           <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
@@ -180,7 +181,7 @@ export function VoteColumn({ count, vertical = true, voted, onVote }) {
           e.stopPropagation();
           onVote && onVote(1);
         }}
-        className={`w-8 h-8 rounded-lg flex items-center justify-center ${voted === 1 ? "bg-[#54794E] text-[#F0F5EF]" : "text-clay-700 hover:bg-[#F3EADB]"}`}
+        className={`w-8 h-8 rounded-md flex items-center justify-center transition ${voted === 1 ? "bg-[#54794E] text-[#F0F5EF]" : "text-clay-700 hover:bg-[#F3EADB]"}`}
         aria-label="Upvote"
       >
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -194,7 +195,7 @@ export function VoteColumn({ count, vertical = true, voted, onVote }) {
           e.stopPropagation();
           onVote && onVote(-1);
         }}
-        className={`w-8 h-8 rounded-lg flex items-center justify-center ${voted === -1 ? "bg-[#7A3925] text-[#F2DDD6]" : "text-clay-700 hover:bg-[#F3EADB]"}`}
+        className={`w-8 h-8 rounded-md flex items-center justify-center transition ${voted === -1 ? "bg-[#7A3925] text-[#F2DDD6]" : "text-clay-700 hover:bg-[#F3EADB]"}`}
         aria-label="Downvote"
       >
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
