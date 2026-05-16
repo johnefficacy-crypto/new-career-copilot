@@ -187,7 +187,7 @@ function FilterSidebar({ type, setType, trust, setTrust, exam, setExam }) {
               data-testid={`res-exam-${e === "all" ? "all" : e.replace(/\s+/g, "-").toLowerCase()}`}
               className={`text-[11px] px-2.5 py-1 rounded-full border ${
                 exam === e
-                  ? "bg-[#4E3A29] text-[#F3EADB] border-[#4E3A29]"
+                  ? "bg-[#FFFDF9] text-[#2E2218] border-[#D9C7A7]"
                   : "border-[#E7DECB] text-clay-700"
               }`}
             >
@@ -215,7 +215,7 @@ function FilterSidebar({ type, setType, trust, setTrust, exam, setExam }) {
               onClick={() => setType(k)}
               data-testid={`res-type-${k}`}
               className={`text-left text-[12px] px-2.5 py-1.5 rounded-md ${
-                type === k ? "bg-[#4E3A29] text-[#F3EADB]" : "text-[#3a2e22] hover:bg-[#F3EADB]"
+                type === k ? "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]" : "text-[#3a2e22] hover:bg-[#F3EADB]"
               }`}
             >
               {label}
@@ -240,7 +240,7 @@ function FilterSidebar({ type, setType, trust, setTrust, exam, setExam }) {
               onClick={() => setTrust(k)}
               data-testid={`res-trust-${k}`}
               className={`flex items-center gap-2 text-left text-[12px] px-2.5 py-1.5 rounded-md ${
-                trust === k ? "bg-[#4E3A29] text-[#F3EADB]" : "text-[#3a2e22] hover:bg-[#F3EADB]"
+                trust === k ? "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]" : "text-[#3a2e22] hover:bg-[#F3EADB]"
               }`}
             >
               {k !== "all" ? <SourceTrustStamp trust={k} /> : <span className="w-2 h-2 bg-[#A68057] rounded-sm" />}
