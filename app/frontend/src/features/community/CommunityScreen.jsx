@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import { useAuth } from "../../lib/authContext";
 import useApiAction from "../../lib/hooks/useApiAction";
@@ -168,16 +168,16 @@ export default function CommunityScreen() {
       className="flex overflow-hidden bg-field-paper text-field-ink"
       style={{ height: "calc(100vh - 60px)" }}
     >
-      <section className="w-[286px] border-r border-[#E7DECB] bg-[#FBF4E8] flex flex-col shrink-0">
+      <aside className="w-[286px] border-r border-field-line bg-field-canvas flex flex-col shrink-0">
         <CommunityTopNav spaces={spaces} activeId={space?.id} onPick={pickSpace} />
         <ChannelsRail
-        space={space}
-        activeId={channel?.id}
-        onPick={pickChannel}
-        isAdmin={isAdmin}
-        onCreateChannel={() => setNewChannelOpen(true)}
-      />
-      </section>
+          space={space}
+          activeId={channel?.id}
+          onPick={pickChannel}
+          isAdmin={isAdmin}
+          onCreateChannel={() => setNewChannelOpen(true)}
+        />
+      </aside>
 
       <section className="flex-1 min-w-0 flex flex-col bg-field-paper">
         <ChannelHeader space={space} channel={channel} onCompose={() => setComposerOpen(true)} />
@@ -249,58 +249,50 @@ export default function CommunityScreen() {
 
 /* ─── Spaces rail ──────────────────────────────────────────────────────── */
 
-function SpacesRail({ spaces, activeId, onPick }) {
+// Horizontal space picker that sits at the top of the unified left column.
+// Replaces the original 64px vertical rail per the "remove quick jump"
+// restructure (commit 42f1aa5).
+function CommunityTopNav({ spaces, activeId, onPick }) {
   return (
-    <aside className="w-[64px] bg-field-canvas border-r border-field-line flex flex-col items-center py-4 gap-2 overflow-y-auto shrink-0">
-      <FieldLabel className="mb-1">Spaces</FieldLabel>
-      {spaces.map((s) => {
-        const totalUnread = s.channels.reduce((a, c) => a + (c.unread || 0), 0);
-        const active = activeId === s.id;
-        return (
-          <button
-            key={s.id}
-            type="button"
-            onClick={() => onPick(s)}
-            className="relative group focus:outline-none"
-            title={s.name}
-            data-testid={`space-${s.id}`}
-          >
-            <span
-              aria-hidden={!active}
-              className={`absolute -left-2 top-1/2 -translate-y-1/2 h-6 w-[2px] rounded-r ${
-                active ? "bg-field-accent" : "bg-transparent"
+    <div className="px-3 pt-3 pb-2.5 border-b border-field-line bg-field-paper">
+      <FieldLabel className="block mb-2">Community spaces</FieldLabel>
+      <div className="flex flex-wrap gap-1.5">
+        {spaces.map((s) => {
+          const active = activeId === s.id;
+          const totalUnread = s.channels.reduce((a, c) => a + (c.unread || 0), 0);
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => onPick(s)}
+              data-testid={`space-chip-${s.id}`}
+              aria-pressed={active}
+              className={`inline-flex items-center gap-1.5 px-2.5 h-7 rounded-md border text-[11.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-field-accent ${
+                active
+                  ? "bg-field-accent text-white border-field-accent"
+                  : "bg-field-canvas text-field-ink-muted border-field-line hover:bg-field-line-soft hover:text-field-ink"
               }`}
-            />
-            <FieldAvatar
-              user={{ id: s.id, name: s.name, avatarColor: s.color }}
-              size={42}
-              className={`rounded-md ${
-                active ? "ring-2 ring-field-accent" : "ring-1 ring-field-line"
-              }`}
-            />
-            {totalUnread > 0 ? (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-field-accent text-white text-[9px] font-bold flex items-center justify-center font-mono">
-                {totalUnread > 99 ? "99+" : totalUnread}
-              </span>
-            ) : null}
-            <span className="absolute left-[52px] top-1/2 -translate-y-1/2 px-2 py-1 rounded-md bg-field-ink text-white text-[10.5px] whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition z-10">
-              {s.name}
-            </span>
-          </button>
-        );
-      })}
-      <div className="mt-1 h-px w-8 bg-field-line" />
-      <button
-        type="button"
-        className="w-10 h-10 rounded-md border border-dashed border-field-line text-field-ink-quiet hover:bg-field-line-soft flex items-center justify-center"
-        title="Browse all spaces"
-        aria-label="Browse all spaces"
-      >
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-        </svg>
-      </button>
-    </aside>
+            >
+              {s.glyph ? (
+                <span aria-hidden="true" className="text-[12px] leading-none">
+                  {s.glyph}
+                </span>
+              ) : null}
+              <span className="truncate">{s.name}</span>
+              {totalUnread > 0 ? (
+                <span
+                  className={`font-mono text-[9.5px] tabular-nums ${
+                    active ? "text-white/85" : "text-field-ink-quiet"
+                  }`}
+                >
+                  {totalUnread > 99 ? "99+" : totalUnread}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -314,8 +306,8 @@ function ChannelsRail({ space, activeId, onPick, isAdmin, onCreateChannel }) {
     quiet: space.channels.filter((c) => !c.lockedAdminWrite && (c.unread || 0) === 0),
   };
   return (
-    <aside className="w-[252px] border-r border-field-line bg-field-canvas flex flex-col shrink-0">
-      <div className="px-4 pt-5 pb-4 border-b border-field-line">
+    <div className="flex-1 min-h-0 flex flex-col">
+      <div className="px-4 pt-4 pb-4 border-b border-field-line">
         <div className="flex items-center gap-3">
           <FieldAvatar user={{ id: space.id, name: space.name, avatarColor: space.color }} size={36} className="rounded-md" />
           <div className="min-w-0 flex-1">
@@ -364,16 +356,7 @@ function ChannelsRail({ space, activeId, onPick, isAdmin, onCreateChannel }) {
         ) : null}
       </div>
 
-      <div className="px-3 py-3 border-t border-field-line bg-field-paper">
-        <FieldLabel className="block mb-2">Quick jump</FieldLabel>
-        <div className="flex flex-col gap-0.5">
-          <QuickLink to="/app/groups" icon="◇" label="Find a study group" />
-          <QuickLink to="/app/partners" icon="↔" label="Accountability partner" />
-          <QuickLink to="/app/mentors" icon="◊" label="Mentor sessions" />
-          <QuickLink to="/app/resources" icon="≣" label="Resource library" />
-        </div>
-      </div>
-    </aside>
+    </div>
   );
 }
 
@@ -429,20 +412,6 @@ function RailGroup({ title, channels, activeId, onPick, muted }) {
         );
       })}
     </div>
-  );
-}
-
-function QuickLink({ to, icon, label }) {
-  return (
-    <Link
-      to={to}
-      className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-field-line-soft text-[12px] text-field-ink-muted hover:text-field-ink transition-colors"
-    >
-      <span aria-hidden="true" className="w-5 text-center text-[13px] text-field-ink-quiet">
-        {icon}
-      </span>
-      <span className="flex-1">{label}</span>
-    </Link>
   );
 }
 
