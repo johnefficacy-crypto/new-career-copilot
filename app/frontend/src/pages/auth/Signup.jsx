@@ -19,7 +19,7 @@ export default function Signup() {
     setError(null);
     try {
       await auth.register({ email: email.trim(), password, name: name.trim() });
-      nav("/app/onboarding", { replace: true });
+      nav("/app/onboarding/chat?mode=discovery", { replace: true });
     } catch (err) {
       setError(err.message || "Unable to create account");
     } finally {
