@@ -168,14 +168,16 @@ export default function CommunityScreen() {
       className="flex overflow-hidden bg-field-paper text-field-ink"
       style={{ height: "calc(100vh - 60px)" }}
     >
-      <SpacesRail spaces={spaces} activeId={space?.id} onPick={pickSpace} />
-      <ChannelsRail
+      <section className="w-[286px] border-r border-[#E7DECB] bg-[#FBF4E8] flex flex-col shrink-0">
+        <CommunityTopNav spaces={spaces} activeId={space?.id} onPick={pickSpace} />
+        <ChannelsRail
         space={space}
         activeId={channel?.id}
         onPick={pickChannel}
         isAdmin={isAdmin}
         onCreateChannel={() => setNewChannelOpen(true)}
       />
+      </section>
 
       <section className="flex-1 min-w-0 flex flex-col bg-field-paper">
         <ChannelHeader space={space} channel={channel} onCompose={() => setComposerOpen(true)} />
@@ -813,7 +815,7 @@ function ReplySection({ replies, thread, channel, users, onChanged }) {
 
       <ReplyComposer channelId={channel?.id} threadId={thread.id} onPosted={onChanged} />
 
-      <ul className="mt-5 space-y-3">
+      <ul className="mt-4 space-y-2">
         {replies.map((r, i) => (
           <ReplyItem
             key={r.id}
@@ -919,7 +921,7 @@ function ReplyComposer({ channelId, threadId, onPosted }) {
         <FieldLabel>Markdown supported</FieldLabel>
       </div>
       <textarea
-        rows="3"
+        rows="2"
         value={body}
         onChange={(e) => setBody(e.target.value)}
         placeholder="Share your thought, ask a follow-up, or post a counter-point…"

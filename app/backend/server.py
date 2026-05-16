@@ -31,10 +31,24 @@ from app.api.admin_persona import router as admin_persona_router
 from app.api.admin_scrape import router as admin_scrape_router
 from app.api.admin_conflicts import router as admin_conflicts_router
 from app.api.admin_eligibility import router as admin_eligibility_router
+from app.api.admin_copyright import (
+    public_router as copyright_public_router,
+    admin_router as admin_copyright_router,
+)
+from app.api.admin_kpis import router as admin_kpis_router
+from app.api.admin_moderation import (
+    router as moderation_router,
+    admin_router as admin_moderation_router,
+)
 from app.api.auth import router as auth_router
 from app.api.admin_trust import router as admin_trust_router
 from app.api.admin_verification_reports import router as admin_verification_reports_router
 from app.api.evidence import router as evidence_router
+from app.api.flashcards import router as flashcards_router
+from app.api.mistakes import router as mistakes_router
+from app.api.notes import router as notes_router
+from app.api.reports import router as reports_router
+from app.api.revision import router as revision_router
 from app.api.exam_intelligence import router as exam_intelligence_router
 from app.api.canonical import router as canonical_router
 from app.api.community_runtime import router as community_runtime_router
@@ -185,6 +199,18 @@ api.include_router(onboarding_unified_router)  # unified guided onboarding — b
 api.include_router(community_runtime_router)  # durable community/social routes — must precede canonical seed fallbacks
 api.include_router(canonical_router)  # canonical Supabase routes — must precede placeholders
 api.include_router(community_people_router)  # community-people: groups, partner, mentors, resources
+# Phase-2 user surfaces: notes, flashcards, mistakes, revision, reports
+api.include_router(notes_router)
+api.include_router(flashcards_router)
+api.include_router(mistakes_router)
+api.include_router(revision_router)
+api.include_router(reports_router)
+# Moderation & trust workflows
+api.include_router(moderation_router)  # /moderation/report, /moderation/my-reports
+api.include_router(admin_moderation_router)  # /admin/moderation/...
+api.include_router(admin_kpis_router)  # /admin/kpis/...
+api.include_router(copyright_public_router)  # /copyright/submit (public DMCA intake)
+api.include_router(admin_copyright_router)  # /admin/copyright/...
 api.include_router(placeholders_router)
 app.include_router(api)
 
