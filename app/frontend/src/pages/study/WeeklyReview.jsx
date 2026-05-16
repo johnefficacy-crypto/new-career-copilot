@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import { Eyebrow, StatusDot, StudyCard, PageHeader } from "../../shared/ui/studyos";
 
@@ -133,5 +134,367 @@ export default function WeeklyReview() {
         </StudyCard>
       </div>
     </div>
+  );
+}
+
+// ── Improved / Declined ──────────────────────────────────────────────────
+function ImprovedDeclined({ kind, items, highlights }) {
+  const sage = kind === "improved";
+  const list = (items && items.length ? items : highlights || []).map((x) =>
+    typeof x === "string" ? { label: x } : x,
+  );
+  return (
+    <StudyCard
+      className={
+        sage
+          ? "!bg-[#F0F5EF] !border-[#B9CFAF]"
+          : "!bg-[#F2DDD6] !border-[#D9B4A6]"
+      }
+    >
+      <Eyebrow>{sage ? "What improved" : "What declined"}</Eyebrow>
+      <h2
+        className={`font-heading text-[20px] mt-1.5 ${
+          sage ? "text-[#33482F]" : "text-[#7A3925]"
+        }`}
+      >
+        {sage ? "These are working." : "These need attention."}
+      </h2>
+      {list.length ? (
+        <ul className="mt-4 space-y-3">
+          {list.map((it, i) => (
+            <li
+              key={`${kind}-${i}`}
+              className="grid grid-cols-[1fr_70px] gap-2 items-baseline"
+            >
+              <div>
+                <div
+                  className={`text-[13px] font-medium ${
+                    sage ? "text-[#33482F]" : "text-[#7A3925]"
+                  }`}
+                >
+                  {it.label}
+                </div>
+                {it.note ? (
+                  <div
+                    className={`text-[11.5px] mt-0.5 ${
+                      sage ? "text-[#41603D]" : "text-[#7A3925]/80"
+                    }`}
+                  >
+                    {it.note}
+                  </div>
+                ) : null}
+              </div>
+              <div
+                className={`text-right num-mono text-[14px] font-semibold ${
+                  sage ? "text-[#33482F]" : "text-[#7A3925]"
+                }`}
+              >
+                {it.delta || "—"}
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p
+          className={`mt-3 text-[12.5px] ${
+            sage ? "text-[#41603D]" : "text-[#7A3925]/80"
+          }`}
+        >
+          {sage
+            ? "Nothing flagged as improved yet — keep logging and the panel fills in."
+            : "No declines to correct this week. That is a good week."}
+        </p>
+      )}
+    </StudyCard>
+  );
+}
+
+// ── Next week changes ────────────────────────────────────────────────────
+function NextWeekChanges({ items }) {
+  return (
+    <StudyCard data-testid="plan-change-preview">
+      <SectionHeader
+        eyebrow="What Study OS will change next week"
+        title="Preview only. Apply with one click."
+        sub="The engine drafts adaptations from this week's signals. Nothing applies until you approve at the top of this page."
+        right={<StatusDot state="live" label="" />}
+      />
+      {items && items.length ? (
+        <ul className="space-y-3">
+          {items.map((it, i) => (
+            <li key={i} className="grid grid-cols-[40px_1fr] gap-3 items-start">
+              <div className="num-mono text-[12px] text-clay-700 pt-0.5">
+                {String(i + 1).padStart(2, "0")}
+              </div>
+              <div>
+                <div className="text-[13.5px] text-clay-900">{it}</div>
+                <div className="mt-1 flex gap-1.5 flex-wrap">
+                  <Chip layer="engine">plan-adapt</Chip>
+                  <Chip layer="user">weekly-signal</Chip>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-[13px] text-clay-700">
+          No plan changes are scheduled from this review yet. When the planner proposes
+          adjustments, they will preview here before they reach your week — nothing changes
+          silently.
+        </p>
+      )}
+      <div className="rule mt-4 pt-3 flex gap-2 flex-wrap">
+        <Link
+          to="/app/study/plan"
+          className="text-[12px] px-3 py-1.5 rounded-full bg-[#33482F] text-[#F0F5EF] font-semibold inline-flex items-center"
+        >
+          Preview adaptation →
+        </Link>
+      </div>
+    </StudyCard>
+  );
+}
+
+// ── User correction checklist ────────────────────────────────────────────
+// Three reflective prompts the aspirant should answer when reviewing a week.
+// "Answer" is a deep-link into the surface where the change actually
+// happens — Plan settings, Subjects, Mocks. "Done" lets the user dismiss
+// the prompt for this session (kept in localStorage so a hard refresh
+// doesn't repeat the nudge). No fake interactive controls.
+function UserCorrectionChecklist({ data }) {
+  const items = [
+    {
+      key: "available-hours",
+      t: "Confirm next week's available hours",
+      body: `Last week: ${data.hours_studied == null ? "—" : `${data.hours_studied}h`}. Plan target ${data.hours_planned == null ? "—" : `${data.hours_planned}h`}.`,
+      to: "/app/study/plan",
+      cta: "Open plan settings",
+    },
+    {
+      key: "focus-topic",
+      t: "Pick a focus topic to fully clear",
+      body:
+        data.declined && data.declined.length
+          ? "Pick from the declined list above."
+          : "Choose a weak topic from your subject tree.",
+      to: "/app/study/subjects",
+      cta: "Open subjects",
+    },
+    {
+      key: "mock-cadence",
+      t: "Mock pace — keep weekly cadence?",
+      body: `Mocks taken: ${data.mocks_taken == null ? "—" : data.mocks_taken}. Cadence options: keep, slow, accelerate.`,
+      to: "/app/study/mocks",
+      cta: "Open mocks",
+    },
+  ];
+  const [dismissed, setDismissed] = React.useState(() => {
+    try {
+      const raw = window.localStorage.getItem("weeklyReview.checklist.dismissed");
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+  function dismiss(key) {
+    setDismissed((prev) => {
+      const next = { ...prev, [key]: new Date().toISOString() };
+      try {
+        window.localStorage.setItem(
+          "weeklyReview.checklist.dismissed",
+          JSON.stringify(next),
+        );
+      } catch {
+        /* localStorage disabled — dismiss is session-only */
+      }
+      return next;
+    });
+  }
+  const visible = items.filter((c) => !dismissed[c.key]);
+  return (
+    <StudyCard>
+      <SectionHeader
+        eyebrow="Your turn"
+        title="Three quick things from you."
+        sub="Engine can adapt task selection; only you can adjust intent and availability."
+      />
+      {visible.length === 0 ? (
+        <p className="text-[12.5px] text-clay-700">
+          You’ve cleared this week’s prompts. The list resets next time the
+          weekly review recomputes.
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {visible.map((c) => (
+            <li
+              key={c.key}
+              className="rounded-xl border border-[#E7DECB] bg-[#FBF8F2] p-3"
+            >
+              <div className="flex items-start gap-3">
+                <span className="tick mt-1.5" aria-hidden="true" />
+                <div className="flex-1">
+                  <div className="text-[13px] font-medium">{c.t}</div>
+                  <div className="text-[11.5px] text-clay-700 mt-1">{c.body}</div>
+                  <div className="mt-2 flex gap-2">
+                    <Link
+                      to={c.to}
+                      className="text-[11px] px-2.5 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold inline-flex items-center"
+                    >
+                      {c.cta} →
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => dismiss(c.key)}
+                      className="text-[11px] px-2.5 py-1 rounded-full border border-[#E7DECB] text-clay-700 font-semibold"
+                    >
+                      Mark done
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </StudyCard>
+  );
+}
+
+// ── Backlog movement chart ───────────────────────────────────────────────
+function BacklogMovementChart({ start, end }) {
+  const hasData = start !== null && end !== null;
+  return (
+    <StudyCard>
+      <SectionHeader
+        eyebrow="Backlog movement"
+        title="Backlog at the start vs end of the week."
+        sub="Goal: end the week with backlog at or below where it started."
+        right={<StatusDot state="live" label="" />}
+      />
+      {hasData ? (
+        <svg
+          viewBox="0 0 720 160"
+          className="w-full h-[160px]"
+          role="img"
+          aria-label="Backlog movement chart"
+        >
+          {[0, 1, 2, 3].map((y) => (
+            <g key={y}>
+              <line x1="40" y1={140 - y * 30} x2="700" y2={140 - y * 30} stroke="#EFE7D4" />
+              <text
+                x="32"
+                y={140 - y * 30}
+                textAnchor="end"
+                dominantBaseline="central"
+                fontFamily="'JetBrains Mono', monospace"
+                fontSize="10"
+                fill="#6C5038"
+              >
+                {y}
+              </text>
+            </g>
+          ))}
+          {["Start", "End"].map((label, i) => (
+            <text
+              key={label}
+              x={200 + i * 320}
+              y={155}
+              textAnchor="middle"
+              fontFamily="'JetBrains Mono', monospace"
+              fontSize="10"
+              fill="#6C5038"
+            >
+              {label}
+            </text>
+          ))}
+          <rect
+            x={150}
+            y={Math.max(0, 140 - start * 30)}
+            width="100"
+            height={Math.min(140, start * 30)}
+            fill="#A68057"
+            rx="3"
+          />
+          <rect
+            x={470}
+            y={Math.max(0, 140 - end * 30)}
+            width="100"
+            height={Math.min(140, end * 30)}
+            fill={end > start ? "#7A3925" : "#54794E"}
+            rx="3"
+          />
+          <line
+            x1="40"
+            y1={140 - start * 30}
+            x2="700"
+            y2={140 - start * 30}
+            stroke="#33482F"
+            strokeDasharray="4 3"
+          />
+          <text
+            x="704"
+            y={140 - start * 30 - 4}
+            fontFamily="'JetBrains Mono', monospace"
+            fontSize="10"
+            fill="#33482F"
+            textAnchor="end"
+          >
+            start = {start}
+          </text>
+        </svg>
+      ) : (
+        <p className="text-[13px] text-clay-700">
+          Backlog movement is not reported for this week yet.
+        </p>
+      )}
+      {hasData ? (
+        <div className="mt-3 flex items-center gap-2 flex-wrap">
+          <Pill tone={end > start ? "rose" : end < start ? "sage" : "outline"}>
+            {end > start
+              ? `+${end - start} carried`
+              : end < start
+                ? `${end - start} cleared`
+                : "Held steady"}
+          </Pill>
+          <span className="text-[11px] text-clay-700">
+            Daily series unlocks once daily backlog snapshots are persisted.
+          </span>
+        </div>
+      ) : null}
+    </StudyCard>
+  );
+}
+
+// ── Review loop explainer ────────────────────────────────────────────────
+function ReviewLoopExplainer() {
+  const steps = [
+    { k: "Weekly signals", v: "adherence · backlog · revision · mock" },
+    { k: "Policy check", v: "availability · constraints · mix targets" },
+    { k: "Engine adapt", v: "draft preview compiled" },
+    { k: "You approve", v: "applied or kept-current" },
+  ];
+  return (
+    <StudyCard className="!bg-[#2E2218] !border-[#2E2218]">
+      <Eyebrow dark>How this becomes next week's plan</Eyebrow>
+      <h3 className="font-heading text-[20px] text-[#F3EADB] mt-1.5">
+        Weekly signals → Engine → Adapted plan
+      </h3>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+        {steps.map((s, i) => (
+          <div
+            key={s.k}
+            className="rounded-xl border border-[#6C5038] p-3 bg-[#4E3A29]/40"
+          >
+            <div className="num-mono text-[9.5px] text-[#D6BC93] uppercase tracking-[0.16em]">
+              {String(i + 1).padStart(2, "0")}
+            </div>
+            <div className="font-heading text-[15px] text-[#F3EADB] mt-1">
+              {s.k}
+            </div>
+            <div className="text-[11px] text-[#D6BC93] mt-1">{s.v}</div>
+          </div>
+        ))}
+      </div>
+    </StudyCard>
   );
 }

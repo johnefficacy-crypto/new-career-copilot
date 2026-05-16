@@ -275,21 +275,39 @@ export default function StudyPlan() {
                       <div className="mt-2 flex flex-wrap gap-1.5 items-center">
                         <button
                           type="button"
-                          className="text-[11px] px-2.5 py-1 rounded-full border border-[#E7DECB] text-clay-700 font-semibold"
+                          aria-pressed={status === "in_progress"}
+                          disabled={status === "in_progress"}
+                          className={`text-[11px] px-2.5 py-1 rounded-full border font-semibold transition ${
+                            status === "in_progress"
+                              ? "border-[#2E2218] bg-[#2E2218] text-[#F3EADB] cursor-default"
+                              : "border-[#E7DECB] text-clay-700 hover:bg-clay-50"
+                          }`}
                           onClick={() => updateStatus(t, "in_progress")}
                         >
                           In progress
                         </button>
                         <button
                           type="button"
-                          className="text-[11px] px-2.5 py-1 rounded-full border border-[#E7DECB] text-clay-700 font-semibold"
+                          aria-pressed={status === "skipped"}
+                          disabled={status === "skipped"}
+                          className={`text-[11px] px-2.5 py-1 rounded-full border font-semibold transition ${
+                            status === "skipped"
+                              ? "border-[#2E2218] bg-[#2E2218] text-[#F3EADB] cursor-default"
+                              : "border-[#E7DECB] text-clay-700 hover:bg-clay-50"
+                          }`}
                           onClick={() => updateStatus(t, "skipped")}
                         >
                           Skip
                         </button>
                         <button
                           type="button"
-                          className="text-[11px] px-2.5 py-1 rounded-full border border-[#E7DECB] text-clay-700 font-semibold"
+                          aria-pressed={status === "missed"}
+                          disabled={status === "missed"}
+                          className={`text-[11px] px-2.5 py-1 rounded-full border font-semibold transition ${
+                            status === "missed"
+                              ? "border-[#2E2218] bg-[#2E2218] text-[#F3EADB] cursor-default"
+                              : "border-[#E7DECB] text-clay-700 hover:bg-clay-50"
+                          }`}
                           onClick={() => updateStatus(t, "missed")}
                         >
                           Mark missed

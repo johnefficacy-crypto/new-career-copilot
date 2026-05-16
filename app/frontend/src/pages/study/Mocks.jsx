@@ -39,6 +39,17 @@ function pct(m) {
   return Number(m?.percentage ?? 0);
 }
 
+// Fallback list used only if both `/api/recruitments` and the exam
+// intelligence catalogue are unavailable. Kept short and deliberately
+// unmarked as canonical — production-active slugs come from the network.
+const EXAM_SLUG_FALLBACK = [
+  "ssc-cgl-2026",
+  "ibps-po-xv",
+  "rbi-grade-b-2026",
+  "upsc-cse-2026",
+  "sbi-clerk-2026",
+];
+
 // ── Mocks page ───────────────────────────────────────────────────────────
 export default function Mocks() {
   const [items, setItems] = useState([]);
@@ -47,9 +58,10 @@ export default function Mocks() {
   const [analysis, setAnalysis] = useState(null);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [open, setOpen] = useState(false);
+  const [examSlugs, setExamSlugs] = useState(EXAM_SLUG_FALLBACK);
   const [form, setForm] = useState({
     name: "",
-    exam_slug: "ssc-cgl-2026",
+    exam_slug: "",
     score: "",
     max_score: 200,
     duration_min: 60,
@@ -95,6 +107,39 @@ export default function Mocks() {
 
   useEffect(() => {
     loadList();
+  }, []);
+
+  // Load the live recruitment catalogue for the exam dropdown so the list
+  // does not rot when admins add or close cycles. Best-effort: failure
+  // silently keeps the static fallback so new mocks can still be logged.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get("/api/recruitments")
+      .then((d) => {
+        if (cancelled) return;
+        const slugs = (Array.isArray(d?.items) ? d.items : [])
+          .map((r) => r?.slug)
+          .filter((s) => typeof s === "string" && s.length > 0);
+        if (slugs.length) {
+          setExamSlugs(Array.from(new Set(slugs)));
+          // Pre-fill the form's exam_slug to the user's top match (first row)
+          // — much more accurate than the hardcoded SSC CGL default.
+          setForm((prev) => (prev.exam_slug ? prev : { ...prev, exam_slug: slugs[0] }));
+        } else {
+          setForm((prev) =>
+            prev.exam_slug ? prev : { ...prev, exam_slug: EXAM_SLUG_FALLBACK[0] },
+          );
+        }
+      })
+      .catch(() => {
+        setForm((prev) =>
+          prev.exam_slug ? prev : { ...prev, exam_slug: EXAM_SLUG_FALLBACK[0] },
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -333,6 +378,7 @@ export default function Mocks() {
           }}
           onSubmit={submit}
           formError={formError}
+          examSlugs={examSlugs}
         />
       )}
     </div>
@@ -718,9 +764,11 @@ function Stat({ label, value, foot }) {
 }
 
 // ── Log mock modal ───────────────────────────────────────────────────────
-function LogMockModal({ form, setForm, onClose, onSubmit, formError }) {
+function LogMockModal({ form, setForm, onClose, onSubmit, formError, examSlugs }) {
   const maxScoreNum = Number(form.max_score);
   const attemptedNum = Number(form.attempted);
+  const slugOptions =
+    Array.isArray(examSlugs) && examSlugs.length ? examSlugs : EXAM_SLUG_FALLBACK;
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4" onClick={onClose}>
       <form
@@ -735,9 +783,15 @@ function LogMockModal({ form, setForm, onClose, onSubmit, formError }) {
             <input required className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           </F>
           <F label="Exam">
-            <select className="input" value={form.exam_slug} onChange={(e) => setForm({ ...form, exam_slug: e.target.value })}>
-              {["ssc-cgl-2026", "ibps-po-xv", "rbi-grade-b-2026", "upsc-cse-2026", "sbi-clerk-2026"].map((x) => (
-                <option key={x}>{x}</option>
+            <select
+              className="input"
+              value={form.exam_slug}
+              onChange={(e) => setForm({ ...form, exam_slug: e.target.value })}
+            >
+              {slugOptions.map((x) => (
+                <option key={x} value={x}>
+                  {x}
+                </option>
               ))}
             </select>
           </F>

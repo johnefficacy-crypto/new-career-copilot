@@ -64,7 +64,18 @@ export default function PlanPreferencesCard({ onRegenerated }) {
     setLoading(true);
     try {
       const d = await api.get("/api/study/plan/preferences");
-      setPrefs(d || {});
+      // Initialise every field the PUT body sends with an explicit default
+      // so JSON.stringify never drops keys. A sparse response shaped like
+      // `{focus: "balanced"}` previously caused `auto_regenerate: undefined`
+      // to leave the toggle in a state the user thought they’d set, while
+      // the backend treated the missing key as "no change."
+      setPrefs({
+        focus: "balanced",
+        auto_regenerate: false,
+        max_tasks_per_day: null,
+        preferred_task_size: null,
+        ...(d || {}),
+      });
       setError("");
     } catch (e) {
       setError(e?.message || "Could not load plan settings");

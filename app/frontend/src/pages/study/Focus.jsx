@@ -16,8 +16,12 @@ const PRESETS = [25, 50, 90];
 const RING_CIRCUMFERENCE = 540; // 2·π·r, r = 86
 
 export default function Focus() {
-  const [subject, setSubject] = useState("Quant");
-  const [topic, setTopic] = useState("Percentage & Ratio");
+  // Subject + topic start empty. Pre-filling fictional values like "Quant" /
+  // "Percentage & Ratio" pollutes per-subject focus telemetry — users who
+  // forget to overwrite log every block against the placeholder. The "Link a
+  // task" selector below populates these from today's plan when picked.
+  const [subject, setSubject] = useState("");
+  const [topic, setTopic] = useState("");
   const [duration, setDuration] = useState(50);
   const [remaining, setRemaining] = useState(50 * 60);
   const [running, setRunning] = useState(false);
@@ -243,8 +247,10 @@ export default function Focus() {
               {!running && remaining > 0 ? (
                 <button
                   onClick={start}
+                  disabled={!subject.trim()}
                   data-testid="focus-start"
-                  className="px-5 py-2.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold text-[13px]"
+                  title={!subject.trim() ? "Set a subject below before starting" : undefined}
+                  className="px-5 py-2.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold text-[13px] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Start
                 </button>
