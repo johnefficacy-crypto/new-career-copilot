@@ -26,7 +26,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app.api.accountability import router as accountability_router
 from app.api.admin_exam_intelligence import router as admin_exam_intel_router
+from app.api.admin_ops import router as admin_ops_router
 from app.api.admin_persona import router as admin_persona_router
 from app.api.admin_scrape import router as admin_scrape_router
 from app.api.admin_conflicts import router as admin_conflicts_router
@@ -196,6 +198,10 @@ api.include_router(persona_questions_router)  # PR2 progressive tiny questions
 api.include_router(study_os_router)  # PR3 Study OS Mission Control — before canonical so /study/mission-control wins
 api.include_router(study_compare_router)  # Study OS comparison + social + verification
 api.include_router(onboarding_unified_router)  # unified guided onboarding — before placeholders
+# Real Supabase-backed accountability + admin ops — must precede community_runtime
+# and placeholders so route order wins for /accountability/mentors/* and /admin/*.
+api.include_router(accountability_router)
+api.include_router(admin_ops_router)
 api.include_router(community_runtime_router)  # durable community/social routes — must precede canonical seed fallbacks
 api.include_router(canonical_router)  # canonical Supabase routes — must precede placeholders
 api.include_router(community_people_router)  # community-people: groups, partner, mentors, resources
