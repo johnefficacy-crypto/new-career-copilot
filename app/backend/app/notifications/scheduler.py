@@ -136,8 +136,10 @@ def stop_scheduler() -> None:
     if _scheduler is not None:
         try:
             _scheduler.shutdown(wait=False)
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # Suppress to keep shutdown idempotent, but log so a failing
+            # scheduler shutdown does not vanish from operational view.
+            logger.warning("scheduler_shutdown_failed exc=%s: %s", type(exc).__name__, exc, exc_info=True)
         _scheduler = None
 
 

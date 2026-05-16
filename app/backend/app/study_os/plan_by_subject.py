@@ -11,7 +11,7 @@ can label the row honestly.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable
 
 from app.study_os.planner import (  # type: ignore  # private helpers reused
@@ -221,5 +221,5 @@ def list_plan_by_subject(
         "total_minutes": total_minutes,
         "total_hours": round(total_minutes / 60, 2),
         "trust_status": overall_trust,
-        "computed_at": datetime.utcnow().isoformat(),
+        "computed_at": datetime.now(timezone.utc).isoformat(),
     }
