@@ -1,12 +1,17 @@
 // Thin API client for Career Copilot backend.
 // Auth tokens come from Supabase Auth (managed by lib/supabase.js).
 
-import { BACKEND_URL } from "../shared/config/env";
+import { API_TIMEOUT_MS, BACKEND_URL } from "../shared/config/env";
 import { supabase } from "./supabase";
 
 if (!BACKEND_URL) {
   // eslint-disable-next-line no-console
   console.warn("Missing REACT_APP_BACKEND_URL — frontend cannot reach the API.");
+}
+
+if (!Number.isFinite(API_TIMEOUT_MS) || API_TIMEOUT_MS <= 0) {
+  // eslint-disable-next-line no-console
+  console.warn("Invalid REACT_APP_API_TIMEOUT_MS; default timeout fallback is active.");
 }
 
 async function getAccessToken() {
@@ -42,7 +47,10 @@ export function getApiErrorMessage(error) {
 
 export function getApiErrorFieldList(error, key) {
   const detail = getApiErrorDetail(error);
-  const value = error?.[key] ?? (detail && typeof detail === "object" ? detail[key] : undefined) ?? error?.data?.[key];
+  const value =
+    error?.[key] ??
+    (detail && typeof detail === "object" ? detail[key] : undefined) ??
+    error?.data?.[key];
   return Array.isArray(value) ? value : [];
 }
 
@@ -56,64 +64,94 @@ export function getApiUnverifiedFields(error) {
 
 export function getApiExistingRecruitmentId(error) {
   const detail = getApiErrorDetail(error);
-  return error?.existing_recruitment_id ?? (detail && typeof detail === "object" ? detail.existing_recruitment_id : undefined) ?? error?.data?.existing_recruitment_id;
+  return error?.existing_recruitment_id ??
+    (detail && typeof detail === "object" ? detail.existing_recruitment_id : undefined) ??
+    error?.data?.existing_recruitment_id;
 }
 
 export function getApiNextActions(error) {
   return getApiErrorFieldList(error, "next_actions");
 }
 
-function attachStructuredErrorFields(err, data, detail) {
-  const detailObj = detail && typeof detail === "object" ? detail : {};
-  const dataObj = data && typeof data === "object" ? data : {};
-  err.data = data;
-  err.detail = detail;
-  err.blocking_issues = detailObj.blocking_issues || dataObj.blocking_issues || [];
-  err.unverified_fields = detailObj.unverified_fields || dataObj.unverified_fields || [];
-  err.warnings = detailObj.warnings || dataObj.warnings || [];
-  err.code = detailObj.code || dataObj.code;
-  err.existing_recruitment_id = detailObj.existing_recruitment_id || dataObj.existing_recruitment_id;
-  err.next_actions = detailObj.next_actions || dataObj.next_actions || [];
-  return err;
+function buildApiError({ status, data, detail, message }) {
+  return {
+    status,
+    message,
+    detail,
+    data,
+    blocking_issues: getApiErrorFieldList({ data, detail }, "blocking_issues"),
+    unverified_fields: getApiErrorFieldList({ data, detail }, "unverified_fields"),
+    warnings: getApiErrorFieldList({ data, detail }, "warnings"),
+    code: (detail && typeof detail === "object" ? detail.code : undefined) || data?.code,
+    existing_recruitment_id: getApiExistingRecruitmentId({ data, detail }),
+    next_actions: getApiNextActions({ data, detail }),
+  };
+}
+
+function resolveHeaders(options = {}) {
+  const headers = { ...(options.headers || {}) };
+  const hasContentType = Object.keys(headers).some((key) => key.toLowerCase() === "content-type");
+  const body = options.body;
+  const shouldSetJsonContentType =
+    body != null && typeof body === "string" && !hasContentType;
+
+  if (shouldSetJsonContentType) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  return headers;
 }
 
 export async function apiFetch(path, options = {}) {
   if (!BACKEND_URL) {
     throw new Error("Missing REACT_APP_BACKEND_URL. Set it in frontend .env before running the app.");
   }
+
   const token = await getAccessToken();
-  const headers = {
-    "Content-Type": "application/json",
-    ...(options.headers || {}),
-  };
+  const controller = new AbortController();
+  const timeoutMs = Number.isFinite(API_TIMEOUT_MS) && API_TIMEOUT_MS > 0 ? API_TIMEOUT_MS : 15000;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const signal = options.signal || controller.signal;
+  const headers = resolveHeaders(options);
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${BACKEND_URL}${path}`, {
-    ...options,
-    headers,
-  });
+
+  let res;
+  try {
+    res = await fetch(`${BACKEND_URL}${path}`, {
+      ...options,
+      signal,
+      headers,
+    });
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error?.name === "AbortError") {
+      throw buildApiError({ status: 408, data: null, detail: "Request timed out", message: "Request timed out" });
+    }
+    throw buildApiError({ status: 0, data: null, detail: error?.message || "Network error", message: "Network error" });
+  }
+
+  clearTimeout(timeoutId);
   const ct = res.headers.get("content-type") || "";
   const data = ct.includes("application/json") ? await res.json() : await res.text();
+
   if (!res.ok) {
     const detail = typeof data === "object" ? data?.detail || data?.message : data;
-    const err = new Error(formatApiErrorDetail(detail) || `API ${res.status}`);
-    err.status = res.status;
-    err.message = getApiErrorMessage({ data, detail }) || err.message;
-    attachStructuredErrorFields(err, data, detail);
-    throw err;
+    const message = getApiErrorMessage({ data, detail }) || `API ${res.status}`;
+    throw buildApiError({ status: res.status, data, detail, message });
   }
+
   return data;
 }
 
 export const api = {
-  get: (p) => apiFetch(p),
-  post: (p, body) => apiFetch(p, { method: "POST", body: JSON.stringify(body || {}) }),
-  put: (p, body) => apiFetch(p, { method: "PUT", body: JSON.stringify(body || {}) }),
-  patch: (p, body) => apiFetch(p, { method: "PATCH", body: JSON.stringify(body || {}) }),
-  delete: (p) => apiFetch(p, { method: "DELETE" }),
-  del: (p) => apiFetch(p, { method: "DELETE" }),
+  get: (p, options = {}) => apiFetch(p, options),
+  post: (p, body, options = {}) => apiFetch(p, { ...options, method: "POST", body: JSON.stringify(body || {}) }),
+  put: (p, body, options = {}) => apiFetch(p, { ...options, method: "PUT", body: JSON.stringify(body || {}) }),
+  patch: (p, body, options = {}) => apiFetch(p, { ...options, method: "PATCH", body: JSON.stringify(body || {}) }),
+  delete: (p, options = {}) => apiFetch(p, { ...options, method: "DELETE" }),
+  del: (p, options = {}) => apiFetch(p, { ...options, method: "DELETE" }),
 };
 
-// Backend exposes Supabase-validated /api/auth/me.
 export const auth = {
   me: () => api.get("/api/auth/me"),
 };
