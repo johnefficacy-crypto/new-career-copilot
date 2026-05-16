@@ -1,6 +1,7 @@
 import React from "react";
 import { Route } from "react-router-dom";
 import { ProtectedRoute } from "../lib/ProtectedRoute";
+import { ADMIN_ROLES } from "../lib/rbac";
 import AdminShell from "../pages/admin/AdminShell";
 import AdminOverview from "../pages/admin/Overview";
 import AdminRecruitments from "../pages/admin/Recruitments";
@@ -22,7 +23,7 @@ import AdminPersona from "../pages/admin/Persona";
 import AdminExamIntelligence from "../pages/admin/ExamIntelligence";
 
 export const adminRouteElements = (
-  <Route element={<ProtectedRoute role={["admin", "super_admin"]}><AdminShell /></ProtectedRoute>}>
+  <Route element={<ProtectedRoute role={ADMIN_ROLES} requireBackend><AdminShell /></ProtectedRoute>}>
     <Route path="/admin" element={<AdminOverview />} />
     <Route path="/admin/operations" element={<AdminOperationsConsole />} />
     <Route path="/admin/recruitments" element={<AdminRecruitments />} />
