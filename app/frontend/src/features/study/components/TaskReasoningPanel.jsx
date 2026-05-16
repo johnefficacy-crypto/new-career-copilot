@@ -151,19 +151,24 @@ export default function TaskReasoningPanel({ taskId, fallbackReasoning }) {
   async function handleToggle() {
     const next = !open;
     setOpen(next);
-    if (next && !detail && !loading && !failed && taskId) {
-      setLoading(true);
-      try {
-        const d = await api.get(
-          `/api/study/task-reasoning/${encodeURIComponent(taskId)}`,
-        );
-        setDetail(d || null);
-        if (!d) setFailed(true);
-      } catch {
-        setFailed(true);
-      } finally {
-        setLoading(false);
-      }
+    if (next && !detail && !loading && taskId) {
+      await loadDetail();
+    }
+  }
+
+  async function loadDetail() {
+    setLoading(true);
+    setFailed(false);
+    try {
+      const d = await api.get(
+        `/api/study/task-reasoning/${encodeURIComponent(taskId)}`,
+      );
+      setDetail(d || null);
+      if (!d) setFailed(true);
+    } catch {
+      setFailed(true);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -191,7 +196,29 @@ export default function TaskReasoningPanel({ taskId, fallbackReasoning }) {
         ) : detail ? (
           <DetailView detail={detail} />
         ) : (
-          <FallbackView reasoning={fallbackReasoning} />
+          <>
+            {failed ? (
+              <div
+                className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 flex items-center justify-between gap-2"
+                role="status"
+                data-testid="task-reasoning-error"
+              >
+                <span>
+                  Couldn’t load full reasoning — showing a summary from your active plan.
+                </span>
+                {taskId ? (
+                  <button
+                    type="button"
+                    onClick={loadDetail}
+                    className="font-semibold underline underline-offset-2 hover:text-amber-900"
+                  >
+                    Retry
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            <FallbackView reasoning={fallbackReasoning} />
+          </>
         )
       ) : null}
     </div>

@@ -8,6 +8,7 @@ import {
   StudyCard,
   SectionHeader,
 } from "../../shared/ui/studyos";
+import useApiAction from "../../lib/hooks/useApiAction";
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 const ERROR_ROWS = [
@@ -61,6 +62,7 @@ export default function Mocks() {
     error_guess: "",
   });
   const [err, setErr] = useState("");
+  const { run: runMockAction } = useApiAction();
 
   async function loadList() {
     try {
@@ -142,73 +144,84 @@ export default function Mocks() {
 
   async function changeReviewState(state) {
     if (!selectedId) return;
-    try {
-      const updated = await api.patch(
-        `/api/study/mocks/${selectedId}/review-state`,
-        { state },
-      );
-      setItems((prev) =>
-        prev.map((m) => (m.id === selectedId ? { ...m, review_state: updated.review_state } : m)),
-      );
-      setAnalysis((a) => (a ? { ...a, review_state: updated.review_state } : a));
-    } catch (e) {
-      if (process.env.NODE_ENV !== "production") console.error(e);
-    }
+    await runMockAction({
+      action: () =>
+        api.patch(`/api/study/mocks/${selectedId}/review-state`, { state }),
+      onSuccess: (updated) => {
+        setItems((prev) =>
+          prev.map((m) =>
+            m.id === selectedId ? { ...m, review_state: updated.review_state } : m,
+          ),
+        );
+        setAnalysis((a) => (a ? { ...a, review_state: updated.review_state } : a));
+      },
+      errorMessage: "Couldn't update review state — try again.",
+    });
   }
 
   async function draftCorrections() {
     if (!selectedId) return;
-    try {
-      const out = await api.post(`/api/study/mocks/${selectedId}/correction-tasks`);
-      setAnalysis((a) =>
-        a ? { ...a, correction_tasks: Array.isArray(out?.items) ? out.items : [], review_state: "correction_drafted" } : a,
-      );
-      setItems((prev) =>
-        prev.map((m) => (m.id === selectedId ? { ...m, review_state: "correction_drafted" } : m)),
-      );
-    } catch (e) {
-      if (process.env.NODE_ENV !== "production") console.error(e);
-    }
+    await runMockAction({
+      action: () => api.post(`/api/study/mocks/${selectedId}/correction-tasks`),
+      onSuccess: (out) => {
+        setAnalysis((a) =>
+          a
+            ? {
+                ...a,
+                correction_tasks: Array.isArray(out?.items) ? out.items : [],
+                review_state: "correction_drafted",
+              }
+            : a,
+        );
+        setItems((prev) =>
+          prev.map((m) =>
+            m.id === selectedId ? { ...m, review_state: "correction_drafted" } : m,
+          ),
+        );
+      },
+      successMessage: "Correction tasks drafted.",
+      errorMessage: "Couldn't draft correction tasks — try again.",
+    });
   }
 
   async function applyCorrection(correctionId) {
-    try {
-      const updated = await api.post(
-        `/api/study/mocks/correction-tasks/${correctionId}/apply`,
-      );
-      setAnalysis((a) =>
-        a
-          ? {
-              ...a,
-              correction_tasks: (a.correction_tasks || []).map((c) =>
-                c.id === correctionId ? updated : c,
-              ),
-            }
-          : a,
-      );
-    } catch (e) {
-      if (process.env.NODE_ENV !== "production") console.error(e);
-    }
+    await runMockAction({
+      action: () =>
+        api.post(`/api/study/mocks/correction-tasks/${correctionId}/apply`),
+      onSuccess: (updated) => {
+        setAnalysis((a) =>
+          a
+            ? {
+                ...a,
+                correction_tasks: (a.correction_tasks || []).map((c) =>
+                  c.id === correctionId ? updated : c,
+                ),
+              }
+            : a,
+        );
+      },
+      errorMessage: "Couldn't add correction to plan — try again.",
+    });
   }
 
   async function dismissCorrection(correctionId) {
-    try {
-      const updated = await api.post(
-        `/api/study/mocks/correction-tasks/${correctionId}/dismiss`,
-      );
-      setAnalysis((a) =>
-        a
-          ? {
-              ...a,
-              correction_tasks: (a.correction_tasks || []).map((c) =>
-                c.id === correctionId ? updated : c,
-              ),
-            }
-          : a,
-      );
-    } catch (e) {
-      if (process.env.NODE_ENV !== "production") console.error(e);
-    }
+    await runMockAction({
+      action: () =>
+        api.post(`/api/study/mocks/correction-tasks/${correctionId}/dismiss`),
+      onSuccess: (updated) => {
+        setAnalysis((a) =>
+          a
+            ? {
+                ...a,
+                correction_tasks: (a.correction_tasks || []).map((c) =>
+                  c.id === correctionId ? updated : c,
+                ),
+              }
+            : a,
+        );
+      },
+      errorMessage: "Couldn't dismiss correction — try again.",
+    });
   }
 
   const avg = items.length

@@ -5,6 +5,7 @@ import { Card, Drawer, Eyebrow, PageHeader, Pill, SectionHeader, StatusDot } fro
 import PlanChangeLogCard from "../features/study/components/PlanChangeLogCard";
 import PlanByTopic from "../features/study/components/PlanByTopic";
 import ExamCycleTimeline from "../features/study/components/ExamCycleTimeline";
+import useApiAction from "../lib/hooks/useApiAction";
 
 const STATUS_TONE = {
   completed: "sage",
@@ -51,6 +52,17 @@ export default function StudyPlan() {
   const [draftOpen, setDraftOpen] = useState(false);
   const [applying, setApplying] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const { run: runTaskAction } = useApiAction();
+  const { run: runApply } = useApiAction();
+
+  async function refetchPlan() {
+    try {
+      const d = await api.get("/api/study/plan");
+      setPlan({ plan: d?.plan || null, tasks: Array.isArray(d?.tasks) ? d.tasks : [] });
+    } catch (e) {
+      if (process.env.NODE_ENV !== "production") console.error(e);
+    }
+  }
 
   useEffect(() => {
     api
@@ -85,39 +97,60 @@ export default function StudyPlan() {
 
   async function applyDraft() {
     setApplying(true);
-    try {
-      await api.post("/api/study/plan/apply", {});
+    const result = await runApply({
+      action: () => api.post("/api/study/plan/apply", {}),
+      successMessage: "Plan applied.",
+      errorMessage: "Couldn't apply plan — try again.",
+    });
+    if (result.ok) {
       setDraftOpen(false);
       setDraft(null);
       setReloadKey((k) => k + 1);
-    } catch (e) {
-      if (process.env.NODE_ENV !== "production") console.error(e);
-    } finally {
-      setApplying(false);
     }
+    setApplying(false);
   }
 
   async function toggle(t) {
-    const nextStatus = t.status === "completed" ? "planned" : "completed";
-    setPlan((p) => ({
+    const wasStatus = t.status || (t.done ? "completed" : "planned");
+    const nextStatus = wasStatus === "completed" ? "planned" : "completed";
+    const patchTo = (status) => (p) => ({
       ...p,
       tasks: p.tasks.map((x) =>
-        x.id === t.id ? { ...x, done: nextStatus === "completed", status: nextStatus } : x,
+        x.id === t.id ? { ...x, done: status === "completed", status } : x,
       ),
-    }));
-    await api.put(`/api/study/tasks/${t.id}`, { status: nextStatus });
+    });
+    await runTaskAction({
+      optimistic: () => setPlan(patchTo(nextStatus)),
+      action: () => api.put(`/api/study/tasks/${t.id}`, { status: nextStatus }),
+      rollback: () => setPlan(patchTo(wasStatus)),
+      errorMessage: "Couldn't save task — try again.",
+    });
   }
+
   async function updateStatus(t, status) {
-    await api.put(`/api/study/tasks/${t.id}`, { status });
-    await api
-      .get("/api/study/plan")
-      .then((d) => setPlan({ plan: d?.plan || null, tasks: Array.isArray(d?.tasks) ? d.tasks : [] }));
+    const wasStatus = t.status || (t.done ? "completed" : "planned");
+    const patchTo = (s) => (p) => ({
+      ...p,
+      tasks: p.tasks.map((x) =>
+        x.id === t.id ? { ...x, done: s === "completed", status: s } : x,
+      ),
+    });
+    const result = await runTaskAction({
+      optimistic: () => setPlan(patchTo(status)),
+      action: () => api.put(`/api/study/tasks/${t.id}`, { status }),
+      rollback: () => setPlan(patchTo(wasStatus)),
+      errorMessage: "Couldn't update task — try again.",
+    });
+    if (result.ok) refetchPlan();
   }
+
   async function carryForward() {
-    await api.post("/api/study/tasks/carry-forward", {});
-    await api
-      .get("/api/study/plan")
-      .then((d) => setPlan({ plan: d?.plan || null, tasks: Array.isArray(d?.tasks) ? d.tasks : [] }));
+    const result = await runTaskAction({
+      action: () => api.post("/api/study/tasks/carry-forward", {}),
+      successMessage: "Backlog carried forward.",
+      errorMessage: "Couldn't carry forward backlog — try again.",
+    });
+    if (result.ok) refetchPlan();
   }
 
   const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];

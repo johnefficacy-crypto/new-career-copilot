@@ -17,6 +17,7 @@ import CompetitionContextCard from "../features/study/components/CompetitionCont
 import PlanPreferencesCard from "../features/study/components/PlanPreferencesCard";
 import { Eyebrow, Pill, StatusDot, StudyCard, TrustStamp } from "../shared/ui/studyos";
 import { mergeMissionControl } from "./today/mergeMissionControl";
+import useApiAction from "../lib/hooks/useApiAction";
 
 const EMPTY_MC = {
   user_context: { dimensions: {}, scores: {}, safe_user_explanation: [] },
@@ -61,6 +62,7 @@ export default function Today() {
   // Bumped when the plan is regenerated (e.g. from the preferences card) so
   // mission control is refetched.
   const [reloadKey, setReloadKey] = useState(0);
+  const { run: runToggle } = useApiAction();
 
   useEffect(() => {
     let cancelled = false;
@@ -100,34 +102,38 @@ export default function Today() {
 
   async function toggleTask(t) {
     if (!t || !t.id) return;
-    // Optimistic flip + reuse existing PUT /api/study/tasks/:id contract.
-    const nextDone = !t.done;
+    // Capture prior task state so we can roll back on POST failure.
+    const wasDone = !!t.done;
+    const wasStatus = t.status || (wasDone ? "completed" : "planned");
+    const nextDone = !wasDone;
     const nextStatus = nextDone ? "completed" : "planned";
-    setMc((prev) =>
-      prev
-        ? {
-            ...prev,
-            today_tasks: prev.today_tasks.map((x) =>
-              x.id === t.id ? { ...x, done: nextDone, status: nextStatus } : x,
-            ),
-          }
-        : prev,
-    );
-    setFallbackPlan((prev) =>
-      prev
-        ? {
-            ...prev,
-            tasks: prev.tasks.map((x) =>
-              x.id === t.id ? { ...x, done: nextDone } : x,
-            ),
-          }
-        : prev,
-    );
-    try {
-      await api.post("/api/study/plan/toggle", { task_id: t.id });
-    } catch (e) {
-      if (process.env.NODE_ENV !== "production") console.error(e);
-    }
+    const patchTasks = (tasks, done, status) =>
+      tasks.map((x) => (x.id === t.id ? { ...x, done, status } : x));
+
+    await runToggle({
+      optimistic: () => {
+        setMc((prev) =>
+          prev
+            ? { ...prev, today_tasks: patchTasks(prev.today_tasks, nextDone, nextStatus) }
+            : prev,
+        );
+        setFallbackPlan((prev) =>
+          prev ? { ...prev, tasks: patchTasks(prev.tasks, nextDone, nextStatus) } : prev,
+        );
+      },
+      action: () => api.post("/api/study/plan/toggle", { task_id: t.id }),
+      rollback: () => {
+        setMc((prev) =>
+          prev
+            ? { ...prev, today_tasks: patchTasks(prev.today_tasks, wasDone, wasStatus) }
+            : prev,
+        );
+        setFallbackPlan((prev) =>
+          prev ? { ...prev, tasks: patchTasks(prev.tasks, wasDone, wasStatus) } : prev,
+        );
+      },
+      errorMessage: "Couldn't save task — try again.",
+    });
   }
 
   if (loading) {

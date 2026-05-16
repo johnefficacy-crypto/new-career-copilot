@@ -59,8 +59,10 @@ export default function FocusReflectionPanel({ session, onDismiss, onSave, bare 
   const [confidence, setConfidence] = useState(60);
   const [revise, setRevise] = useState(null);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  function handleSave() {
+  async function handleSave() {
     const reflection = {
       subject: session?.subject || "",
       topic: session?.topic || "",
@@ -71,8 +73,19 @@ export default function FocusReflectionPanel({ session, onDismiss, onSave, bare 
       confidence_after: confidence,
       should_revise: revise,
     };
-    if (typeof onSave === "function") onSave(reflection);
-    setSaved(true);
+    setSaving(true);
+    setSaveError("");
+    try {
+      // onSave is currently a no-op (no backend endpoint for reflection yet),
+      // but if a future caller wires it to a real endpoint we must only
+      // confirm "saved" once the promise resolves.
+      if (typeof onSave === "function") await onSave(reflection);
+      setSaved(true);
+    } catch (e) {
+      setSaveError(e?.message || "Couldn’t save reflection — try again.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -187,13 +200,32 @@ export default function FocusReflectionPanel({ session, onDismiss, onSave, bare 
           />
 
           <div className="flex items-center gap-2 pt-1">
-            <button type="button" className="btn btn-primary" onClick={handleSave}>
-              Save reflection
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleSave}
+              disabled={saving}
+            >
+              {saving ? "Saving…" : "Save reflection"}
             </button>
-            <button type="button" className="btn btn-ghost" onClick={onDismiss}>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={onDismiss}
+              disabled={saving}
+            >
               Skip
             </button>
           </div>
+          {saveError ? (
+            <div
+              className="text-[11px] text-rose-700"
+              role="status"
+              data-testid="focus-reflection-error"
+            >
+              {saveError}
+            </div>
+          ) : null}
         </>
       )}
 
