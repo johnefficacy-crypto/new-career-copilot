@@ -56,7 +56,7 @@ function Nav() {
               <Link to="/login" data-testid="nav-login" className="btn btn-ghost hidden sm:inline-flex">
                 Sign in
               </Link>
-              <Link to="/signup" data-testid="nav-signup" className="btn btn-primary">
+              <Link to="/app/onboarding/chat?mode=discovery" data-testid="nav-signup" className="btn btn-primary">
                 Start free
               </Link>
             </>
@@ -93,7 +93,7 @@ function Hero() {
             motivational fluff. No "AI says so" without showing the work.
           </p>
           <div className="mt-7 flex gap-3 flex-wrap">
-            <Link to="/signup" data-testid="hero-cta-signup" className="btn btn-primary">
+            <Link to="/app/onboarding/chat?mode=discovery" data-testid="hero-cta-signup" className="btn btn-primary">
               Start free · pick your exam
             </Link>
             <Link to={PROTOTYPE_HOME} data-testid="hero-cta-login" className="btn btn-ghost">
@@ -1465,7 +1465,7 @@ function CTA() {
           Pick your exam. Tell us your hours. We'll give you a calm, traceable plan tomorrow at 06:00.
         </p>
         <div className="mt-8 flex justify-center gap-3 flex-wrap">
-          <Link to="/signup" className="btn btn-primary">
+          <Link to="/app/onboarding/chat?mode=discovery" className="btn btn-primary">
             Start free · pick your exam
           </Link>
           <Link to={PROTOTYPE_HOME} className="btn btn-ghost">
@@ -1531,7 +1531,7 @@ function Footer() {
             { l: "Mentors", to: "/app/mentors" },
             { l: "Pricing", h: "#pricing" },
             { l: "Sign in", to: "/login" },
-            { l: "Get started", to: "/signup" },
+            { l: "Get started", to: "/app/onboarding/chat?mode=discovery" },
           ]}
         />
       </div>
