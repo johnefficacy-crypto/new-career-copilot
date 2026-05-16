@@ -4,11 +4,17 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
+from app.exam_intelligence.competition import (
+    competition_series,
+    cutoff_series,
+    vacancy_series,
+)
 from app.exam_intelligence.coverage import (
     verified_pyq_topic_counts,
     verified_topic_coverage,
 )
 from app.exam_intelligence.lookup import resolve_exam_by_id, resolve_exam_by_slug
+from app.exam_intelligence.pyq_papers import difficulty_heatmap, verified_pyq_papers
 
 logger = logging.getLogger("career_copilot.exam_intelligence.status")
 
@@ -103,6 +109,11 @@ def exam_intelligence_summary(
             "topics": [],
             "verified_pyq_counts": {},
             "verified_syllabus_mentions": 0,
+            "competition_series": [],
+            "cutoff_series": {},
+            "vacancy_series": {"total": [], "by_category": {}},
+            "pyq_papers": [],
+            "difficulty_heatmap": {"buckets": ["easy", "medium", "hard", "unknown"], "rows": [], "verified_question_count": 0},
             "verified_only": True,
         }
 
@@ -110,6 +121,11 @@ def exam_intelligence_summary(
     coverage = verified_topic_coverage(supabase, exam_id) or []
     pyq_counts = verified_pyq_topic_counts(supabase, exam_id) or {}
     syllabus_verified = _verified_syllabus_count(supabase, exam_id)
+    competition = competition_series(supabase, exam_id)
+    cutoffs = cutoff_series(competition)
+    vacancies = vacancy_series(competition)
+    pyq_papers = verified_pyq_papers(supabase, exam_id)
+    heatmap = difficulty_heatmap(supabase, exam_id)
 
     topics_payload: list[dict[str, Any]] = []
     for row in coverage:
@@ -121,7 +137,13 @@ def exam_intelligence_summary(
             }
         )
 
-    available = bool(topics_payload) or any(pyq_counts.values()) or syllabus_verified > 0
+    available = (
+        bool(topics_payload)
+        or any(pyq_counts.values())
+        or syllabus_verified > 0
+        or bool(competition)
+        or bool(pyq_papers)
+    )
     return {
         "exam": {
             "id": exam_id,
@@ -133,5 +155,10 @@ def exam_intelligence_summary(
         "topics": topics_payload,
         "verified_pyq_counts": pyq_counts,
         "verified_syllabus_mentions": syllabus_verified,
+        "competition_series": competition,
+        "cutoff_series": cutoffs,
+        "vacancy_series": vacancies,
+        "pyq_papers": pyq_papers,
+        "difficulty_heatmap": heatmap,
         "verified_only": True,
     }

@@ -12,7 +12,7 @@ review_cadence: per-sprint
 
 # Career Copilot — Product Roadmap
 
-_Last updated: 2026-04-30 — Phases 0–7 complete, Phase 8 next_
+_Last updated: 2026-05-16 — Phases 0–7 complete, Phase 12 (Exam Intelligence Hub) v1 shipped with UPSC CSE pilot_
 
 This is the canonical phased roadmap. Each phase has a clear goal, scope, and definition of done. Historical sprint details are in [history/](../history/).
 
@@ -216,21 +216,26 @@ See [product/community-platform.md](community-platform.md) for full design.
 
 ---
 
-## Phase 12 — Exam Intelligence Hub 📋
+## Phase 12 — Exam Intelligence Hub 🔄
 
 **Goal:** Every exam becomes a complete decision page, replacing the fragmented research an aspirant currently does across 10 sites.
 
-**Scope:**
-- `exam_families` table (UPSC CSE, SSC CGL, IBPS PO, etc.) separate from recruitment cycles
-- `exam_cycles` — per-year notification, apply window, exam date, result date
-- `exam_pyq_papers` — official PYQ links per year/stage
-- `exam_pyq_analysis` — subject/topic/question count/difficulty/weight
-- `exam_cutoffs` — category-wise cutoff by year and stage
-- `exam_vacancy_history` — post-wise vacancy by year and category
-- `exam_competition_metrics` — applicants/appeared/qualified/vacancies/ratio
-- Exam detail page at `/dashboard/exams/[examSlug]` with visual analytics
-- PYQ trend line, cutoff trend chart, vacancy bar chart, difficulty heatmap
-- Pilot exam: SSC CGL or SBI Clerk (choose one, do it thoroughly)
+**Schema status:** the `exam_cutoffs` / `exam_vacancy_history` tables called out in the original scope were absorbed into per-cycle rows of `exam_competition_metrics` (migrations 030, 055). The aspirant-facing read API documents the jsonb conventions for `cutoff_trend` and `vacancy_by_category` so admin-entered rows render deterministically.
+
+**Shipped:**
+- `exam_families`, `exams`, `exam_cycles`, `exam_phases`, `exam_phase_sections`, `exam_topic_coverage` (migration 030)
+- `pyq_sources`, `pyq_papers`, `pyq_questions`, `pyq_question_topic_tags` (migration 032) — covers PYQ papers + per-question difficulty
+- `exam_competition_metrics`, `exam_policy_updates` with verified-only RLS (055, 056, 057)
+- Public read API `/api/exam-intelligence/exams/{slug}` returns `competition_series`, `cutoff_series`, `vacancy_series`, `pyq_papers`, `difficulty_heatmap` (verified rows only)
+- Recruitment detail endpoint surfaces `exam_slug` so the aspirant page can resolve the linked exam
+- Aspirant-facing **Exam intelligence** tab on `/app/exams/:slug` with PYQ trend line, cutoff trend chart, vacancy bar chart, difficulty heatmap and verified PYQ paper list
+- Admin review console at `/admin/exam-intelligence` (overview / exams / review queue / topic coverage / competition / policy / plan impact)
+- UPSC CSE pilot seed (`app/supabase/seeds/exam_intelligence_demo_upsc_cse.sql`) — 5 cycles, 4 verified PYQ papers, locked competition metrics with cutoff/vacancy series
+
+**Still to ship:**
+- Coverage of additional exam families (SSC CGL seed exists but only one cycle; SBI Clerk, IBPS PO, RBI Grade B etc. unstarted)
+- `/dashboard/exams/[examSlug]` standalone exam page (today's surface is the recruitment-detail tab; useful for exams without an active recruitment)
+- Admin UX to author the canonical `cutoff_trend` jsonb shape directly (today admins must follow the documented convention manually)
 
 **Start with one pilot.** Don't build the schema for 50 exams and fill none of them.
 
