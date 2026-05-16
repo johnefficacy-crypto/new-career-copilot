@@ -1,8 +1,10 @@
-# Frontend audit — Study OS (Today, StudyPlan, Tracker, Mocks, Focus, WeeklyReview, Subjects, Dashboard)
+# Frontend audit — Study OS (Today, StudyPlan, Tracker, Mocks, Focus, WeeklyReview, Subjects, Dashboard, Compare + 32 components)
 
 _Last updated: 2026-05-16_
 
 Scope (read in full):
+
+**Pages:**
 - `app/frontend/src/pages/Today.jsx` (413 LOC)
 - `app/frontend/src/pages/StudyPlan.jsx` (494 LOC)
 - `app/frontend/src/pages/Tracker.jsx` (85 LOC)
@@ -11,9 +13,12 @@ Scope (read in full):
 - `app/frontend/src/pages/study/Mocks.jsx` (775 LOC)
 - `app/frontend/src/pages/study/WeeklyReview.jsx` (537 LOC)
 - `app/frontend/src/pages/study/Subjects.jsx` (96 LOC)
-- `app/frontend/src/features/study/components/StudyTaskCard.jsx` (78 LOC, sampled)
+- `app/frontend/src/pages/study/Compare.jsx` (422 LOC)
 
-Total user-facing Study OS surface: ~3.2k LOC across 8 pages + ~3.4k LOC across 32 components in `features/study/components/`. The 32-component layer was only spot-checked; a follow-up pass should walk each component against its backend contract.
+**Components (`features/study/components/` — 32 files, ~3.4k LOC, plus `features/dashboard/components/TodaysActions.jsx`):**
+EngineTrace, TaskReasoningPanel, PlanByTopic, PlanChangeLogCard, PlanPreferencesCard, NextBestActionCard, UpdateIntelligencePanel, TruthPanelCard, IntelligenceLayersPanel, SafeExplanationCard, PlanReasoningCard, ExamContextCard, CompetitionContextCard, StudyPolicyPreview, FocusReflectionPanel, StudyMetricCard, MissionControlSkeleton, StudyTaskCard, SubjectCards, SubjectCard, TopicTreePanel, TopicRow, NextRecommendedActions, MasteryDistribution, MockCorrectionPreview, PlannedVsActualChart, PhaseBandTimeline, CycleProgressRail, CycleSubjectProgress, ExamCycleTimeline, PlanRiskFlags, SourceTrustBadge, TodaysActions.
+
+Total audited: ~6.6k LOC across 41 files.
 
 Backend cross-checks against:
 - `app/backend/app/api/study_os.py` (`/study/mission-control`, `/study/plan/*`, `/study/mocks/*`, `/study/weekly-review/*`, `/study/subjects`, `/study/topics`, `/study/task-reasoning/*`)
@@ -129,6 +134,87 @@ correct: Number(form.correct),
 User can submit `score=300, max_score=200` or `correct=50, attempted=20`. The backend may or may not reject; the trend chart (line 590+) divides by `max` = `100` hardcoded which clips silently; subject breakdown (lines 387-413) shows `correct/total` ratios that exceed 1.0 and renders bars wider than 100%.
 
 **Fix:** native validation (`max={form.attempted}` on `correct`, `max={form.max_score}` on `score`) + a guard in `submit` before the POST.
+
+### S-P0-9. `TruthPanelCard.TruthCol` crashes on unrecognised `tone`
+**File:** `features/study/components/TruthPanelCard.jsx:6-13`
+
+`TruthCol` looks up `palette = {sage, rose, amber}[tone]` then immediately reads `palette.bg`. Today's two callers pass `"amber"` and `"rose"` (safe). The moment a future channel adds any other tone — or an operator typo — `palette` is `undefined` and the inline `style={{ background: palette.bg }}` throws `TypeError: cannot read 'bg' of undefined`, taking down the Truth Panel — the single most trust-load-bearing card on Today.
+
+**Fix:** `const palette = TONES[tone] || TONES.amber;` with a module-level `TONES` map.
+
+### S-P0-10. `PlanPreferencesCard.save` failure leaves local prefs diverged from server
+**File:** `features/study/components/PlanPreferencesCard.jsx:86-117`
+
+On a 4xx from `PUT /plan/preferences` the catch sets `error` but `dirty` stays true and `prefs` keeps the local-only value. User sees a red error, clicks "Save & regenerate plan" again — same PUT fails. The segmented buttons display the locally-changed value as if persisted; the user's mental model is "my settings are saved." Local state and server state silently diverge for the whole session.
+
+**Fix:** on save error, refetch via `load()` to reset `prefs` to server truth, or keep a `pendingPrefs` shadow separate from `prefs`.
+
+### S-P0-11. `TaskReasoningPanel` silently degrades to inline fallback on fetch failure
+**File:** `features/study/components/TaskReasoningPanel.jsx:151-168, 186-196`
+
+`api.get(/api/study/task-reasoning/:id)` failure sets `failed=true` and renders `<FallbackView>` with whatever `fallbackReasoning` was inlined from mission-control. The user sees a complete-looking reasoning panel and has no idea the detailed channels (`reasoning_trace`, `evidence`, multi-channel signals) failed to load. Worst case: the fallback shows generic `FALLBACK_SUMMARY` text that reads like a real explanation, not an error. Direct violation of the Truth Panel promise.
+
+**Fix:** render a small "Couldn't load full reasoning — showing summary" banner inside `FallbackView` when `failed`; offer a retry.
+
+### S-P0-12. `PlanByTopic` divides by zero / produces `NaN` widths when no hours allocated
+**File:** `features/study/components/PlanByTopic.jsx:56, 94`
+
+`maxMinutes = items.reduce((m, it) => Math.max(m, it.planned_minutes || 0), 0)`. If all items have `planned_minutes: 0` (a fresh weight-only plan), `maxMinutes` is `0` and the bar width math produces `NaN`. The header reads "Where your hours go · 0h planned" while rows render unlabelled empty bars — the user can't distinguish "planner returned no allocations" from "chart broke."
+
+**Fix:** the existing `maxMinutes ? ... : 0` guard at line 94 prevents the NaN, but render an explicit "Hours not yet allocated to subjects" message when `totalHours === 0 && items.length > 0`.
+
+### S-P0-13. `FocusReflectionPanel.handleSave` flips `saved=true` regardless of `onSave` result
+**File:** `features/study/components/FocusReflectionPanel.jsx:63-76`
+
+`onSave(reflection)` is called and then `setSaved(true)` runs unconditionally. If the parent's `onSave` is async and rejects (e.g., a future planner endpoint 4xxs), the panel shows "Reflection noted for this session" as a success state but nothing was persisted. Today the contract is local-only, so the failure mode is dormant — but the moment this wires to a real endpoint, the success banner lies.
+
+**Fix:** `await onSave(reflection)` inside try/catch; only `setSaved(true)` on resolved promise; surface error otherwise.
+
+### S-P0-14. `Compare` Behavior Index `MiniBar` always renders 0%
+**File:** `pages/study/Compare.jsx:175`
+
+The Components grid passes `<MiniBar value={Number(components[k] || 0)} />`, but `MiniBar` (`shared/ui/studyos/primitives.jsx:151`) only accepts a `pct` prop. `value` is unknown — falls through to default `pct=0`, so every one of the seven behavior bars renders empty. The numeric percentage to the right is correct, so the chart and the numbers visibly disagree — a confidence-corroding contradiction on the page the spec calls "the fair-comparison surface."
+
+**Fix:** `<MiniBar pct={Number(components[k] || 0)} />` (values are already 0..1).
+
+### S-P0-15. `Compare` cohort/leaderboard pill tones fall through to neutral
+**File:** `pages/study/Compare.jsx:30-34, 228, 253-254`
+
+`rankBandTone` returns `"green" | "amber" | "rose" | "stone"`, but `PILL_TONE` in `primitives.jsx:15-23` only knows `outline | sage | clay | dusk | amber | ink | rose`. `"green"` and `"stone"` silently fall through to `pill-outline`. "Ahead" / "Behind" / "On track" / private-listing pills all render with the same neutral chrome — users can't tell at a glance whether they're ahead or behind in their cohort, defeating the visual semantics of the page.
+
+**Fix:** map `ahead → "sage"`, `on_track → "ink"`, `behind → "rose"`, `default → "outline"`.
+
+### S-P0-16. `Compare.updateSetting` privacy toggle swallows errors with no rollback
+**File:** `pages/study/Compare.jsx:110-117`
+
+Privacy toggles (solo mode, public leaderboard, friends leaderboard, cohort comparison) call `api.put` and swallow errors to a dev-only `console.error`. If the PUT 4xx/5xx, the user's last visible toggle position came from the DOM event itself; `settings` was never updated, so the next render flips the box back, with no toast. For "Solo mode (hide me from all comparisons)" this is a **privacy-relevant** silent failure: the user believes they've gone solo, the backend hasn't acted.
+
+**Fix:** optimistic-update `settings`, roll back on error, surface a toast via `ToastProvider`.
+
+### S-P0-17. `TodaysActions` renders "Resolve 0 pending docs" when only forms are in progress
+**File:** `features/dashboard/components/TodaysActions.jsx:8`
+
+```js
+if (pendingDocs > 0 || inProgressForms > 0) list.push({ label: `Resolve ${pendingDocs} pending docs`, ... });
+```
+
+The OR lets `inProgressForms` open the gate, but the label only counts `pendingDocs`. A user with 0 pending docs and 3 forms in progress sees "**Resolve 0 pending docs**" as the top dashboard CTA.
+
+**Fix:** branch labels — prefer `pendingDocs` when > 0, otherwise `Resume ${inProgressForms} in-progress forms`.
+
+### S-P0-18. `TodaysActions` builds `/app/exams/undefined` when `topMatches[0].slug` is missing
+**File:** `features/dashboard/components/TodaysActions.jsx:9`
+
+`if (topMatches[0]?.next_action) list.push({ to: `/app/exams/${topMatches[0].slug}` })` — only `next_action` is guarded. Matching engines often emit a `next_action` without a populated `slug` (transient match without a fully-resolved canonical recruitment). Click navigates to `/app/exams/undefined`, where the route 404s or crashes the exam-detail loader.
+
+**Fix:** gate on `topMatches[0]?.slug && topMatches[0]?.next_action`.
+
+### S-P0-19. `TopicRow.loadEvidence` fabricates a successful `trust` payload on fetch failure
+**File:** `features/study/components/TopicRow.jsx:37-51`
+
+On `catch`, `setEvidence({ trust: { status: t.trust_status || "locked" } })`. The render path (line 181) then treats `evidence && !evidence.row` as "admin-only, trust status above is server-confirmed." A 500 / network error becomes a **confidence-positive** message produced from an actual failure. `loadingEvidence` clears, so the drawer never retries.
+
+**Fix:** keep `evidence = null` on failure, set a separate `evidenceError` flag, render "Evidence couldn't load — retry" with a retry button.
 
 ---
 
@@ -266,6 +352,146 @@ User clicks "Apply", waits, nothing happens, drawer stays open. They likely clic
 
 **Fix:** toast + leave the drawer open OR close-with-failure-banner. Definitely disable the button until the call completes (already does that via `applying` state).
 
+### S-P1-13. `UpdateIntelligencePanel` renders hardcoded fictional sample updates when backend returns `[]`
+**File:** `features/study/components/UpdateIntelligencePanel.jsx:8-60, 153-163`
+
+When `official` or `unverified` props are `[]`, the component falls back to `SAMPLE_OFFICIAL` / `SAMPLE_UNVERIFIED`. A "Preview · static example" pill is shown at the panel header, but individual cards still render full fictional titles like "Exam cycle notification (example)" with detailed `summary` and "Source · (static example)" rows. Aspirants skim cards, not the header pill. Same class as F-P1-1/F-P1-2 from the community audit — on a fresh install every user sees 5 fake updates.
+
+**Fix:** render an `EmptyState` ("No verified updates for your exam this week") when both lists are empty. Reserve `SAMPLE_*` for Storybook, or gate behind a `previewMode` prop.
+
+### S-P1-14. `PlanByTopic` shows `0h · 0%` rows indistinguishable from unallocated subjects
+**File:** `features/study/components/PlanByTopic.jsx:118-122`
+
+`{s.planned_hours ?? 0}h · {Math.round((s.weight || 0) * 100)}%`. If the backend emits a row with weight 0 (or null) and planned_minutes 0, the row renders "0h · 0%" — visually indistinguishable from a subject that was actively allocated 0 hours this week. Null-vs-zero confusion (same class as S-P0-5).
+
+**Fix:** if `weight == null && planned_minutes == null`, render "Not in this week's plan" instead of "0h · 0%".
+
+### S-P1-15. `CompetitionContextCard.fmtRatio` produces "1 in 0" / "1 in 1" for misformatted ratios
+**File:** `features/study/components/CompetitionContextCard.jsx:21-27`
+
+`return `1 in ${Math.round(1 / n).toLocaleString()}` `. For `n` slightly > 0.5, `1/n` rounds to 1; for `n = 1.5` (impossible but defensive — e.g., backend stores ratio as percent by mistake → `60.0` → "1 in 0"), the output is nonsense. The card is the only number users see for "how competitive is this exam"; garbage display erodes trust.
+
+**Fix:** treat anything `n > 0.5` as an explicit percentage display (`Math.round(n*100)%`); restrict "1 in N" to small ratios.
+
+### S-P1-16. `PlanChangeLogCard` uses `toLocaleString()` — timezone-ambiguous on an audit log
+**File:** `features/study/components/PlanChangeLogCard.jsx:58, 73`
+
+`new Date(row.created_at).toLocaleString()` produces a locale-specific string in the browser's local timezone with no timezone label. For a panel labelled "event log" — meant to be auditable — users on different timezones reading the same shared screen see different timestamps with no way to know which is which.
+
+**Fix:** use `formatRelative` ("12 minutes ago") with the ISO timestamp in `title`, or render with explicit timezone (`toLocaleString(undefined, {timeZoneName: "short"})`).
+
+### S-P1-17. `PlanPreferencesCard` sends `auto_regenerate: undefined` on first interaction
+**File:** `features/study/components/PlanPreferencesCard.jsx:67, 92-97, 167-178`
+
+`setPrefs(d || {})` — if `/plan/preferences` returns sparse data (no `auto_regenerate` key), the switch's `aria-checked={!!prefs.auto_regenerate}` correctly renders `false`, but the PUT body sends `auto_regenerate: undefined`. JSON.stringify drops the key, and the backend's PUT handler may interpret "missing" as "no change". The user's toggle never travels — silent contract drift.
+
+**Fix:** initialise `setPrefs({focus: "balanced", auto_regenerate: false, max_tasks_per_day: null, preferred_task_size: null, ...(d || {})})` so every PUT body has explicit values.
+
+### S-P1-18. `ExamContextCard` displays negative `days_remaining` literally
+**File:** `features/study/components/ExamContextCard.jsx:48-51`
+
+`{ec.days_remaining} days remaining`. Backend likely emits negative values for past cycles. Card renders "-12 days remaining" — confusing.
+
+**Fix:** `ec.days_remaining >= 0 ? `${ec.days_remaining} days remaining` : `${Math.abs(ec.days_remaining)} days ago``.
+
+### S-P1-19. `NextBestActionCard` button is dead when consumer omits `onPrimary`
+**File:** `features/study/components/NextBestActionCard.jsx:6-13, 50-61`
+
+`study_task` and `progressive_question` action types map to `link=null`. When `link` is null, the component renders a `<button onClick={onPrimary}>`. But `onPrimary` is optional — if the consumer doesn't pass it, the button silently does nothing. Same dead-button class as WeeklyReview's "Preview adaptation."
+
+**Fix:** default `onPrimary` to a no-op that toasts "Open the task list below" or focuses the task list anchor; or render `<a href="#tasks">` when no handler is wired.
+
+### S-P1-20. `IntelligenceLayersPanel` documentation reads as live data
+**File:** `features/study/components/IntelligenceLayersPanel.jsx:14-20, 101-126`
+
+The component is preview-only (an inline `pill-amber "Preview"` and italic footer say so). But the inline rows read like real values ("Hours you said you have", "From mocks, drills, focus signals"). A user could mistake "Mock history: Scores, trend, weak topics" for a real mock-history summary. A panel that *looks* like a dashboard but is documentation.
+
+**Fix:** rework copy in future tense ("Will show your scores and trend"), or hide the panel entirely until at least one layer has live data.
+
+### S-P1-21. `FocusReflectionPanel` claims "kept on this device" but never persists
+**File:** `features/study/components/FocusReflectionPanel.jsx:55-77`
+
+After save, panel shows "Reflection noted for this session. It is kept on this device for now." Nothing is actually persisted to localStorage — `handleSave` calls `onSave` and flips local state. On reload/remount the reflection is gone. The copy lies.
+
+**Fix:** drop "kept on this device" copy until persistence is wired, or actually `localStorage.setItem("focus.reflection." + session.id, JSON.stringify(reflection))`.
+
+### S-P1-22. `NextRecommendedActions` ranking mixes incompatible scales
+**File:** `features/study/components/NextRecommendedActions.jsx:30-33`
+
+`score = (t.exam_priority_score || 0) * 10 - (t.mastery_score || 100) + (t.error_pattern_count ? 25 : 0)`. Per `study_os.py:379` / `planner.py:231`, `exam_priority_score` is a 0..1 fraction. `mastery_score` is 0..100. So `priority*10` is in `[0,10]` and `-mastery` is in `[-100,0]` — **mastery dominates by 10×**, and "highest priority" collapses to "lowest mastery wins" regardless of exam weight. Default `|| 100` for missing mastery also penalises topics with no signal.
+
+**Fix:** normalise both inputs to `[0,1]` before weighting, and treat missing mastery as low-confidence (skip from ranking, or use a neutral midpoint), not perfect.
+
+### S-P1-23. `TopicRow` priority badge always shows `0` or `1`
+**File:** `features/study/components/TopicRow.jsx:87-88`
+
+`priority {Math.round(t.exam_priority_score || 0)}` — when `exam_priority_score` is the 0..1 backend fraction (S-P1-22), every row rounds to either 0 or 1. The chip becomes uninformative for differentiating topics, exactly where the spec wants exam-weight legibility.
+
+**Fix:** `priority {Math.round((t.exam_priority_score || 0) * 100)}` and label as percent (or pass a normalised field from backend).
+
+### S-P1-24. `CycleProgressRail` collapses to a 1-day rail with a single milestone
+**File:** `features/study/components/CycleProgressRail.jsx:33-38`
+
+When only one milestone has a date (a freshly registered exam with just `exam_start`), `min === max` and the fallback adds 1 day to `max`. The "today" dot renders at 0% or 100% with no visible cycle, no scale, no explanation. Same effect when phase bands resolve to identical start/end dates.
+
+**Fix:** require at least two distinct dated milestones before rendering the rail; otherwise show the existing "Cycle dates will appear here…" empty state.
+
+### S-P1-25. `CycleProgressRail` index-based React keys collide on refetch
+**File:** `features/study/components/CycleProgressRail.jsx:67-68, 105-106`
+
+`key={`${m.kind}-${i}`}` — if two milestones share `kind` (e.g., two `application_start` rows for two recruitments), keys collide on the second pass after a refetch. React mis-reconciles popovers and the `title` tooltip jumps to the wrong date.
+
+**Fix:** key on `${m.kind}-${m.date}-${i}` and use `m.date` for the legend key.
+
+### S-P1-26. `PhaseBandTimeline` "Current/Past/Upcoming" computed across timezones
+**File:** `features/study/components/PhaseBandTimeline.jsx:35, 41-47`
+
+`todayMs = today ? new Date(today).valueOf() : Date.now()` — when `today` is a `YYYY-MM-DD` backend string it's parsed as UTC midnight, but `b.start`/`b.end` could be ISO timestamps or date-only strings. Cross-DST or for IST users near midnight, a phase flips from "Current" to "Past" up to ~5.5 hours early. The visual cue users rely on to know "what phase am I in?" is wrong on the boundary day.
+
+**Fix:** compare `YYYY-MM-DD` ISO strings (`String(today).slice(0,10) <= b.end.slice(0,10)`) so the comparison is timezone-free.
+
+### S-P1-27. `CycleSubjectProgress` defaults `planned_pct` to 100, masking unscheduled subjects
+**File:** `features/study/components/CycleSubjectProgress.jsx:27-29`
+
+`const planned = Number(s.planned_pct || 100); ratio = actual / planned;` — defaulting missing/zero `planned_pct` to 100 means subjects the backend hasn't scheduled report `ratio = actual/100`. With `actual_pct === 0` it shows "not started" (fine), but as soon as the user logs any session, the bar shows progress against an imaginary 100% plan — masking the fact that no plan exists.
+
+**Fix:** when `planned_pct` is missing or zero, render `Pill="not planned"` with a TrustStamp=`preview`; never coerce planned to 100.
+
+### S-P1-28. `PlannedVsActualChart` empty state hides the chart for day-1 users
+**File:** `features/study/components/PlannedVsActualChart.jsx:10`
+
+`if (points.length < 2) return null;` — a single point (week 1 of a cycle, the most common case for a new aspirant) drops to "will appear once tasks are scheduled across the cycle." But the user *just* scheduled tasks; they just don't have two weeks yet. Users on day 1–7 will believe the planner failed.
+
+**Fix:** render a single dot with a "Week 1 of the cycle — chart appears from week 2" caption.
+
+### S-P1-29. `SubjectCard` "below 65%" hardcoded threshold contradicts `MasteryDistribution` target
+**File:** `features/study/components/SubjectCard.jsx:49`
+
+`{pct < 65 ? <Pill tone="amber">below 65%</Pill> : <Pill tone="sage">on target</Pill>}`. `MasteryDistribution` accepts a `target` prop (default 65) plumbed from policy. If admin policy raises the target to 70%, the distribution panel updates but per-card pills on the same page still claim "on target" at 65–69%. Two sources of truth on the same page.
+
+**Fix:** thread `target` down to `SubjectCard` via `SubjectCards`.
+
+### S-P1-30. `SubjectCards` activeId can match across subjects sharing a name
+**File:** `features/study/components/SubjectCards.jsx:31`
+
+`isActive = activeId && (s.subject_id === activeId || s.subject === activeId)` — falls back to comparing the subject *name*. If two recruitments share the name "Quant" (one per exam), clicking Quant in exam A lights up both rows.
+
+**Fix:** match on `subject_id` only; require the parent to pass the id.
+
+### S-P1-31. `Compare` privacy pill flashes wrong state during settings hydration
+**File:** `pages/study/Compare.jsx:253, 370-388`
+
+Card header renders `<Pill>{...? "You are listed" : "Private (opt-in)"}</Pill>` before `settings` has loaded. A user who has previously opted in sees "Private" for a few hundred ms before the page hydrates, then watches it flip — confusing on a leaderboard-listing pill.
+
+**Fix:** show a `—` / skeleton until `settings` is non-null.
+
+### S-P1-32. `ExamCycleTimeline` fabricates a fictional `planner_v1` label
+**File:** `features/study/components/ExamCycleTimeline.jsx:164-166`
+
+`<span>{plan.planner_version || "planner_v1"}</span>` — when the backend hasn't shipped a planner version, the UI claims `planner_v1` was used. This is a Truth-Panel-relevant fact (which engine produced this plan) and must not be invented client-side.
+
+**Fix:** render `—` or hide the chip when `planner_version` is missing.
+
 ---
 
 ## P2 — A11y / contract drift / polish
@@ -362,24 +588,185 @@ User-visible English strings are inlined throughout. The strategy doc mentions l
 
 **Fix:** if/when i18n lands, route these through a translation module.
 
+### S-P2-12. `EngineTrace` SVG is `aria-hidden="true"` but contains the only narrative
+**File:** `features/study/components/EngineTrace.jsx:49`
+
+The middle column is a 720×220 SVG with all the diagram text inside `<text>` elements. The whole SVG is marked `aria-hidden="true"`. Screen-reader users get only the left eyebrow and the right "Provenance key" — they miss the core diagram and the live `planSummary` value entirely.
+
+**Fix:** drop `aria-hidden`, add `<title>` and `<desc>` inside the SVG describing the four-layer flow plus `planSummary`, and `role="img"` on the SVG.
+
+### S-P2-13. `PlanChangeLogCard` renders raw enum values verbatim
+**File:** `features/study/components/PlanChangeLogCard.jsx:66`
+
+`<Pill tone="ink">{row.event_type}</Pill>` shows literal `plan_regenerated`, `task_carry_forward`, etc. Users see snake_case. Same for `trigger_source` (line 68).
+
+**Fix:** `EVENT_LABEL = { plan_regenerated: "Plan regenerated", ... }`.
+
+### S-P2-14. `SafeExplanationCard` alternates tone by index
+**File:** `features/study/components/SafeExplanationCard.jsx:18`
+
+`tone={i % 2 === 0 ? "sage" : "clay"}`. Pill colours flip with array order — same signal sage on one render, clay on the next if the backend reorders. Defeats the colour-coding promise.
+
+**Fix:** drop alternation, hash on signal text, or expect `signal.tone` from backend.
+
+### S-P2-15. `StudyMetricCard` cannot distinguish 0 from missing
+**File:** `features/study/components/StudyMetricCard.jsx:18`
+
+`value === null || undefined || ""` renders "—", but `value === 0` renders "0". For metrics where 0 is genuine "no telemetry," the card shows "0" — same class as S-P0-5.
+
+**Fix:** accept an explicit `unknown` boolean or a sibling `hasData` prop.
+
+### S-P2-16. `CompetitionContextCard` enum verbatim "unknown pressure"
+**File:** `features/study/components/CompetitionContextCard.jsx:69`
+
+`label={`${level} pressure`}` produces "unknown pressure" / "high pressure" — fine for the four canonical values, but no titlecase, and "unknown pressure" reads ambiguously.
+
+**Fix:** explicit labels (`{high: "High competition", unknown: "Pressure not measured"}`).
+
+### S-P2-17. `PlanReasoningCard` uses `key={i}`
+**File:** `features/study/components/PlanReasoningCard.jsx:34`
+
+React key-by-index. If the backend reorders or filters reasoning entries between renders, React keeps stale DOM state.
+
+**Fix:** `key={`${r.reason_type}-${r.summary?.slice(0,32)}-${i}`}`, or accept `r.id` from backend.
+
+### S-P2-18. `UpdateIntelligencePanel.normalizeUpdate` accepts both camelCase and snake_case
+**File:** `features/study/components/UpdateIntelligencePanel.jsx:62-74`
+
+`source_url || sourceUrl`, `received_at || receivedAt`, `kind || sourceType` — defensive against unknown contract. FastAPI emits snake_case; the either-or accommodation is a code smell that suggests nobody owns the schema. Pick one and drop the other.
+
+**Fix:** confirm backend payload shape, drop the alternates.
+
+### S-P2-19. `FocusReflectionPanel` "5+" button stores literal `5`
+**File:** `features/study/components/FocusReflectionPanel.jsx:70, 138-153`
+
+Button labelled "5+" stores `distractions: 5`. When eventually persisted, "I had 8 distractions" rounds to 5 with no signal that it was clamped.
+
+**Fix:** add a numeric input for >5, or store `distractions_min: 5, distractions_clamped: true`.
+
+### S-P2-20. `StudyPolicyPreview` boolean-only constraint contract is undocumented
+**File:** `features/study/components/StudyPolicyPreview.jsx:14-16, 66`
+
+The truthy-only filter at line 15 drops anything non-boolean. If the backend ever ships numeric constraints like `min_break_minutes`, they vanish silently.
+
+**Fix:** support `{key, value, kind}` objects from backend, or document the boolean-only contract.
+
+### S-P2-21. `PlanByTopic` skeleton fixed at 3 rows regardless of expected count
+**File:** `features/study/components/PlanByTopic.jsx:76-84`
+
+Three pulsing bars while loading. If the list resolves to 8 subjects, layout jumps significantly.
+
+**Fix:** render skeleton rows matching a remembered `lastKnownCount` from session storage, or accept an `expectedCount` prop.
+
+### S-P2-22. `TodaysActions.jsx` is a single-line JSX expression
+**File:** `features/dashboard/components/TodaysActions.jsx:15`
+
+~600-char single line. Unreviewable diffs — same anti-pattern flagged in S-P2-2 for Dashboard.jsx.
+
+**Fix:** reformat to multi-line JSX.
+
+### S-P2-23. `TopicRow` renders raw `JSON.stringify(evidence.row)` to users
+**File:** `features/study/components/TopicRow.jsx:177-180`
+
+`<pre>{JSON.stringify(evidence.row, null, 2)}</pre>`. If the evidence endpoint ever returns rows to non-admins (a perms regression on the backend), aspirants see raw DB JSON. Even in admin mode this is unstyled and bypasses calibrated trust language.
+
+**Fix:** render structured `<Fact>` rows for known keys; show raw JSON only when `?debug=1`.
+
+### S-P2-24. `SubjectCard` has no `:focus-visible` ring
+**File:** `features/study/components/SubjectCard.jsx:18-27`
+
+The card switches between `<button>` and `<div>` based on `onSelect` presence, but has no focus ring. The parent's `ring-2 ring-[#2E2218]` selected indicator (`SubjectCards.jsx:35`) wraps the card *outside* the button — so it animates on click but is invisible on keyboard focus.
+
+**Fix:** add `focus-visible:ring-2 focus-visible:ring-clay-900` to the RootTag className when `active`.
+
+### S-P2-25. `TopicRow` "View PYQ tags" button no-ops after first click
+**File:** `features/study/components/TopicRow.jsx:165-171`
+
+After `evidence` is set, `loadEvidence` early-returns. Second click silently does nothing.
+
+**Fix:** scroll to / focus the rendered evidence block, or hide the button once evidence is loaded.
+
+### S-P2-26. `MockCorrectionPreview` "Preview" pill is honest but unactionable
+**File:** `features/study/components/MockCorrectionPreview.jsx:7-13, 33`
+
+Component is intentionally a preview (no planner endpoint exists). But it ships on user-facing pages — the five category labels read like recommendations the system makes. Users could mistake them for queued tasks. The "Preview" pill is below the heading rather than above.
+
+**Fix:** prepend "Preview only — Study OS doesn't generate these tasks yet" inside the card body, not just as a pill.
+
+### S-P2-27. `Compare.MiniSparkline` uses array index as React key
+**File:** `pages/study/Compare.jsx:60`
+
+`key={i}` for a 7-day history. When a new day rolls in, React reorders bar heights against stale keys → animation glitches.
+
+**Fix:** `key={p.date}`.
+
+### S-P2-28. `Compare` leaderboard renders every entry as "Aspirant" / "Group" / "Pair"
+**File:** `pages/study/Compare.jsx:270-272`
+
+Every user-row shows the literal word "Aspirant", every group-row shows "Group". Leaderboards exist to differentiate; rendering everyone as the same word makes the ranking decorative. Spec calls for anonymised display name or rank-only — pick one.
+
+**Fix:** `e.display_name || `Aspirant ${e.rank}``, gated on the backend's privacy setting.
+
+### S-P2-29. `Compare.allSettled` swallows secondary fetch failures
+**File:** `pages/study/Compare.jsx:93-103`
+
+Four secondary endpoints; on failure the corresponding section silently renders empty-state copy as if the user simply doesn't have data. Same class as S-P2-6 on Subjects.
+
+**Fix:** track per-request errors; surface inline "Couldn't load cohort comparison — retry."
+
+### S-P2-30. `CycleSubjectProgress` TrustStamp coerces unknown to `preview`
+**File:** `features/study/components/CycleSubjectProgress.jsx:54-55`
+
+`<TrustStamp kind={s.trust_status === "locked" ? "locked" : "preview"} />` — any non-locked status (including `not_connected`, `needs`) labels as "Preview." Users read "Preview" as "we made this up" even when the actual status is "needs verification."
+
+**Fix:** pass `s.trust_status` through; let `TrustStamp`'s STAMP_MAP pick the label; fall back to preview only when undefined.
+
+### S-P2-31. `PlanRiskFlags` keys on `f.code` with no fallback for collisions
+**File:** `features/study/components/PlanRiskFlags.jsx:31-32`
+
+If the backend ever emits two flags with the same code (e.g., two `subject_behind` flags for different subjects), React drops the duplicate silently. Backend audit needs to confirm uniqueness; in the meantime defend with `key={`${f.code}-${i}`}`.
+
+---
+
+## Well-built (no findings)
+
+- `MissionControlSkeleton.jsx` — short, pure presentational.
+- `SourceTrustBadge.jsx` — clean variant map, defensive `if (!variant) return null`, proper `role="status"` and `aria-label`.
+- `PhaseBandTimeline.jsx` — barring the timezone nit (S-P1-26), pure presentational and contract-aligned.
+- `PlanRiskFlags.jsx` — non-shaming language, empty state, no client-side fabrication.
+- `MasteryDistribution.jsx` — explicit target line, server-provided values only.
+
+---
+
+## Counts
+
+| Severity | Total |
+|---|---|
+| P0 | 19 |
+| P1 | 32 |
+| P2 | 31 |
+| **Total** | **82** |
+
 ---
 
 ## What I did not verify
 
-- `features/study/components/` (32 components, ~3.4k LOC) — sampled `StudyTaskCard` only. Components like `EngineTrace`, `PlanByTopic`, `MasteryDistribution`, `TopicTreePanel`, `NextRecommendedActions`, `TaskReasoningPanel`, `PlanPreferencesCard`, `PlanChangeLogCard`, `CompetitionContextCard`, `UpdateIntelligencePanel`, etc. need a separate pass.
-- `features/dashboard/components/TodaysActions.jsx` — used by both Dashboard and Today.
-- `Compare.jsx` (422 LOC) — sampled at the top only.
 - Backend response shapes for `/api/study/mission-control` and `/api/study/weekly-review` — assumed the documented shape; should be cross-checked against actual responses against a populated DB.
-- No mock-up rendering: cannot confirm the SVG charts (`MockScoreTrend`, `BacklogMovementChart`) look right at edge values without running the dev server.
+- No live rendering: cannot confirm the SVG charts (`MockScoreTrend`, `BacklogMovementChart`, `CycleProgressRail`, `PlannedVsActualChart`) look right at edge values without running the dev server.
+- `TopicTreePanel.jsx` itself (the parent wrapping `TopicRow`) — read but no findings beyond what `TopicRow` already surfaces.
 
 ---
 
 ## Recommended ship order
 
-1. **S-P0-1, S-P0-2, S-P0-3, S-P0-6**: error-handling sweep. Same pattern, same fix (try/catch + toast + rollback). Bundle into one PR.
-2. **S-P0-4, S-P0-5**: data-shape and empty-state correctness. The `EMPTY_MC` merge bug will manifest as soon as the backend returns sparse payloads; the WeeklyReview "0%" bug is a strategy-doc violation and is visible from minute one.
-3. **S-P0-7, S-P0-8**: Tracker controlled-inputs + Mocks validation. Ship together — both are data-correctness bugs that lie quietly.
-4. **S-P1 dead buttons (S-P1-1, S-P1-2)**: either wire or delete. Cheap.
-5. **S-P1 telemetry correctness (S-P1-5 timezone, S-P1-8 timer drift, S-P1-11 datetime UTC)**: needed before Truth Panel numbers can be trusted.
-6. **S-P1-3, S-P1-6, S-P1-7**: UX correctness — selected state, dropdown, fictional defaults.
-7. **P2 batch**: a11y + polish (especially S-P2-1 modal semantics — fast and high-leverage for keyboard/screen-reader users).
+1. **Error-handling sweep (P0):** S-P0-1, S-P0-2, S-P0-3, S-P0-6, S-P0-10, S-P0-11, S-P0-13, S-P0-16, S-P0-19. Same pattern, same fix (try/catch + toast + rollback). Bundle into one PR — touches Today, StudyPlan, Focus, Mocks, PlanPreferencesCard, TaskReasoningPanel, FocusReflectionPanel, Compare, TopicRow.
+2. **Crash fixes (P0):** S-P0-9 (TruthPanelCard tone crash — one-line fix), S-P0-14 (Compare MiniBar wrong prop — one-line fix), S-P0-15 (Compare pill tones — five-line fix), S-P0-17 + S-P0-18 (TodaysActions wrong label + undefined slug — small PR).
+3. **Data-shape and empty-state correctness:** S-P0-4 (EMPTY_MC merge), S-P0-5 (WeeklyReview "0%" shame loop), S-P1-14 (PlanByTopic 0h·0%), S-P0-12 (PlanByTopic NaN).
+4. **Fictional data leaking to live users (P1):** S-P1-7 (Focus defaults), S-P1-13 (UpdateIntelligencePanel sample updates), S-P1-20 (IntelligenceLayersPanel docs-as-data), S-P1-21 (FocusReflectionPanel "kept on device" lie), S-P1-32 (ExamCycleTimeline fake `planner_v1`).
+5. **Tracker + Mocks data correctness:** S-P0-7 (Tracker uncontrolled inputs), S-P0-8 (Mocks validation).
+6. **Dead buttons:** S-P1-1, S-P1-2, S-P1-19 (NextBestActionCard fallback). Either wire or delete.
+7. **Ranking and scale bugs (P1):** S-P1-22 (NextRecommendedActions scale mix — high-impact, affects what users do next), S-P1-23 (TopicRow priority 0/1).
+8. **Telemetry correctness:** S-P1-5, S-P1-8, S-P1-11, S-P1-16, S-P1-26 (all timezone / timer / locale issues). Needed before Truth Panel numbers can be trusted.
+9. **Layout / chart correctness:** S-P1-4, S-P1-9, S-P1-10, S-P1-24, S-P1-27, S-P1-28.
+10. **UX correctness:** S-P1-3, S-P1-6, S-P1-15, S-P1-17, S-P1-18, S-P1-29, S-P1-30, S-P1-31.
+11. **P2 batch:** a11y (S-P2-1 modal semantics, S-P2-12 EngineTrace SVG, S-P2-24 SubjectCard focus ring) — fast and high-leverage for keyboard / screen-reader users; then enum labels (S-P2-13, S-P2-16), polish, and contract cleanup.
