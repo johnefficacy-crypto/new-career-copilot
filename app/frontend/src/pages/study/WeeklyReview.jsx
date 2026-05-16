@@ -1,229 +1,138 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
-import {
-  Eyebrow,
-  Pill,
-  Chip,
-  StatusDot,
-  StudyCard,
-  SectionHeader,
-  PageHeader,
-} from "../../shared/ui/studyos";
+import { Eyebrow, StatusDot, StudyCard, PageHeader } from "../../shared/ui/studyos";
 
-// All optional fields below are read defensively — the weekly-review
-// endpoint may not always populate every field on day-one usage.
-// Null = "not reported yet" (renders "—"); 0 = "explicitly zero." Coercing
-// null to 0 produces the shame-loop "0% adherence" headline that the
-// strategy doc bans, so callers below differentiate them.
-const EMPTY = {
-  week_of: "This week",
-  week_start: null,
-  week_end: null,
-  hours_studied: null,
-  hours_planned: null,
-  adherence: null,
-  mocks_taken: null,
-  tasks_completed: null,
-  tasks_planned: null,
-  backlog_start: null,
-  backlog_end: null,
-  revision_coverage: null,
-  mock_trend: [],
-  highlights: [],
-  corrections: [],
-  next_changes: [],
-  improved: [],
-  declined: [],
-};
+const PERIODS = ["daily", "weekly", "monthly"];
 
-function num(v) {
-  return v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v);
+function fmtPct(v) {
+  if (v === null || v === undefined) return "—";
+  return `${Math.round(Number(v) * 100)}%`;
+}
+
+function readTone(score) {
+  if (score === null || score === undefined) return "bg-[#F3EEE8] text-[#6E5A4A] border-[#DDCFBE]";
+  const p = Number(score) * 100;
+  if (p >= 90) return "bg-[#E7F6EA] text-[#1E5A33] border-[#B5DDBF]";
+  if (p >= 75) return "bg-[#EEF7FF] text-[#164A7A] border-[#BCD9F4]";
+  if (p >= 60) return "bg-[#FFF8E8] text-[#6A4A09] border-[#F1DEAF]";
+  if (p >= 40) return "bg-[#FFF0E8] text-[#7A3A1D] border-[#EDC6B1]";
+  return "bg-[#FCEBEC] text-[#7A1D2C] border-[#E8B9C1]";
 }
 
 export default function WeeklyReview() {
-  const [d, setD] = useState(EMPTY);
-  const [err, setErr] = useState("");
+  const [period, setPeriod] = useState("weekly");
+  const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
 
-  function ingest(res) {
-    const r = res || {};
-    setD({
-      week_of: r.week_of || r.week_start || "This week",
-      week_start: r.week_start || null,
-      week_end: r.week_end || null,
-      hours_studied: num(r.hours_studied),
-      hours_planned: num(r.hours_planned),
-      adherence: num(r.adherence),
-      mocks_taken: num(r.mocks_taken),
-      tasks_completed: num(r.tasks_completed),
-      tasks_planned: num(r.tasks_planned),
-      backlog_start: num(r.backlog_start),
-      backlog_end: num(r.backlog_end),
-      revision_coverage: num(r.revision_coverage),
-      mock_trend: Array.isArray(r.mock_trend) ? r.mock_trend : [],
-      highlights: Array.isArray(r.highlights) ? r.highlights : [],
-      corrections: Array.isArray(r.corrections) ? r.corrections : [],
-      next_changes: Array.isArray(r.next_changes) ? r.next_changes : [],
-      improved: Array.isArray(r.improved) ? r.improved : [],
-      declined: Array.isArray(r.declined) ? r.declined : [],
-    });
-  }
+  const title = period === "daily" ? "Today's Report Card" : period === "weekly" ? "Weekly Report Card" : "Monthly Report Card";
 
-  async function load() {
+  const load = async (p = period) => {
     try {
-      ingest(await api.get("/api/study/weekly-review"));
+      const r = await api.get(`/api/study/report-card?period=${p}`);
+      setData(r || null);
       setErr("");
     } catch (e) {
-      setErr("Weekly review unavailable right now.");
+      setErr("Report card unavailable right now.");
       if (process.env.NODE_ENV !== "production") console.error(e);
     }
-  }
+  };
 
-  async function recompute() {
+  const recompute = async () => {
     setBusy(true);
     try {
-      ingest(await api.post("/api/study/weekly-review/compute"));
+      const r = await api.post(`/api/study/report-card/compute?period=${period}`);
+      setData(r || null);
+      setErr("");
     } catch (e) {
-      setErr("Could not recompute weekly review.");
-      if (process.env.NODE_ENV !== "production") console.error(e);
+      setErr("Could not recompute report card.");
     } finally {
       setBusy(false);
     }
-  }
+  };
 
   useEffect(() => {
-    load();
-    // load is stable for the lifetime of this component.
+    load(period);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [period]);
 
-  const adherencePct = d.adherence == null ? null : Math.round(d.adherence * 100);
-  const taskCompletion =
-    d.tasks_planned != null && d.tasks_planned > 0
-      ? `${d.tasks_completed ?? 0}/${d.tasks_planned}`
-      : "—";
-  const backlogMoved =
-    d.backlog_start !== null && d.backlog_end !== null
-      ? d.backlog_end - d.backlog_start
-      : null;
-  const mockTrendDelta =
-    d.mock_trend.length >= 2
-      ? Math.round(
-          (d.mock_trend[d.mock_trend.length - 1].percentage || 0) -
-            (d.mock_trend[0].percentage || 0),
-        )
-      : null;
-
-  const cells = [
-    {
-      k: "Hours studied",
-      v: d.hours_studied == null ? "—" : `${d.hours_studied}h`,
-      sub:
-        d.hours_planned == null
-          ? "No plan target yet"
-          : `of ${d.hours_planned}h planned`,
-    },
-    {
-      k: "Adherence",
-      v: adherencePct == null ? "—" : `${adherencePct}%`,
-      sub: adherencePct == null ? "Log a focus session to start" : "7-day rolling",
-    },
-    {
-      k: "Tasks complete",
-      v: taskCompletion,
-      sub: d.tasks_planned == null ? "No plan yet" : "of weekly plan",
-    },
-    {
-      k: "Mocks taken",
-      v: d.mocks_taken == null ? "—" : d.mocks_taken,
-      sub: mockTrendDelta !== null
-        ? `trend ${mockTrendDelta > 0 ? "+" : ""}${mockTrendDelta}%`
-        : "no trend yet",
-    },
-    {
-      k: "Backlog",
-      v:
-        backlogMoved === null
-          ? "—"
-          : `${d.backlog_start} → ${d.backlog_end}`,
-      sub:
-        backlogMoved === null
-          ? "Not reported"
-          : backlogMoved > 0
-            ? `+${backlogMoved} carried`
-            : backlogMoved < 0
-              ? `${backlogMoved} cleared`
-              : "Held steady",
-    },
-    {
-      k: "Revision cov.",
-      v:
-        d.revision_coverage !== null
-          ? `${Math.round(d.revision_coverage * 100)}%`
-          : "—",
-      sub: d.revision_coverage !== null ? "target 65%" : "not reported",
-    },
-  ];
+  const s = data?.scores || {};
+  const scoreCards = useMemo(
+    () => [
+      { k: "Adherence", v: fmtPct(s.plan_adherence_score), hint: s.label || "No evidence" },
+      { k: "Completion", v: fmtPct(s.plan_completion_score), hint: "Completed minutes / planned minutes" },
+      { k: "Focus adherence", v: fmtPct(s.focus_adherence_score), hint: "Focus minutes / planned minutes" },
+      { k: "Consistency", v: fmtPct(s.consistency_score), hint: "Active days / planned days" },
+      { k: "Revision", v: fmtPct(s.revision_completion_score), hint: "Revision tasks completed" },
+      { k: "Mock review", v: fmtPct(s.mock_review_score), hint: `Trust: ${data?.evidence_summary?.mock_score_block?.trust_label || "platform_verified"}` },
+      { k: "Corrections", v: fmtPct(s.correction_completion_score), hint: "Correction tasks closed" },
+      { k: "Backlog Δ", v: `${s.backlog_delta ?? "—"}`, hint: "Backlog movement" },
+    ],
+    [s, data],
+  );
 
   return (
     <div className="space-y-6" data-testid="weekly-review-page">
-      {err && (
-        <div className="rounded-xl bg-clay-50 text-clay-800 text-xs px-3 py-2">
-          {err}
-        </div>
-      )}
+      {err && <div className="rounded-xl bg-clay-50 text-clay-800 text-xs px-3 py-2">{err}</div>}
 
       <PageHeader
-        eyebrow={`Weekly review${d.week_start ? ` · ${d.week_start} → ${d.week_end}` : ""}`}
-        title="Close the loop."
-        sub="An honest read of last week. We surface what improved, what declined, and what Study OS will change next week — calmly. No streaks. No shame."
+        eyebrow="Report Card"
+        title={title}
+        sub="Deterministic progress analytics from tracked study behavior. No AI judgement, only evidence."
         right={
           <div className="flex gap-2 items-center">
             <StatusDot state="live" label="" />
-            <button
-              type="button"
-              onClick={recompute}
-              disabled={busy}
-              className="text-[12px] px-3 py-1.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold disabled:opacity-50"
-            >
+            <button type="button" onClick={recompute} disabled={busy} className="text-[12px] px-3 py-1.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold disabled:opacity-50">
               {busy ? "Recomputing…" : "Recompute"}
             </button>
           </div>
         }
       />
 
-      {/* Headline metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        {cells.map((c) => (
-          <div
-            key={c.k}
-            className="soft-card grain relative overflow-hidden rounded-[14px] px-4 py-3.5"
+      <div className="soft-card rounded-2xl p-2 inline-flex gap-2">
+        {PERIODS.map((p) => (
+          <button
+            key={p}
+            type="button"
+            onClick={() => setPeriod(p)}
+            className={`px-4 py-2 rounded-xl text-sm font-semibold ${period === p ? "bg-[#2E2218] text-[#F3EADB]" : "bg-transparent text-[#5D4B3F]"}`}
           >
+            {p[0].toUpperCase() + p.slice(1)}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {scoreCards.map((c) => (
+          <div key={c.k} className={`rounded-2xl border p-4 ${readTone(c.k === "Adherence" ? s.plan_adherence_score : c.k === "Completion" ? s.plan_completion_score : c.k === "Focus adherence" ? s.focus_adherence_score : c.k === "Consistency" ? s.consistency_score : null)}`}>
             <Eyebrow>{c.k}</Eyebrow>
-            <div className="font-heading text-[24px] mt-1.5 leading-none">{c.v}</div>
-            <div className="text-[11px] text-clay-700 mt-2">{c.sub}</div>
+            <div className="font-heading text-[28px] mt-1 leading-none">{c.v}</div>
+            <div className="text-[11px] mt-2 opacity-90">{c.hint}</div>
           </div>
         ))}
       </div>
 
-      {/* Improved / Declined */}
-      <div className="grid md:grid-cols-2 gap-6">
-        <ImprovedDeclined kind="improved" items={d.improved} highlights={d.highlights} />
-        <ImprovedDeclined kind="declined" items={d.declined} highlights={d.corrections} />
+      <div className="grid lg:grid-cols-3 gap-4">
+        <StudyCard className="!bg-[#F8FBFF] !border-[#C9DCF2]">
+          <Eyebrow>Task execution</Eyebrow>
+          <div className="text-sm mt-2">Planned: <b>{data?.planned_tasks ?? 0}</b></div>
+          <div className="text-sm">Completed: <b>{data?.completed_tasks ?? 0}</b></div>
+          <div className="text-sm">Missed / Skipped / Carried: <b>{data?.missed_tasks ?? 0}</b> / <b>{data?.skipped_tasks ?? 0}</b> / <b>{data?.carried_forward_tasks ?? 0}</b></div>
+        </StudyCard>
+        <StudyCard className="!bg-[#F4FBF2] !border-[#C9E8C3]">
+          <Eyebrow>Time evidence</Eyebrow>
+          <div className="text-sm mt-2">Planned minutes: <b>{data?.planned_minutes ?? 0}</b></div>
+          <div className="text-sm">Completed minutes: <b>{data?.completed_minutes ?? 0}</b></div>
+          <div className="text-sm">Focus minutes: <b>{data?.focus_minutes ?? 0}</b></div>
+        </StudyCard>
+        <StudyCard className="!bg-[#FFF8F1] !border-[#F0D7B8]">
+          <Eyebrow>Mocks and corrections</Eyebrow>
+          <div className="text-sm mt-2">Mocks taken / reviewed: <b>{data?.mocks_taken ?? 0}</b> / <b>{data?.mocks_reviewed ?? 0}</b></div>
+          <div className="text-sm">Correction tasks created / completed: <b>{data?.correction_tasks_created ?? 0}</b> / <b>{data?.correction_tasks_completed ?? 0}</b></div>
+          <div className="text-xs text-muted-foreground mt-2">Source: platform tracked</div>
+        </StudyCard>
       </div>
-
-      {/* Next week changes + correction checklist */}
-      <div className="grid lg:grid-cols-[1fr_360px] gap-6 items-start">
-        <NextWeekChanges items={d.next_changes} />
-        <UserCorrectionChecklist data={d} />
-      </div>
-
-      {/* Backlog movement */}
-      <BacklogMovementChart start={d.backlog_start} end={d.backlog_end} />
-
-      {/* Review loop explainer */}
-      <ReviewLoopExplainer />
     </div>
   );
 }
