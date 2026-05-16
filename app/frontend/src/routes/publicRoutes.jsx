@@ -21,9 +21,26 @@ import PrototypeAdminCommunity from "../prototype/screens/AdminCommunity";
 import PrototypeAdminMarket from "../prototype/screens/AdminMarket";
 import PrototypeAdminFunnel from "../prototype/screens/AdminFunnel";
 import PrototypeHandoff from "../prototype/screens/Handoff";
+import CopyrightSubmit from "../pages/CopyrightSubmit";
 
 const prototypeRouteElements = ENABLE_PROTOTYPE_ROUTES ? (
   <>
+    <Route path="/" element={<Landing />} />
+    <Route path="/login" element={<GuestOnly><Login /></GuestOnly>} />
+    <Route path="/signup" element={<GuestOnly><Signup /></GuestOnly>} />
+    <Route path="/forgot-password" element={<ForgotPassword />} />
+    <Route path="/reset-password" element={<ResetPassword />} />
+    <Route path="/copyright" element={<CopyrightSubmit />} />
+    <Route path="/dmca" element={<CopyrightSubmit />} />
+    {/* Unified guided onboarding — both entry modes are publicly reachable
+        so a guest can answer 2-3 questions before signing in. */}
+    <Route path="/app/onboarding/chat" element={<OnboardingChat />} />
+    <Route path="/go/:intent/:recruitmentSlug" element={<FunnelLandingRouter />} />
+    <Route path="/go/:intent/:recruitmentSlug/:postSlug" element={<FunnelLandingRouter />} />
+
+    {/* Prototype gallery — read-only visual ports of every prototype
+        screen, mounted with mock data. Reachable without auth so design
+        reviews and QA against the prototype don't need a login. */}
     <Route path="/prototype" element={<PrototypeIndex />} />
     <Route path="/prototype/eligibility" element={<PrototypeEligibility />} />
     <Route path="/prototype/groups" element={<PrototypeGroups />} />
