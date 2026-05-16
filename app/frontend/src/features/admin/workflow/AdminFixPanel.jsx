@@ -6,6 +6,7 @@ import PostEligibilityReviewGroup from "./PostEligibilityReviewGroup";
 import BlockerList from "./BlockerList";
 import ConflictResolver from "./ConflictResolver";
 import PromotionPreviewPanel from "./PromotionPreviewPanel";
+import OfficialSourceQuickResolver from "./OfficialSourceQuickResolver";
 import RecruitmentCriteriaPanel from "../recruitments/RecruitmentCriteriaPanel";
 import RecruitmentBlockerFixForm from "../recruitments/RecruitmentBlockerFixForm";
 import { HIGH_RISK_QUEUE_FIELDS, RECOMMENDED_REVIEW_FIELDS } from "./adminWorkflowContract";
@@ -69,7 +70,6 @@ export default function AdminFixPanel({
   onValidate,
   onVerify,
   onPublish,
-  onOpenOfficialSourceResolver,
   onSourcesChanged,
   onOpenConflict,
   onResolveConflict,
@@ -87,12 +87,13 @@ export default function AdminFixPanel({
         <QueueFixSection
           item={queueItem}
           conflicts={openConflicts}
+          sources={sources}
           onFieldAction={onQueueFieldAction}
           onPromote={onPromote}
           onMergeIntoExisting={onMergeIntoExisting}
           onMarkDuplicate={onMarkDuplicate}
           onRejectCandidate={onRejectCandidate}
-          onOpenOfficialSourceResolver={onOpenOfficialSourceResolver}
+          onSourcesChanged={onSourcesChanged}
           onOpenConflict={onOpenConflict}
           onRejectConflict={onRejectConflict}
           busy={busy}
@@ -122,7 +123,7 @@ export default function AdminFixPanel({
   );
 }
 
-function QueueFixSection({ item, conflicts = [], onFieldAction, onPromote, onMergeIntoExisting, onMarkDuplicate, onRejectCandidate, onOpenOfficialSourceResolver, onOpenConflict, onRejectConflict, busy }) {
+function QueueFixSection({ item, conflicts = [], sources = [], onFieldAction, onPromote, onMergeIntoExisting, onMarkDuplicate, onRejectCandidate, onSourcesChanged, onOpenConflict, onRejectConflict, busy }) {
   const blockers = item.unverified_fields || [];
   const dups = item.duplicate_candidates || [];
   const officialUnresolved = item.official_source_resolved === false;
@@ -169,19 +170,13 @@ function QueueFixSection({ item, conflicts = [], onFieldAction, onPromote, onMer
         />
 
         {officialUnresolved ? (
-          <div style={{ background: "var(--pending-bg)", border: "1px solid var(--pending)", borderRadius: 3, padding: "10px 12px" }}>
-            <div className="row" style={{ justifyContent: "space-between" }}>
-              <div>
-                <div className="fld-key" style={{ color: "var(--pending)" }}>Official source not resolved</div>
-                <div className="field-sub" style={{ color: "var(--pending)", marginTop: 3 }}>
-                  Backend gate blocks promotion until an official, verified source is linked.
-                </div>
-              </div>
-              <button type="button" className="btn small" onClick={onOpenOfficialSourceResolver} disabled={busy} data-testid="open-official-resolver">
-                Resolve
-              </button>
-            </div>
-          </div>
+          <OfficialSourceQuickResolver
+            queueItem={item}
+            sources={sources}
+            busy={busy}
+            onChanged={bumpPreview}
+            onSourcesChanged={onSourcesChanged}
+          />
         ) : null}
 
         {openConflicts.length > 0 ? (

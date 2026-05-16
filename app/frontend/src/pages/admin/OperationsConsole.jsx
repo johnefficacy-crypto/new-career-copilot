@@ -4,7 +4,6 @@ import { api, getApiUnverifiedFields } from "../../lib/api";
 import useAdminAction from "../../features/admin/shared/useAdminAction";
 import AdminProgressBar from "../../features/admin/workflow/AdminProgressBar";
 import AdminFixPanel from "../../features/admin/workflow/AdminFixPanel";
-import OfficialSourceResolver from "../../features/admin/workflow/OfficialSourceResolver";
 import DuplicateMergePreview from "../../features/admin/workflow/DuplicateMergePreview";
 import SelectionContextBanner from "../../features/admin/workflow/SelectionContextBanner";
 import useConflicts from "../../features/admin/workflow/useConflicts";
@@ -64,7 +63,6 @@ export default function OperationsConsole() {
   const [loadError, setLoadError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState(null);
-  const [resolverOpen, setResolverOpen] = useState(false);
   const [mergeTarget, setMergeTarget] = useState(null);
   const [conflictTarget, setConflictTarget] = useState(null);
   const [queueFilter, setQueueFilter] = useState(() => searchParams.get("queue_status") || "pending");
@@ -299,19 +297,6 @@ export default function OperationsConsole() {
     });
   }, [runAction, refetchConflicts, loadAll]);
 
-  const resolveOfficialSource = useCallback(async (payload) => {
-    if (!queueId) return;
-    await runAction({
-      key: `resolve-official-${queueId}`,
-      successMessage: "Official source resolved. Promotion gate flipped open.",
-      action: async () => {
-        await api.post(`/api/admin/scrape/items/${queueId}/resolve-official-source`, payload);
-        setResolverOpen(false);
-        await loadAll();
-      },
-    });
-  }, [queueId, runAction, loadAll]);
-
   const runScrape = useCallback(async (modeArg) => {
     const key = modeArg === "dry" ? "scrape-dry" : "scrape-live";
     await runAction({
@@ -407,12 +392,8 @@ export default function OperationsConsole() {
             onValidate={validate}
             onVerify={verify}
             onPublish={publish}
-            onOpenOfficialSourceResolver={() => setResolverOpen(true)}
-            resolverOpen={resolverOpen}
             mergeTarget={mergeTarget}
-            onCloseResolver={() => setResolverOpen(false)}
             onCloseMerge={() => setMergeTarget(null)}
-            onResolveOfficialSource={resolveOfficialSource}
             onSourcesChanged={loadAll}
             onConfirmMerge={confirmMerge}
             conflicts={conflicts}
@@ -563,9 +544,9 @@ function ReviewAndPublish({
   onClearSource, onClearQueue, onClearRecruitment,
   onStepClick, onQueueFieldAction,
   onPromote, onMergeIntoExisting, onMarkDuplicate, onRejectCandidate,
-  onValidate, onVerify, onPublish, onOpenOfficialSourceResolver,
-  resolverOpen, mergeTarget, onCloseResolver, onCloseMerge,
-  onResolveOfficialSource, onSourcesChanged, onConfirmMerge,
+  onValidate, onVerify, onPublish,
+  mergeTarget, onCloseMerge,
+  onSourcesChanged, onConfirmMerge,
   conflicts, conflictTarget, onOpenConflict, onResolveConflict, onRejectConflict, onCloseConflict,
   busy, msg, actionError,
 }) {
@@ -634,22 +615,12 @@ function ReviewAndPublish({
               onValidate={onValidate}
               onVerify={onVerify}
               onPublish={onPublish}
-              onOpenOfficialSourceResolver={onOpenOfficialSourceResolver}
               onSourcesChanged={onSourcesChanged}
               onOpenConflict={onOpenConflict}
               onResolveConflict={onResolveConflict}
               onRejectConflict={onRejectConflict}
               onCloseConflict={onCloseConflict}
               busy={busy}
-            />
-            <OfficialSourceResolver
-              open={resolverOpen && Boolean(selectedQueueItem)}
-              sources={sources}
-              queueItem={selectedQueueItem}
-              busy={busy}
-              onClose={onCloseResolver}
-              onSubmit={onResolveOfficialSource}
-              onSourcesChanged={onSourcesChanged}
             />
             <DuplicateMergePreview
               open={Boolean(mergeTarget && queueId)}
