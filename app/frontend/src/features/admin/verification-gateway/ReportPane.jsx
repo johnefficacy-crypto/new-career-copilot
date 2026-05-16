@@ -197,7 +197,6 @@ export default function ReportPane({
   onPromote,
   onConfirmSuggestedProof,
   onOpenOverride,
-  onOpenWorkflow,
 }) {
   if (!report) {
     return (
@@ -271,16 +270,6 @@ export default function ReportPane({
           <ResolvedProofCard report={report} />
         </>
       ) : null}
-
-      <button
-        type="button"
-        className="drawer-trigger"
-        onClick={() => onOpenWorkflow?.(report)}
-        data-testid="open-workflow-drawer"
-      >
-        <span>Workflow details · live timeline</span>
-        <span className="arrow">→</span>
-      </button>
     </div>
   );
 }

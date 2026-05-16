@@ -184,7 +184,12 @@ function findDetail(detailsList, field, entityScope) {
 }
 
 function statusFromDetail(detail) {
-  return detail?.reviewer_status || "unverified";
+  // Return undefined when there is no evidence row at all, so the caller
+  // can fall back to the flat ``field_evidence_status`` map. Returning a
+  // hard-coded "unverified" here used to swallow the verified status
+  // that lived on the flat map when the relational detail wasn't shipped
+  // on the queue row.
+  return detail?.reviewer_status || undefined;
 }
 
 function ReviewSection({ title, description, fields, extracted, evidence, evidenceDetails, onFieldAction }) {

@@ -913,6 +913,7 @@ def list_scrape_queue(
         # post would look globally verified).
         reviewed = evidence_by_queue.get(r.get("id"), {})
         r["field_evidence_status"] = reviewed
+        r["field_evidence_details"] = evidence_details_by_queue.get(r.get("id"), [])
         missing = [f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified", "corrected"}]
         r["unverified_fields"] = sorted(missing)
         r["open_conflicts"] = int(open_conflicts_by_queue.get(r.get("id"), 0))
