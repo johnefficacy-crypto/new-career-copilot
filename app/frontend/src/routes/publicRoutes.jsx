@@ -20,6 +20,7 @@ import PrototypeAdminCommunity from "../prototype/screens/AdminCommunity";
 import PrototypeAdminMarket from "../prototype/screens/AdminMarket";
 import PrototypeAdminFunnel from "../prototype/screens/AdminFunnel";
 import PrototypeHandoff from "../prototype/screens/Handoff";
+import CopyrightSubmit from "../pages/CopyrightSubmit";
 
 export const publicRouteElements = (
   <>
@@ -28,6 +29,8 @@ export const publicRouteElements = (
     <Route path="/signup" element={<GuestOnly><Signup /></GuestOnly>} />
     <Route path="/forgot-password" element={<ForgotPassword />} />
     <Route path="/reset-password" element={<ResetPassword />} />
+    <Route path="/copyright" element={<CopyrightSubmit />} />
+    <Route path="/dmca" element={<CopyrightSubmit />} />
     {/* Unified guided onboarding — both entry modes are publicly reachable
         so a guest can answer 2-3 questions before signing in. */}
     <Route path="/app/onboarding/chat" element={<OnboardingChat />} />

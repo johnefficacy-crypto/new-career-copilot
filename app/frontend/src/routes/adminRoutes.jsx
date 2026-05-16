@@ -20,6 +20,9 @@ import AdminCommunity from "../pages/admin/Community";
 import AdminAIPolicy from "../pages/admin/AIPolicy";
 import AdminPersona from "../pages/admin/Persona";
 import AdminExamIntelligence from "../pages/admin/ExamIntelligence";
+import AdminModerationQueue from "../pages/admin/ModerationQueue";
+import AdminKPIs from "../pages/admin/KPIs";
+import AdminCopyright from "../pages/admin/Copyright";
 
 export const adminRouteElements = (
   <Route element={<ProtectedRoute role={["admin", "super_admin"]}><AdminShell /></ProtectedRoute>}>
@@ -42,5 +45,8 @@ export const adminRouteElements = (
     <Route path="/admin/ai-policy" element={<AdminAIPolicy />} />
     <Route path="/admin/persona" element={<AdminPersona />} />
     <Route path="/admin/exam-intelligence" element={<AdminExamIntelligence />} />
+    <Route path="/admin/moderation" element={<AdminModerationQueue />} />
+    <Route path="/admin/kpis" element={<AdminKPIs />} />
+    <Route path="/admin/copyright" element={<AdminCopyright />} />
   </Route>
 );
