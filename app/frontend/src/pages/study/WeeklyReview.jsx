@@ -12,16 +12,19 @@ import {
 
 // All optional fields below are read defensively — the weekly-review
 // endpoint may not always populate every field on day-one usage.
+// Null = "not reported yet" (renders "—"); 0 = "explicitly zero." Coercing
+// null to 0 produces the shame-loop "0% adherence" headline that the
+// strategy doc bans, so callers below differentiate them.
 const EMPTY = {
   week_of: "This week",
   week_start: null,
   week_end: null,
-  hours_studied: 0,
-  hours_planned: 0,
-  adherence: 0,
-  mocks_taken: 0,
-  tasks_completed: 0,
-  tasks_planned: 0,
+  hours_studied: null,
+  hours_planned: null,
+  adherence: null,
+  mocks_taken: null,
+  tasks_completed: null,
+  tasks_planned: null,
   backlog_start: null,
   backlog_end: null,
   revision_coverage: null,
@@ -48,12 +51,12 @@ export default function WeeklyReview() {
       week_of: r.week_of || r.week_start || "This week",
       week_start: r.week_start || null,
       week_end: r.week_end || null,
-      hours_studied: num(r.hours_studied) ?? 0,
-      hours_planned: num(r.hours_planned) ?? 0,
-      adherence: num(r.adherence) ?? 0,
-      mocks_taken: num(r.mocks_taken) ?? 0,
-      tasks_completed: num(r.tasks_completed) ?? 0,
-      tasks_planned: num(r.tasks_planned) ?? 0,
+      hours_studied: num(r.hours_studied),
+      hours_planned: num(r.hours_planned),
+      adherence: num(r.adherence),
+      mocks_taken: num(r.mocks_taken),
+      tasks_completed: num(r.tasks_completed),
+      tasks_planned: num(r.tasks_planned),
       backlog_start: num(r.backlog_start),
       backlog_end: num(r.backlog_end),
       revision_coverage: num(r.revision_coverage),
@@ -94,9 +97,11 @@ export default function WeeklyReview() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const adherencePct = Math.round((d.adherence || 0) * 100);
+  const adherencePct = d.adherence == null ? null : Math.round(d.adherence * 100);
   const taskCompletion =
-    d.tasks_planned > 0 ? `${d.tasks_completed}/${d.tasks_planned}` : "—";
+    d.tasks_planned != null && d.tasks_planned > 0
+      ? `${d.tasks_completed ?? 0}/${d.tasks_planned}`
+      : "—";
   const backlogMoved =
     d.backlog_start !== null && d.backlog_end !== null
       ? d.backlog_end - d.backlog_start
@@ -112,22 +117,25 @@ export default function WeeklyReview() {
   const cells = [
     {
       k: "Hours studied",
-      v: `${d.hours_studied}h`,
-      sub: `of ${d.hours_planned}h planned`,
+      v: d.hours_studied == null ? "—" : `${d.hours_studied}h`,
+      sub:
+        d.hours_planned == null
+          ? "No plan target yet"
+          : `of ${d.hours_planned}h planned`,
     },
     {
       k: "Adherence",
-      v: `${adherencePct}%`,
-      sub: "7-day rolling",
+      v: adherencePct == null ? "—" : `${adherencePct}%`,
+      sub: adherencePct == null ? "Log a focus session to start" : "7-day rolling",
     },
     {
       k: "Tasks complete",
       v: taskCompletion,
-      sub: "of weekly plan",
+      sub: d.tasks_planned == null ? "No plan yet" : "of weekly plan",
     },
     {
       k: "Mocks taken",
-      v: d.mocks_taken,
+      v: d.mocks_taken == null ? "—" : d.mocks_taken,
       sub: mockTrendDelta !== null
         ? `trend ${mockTrendDelta > 0 ? "+" : ""}${mockTrendDelta}%`
         : "no trend yet",
@@ -342,7 +350,7 @@ function UserCorrectionChecklist({ data }) {
   const items = [
     {
       t: "Confirm next week's available hours",
-      body: `Last week: ${data.hours_studied}h. Plan target ${data.hours_planned || "—"}h.`,
+      body: `Last week: ${data.hours_studied == null ? "—" : `${data.hours_studied}h`}. Plan target ${data.hours_planned == null ? "—" : `${data.hours_planned}h`}.`,
     },
     {
       t: "Pick a focus topic to fully clear",
@@ -353,7 +361,7 @@ function UserCorrectionChecklist({ data }) {
     },
     {
       t: "Mock pace — keep weekly cadence?",
-      body: `Mocks taken: ${data.mocks_taken}. Cadence options: keep, slow, accelerate.`,
+      body: `Mocks taken: ${data.mocks_taken == null ? "—" : data.mocks_taken}. Cadence options: keep, slow, accelerate.`,
     },
   ];
   return (

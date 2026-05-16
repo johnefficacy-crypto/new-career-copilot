@@ -16,6 +16,7 @@ import ExamContextCard from "../features/study/components/ExamContextCard";
 import CompetitionContextCard from "../features/study/components/CompetitionContextCard";
 import PlanPreferencesCard from "../features/study/components/PlanPreferencesCard";
 import { Eyebrow, Pill, StatusDot, StudyCard, TrustStamp } from "../shared/ui/studyos";
+import { mergeMissionControl } from "./today/mergeMissionControl";
 
 const EMPTY_MC = {
   user_context: { dimensions: {}, scores: {}, safe_user_explanation: [] },
@@ -44,6 +45,7 @@ const EMPTY_MC = {
   meta: {},
 };
 
+
 function formatPercent(v) {
   if (v === null || v === undefined) return "—";
   return `${Math.round(Number(v) * 100)}%`;
@@ -67,7 +69,7 @@ export default function Today() {
       try {
         const data = await api.get("/api/study/mission-control");
         if (!cancelled) {
-          setMc({ ...EMPTY_MC, ...(data || {}) });
+          setMc(mergeMissionControl(EMPTY_MC, data));
           setError("");
         }
       } catch (e) {
