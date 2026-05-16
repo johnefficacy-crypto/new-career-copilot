@@ -45,7 +45,6 @@ export default function AdminFixPanel({
   recruitment,
   validateResult,
   sources = [],
-  nextAction = null,
   conflicts = [],
   conflictTarget = null,
   onQueueFieldAction,
@@ -60,11 +59,10 @@ export default function AdminFixPanel({
   onResolveConflict,
   onRejectConflict,
   onCloseConflict,
-  onJumpToTarget,
   busy,
 }) {
   if (!queueItem && !recruitment) {
-    return <NextActionEmpty nextAction={nextAction} onJump={onJumpToTarget} />;
+    return <FixPanelEmpty />;
   }
   const openConflicts = (conflicts || []).filter((c) => (c?.status || "open") === "open");
   return (
@@ -439,30 +437,15 @@ function RecruitmentFixSection({ recruitment, validateResult, sources = [], onVa
   );
 }
 
-function NextActionEmpty({ nextAction, onJump }) {
-  const status = nextAction?.status || "todo";
-  const tone = status === "blocked" ? "warn" : "";
-  const label = nextAction?.label || "Pick a workflow target on the left";
-  const reason = nextAction?.reason;
-  const hint = nextAction?.hint;
-  const ctaLabel = nextAction?.target ? "Jump to action" : "Select something to fix";
+function FixPanelEmpty() {
   return (
-    <section className={`next-action ${tone}`} data-testid="admin-fix-panel-empty">
+    <section className="next-action" data-testid="admin-fix-panel-empty">
       <div>
-        <div className="lbl" style={{ marginBottom: 5 }}>Next safe action</div>
-        <h4 className="oc-title" style={{ color: "var(--paper)" }}>{label}</h4>
-        {reason ? <div style={{ fontSize: 12, color: "rgba(250,247,242,0.85)", marginTop: 4 }} data-testid="empty-next-reason">{reason}</div> : null}
-        {hint ? <div style={{ fontSize: 11, color: "rgba(250,247,242,0.65)", marginTop: 4 }}>{hint}</div> : null}
+        <div className="lbl" style={{ marginBottom: 5 }}>Workspace</div>
+        <h4 className="oc-title" style={{ color: "var(--paper)" }}>
+          Pick a queue item or recruitment on the left to start working.
+        </h4>
       </div>
-      <button
-        type="button"
-        className="btn primary"
-        onClick={() => onJump?.(nextAction?.target, nextAction)}
-        disabled={!nextAction?.target}
-        data-testid="empty-next-cta"
-      >
-        {ctaLabel}
-      </button>
     </section>
   );
 }

@@ -10,7 +10,6 @@ import QueueItem from "../../features/admin/verification-gateway/QueueItem";
 import ReportPane from "../../features/admin/verification-gateway/ReportPane";
 import OverrideConflictModal from "../../features/admin/verification-gateway/OverrideConflictModal";
 import BulkActionModal from "../../features/admin/verification-gateway/BulkActionModal";
-import WorkflowDetailsDrawer from "../../features/admin/verification-gateway/WorkflowDetailsDrawer";
 import BatchAlertBanner from "../../features/admin/verification-gateway/BatchAlertBanner";
 import { verificationReportsService } from "../../services/verificationReportsService";
 
@@ -95,7 +94,6 @@ export default function VerificationGatewayConsole() {
   const [overrideTarget, setOverrideTarget] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkAction, setBulkAction] = useState("bulk_promote");
-  const [workflowOpen, setWorkflowOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
 
   const updateParams = useCallback((next) => {
@@ -360,7 +358,6 @@ export default function VerificationGatewayConsole() {
             onPromote={onPromote}
             onConfirmSuggestedProof={onConfirmSuggestedProof}
             onOpenOverride={onOpenOverride}
-            onOpenWorkflow={() => setWorkflowOpen(true)}
           />
         </div>
       </section>
@@ -380,12 +377,6 @@ export default function VerificationGatewayConsole() {
         onClose={() => setBulkOpen(false)}
         onApplied={onBulkApplied}
         busy={busy}
-      />
-
-      <WorkflowDetailsDrawer
-        open={workflowOpen}
-        report={selectedReport}
-        onClose={() => setWorkflowOpen(false)}
       />
     </div>
   );

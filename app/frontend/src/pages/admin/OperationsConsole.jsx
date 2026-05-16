@@ -3,9 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { api, getApiUnverifiedFields } from "../../lib/api";
 import useAdminAction from "../../features/admin/shared/useAdminAction";
 import AdminProgressBar from "../../features/admin/workflow/AdminProgressBar";
-import AdminActionChecklist from "../../features/admin/workflow/AdminActionChecklist";
 import AdminFixPanel from "../../features/admin/workflow/AdminFixPanel";
-import useAdminNextActions from "../../features/admin/workflow/useAdminNextActions";
 import OfficialSourceResolver from "../../features/admin/workflow/OfficialSourceResolver";
 import DuplicateMergePreview from "../../features/admin/workflow/DuplicateMergePreview";
 import SelectionContextBanner from "../../features/admin/workflow/SelectionContextBanner";
@@ -140,24 +138,9 @@ export default function OperationsConsole() {
     conflicts,
   }), [selectedSource, latestRun, selectedQueueItem, selectedRecruitment, validateResult, conflicts]);
 
-  const checklistItems = useAdminNextActions(progressState);
-  const nextAction = useMemo(
-    () => checklistItems.find((i) => i.status === "blocked")
-       || checklistItems.find((i) => i.status === "todo")
-       || null,
-    [checklistItems],
-  );
-
   const onStepClick = useCallback((stepId) => {
     const setupSteps = new Set(["source_ready", "dry_scrape", "live_scrape"]);
     updateParams({ mode: setupSteps.has(stepId) ? "source" : "queue" });
-  }, [updateParams]);
-
-  const onJumpToChecklistTarget = useCallback((target) => {
-    if (!target) return;
-    const setupTargets = new Set(["source-list", "run-controls"]);
-    if (setupTargets.has(target)) updateParams({ mode: "source" });
-    else updateParams({ mode: "queue" });
   }, [updateParams]);
 
   const queueFieldAction = useCallback(async (id, field, action, correctedValue, scope) => {
@@ -381,7 +364,6 @@ export default function OperationsConsole() {
           />
         ) : (
           <ReviewAndPublish
-            checklistItems={checklistItems}
             progressState={progressState}
             selectedSource={selectedSource}
             selectedQueueItem={selectedQueueItem}
@@ -392,7 +374,6 @@ export default function OperationsConsole() {
             recruitments={recruitments}
             sources={sources}
             validateResult={validateResult}
-            nextAction={nextAction}
             queueFilter={queueFilter}
             onQueueFilter={(value) => { setQueueFilter(value); updateParams({ queue_status: value === "pending" ? null : value }); }}
             onSelectQueue={(id) => updateParams({ queue_id: id })}
@@ -401,7 +382,6 @@ export default function OperationsConsole() {
             onClearQueue={() => updateParams({ queue_id: null })}
             onClearRecruitment={() => updateParams({ recruitment_id: null })}
             onStepClick={onStepClick}
-            onJumpToChecklistTarget={onJumpToChecklistTarget}
             onQueueFieldAction={queueFieldAction}
             onPromote={promote}
             onMergeIntoExisting={openMergePreview}
@@ -558,11 +538,11 @@ function SetupAndRun({ sources, selectedSource, runs, queue, onSelectSource, onR
 }
 
 function ReviewAndPublish({
-  checklistItems, progressState, selectedSource, selectedQueueItem, selectedRecruitment,
-  queue, queueId, recruitmentId, recruitments, sources, validateResult, nextAction,
+  progressState, selectedSource, selectedQueueItem, selectedRecruitment,
+  queue, queueId, recruitmentId, recruitments, sources, validateResult,
   queueFilter, onQueueFilter, onSelectQueue, onSelectRecruitment,
   onClearSource, onClearQueue, onClearRecruitment,
-  onStepClick, onJumpToChecklistTarget, onQueueFieldAction,
+  onStepClick, onQueueFieldAction,
   onPromote, onMergeIntoExisting, onMarkDuplicate,
   onValidate, onVerify, onPublish, onOpenOfficialSourceResolver,
   resolverOpen, mergeTarget, onCloseResolver, onCloseMerge,
@@ -570,16 +550,12 @@ function ReviewAndPublish({
   conflicts, conflictTarget, onOpenConflict, onResolveConflict, onRejectConflict, onCloseConflict,
   busy, msg, actionError,
 }) {
-  const calloutTitle = nextAction?.label || "Pick a workflow target";
-  const calloutMessage = nextAction?.reason || nextAction?.hint || "Select a queue item or recruitment to start working.";
-  const calloutTone = checklistItems.some((i) => i.status === "blocked") ? "warn" : "info";
-
   return (
     <>
       <section className="scrn" style={{ padding: "0 0 18px", border: "none" }}>
         <div className="scrn-head">
           <h3 className="oc-title">Review pipeline state</h3>
-          <span className="scrn-tag">progress + context + next action</span>
+          <span className="scrn-tag">progress + selection context</span>
         </div>
         <div className="stack">
           <AdminProgressBar state={progressState} onStepClick={onStepClick} />
@@ -591,16 +567,6 @@ function ReviewAndPublish({
             onClearQueue={onClearQueue}
             onClearRecruitment={onClearRecruitment}
           />
-          <div className={`next-action${calloutTone === "warn" ? " warn" : ""}`}>
-            <div>
-              <div className="lbl" style={{ marginBottom: 5 }}>Next safe action</div>
-              <h4 className="oc-title" style={{ color: "var(--paper)" }}>{calloutTitle}</h4>
-              <div style={{ fontSize: 12, color: "rgba(250,247,242,0.85)", marginTop: 4 }}>{calloutMessage}</div>
-            </div>
-            {nextAction?.target ? (
-              <button type="button" className="btn primary" onClick={() => onJumpToChecklistTarget(nextAction.target)}>Open fix panel</button>
-            ) : null}
-          </div>
           {msg ? <div className="warn-row" data-testid="ops-msg">{msg}</div> : null}
           {actionError ? <div className="err-row">{actionError.message}</div> : null}
         </div>
@@ -608,13 +574,11 @@ function ReviewAndPublish({
 
       <section className="scrn" style={{ borderTop: "1px solid var(--rule)" }}>
         <div className="scrn-head">
-          <h3 className="oc-title">Left rail · workspace</h3>
-          <span className="scrn-tag">checklist + queue · fix panel</span>
+          <h3 className="oc-title">Workspace</h3>
+          <span className="scrn-tag">queue · fix panel</span>
         </div>
         <div className="grid" style={{ display: "grid", gridTemplateColumns: "minmax(280px, 340px) 1fr", gap: 16 }}>
           <div className="stack" data-testid="ops-left-column">
-            <AdminActionChecklist items={checklistItems} onJump={onJumpToChecklistTarget} />
-
             <div className="card">
               <div className="filter-bar">
                 {QUEUE_FILTERS.map((f) => (
@@ -641,10 +605,8 @@ function ReviewAndPublish({
               recruitment={selectedRecruitment}
               validateResult={validateResult}
               sources={sources}
-              nextAction={nextAction}
               conflicts={conflicts}
               conflictTarget={conflictTarget}
-              onJumpToTarget={onJumpToChecklistTarget}
               onQueueFieldAction={onQueueFieldAction}
               onPromote={onPromote}
               onMergeIntoExisting={onMergeIntoExisting}
