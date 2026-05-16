@@ -10,6 +10,7 @@ import {
   PageHeader,
   Drawer,
 } from "../../shared/ui/studyos";
+import useApiAction from "../../lib/hooks/useApiAction";
 
 const PRESETS = [25, 50, 90];
 const RING_CIRCUMFERENCE = 540; // 2·π·r, r = 86
@@ -28,6 +29,7 @@ export default function Focus() {
   // Holds the just-finished session so the reflection drawer can render.
   const [reflectionSession, setReflectionSession] = useState(null);
   const tickRef = useRef(null);
+  const { run: runFocusAction } = useApiAction();
 
   useEffect(() => {
     api.get("/api/study/focus/summary").then(setSummary).catch(() => {});
@@ -72,12 +74,17 @@ export default function Focus() {
   }
 
   async function start() {
-    const s = await api.post("/api/study/focus/start", {
-      subject,
-      topic,
-      duration_min: duration,
+    const result = await runFocusAction({
+      action: () =>
+        api.post("/api/study/focus/start", {
+          subject,
+          topic,
+          duration_min: duration,
+        }),
+      errorMessage: "Couldn't start focus session — try again.",
     });
-    setSessionId(s.id);
+    if (!result.ok) return;
+    setSessionId(result.data?.id);
     setRunning(true);
     setReflectionSession(null);
   }
@@ -87,10 +94,17 @@ export default function Focus() {
   async function finish(auto = false) {
     const completedMin = Math.round((duration * 60 - remaining) / 60);
     if (sessionId) {
-      await api.post("/api/study/focus/stop", {
-        id: sessionId,
-        completed_min: auto ? duration : completedMin,
+      const result = await runFocusAction({
+        action: () =>
+          api.post("/api/study/focus/stop", {
+            id: sessionId,
+            completed_min: auto ? duration : completedMin,
+          }),
+        errorMessage: "Couldn't save focus session — your timer state is preserved; tap End again to retry.",
       });
+      // On failure: leave sessionId/running intact so the user can retry.
+      // No reflection is offered because nothing was logged.
+      if (!result.ok) return;
       // Offer a post-session reflection (kept local — see FocusReflectionPanel).
       setReflectionSession({
         subject,

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Activity, Target, Timer, Trophy, ShieldCheck } from "lucide-react";
 import { api } from "../../lib/api";
+import useApiAction from "../../lib/hooks/useApiAction";
 import {
   Card,
   Chip,
@@ -74,6 +75,7 @@ export default function StudyCompare() {
   const [trust, setTrust] = useState(null);
   const [settings, setSettings] = useState(null);
   const [err, setErr] = useState("");
+  const { run: runSettingAction } = useApiAction();
 
   const loadAll = useCallback(async () => {
     try {
@@ -108,12 +110,15 @@ export default function StudyCompare() {
   }, [loadAll]);
 
   async function updateSetting(patch) {
-    try {
-      const next = await api.put("/api/study/compare/settings", patch);
-      setSettings(next);
-    } catch (e) {
-      if (process.env.NODE_ENV !== "production") console.error(e);
-    }
+    const prior = settings;
+    await runSettingAction({
+      optimistic: () => setSettings((s) => ({ ...(s || {}), ...patch })),
+      action: () => api.put("/api/study/compare/settings", patch),
+      onSuccess: (next) => setSettings(next),
+      rollback: () => setSettings(prior),
+      errorMessage:
+        "Couldn’t save privacy setting — your previous setting is still in effect.",
+    });
   }
 
   const behaviorIndex = me?.behavior_index;

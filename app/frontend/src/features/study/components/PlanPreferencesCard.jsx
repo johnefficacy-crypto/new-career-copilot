@@ -111,6 +111,10 @@ export default function PlanPreferencesCard({ onRegenerated }) {
       }
     } catch (e) {
       setError(e?.message || "Could not save plan settings");
+      // Pull server truth back so the segmented buttons stop reflecting an
+      // unsaved local edit. Without this the user sees their changed value
+      // as if persisted and re-saves the same failing payload.
+      load();
     } finally {
       setBusy(false);
     }

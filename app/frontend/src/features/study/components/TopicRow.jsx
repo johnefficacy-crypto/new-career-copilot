@@ -31,20 +31,24 @@ function fmtPct(value) {
 export default function TopicRow({ topic, defaultOpen = false }) {
   const [open, setOpen] = useState(!!defaultOpen);
   const [evidence, setEvidence] = useState(null);
+  const [evidenceError, setEvidenceError] = useState(false);
   const [loadingEvidence, setLoadingEvidence] = useState(false);
   const t = topic || {};
 
   async function loadEvidence() {
     if (evidence || loadingEvidence) return;
     setLoadingEvidence(true);
+    setEvidenceError(false);
     try {
       const e = await api.get(
         `/api/evidence/exam_topic_coverage/${encodeURIComponent(t.topic_id)}`,
       );
       setEvidence(e);
     } catch {
-      // Evidence is admin-gated. Aspirants see "trust stamp only" copy.
-      setEvidence({ trust: { status: t.trust_status || "locked" } });
+      // Do NOT fabricate a successful evidence payload — a 403 (admin-only)
+      // and a 500 (genuine failure) must surface differently. Mark failure
+      // and let the drawer render a retry affordance + trust stamp only.
+      setEvidenceError(true);
     } finally {
       setLoadingEvidence(false);
     }
@@ -184,6 +188,21 @@ export default function TopicRow({ topic, defaultOpen = false }) {
             </p>
           ) : loadingEvidence ? (
             <p className="mt-3 text-[11.5px] text-clay-700">Loading evidence…</p>
+          ) : evidenceError ? (
+            <div
+              className="mt-3 flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] text-amber-800"
+              role="status"
+              data-testid="topic-row-evidence-error"
+            >
+              <span>Couldn’t load evidence. Trust stamp above is server-confirmed.</span>
+              <button
+                type="button"
+                onClick={loadEvidence}
+                className="font-semibold underline underline-offset-2 hover:text-amber-900"
+              >
+                Retry
+              </button>
+            </div>
           ) : null}
         </div>
       ) : null}
