@@ -315,7 +315,7 @@ export default function PlanImpactPreview() {
                     onClick={() => setDecision(d.value)}
                     className={`text-[12px] px-3 py-1.5 rounded-full font-semibold transition border ${
                       active
-                        ? "bg-[#2E2218] text-[#F3EADB] border-[#2E2218]"
+                        ? "bg-[#FFFDF9] text-[#2E2218] border-[#D9C7A7]"
                         : "bg-white/70 text-clay-700 border-[#E7DECB] hover:bg-clay-50"
                     }`}
                   >

@@ -211,7 +211,7 @@ export default function AdminPersona() {
             data-testid={`admin-persona-tab-${t.id}`}
             className={`px-3.5 py-1.5 rounded-full text-[12px] font-semibold transition ${
               tab === t.id
-                ? "bg-[#2E2218] text-[#F3EADB]"
+                ? "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]"
                 : "text-clay-700 hover:bg-[#E7D6BA]"
             }`}
             aria-pressed={tab === t.id}

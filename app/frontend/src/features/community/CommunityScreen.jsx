@@ -1,22 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import {
-  Avatar,
-  ChannelIcon,
-  ChannelRulesRibbon,
-  Drawer,
-  Eyebrow,
-  Flair,
-  Pill,
-  SpaceIcon,
-  StatusDot,
-  StudyCard as Card,
-  StudyEmptyState as EmptyState,
-  UserBadge,
-  UserChip,
-  VerifiedSeal,
-  VoteColumn,
-} from "../../shared/ui/studyos";
+import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import { useAuth } from "../../lib/authContext";
 import useApiAction from "../../lib/hooks/useApiAction";
@@ -28,197 +11,37 @@ import {
   FLAIRS,
   rulesKeyFor,
 } from "./data";
+import {
+  FieldAvatar,
+  FieldButton,
+  FieldCard,
+  FieldDivider,
+  FieldDrawer,
+  FieldEmpty,
+  FieldFieldGroup,
+  FieldInput,
+  FieldLabel,
+  FieldPill,
+  FieldSegmented,
+  FieldStatusDot,
+  FieldTextarea,
+  FieldVoteColumn,
+} from "./ui";
 
 // Channel creation hits the deprecated seed-only /spaces/{id}/channels handler.
-// Until it migrates to community_runtime (P1 from audit-p0-fixes.md), don't
-// expose a button that creates channels which never persist.
+// Keep gated until it migrates to community_runtime.
 const CHANNEL_CREATION_ENABLED = false;
 
 function parseTime(s) {
-  // Backend createdAt is ISO; seed createdAt is "4h"/"2d"/etc. Parse loosely.
   if (!s) return 0;
   const t = Date.parse(s);
   return Number.isNaN(t) ? 0 : t;
 }
 
-// Production port of docs/reference/UI_claude-code/screen-community.jsx.
-// Spaces rail (vertical) → Channels rail → Channel header + rules ribbon →
-// Thread list with sort toolbar → Thread detail with replies & sidebar.
-
-export default function CommunityScreen() {
-  const params = useParams();
-  const navigate = useNavigate();
-  const { isAdmin } = useAuth();
-
-  const [spaces, setSpaces] = useState(SEED_SPACES);
-  const [users, setUsers] = useState(SEED_USERS);
-  const [threadsByChannel, setThreadsByChannel] = useState(SEED_THREADS);
-  const [newChannelOpen, setNewChannelOpen] = useState(false);
-
-  const [spaceId, setSpaceId] = useState(params.spaceId || SEED_SPACES[0].id);
-  const [channelId, setChannelId] = useState(
-    params.channelId || SEED_SPACES[0].channels[0].id,
-  );
-  const threadId = params.threadId || null;
-  const [sort, setSort] = useState("hot");
-  const [composerOpen, setComposerOpen] = useState(false);
-
-  // Live data: fetch the spaces document; gracefully fall back to seed.
-  const refreshSpaces = useCallback(async () => {
-    try {
-      const d = await api.get("/api/community/spaces");
-      if (!d) return;
-      if (Array.isArray(d.spaces) && d.spaces.length) setSpaces(d.spaces);
-      if (d.users && typeof d.users === "object") setUsers((prev) => ({ ...prev, ...d.users }));
-      if (d.threads && typeof d.threads === "object")
-        setThreadsByChannel((prev) => ({ ...prev, ...d.threads }));
-    } catch {
-      // Backend not configured for spaces yet — keep seed data.
-    }
-  }, []);
-
-  useEffect(() => {
-    refreshSpaces();
-  }, [refreshSpaces]);
-
-  // After picking a channel, fetch its threads from the runtime endpoint so
-  // votes / newly-created threads / replies show up live. Sort is passed
-  // through so backend filters like `unanswered` work against the full set
-  // instead of a hot-only slice.
-  const refreshChannelThreads = useCallback(async (cid, sortKey = "hot") => {
-    if (!cid) return;
-    try {
-      const d = await api.get(`/api/community/channels/${cid}/threads?sort=${encodeURIComponent(sortKey)}`);
-      if (Array.isArray(d?.items)) {
-        setThreadsByChannel((prev) => ({ ...prev, [cid]: d.items }));
-      }
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    if (channelId) refreshChannelThreads(channelId, sort);
-  }, [channelId, sort, refreshChannelThreads]);
-
-  const space = useMemo(() => spaces.find((s) => s.id === spaceId) || spaces[0], [spaces, spaceId]);
-  const channel = useMemo(
-    () => space?.channels.find((c) => c.id === channelId) || space?.channels[0],
-    [space, channelId],
-  );
-  const threads = useMemo(() => threadsByChannel[channel?.id] || [], [threadsByChannel, channel]);
-  const thread = useMemo(() => (threadId ? threads.find((t) => t.id === threadId) : null), [threadId, threads]);
-
-  // URL updates are driven by user actions (pick/open/close), not by derived
-  // state. The previous effect ran on every render that updated `spaces`/
-  // `threads`, calling navigate(...,{replace:true}) and clobbering user-typed
-  // URLs as soon as data refreshed.
-
-  function pickSpace(s) {
-    setSpaceId(s.id);
-    setChannelId(s.channels[0].id);
-    navigate(`/app/community/${s.id}/${s.channels[0].id}`);
-  }
-  function pickChannel(c) {
-    setChannelId(c.id);
-    if (space) navigate(`/app/community/${space.id}/${c.id}`);
-  }
-  function openThread(t) {
-    if (space && channel) navigate(`/app/community/${space.id}/${channel.id}/${t.id}`);
-  }
-  function closeThread() {
-    if (space && channel) navigate(`/app/community/${space.id}/${channel.id}`);
-  }
-
-  const sortedThreads = useMemo(() => sortThreads(threads, sort, users), [threads, sort, users]);
-
-  return (
-    // Break out of the DashShell's padded centered <main> so the community
-    // surface renders edge-to-edge like the reference prototype.
-    <div
-      data-testid="community-page"
-      className="flex overflow-hidden"
-      style={{ height: "calc(100vh - 60px)" }}
-    >
-      <SpacesRail spaces={spaces} activeId={space?.id} onPick={pickSpace} />
-      <ChannelsRail
-        space={space}
-        activeId={channel?.id}
-        onPick={pickChannel}
-        isAdmin={isAdmin}
-        onCreateChannel={() => setNewChannelOpen(true)}
-      />
-
-      <section className="flex-1 min-w-0 flex flex-col bg-[#FBF6EF]">
-        <ChannelHeader space={space} channel={channel} onCompose={() => setComposerOpen(true)} />
-        {channel ? (
-          <ChannelRulesRibbon channel={channel} rules={CHANNEL_RULES[rulesKeyFor(channel)] || []} />
-        ) : null}
-
-        {thread ? (
-          <ThreadDetail
-            thread={thread}
-            channel={channel}
-            users={users}
-            onBack={closeThread}
-            onChanged={() => refreshChannelThreads(channel.id)}
-          />
-        ) : (
-          <>
-            <ThreadToolbar sort={sort} onSort={setSort} channel={channel} count={threads.length} />
-            <div className="flex-1 overflow-auto">
-              <div className="px-6 py-4">
-                {sortedThreads.length === 0 ? (
-                  <EmptyState
-                    icon="◌"
-                    title="No threads yet in this channel."
-                    body="Be the first to start one."
-                  />
-                ) : (
-                  <div className="space-y-3">
-                    {sortedThreads.map((t) => (
-                      <ThreadCard
-                        key={t.id}
-                        thread={t}
-                        users={users}
-                        channelId={channel.id}
-                        onOpen={() => openThread(t)}
-                        onVoted={() => refreshChannelThreads(channel.id)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-              <CommunityFooter space={space} />
-            </div>
-          </>
-        )}
-      </section>
-
-      {composerOpen ? (
-        <ComposerDrawer
-          channel={channel}
-          onClose={() => setComposerOpen(false)}
-          onCreated={(newThread) => {
-            refreshChannelThreads(channel.id);
-            if (newThread?.id) navigate(`/app/community/${space.id}/${channel.id}/${newThread.id}`);
-          }}
-        />
-      ) : null}
-
-      {newChannelOpen ? (
-        <NewChannelDrawer
-          space={space}
-          onClose={() => setNewChannelOpen(false)}
-          onCreated={(ch) => {
-            refreshSpaces();
-            if (ch?.id) {
-              setChannelId(ch.id);
-              navigate(`/app/community/${space.id}/${ch.id}`, { replace: true });
-            }
-          }}
-        />
-      ) : null}
-    </div>
-  );
+function isVerifiedAuthor(users, t) {
+  const u = users[t.author];
+  if (!u || !u.badge) return false;
+  return ["topper", "officer", "admin"].includes(u.badge.kind);
 }
 
 function sortThreads(list, sort, users) {
@@ -251,56 +74,230 @@ function sortThreads(list, sort, users) {
   }
 }
 
-function isVerifiedAuthor(users, t) {
-  const u = users[t.author];
-  if (!u || !u.badge) return false;
-  return ["topper", "officer", "admin"].includes(u.badge.kind);
+function flairTone(kind) {
+  switch (kind) {
+    case "pyq":
+      return "warn";
+    case "doubt":
+      return "info";
+    case "topper":
+    case "verified":
+      return "accent";
+    case "admin":
+      return "ink";
+    case "vent":
+      return "neutral";
+    default:
+      return "outline";
+  }
+}
+
+export default function CommunityScreen() {
+  const params = useParams();
+  const navigate = useNavigate();
+  const { isAdmin } = useAuth();
+
+  const [spaces, setSpaces] = useState(SEED_SPACES);
+  const [users, setUsers] = useState(SEED_USERS);
+  const [threadsByChannel, setThreadsByChannel] = useState(SEED_THREADS);
+  const [newChannelOpen, setNewChannelOpen] = useState(false);
+
+  const [spaceId, setSpaceId] = useState(params.spaceId || SEED_SPACES[0].id);
+  const [channelId, setChannelId] = useState(params.channelId || SEED_SPACES[0].channels[0].id);
+  const threadId = params.threadId || null;
+  const [sort, setSort] = useState("hot");
+  const [composerOpen, setComposerOpen] = useState(false);
+
+  const refreshSpaces = useCallback(async () => {
+    try {
+      const d = await api.get("/api/community/spaces");
+      if (!d) return;
+      if (Array.isArray(d.spaces) && d.spaces.length) setSpaces(d.spaces);
+      if (d.users && typeof d.users === "object") setUsers((prev) => ({ ...prev, ...d.users }));
+      if (d.threads && typeof d.threads === "object") setThreadsByChannel((prev) => ({ ...prev, ...d.threads }));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    refreshSpaces();
+  }, [refreshSpaces]);
+
+  const refreshChannelThreads = useCallback(async (cid, sortKey = "hot") => {
+    if (!cid) return;
+    try {
+      const d = await api.get(`/api/community/channels/${cid}/threads?sort=${encodeURIComponent(sortKey)}`);
+      if (Array.isArray(d?.items)) {
+        setThreadsByChannel((prev) => ({ ...prev, [cid]: d.items }));
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (channelId) refreshChannelThreads(channelId, sort);
+  }, [channelId, sort, refreshChannelThreads]);
+
+  const space = useMemo(() => spaces.find((s) => s.id === spaceId) || spaces[0], [spaces, spaceId]);
+  const channel = useMemo(
+    () => space?.channels.find((c) => c.id === channelId) || space?.channels[0],
+    [space, channelId],
+  );
+  const threads = useMemo(() => threadsByChannel[channel?.id] || [], [threadsByChannel, channel]);
+  const thread = useMemo(() => (threadId ? threads.find((t) => t.id === threadId) : null), [threadId, threads]);
+
+  function pickSpace(s) {
+    setSpaceId(s.id);
+    setChannelId(s.channels[0].id);
+    navigate(`/app/community/${s.id}/${s.channels[0].id}`);
+  }
+  function pickChannel(c) {
+    setChannelId(c.id);
+    if (space) navigate(`/app/community/${space.id}/${c.id}`);
+  }
+  function openThread(t) {
+    if (space && channel) navigate(`/app/community/${space.id}/${channel.id}/${t.id}`);
+  }
+  function closeThread() {
+    if (space && channel) navigate(`/app/community/${space.id}/${channel.id}`);
+  }
+
+  const sortedThreads = useMemo(() => sortThreads(threads, sort, users), [threads, sort, users]);
+
+  return (
+    <div
+      data-testid="community-page"
+      className="flex overflow-hidden bg-field-paper text-field-ink"
+      style={{ height: "calc(100vh - 60px)" }}
+    >
+      <aside className="w-[286px] border-r border-field-line bg-field-canvas flex flex-col shrink-0">
+        <CommunityTopNav spaces={spaces} activeId={space?.id} onPick={pickSpace} />
+        <ChannelsRail
+          space={space}
+          activeId={channel?.id}
+          onPick={pickChannel}
+          isAdmin={isAdmin}
+          onCreateChannel={() => setNewChannelOpen(true)}
+        />
+      </aside>
+
+      <section className="flex-1 min-w-0 flex flex-col bg-field-paper">
+        <ChannelHeader space={space} channel={channel} onCompose={() => setComposerOpen(true)} />
+        {channel ? <ChannelRules channel={channel} /> : null}
+
+        {thread ? (
+          <ThreadDetail
+            thread={thread}
+            channel={channel}
+            users={users}
+            onBack={closeThread}
+            onChanged={() => refreshChannelThreads(channel.id, sort)}
+          />
+        ) : (
+          <>
+            <ThreadToolbar sort={sort} onSort={setSort} channel={channel} count={threads.length} />
+            <div className="flex-1 overflow-auto">
+              <div className="px-6 py-5 max-w-[1100px]">
+                {sortedThreads.length === 0 ? (
+                  <FieldEmpty
+                    icon="◌"
+                    title="No threads yet in this channel."
+                    body="Be the first to start one."
+                  />
+                ) : (
+                  <div className="space-y-2.5">
+                    {sortedThreads.map((t) => (
+                      <ThreadCard
+                        key={t.id}
+                        thread={t}
+                        users={users}
+                        channelId={channel.id}
+                        onOpen={() => openThread(t)}
+                        onVoted={() => refreshChannelThreads(channel.id, sort)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+              <CommunityFooter space={space} />
+            </div>
+          </>
+        )}
+      </section>
+
+      {composerOpen ? (
+        <ComposerDrawer
+          channel={channel}
+          onClose={() => setComposerOpen(false)}
+          onCreated={(newThread) => {
+            refreshChannelThreads(channel.id, sort);
+            if (newThread?.id) navigate(`/app/community/${space.id}/${channel.id}/${newThread.id}`);
+          }}
+        />
+      ) : null}
+
+      {newChannelOpen ? (
+        <NewChannelDrawer
+          space={space}
+          onClose={() => setNewChannelOpen(false)}
+          onCreated={() => {
+            refreshSpaces();
+          }}
+        />
+      ) : null}
+    </div>
+  );
 }
 
 /* ─── Spaces rail ──────────────────────────────────────────────────────── */
-function SpacesRail({ spaces, activeId, onPick }) {
+
+// Horizontal space picker that sits at the top of the unified left column.
+// Replaces the original 64px vertical rail per the "remove quick jump"
+// restructure (commit 42f1aa5).
+function CommunityTopNav({ spaces, activeId, onPick }) {
   return (
-    <aside className="w-[64px] bg-[#F3EADB] border-r border-[#E7DECB] flex flex-col items-center py-4 gap-2 overflow-y-auto shrink-0">
-      <div className="num-mono text-[9px] text-[#A68057] tracking-[0.18em] mb-1">SPACES</div>
-      {spaces.map((s) => {
-        const totalUnread = s.channels.reduce((a, c) => a + (c.unread || 0), 0);
-        return (
-          <button
-            key={s.id}
-            onClick={() => onPick(s)}
-            className="relative group"
-            title={s.name}
-            data-testid={`space-${s.id}`}
-            type="button"
-          >
-            <SpaceIcon space={s} size={44} active={activeId === s.id} />
-            {totalUnread > 0 ? (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#4E3A29] text-[#F3EADB] text-[9px] font-bold flex items-center justify-center num-mono">
-                {totalUnread}
-              </span>
-            ) : null}
-            <span className="absolute left-[52px] top-1/2 -translate-y-1/2 px-2 py-1 rounded-md bg-[#4E3A29] text-[#F3EADB] text-[10.5px] whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition z-10">
-              {s.name}
-            </span>
-          </button>
-        );
-      })}
-      <div className="mt-1 h-px w-8 bg-[#D6C9AC]" />
-      <button
-        type="button"
-        className="w-11 h-11 rounded-xl border border-dashed border-[#A68057] text-[#6C5038] flex items-center justify-center hover:bg-[#FBF6EF]"
-        title="Browse all spaces"
-        aria-label="Browse all spaces"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-        </svg>
-      </button>
-    </aside>
+    <div className="px-3 pt-3 pb-2.5 border-b border-field-line bg-field-paper">
+      <FieldLabel className="block mb-2">Community spaces</FieldLabel>
+      <div className="flex flex-wrap gap-1.5">
+        {spaces.map((s) => {
+          const active = activeId === s.id;
+          const totalUnread = s.channels.reduce((a, c) => a + (c.unread || 0), 0);
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => onPick(s)}
+              data-testid={`space-chip-${s.id}`}
+              aria-pressed={active}
+              className={`inline-flex items-center gap-1.5 px-2.5 h-7 rounded-md border text-[11.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-field-accent ${
+                active
+                  ? "bg-field-accent text-white border-field-accent"
+                  : "bg-field-canvas text-field-ink-muted border-field-line hover:bg-field-line-soft hover:text-field-ink"
+              }`}
+            >
+              {s.glyph ? (
+                <span aria-hidden="true" className="text-[12px] leading-none">
+                  {s.glyph}
+                </span>
+              ) : null}
+              <span className="truncate">{s.name}</span>
+              {totalUnread > 0 ? (
+                <span
+                  className={`font-mono text-[9.5px] tabular-nums ${
+                    active ? "text-white/85" : "text-field-ink-quiet"
+                  }`}
+                >
+                  {totalUnread > 99 ? "99+" : totalUnread}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
 /* ─── Channels rail ────────────────────────────────────────────────────── */
+
 function ChannelsRail({ space, activeId, onPick, isAdmin, onCreateChannel }) {
   if (!space) return null;
   const grouped = {
@@ -309,33 +306,25 @@ function ChannelsRail({ space, activeId, onPick, isAdmin, onCreateChannel }) {
     quiet: space.channels.filter((c) => !c.lockedAdminWrite && (c.unread || 0) === 0),
   };
   return (
-    <aside className="w-[252px] border-r border-[#E7DECB] bg-[#FBF4E8] flex flex-col shrink-0">
-      <div className="px-4 pt-4 pb-3 border-b border-[#E7DECB]">
+    <div className="flex-1 min-h-0 flex flex-col">
+      <div className="px-4 pt-4 pb-4 border-b border-field-line">
         <div className="flex items-center gap-3">
-          <SpaceIcon space={space} size={36} active />
+          <FieldAvatar user={{ id: space.id, name: space.name, avatarColor: space.color }} size={36} className="rounded-md" />
           <div className="min-w-0 flex-1">
-            <div className="font-heading text-[16px] leading-tight truncate">{space.name}</div>
-            <div className="num-mono text-[10px] text-clay-700 mt-0.5">
-              {space.members.toLocaleString()} members · <span className="text-[#33482F]">●</span> {space.online.toLocaleString()} online
+            <div className="font-sans text-[15px] font-semibold leading-tight truncate text-field-ink">{space.name}</div>
+            <div className="font-mono text-[10px] text-field-ink-quiet mt-0.5 uppercase tracking-[0.06em]">
+              {space.members.toLocaleString()} · {space.online.toLocaleString()} online
             </div>
           </div>
         </div>
-        <div className="mt-3 flex items-center flex-wrap gap-1.5 text-[10.5px]">
+        <div className="mt-3 flex flex-wrap gap-1.5">
           {space.verifiedToppers > 0 ? (
-            <span className="inline-flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-sm bg-[#54794E]" />
-              {space.verifiedToppers} verified toppers
-            </span>
+            <FieldPill tone="accent">{space.verifiedToppers} toppers</FieldPill>
           ) : null}
-          {space.mentors > 0 ? (
-            <span className="inline-flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-sm bg-[#A68057]" />
-              {space.mentors} mentors
-            </span>
-          ) : null}
+          {space.mentors > 0 ? <FieldPill tone="info">{space.mentors} mentors</FieldPill> : null}
         </div>
         {space.pinNote ? (
-          <div className="mt-3 text-[11px] text-clay-700 italic leading-snug border-l-2 border-[#D6BC93] pl-2.5">
+          <div className="mt-3 text-[11.5px] text-field-ink-muted italic leading-snug border-l-2 border-field-line pl-2.5">
             {space.pinNote}
           </div>
         ) : null}
@@ -343,165 +332,137 @@ function ChannelsRail({ space, activeId, onPick, isAdmin, onCreateChannel }) {
 
       <div className="flex-1 overflow-y-auto px-2 py-2">
         {grouped.pinned.length > 0 ? (
-          <RailGroup title="Official" channels={grouped.pinned} activeId={activeId} onPick={onPick} space={space} />
+          <RailGroup title="Official" channels={grouped.pinned} activeId={activeId} onPick={onPick} />
         ) : null}
         {grouped.active.length > 0 ? (
-          <RailGroup title="Active" channels={grouped.active} activeId={activeId} onPick={onPick} space={space} />
+          <RailGroup title="Active" channels={grouped.active} activeId={activeId} onPick={onPick} />
         ) : null}
         {grouped.quiet.length > 0 ? (
-          <RailGroup title="Quiet" channels={grouped.quiet} activeId={activeId} onPick={onPick} space={space} muted />
+          <RailGroup title="Quiet" channels={grouped.quiet} activeId={activeId} onPick={onPick} muted />
         ) : null}
         {isAdmin && CHANNEL_CREATION_ENABLED ? (
           <button
             type="button"
             onClick={onCreateChannel}
             data-testid="new-channel-btn"
-            className="mt-2 w-full text-left flex items-center gap-2 px-2 py-2 rounded-lg border border-dashed border-[#A68057] text-clay-700 hover:bg-[#F3EADB]"
+            className="mt-2 w-full text-left flex items-center gap-2 px-2 py-2 rounded-md border border-dashed border-field-line text-field-ink-muted hover:bg-field-line-soft"
           >
-            <span className="w-[26px] h-[26px] rounded-md border border-dashed border-[#A68057] flex items-center justify-center text-[#A68057] font-mono text-[16px] leading-none">
+            <span className="w-6 h-6 rounded-md border border-dashed border-field-line flex items-center justify-center font-mono text-[15px] leading-none">
               +
             </span>
             <span className="text-[12.5px] font-medium">New channel</span>
-            <span className="ml-auto num-mono text-[9px] text-[#A68057] uppercase tracking-[0.18em]">admin</span>
+            <FieldLabel className="ml-auto">admin</FieldLabel>
           </button>
         ) : null}
       </div>
 
-      <div className="px-3 py-3 border-t border-[#E7DECB] bg-[#F3EADB]/40">
-        <div className="num-mono text-[9.5px] text-[#A68057] tracking-[0.18em] mb-1.5">QUICK JUMP</div>
-        <div className="flex flex-col gap-1.5">
-          <QuickLink to="/app/groups" icon="◇" label="Find a study group" />
-          <QuickLink to="/app/partners" icon="↔" label="Accountability partner" />
-          <QuickLink to="/app/mentors" icon="◊" label="Mentor sessions" />
-          <QuickLink to="/app/resources" icon="≣" label="Resource library" />
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-function RailGroup({ title, channels, activeId, onPick, space, muted }) {
-  return (
-    <div className="mb-3">
-      <div className="num-mono text-[9.5px] text-[#A68057] tracking-[0.18em] px-2 mb-1.5 flex items-center justify-between">
-        <span>{title}</span>
-        <span className="text-[#C9B68F]">{channels.length}</span>
-      </div>
-      {channels.map((ch) => (
-        <button
-          key={ch.id}
-          type="button"
-          onClick={() => onPick(ch)}
-          data-testid={`channel-${ch.id}`}
-          className={`w-full text-left flex items-center gap-2.5 px-2 py-2 rounded-lg mb-0.5 transition ${
-            activeId === ch.id ? "bg-[#4E3A29]" : "hover:bg-[#F3EADB]"
-          }`}
-        >
-          <ChannelIcon ch={ch} color={space.color} size={26} />
-          <span className="flex-1 min-w-0">
-            <span className={`flex items-center gap-1.5 ${activeId === ch.id ? "text-[#F3EADB]" : "text-[#2E2218]"}`}>
-              <span className="text-[12.5px] font-medium truncate">{ch.name}</span>
-              {ch.lockedAdminWrite ? (
-                <svg
-                  width="9"
-                  height="9"
-                  viewBox="0 0 12 12"
-                  fill="none"
-                  className="shrink-0"
-                  style={{ color: activeId === ch.id ? "#D6BC93" : "#A68057" }}
-                  aria-hidden="true"
-                >
-                  <rect x="3" y="5" width="6" height="5" rx="0.6" stroke="currentColor" strokeWidth="1.1" />
-                  <path d="M4.5 5V3.6A1.5 1.5 0 0 1 7.5 3.6V5" stroke="currentColor" strokeWidth="1.1" />
-                </svg>
-              ) : null}
-            </span>
-            <span
-              className={`block text-[10px] num-mono ${
-                activeId === ch.id ? "text-[#D6BC93]" : muted ? "text-[#C9B68F]" : "text-[#A68057]"
-              }`}
-            >
-              {ch.members ? `${ch.members.toLocaleString()} · ` : ""}
-              {ch.lastActiveAt}
-            </span>
-          </span>
-          {ch.unread > 0 ? (
-            <span
-              className={`min-w-[20px] h-[18px] px-1.5 rounded-full text-[9.5px] font-bold flex items-center justify-center num-mono ${
-                activeId === ch.id ? "bg-[#D6BC93] text-[#2E2218]" : "bg-[#4E3A29] text-[#F3EADB]"
-              }`}
-            >
-              {ch.unread}
-            </span>
-          ) : null}
-        </button>
-      ))}
     </div>
   );
 }
 
-function QuickLink({ to, icon, label, badge }) {
+function RailGroup({ title, channels, activeId, onPick, muted }) {
   return (
-    <Link
-      to={to}
-      className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-[#F3EADB] text-[11.5px] text-[#3a2e22]"
-    >
-      <span className="w-5 text-center text-[14px] text-[#A68057]">{icon}</span>
-      <span className="flex-1">{label}</span>
-      {badge ? <span className="num-mono text-[9.5px] text-clay-700">{badge}</span> : null}
-    </Link>
+    <div className="mb-3">
+      <div className="flex items-center justify-between px-2 mb-1">
+        <FieldLabel>{title}</FieldLabel>
+        <span className="font-mono text-[9.5px] text-field-ink-quiet">{channels.length}</span>
+      </div>
+      {channels.map((ch) => {
+        const active = activeId === ch.id;
+        return (
+          <button
+            key={ch.id}
+            type="button"
+            onClick={() => onPick(ch)}
+            data-testid={`channel-${ch.id}`}
+            className={`w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-md mb-0.5 transition-colors ${
+              active
+                ? "bg-field-accent-soft text-field-accent-ink"
+                : muted
+                  ? "text-field-ink-quiet hover:bg-field-line-soft hover:text-field-ink-muted"
+                  : "text-field-ink-muted hover:bg-field-line-soft hover:text-field-ink"
+            }`}
+          >
+            <span className="font-mono text-[14px] w-5 text-center text-field-ink-quiet">#</span>
+            <span className="flex-1 min-w-0">
+              <span className="flex items-center gap-1.5">
+                <span className="text-[12.5px] font-medium truncate">{ch.name}</span>
+                {ch.lockedAdminWrite ? (
+                  <svg width="9" height="9" viewBox="0 0 12 12" fill="none" className="shrink-0 text-field-ink-quiet" aria-hidden="true">
+                    <rect x="3" y="5" width="6" height="5" rx="0.6" stroke="currentColor" strokeWidth="1.1" />
+                    <path d="M4.5 5V3.6A1.5 1.5 0 0 1 7.5 3.6V5" stroke="currentColor" strokeWidth="1.1" />
+                  </svg>
+                ) : null}
+              </span>
+              <span className="block font-mono text-[10px] text-field-ink-quiet uppercase tracking-[0.06em] truncate">
+                {ch.members ? `${ch.members.toLocaleString()} · ` : ""}
+                {ch.lastActiveAt}
+              </span>
+            </span>
+            {ch.unread > 0 ? (
+              <span
+                className={`min-w-[18px] h-[18px] px-1.5 rounded-full text-[9.5px] font-bold flex items-center justify-center font-mono ${
+                  active ? "bg-field-accent text-white" : "bg-field-line text-field-ink"
+                }`}
+              >
+                {ch.unread > 99 ? "99+" : ch.unread}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
-/* ─── Channel header + toolbar ─────────────────────────────────────────── */
+/* ─── Channel header + rules ───────────────────────────────────────────── */
+
 function ChannelHeader({ space, channel, onCompose }) {
   if (!channel || !space) return null;
   return (
-    <div className="px-6 pt-5 pb-3 border-b border-[#E7DECB] bg-[#FBF6EF] flex items-end justify-between gap-4">
+    <div className="px-6 pt-5 pb-4 border-b border-field-line bg-field-canvas flex items-end justify-between gap-4">
       <div className="min-w-0">
-        <div className="flex items-center gap-2 text-[11px] text-clay-700">
-          <span className="num-mono tracking-[0.18em] uppercase">{space.name}</span>
-          <span>›</span>
-          {channel.lockedAdminWrite ? <Pill tone="ink">Locked · admin-write only</Pill> : null}
+        <div className="flex items-center gap-2 font-mono text-[10.5px] text-field-ink-quiet uppercase tracking-[0.12em]">
+          <span>{space.name}</span>
+          <span aria-hidden="true">›</span>
+          {channel.lockedAdminWrite ? <FieldPill tone="ink">Admin-write only</FieldPill> : null}
         </div>
-        <h1 className="font-heading text-[28px] mt-1 flex items-baseline gap-2 leading-tight">
-          <span className="font-mono text-[20px] text-[#A68057]">#</span>
+        <h1 className="font-sans text-[24px] font-semibold mt-1.5 flex items-baseline gap-1.5 leading-tight text-field-ink">
+          <span className="font-mono text-[20px] text-field-ink-quiet">#</span>
           {channel.name}
         </h1>
-        <p className="text-[12.5px] text-clay-700 mt-1 max-w-[64ch]">
-          {channel.purpose || "Discussion channel."}
-        </p>
-      </div>
-      <div className="flex items-center gap-2 shrink-0">
-        <button
-          type="button"
-          className="px-3 py-1.5 rounded-full border border-[#E7DECB] text-clay-700 text-[12px] font-semibold flex items-center gap-1.5"
-        >
-          <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-            <path d="M2.5 7a4.5 4.5 0 1 0 4.5-4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-            <path d="M9 4.5h-2v2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          Follow
-        </button>
-        <button
-          type="button"
-          className="px-3 py-1.5 rounded-full border border-[#E7DECB] text-clay-700 text-[12px] font-semibold"
-        >
-          Search
-        </button>
-        {!channel.lockedAdminWrite ? (
-          <button
-            type="button"
-            onClick={onCompose}
-            data-testid="new-thread-btn"
-            className="px-3.5 py-1.5 rounded-full bg-[#4E3A29] text-[#F3EADB] text-[12px] font-semibold flex items-center gap-1.5"
-          >
-            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-              <path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-            </svg>
-            New thread
-          </button>
+        {channel.purpose ? (
+          <p className="text-[12.5px] text-field-ink-muted mt-1 max-w-[64ch]">{channel.purpose}</p>
         ) : null}
+      </div>
+      {!channel.lockedAdminWrite ? (
+        <FieldButton variant="primary" size="sm" onClick={onCompose} data-testid="new-thread-btn">
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+          New thread
+        </FieldButton>
+      ) : null}
+    </div>
+  );
+}
+
+function ChannelRules({ channel }) {
+  const rules = CHANNEL_RULES[rulesKeyFor(channel)] || [];
+  if (rules.length === 0) return null;
+  return (
+    <div className="px-6 py-2 border-b border-field-line bg-field-paper">
+      <div className="flex items-center gap-3 font-mono text-[10.5px] text-field-ink-quiet uppercase tracking-[0.12em]">
+        <span>Rules</span>
+        <span aria-hidden="true">·</span>
+        <span className="flex flex-wrap items-center gap-x-4 gap-y-1 normal-case tracking-normal text-[11px] text-field-ink-muted">
+          {rules.slice(0, 3).map((r, i) => (
+            <span key={i} className="inline-flex items-center gap-1.5">
+              <span aria-hidden="true" className="h-1 w-1 rounded-full bg-field-accent" />
+              {r}
+            </span>
+          ))}
+        </span>
       </div>
     </div>
   );
@@ -509,47 +470,36 @@ function ChannelHeader({ space, channel, onCompose }) {
 
 function ThreadToolbar({ sort, onSort, channel, count }) {
   const sorts = [
-    { v: "hot", label: "Hot" },
-    { v: "new", label: "New" },
-    { v: "top", label: "Top · week" },
-    { v: "verified", label: "Verified · floats Toppers" },
-    { v: "unanswered", label: "Unanswered" },
+    { value: "hot", label: "Hot" },
+    { value: "new", label: "New" },
+    { value: "top", label: "Top" },
+    { value: "verified", label: "Verified" },
+    { value: "unanswered", label: "Unanswered" },
   ];
   return (
-    <div className="px-6 py-3 border-b border-[#E7DECB] bg-[#FBF6EF] flex items-center gap-3 flex-wrap">
-      <div className="flex gap-1 bg-[#F3EADB] p-1 rounded-full border border-[#E7DECB]">
-        {sorts.map((s) => (
-          <button
-            key={s.v}
-            type="button"
-            onClick={() => onSort(s.v)}
-            data-testid={`sort-${s.v}`}
-            className={`px-3 py-1 rounded-full text-[11.5px] font-semibold ${
-              sort === s.v ? "bg-[#4E3A29] text-[#F3EADB]" : "text-clay-700 hover:bg-[#E7D6BA]"
-            }`}
-          >
-            {s.label}
-          </button>
-        ))}
-      </div>
+    <div className="px-6 py-3 border-b border-field-line bg-field-canvas flex items-center gap-3 flex-wrap">
+      <FieldSegmented value={sort} onChange={onSort} options={sorts} />
       {channel && channel.pinned > 0 ? (
-        <span className="num-mono text-[10.5px] text-clay-700">{channel.pinned} pinned</span>
+        <span className="font-mono text-[10.5px] text-field-ink-quiet uppercase tracking-[0.06em]">
+          {channel.pinned} pinned
+        </span>
       ) : null}
-      <span className="num-mono text-[10.5px] text-clay-700 ml-auto">{count} threads</span>
+      <span className="font-mono text-[10.5px] text-field-ink-quiet uppercase tracking-[0.06em] ml-auto">
+        {count} threads
+      </span>
     </div>
   );
 }
 
 /* ─── Thread card ──────────────────────────────────────────────────────── */
+
 function ThreadCard({ thread, users, channelId, onOpen, onVoted }) {
-  const u = users[thread.author];
+  const u = users[thread.author] || { name: thread.author };
   const isOfficial = u?.role === "admin";
   const flair = FLAIRS[thread.flair];
   const [localVote, setLocalVote] = useState(thread.youVoted || 0);
   const [localNet, setLocalNet] = useState(
-    thread.netVotes != null
-      ? thread.netVotes
-      : (thread.upvotes || 0) - (thread.downvotes || 0),
+    thread.netVotes != null ? thread.netVotes : (thread.upvotes || 0) - (thread.downvotes || 0),
   );
   const { run } = useApiAction();
 
@@ -559,8 +509,7 @@ function ThreadCard({ thread, users, channelId, onOpen, onVoted }) {
     const prevVote = localVote;
     const prevNet = localNet;
     const r = await run({
-      action: () =>
-        api.post(`/api/community/channels/${channelId}/threads/${thread.id}/vote`, { direction }),
+      action: () => api.post(`/api/community/channels/${channelId}/threads/${thread.id}/vote`, { direction }),
       optimistic: () => {
         setLocalVote(wanted);
         setLocalNet((v) => v + delta);
@@ -578,7 +527,7 @@ function ThreadCard({ thread, users, channelId, onOpen, onVoted }) {
     }
   }
 
-  function handleCardKeyDown(e) {
+  function handleKey(e) {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       onOpen();
@@ -588,69 +537,66 @@ function ThreadCard({ thread, users, channelId, onOpen, onVoted }) {
   return (
     <article
       onClick={onOpen}
-      onKeyDown={handleCardKeyDown}
+      onKeyDown={handleKey}
       role="link"
       tabIndex={0}
       aria-label={`Open thread: ${thread.title}`}
       data-testid={`thread-card-${thread.id}`}
-      className={`rounded-xl border bg-white/70 hover:bg-white hover:border-[#A68057] transition cursor-pointer flex gap-0 overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A68057] ${
-        isOfficial ? "border-[#4E3A29]" : thread.pinned ? "border-[#94B28A]" : "border-[#E7DECB]"
+      className={`rounded-md border bg-field-canvas hover:border-field-ink-quiet transition-colors cursor-pointer flex gap-0 overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-field-accent ${
+        isOfficial
+          ? "border-field-accent"
+          : thread.pinned
+            ? "border-field-warn/40"
+            : "border-field-line"
       }`}
-      style={isOfficial ? { background: "linear-gradient(180deg, #FBF8F2 0%, #FBF6EF 100%)" } : {}}
     >
-      <div className="bg-[#FBF8F2] border-r border-[#EFE2C9] py-3 flex flex-col items-center">
-        <VoteColumn
-          count={localNet}
-          voted={localVote === 1 ? 1 : localVote === -1 ? -1 : null}
+      <div className="bg-field-paper border-r border-field-line-soft px-3 py-3 flex flex-col items-center">
+        <FieldVoteColumn
+          value={localNet}
+          vote={localVote === 1 ? 1 : localVote === -1 ? -1 : 0}
           onVote={(d) => vote(d)}
         />
       </div>
 
-      <div className="flex-1 min-w-0 px-5 py-3.5">
-        <div className="flex items-center gap-2 flex-wrap">
-          {thread.pinned ? (
-            <span className="pill pill-sage" style={{ fontSize: 9.5, padding: "2px 7px" }}>
-              📌 Pinned
-            </span>
-          ) : null}
-          {isOfficial ? <span className="stamp stamp-official">Official</span> : null}
-          <Flair flair={flair} />
+      <div className="flex-1 min-w-0 px-5 py-4">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {thread.pinned ? <FieldPill tone="warn">Pinned</FieldPill> : null}
+          {isOfficial ? <FieldPill tone="ink">Official</FieldPill> : null}
+          {flair ? <FieldPill tone={flairTone(flair.kind)}>{flair.label}</FieldPill> : null}
           {thread.planRelevant ? (
-            <span
-              className="pill"
-              style={{ background: "#ECE7F2", color: "#31293B", fontSize: 9.5, padding: "2px 7px" }}
-            >
-              ◐ Matches: {thread.planRelevant.topic}
-            </span>
+            <FieldPill tone="info">Matches: {thread.planRelevant.topic}</FieldPill>
           ) : null}
-          {thread.solved ? (
-            <span className="pill pill-sage" style={{ fontSize: 9.5, padding: "2px 7px" }}>
-              ✓ Verified answer
-            </span>
-          ) : null}
+          {thread.solved ? <FieldPill tone="accent">✓ Verified answer</FieldPill> : null}
         </div>
 
         <h3
-          className="font-heading mt-2 leading-snug text-[#2E2218]"
-          style={{ fontSize: thread.pinned || isOfficial ? 19 : 17 }}
+          className="font-sans mt-2 leading-snug text-field-ink font-semibold"
+          style={{ fontSize: thread.pinned || isOfficial ? 17 : 15.5 }}
         >
           {thread.title}
         </h3>
 
         {thread.body ? (
-          <p className="text-[13px] text-[#3a2e22] mt-1.5 leading-[1.5] line-clamp-2">{thread.body}</p>
+          <p className="text-[13px] text-field-ink-muted mt-1.5 leading-[1.55] line-clamp-2">{thread.body}</p>
         ) : null}
 
         {thread.verifiedSource ? (
-          <div className="mt-2 inline-flex items-center gap-1.5 text-[10.5px] text-[#33482F] num-mono">
-            <VerifiedSeal size={14} />
-            <span>source · {thread.verifiedSource}</span>
+          <div className="mt-2 inline-flex items-center gap-1.5 font-mono text-[10.5px] text-field-accent-ink uppercase tracking-[0.06em]">
+            <span aria-hidden="true">●</span>
+            source · {thread.verifiedSource}
           </div>
         ) : null}
 
-        <div className="mt-3 flex items-center justify-between flex-wrap gap-2">
-          <UserChip user={u || { name: thread.author }} time={thread.createdAt} compact />
-          <div className="flex items-center gap-3 text-[11px] text-clay-700">
+        <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0">
+            <FieldAvatar user={u} size={22} />
+            <div className="font-mono text-[10.5px] text-field-ink-quiet uppercase tracking-[0.06em] truncate">
+              <span className="text-field-ink-muted normal-case tracking-normal text-[11.5px]">{u.name || thread.author}</span>
+              {" · "}
+              {thread.createdAt}
+            </div>
+          </div>
+          <div className="flex items-center gap-3 font-mono text-[11px] text-field-ink-quiet">
             <span className="inline-flex items-center gap-1">
               <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
                 <path
@@ -659,15 +605,9 @@ function ThreadCard({ thread, users, channelId, onOpen, onVoted }) {
                   strokeWidth="1.2"
                 />
               </svg>
-              <span className="num-mono">{thread.replies || 0}</span>
-              {thread.repliesLocked ? <span className="text-[#A68057]">· locked</span> : null}
+              <span className="tabular-nums">{thread.replies || 0}</span>
+              {thread.repliesLocked ? <span>· locked</span> : null}
             </span>
-            <button type="button" className="hover:text-[#2E2218]" onClick={(e) => e.stopPropagation()}>
-              Save
-            </button>
-            <button type="button" className="hover:text-[#2E2218]" onClick={(e) => e.stopPropagation()}>
-              Share
-            </button>
           </div>
         </div>
       </div>
@@ -676,6 +616,7 @@ function ThreadCard({ thread, users, channelId, onOpen, onVoted }) {
 }
 
 /* ─── Thread detail ────────────────────────────────────────────────────── */
+
 function ThreadDetail({ thread, channel, users, onBack, onChanged }) {
   const u = users[thread.author] || { name: thread.author };
   const flair = FLAIRS[thread.flair];
@@ -683,9 +624,7 @@ function ThreadDetail({ thread, channel, users, onBack, onChanged }) {
   const replies = liveThread.topReplies || thread.topReplies || [];
   const [vote, setVote] = useState(liveThread.youVoted || 0);
   const [netVotes, setNetVotes] = useState(
-    liveThread.netVotes != null
-      ? liveThread.netVotes
-      : (liveThread.upvotes || 0) - (liveThread.downvotes || 0),
+    liveThread.netVotes != null ? liveThread.netVotes : (liveThread.upvotes || 0) - (liveThread.downvotes || 0),
   );
   const { run } = useApiAction();
 
@@ -712,8 +651,7 @@ function ThreadDetail({ thread, channel, users, onBack, onChanged }) {
     const prevVote = vote;
     const prevNet = netVotes;
     const r = await run({
-      action: () =>
-        api.post(`/api/community/channels/${channel.id}/threads/${thread.id}/vote`, { direction }),
+      action: () => api.post(`/api/community/channels/${channel.id}/threads/${thread.id}/vote`, { direction }),
       optimistic: () => {
         setVote(wanted);
         setNetVotes((v) => v + delta);
@@ -731,14 +669,16 @@ function ThreadDetail({ thread, channel, users, onBack, onChanged }) {
     }
   }
 
+  const isOfficial = u?.role === "admin";
+
   return (
     <div className="flex-1 overflow-auto" data-testid={`thread-detail-${thread.id}`}>
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6 px-6 py-5 max-w-[1100px]">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6 px-6 py-5 max-w-[1100px]">
         <div>
           <button
             type="button"
             onClick={onBack}
-            className="text-[11.5px] text-clay-700 hover:text-clay-900 flex items-center gap-1.5 mb-3"
+            className="text-[11.5px] text-field-ink-muted hover:text-field-ink flex items-center gap-1.5 mb-3"
           >
             <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
               <path
@@ -752,108 +692,60 @@ function ThreadDetail({ thread, channel, users, onBack, onChanged }) {
             Back to #{channel?.name}
           </button>
 
-          <article className="rounded-xl border border-[#E7DECB] bg-white/80 p-6">
-            <div className="flex items-center gap-2 flex-wrap">
-              {thread.pinned ? <Pill tone="sage">📌 Pinned</Pill> : null}
-              {u?.role === "admin" ? <span className="stamp stamp-official">Official</span> : null}
-              <Flair flair={flair} />
-              {thread.planRelevant ? (
-                <span className="pill" style={{ background: "#ECE7F2", color: "#31293B", fontSize: 9.5 }}>
-                  ◐ {thread.planRelevant.reason}
-                </span>
-              ) : null}
+          <FieldCard className="!p-6">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {thread.pinned ? <FieldPill tone="warn">Pinned</FieldPill> : null}
+              {isOfficial ? <FieldPill tone="ink">Official</FieldPill> : null}
+              {flair ? <FieldPill tone={flairTone(flair.kind)}>{flair.label}</FieldPill> : null}
+              {thread.planRelevant ? <FieldPill tone="info">{thread.planRelevant.reason}</FieldPill> : null}
             </div>
 
-            <h1 className="font-heading text-[28px] mt-2.5 leading-tight">{thread.title}</h1>
+            <h1 className="font-sans text-[26px] font-semibold mt-3 leading-tight text-field-ink">{thread.title}</h1>
 
             <div className="mt-3 flex items-center justify-between flex-wrap gap-3">
-              <UserChip user={u} time={thread.createdAt} />
-              <div className="flex items-center gap-2 text-[11px] text-clay-700">
-                <VoteColumn
-                  vertical={false}
-                  count={netVotes}
-                  voted={vote === 1 ? 1 : vote === -1 ? -1 : null}
+              <div className="flex items-center gap-2.5">
+                <FieldAvatar user={u} size={28} />
+                <div>
+                  <div className="text-[12.5px] font-medium text-field-ink">{u.name || thread.author}</div>
+                  <div className="font-mono text-[10.5px] text-field-ink-quiet uppercase tracking-[0.06em]">
+                    {thread.createdAt}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 font-mono text-[11px] text-field-ink-quiet">
+                <FieldVoteColumn
+                  value={netVotes}
+                  vote={vote === 1 ? 1 : vote === -1 ? -1 : 0}
                   onVote={(d) => castVote(d)}
                 />
-                <span className="text-[#A68057]">·</span>
-                <span className="num-mono">{liveThread.replies || 0} replies</span>
+                <span aria-hidden="true">·</span>
+                <span className="tabular-nums">{liveThread.replies || 0} replies</span>
               </div>
             </div>
 
-            <div className="rule mt-4 pt-4 text-[14.5px] text-[#2E2218] leading-[1.65] whitespace-pre-wrap">
-              {thread.body}
-            </div>
+            <FieldDivider className="my-5" />
+
+            <div className="text-[14px] text-field-ink leading-[1.7] whitespace-pre-wrap">{thread.body}</div>
 
             {thread.verifiedSource ? (
-              <div className="rule mt-4 pt-3 rounded-lg bg-[#F0F5EF] border border-[#B9CFAF] p-3 flex items-center gap-3">
-                <VerifiedSeal size={20} />
-                <div className="flex-1">
-                  <div className="text-[11.5px] font-semibold text-[#33482F]">Official source</div>
-                  <div className="num-mono text-[10.5px] text-[#33482F]">{thread.verifiedSource}</div>
+              <div className="mt-5 rounded-md bg-field-accent-soft border border-field-accent/30 p-3 flex items-center gap-3">
+                <div aria-hidden="true" className="h-2 w-2 rounded-full bg-field-accent" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11.5px] font-semibold text-field-accent-ink">Official source</div>
+                  <div className="font-mono text-[10.5px] text-field-accent-ink truncate">{thread.verifiedSource}</div>
                 </div>
-                <button
-                  type="button"
-                  className="text-[11px] text-[#33482F] font-semibold underline bg-transparent"
-                >
-                  Open →
-                </button>
               </div>
             ) : null}
-
-            <div className="rule mt-5 pt-4 flex items-center gap-2 flex-wrap">
-              <button
-                type="button"
-                className="px-3 py-1.5 rounded-full bg-[#4E3A29] text-[#F3EADB] text-[12px] font-semibold"
-              >
-                Reply
-              </button>
-              <button
-                type="button"
-                className="px-3 py-1.5 rounded-full border border-[#E7DECB] text-clay-700 text-[12px] font-semibold"
-              >
-                Save
-              </button>
-              <button
-                type="button"
-                className="px-3 py-1.5 rounded-full border border-[#E7DECB] text-clay-700 text-[12px] font-semibold"
-              >
-                Share
-              </button>
-              {thread.planRelevant ? (
-                <button
-                  type="button"
-                  className="px-3 py-1.5 rounded-full border border-[#94B28A] text-[#33482F] text-[12px] font-semibold flex items-center gap-1.5"
-                >
-                  <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                    <path d="M2 6h8M6 2v8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                  </svg>
-                  Add to study tasks
-                </button>
-              ) : null}
-              <button type="button" className="ml-auto text-[11px] text-clay-700 hover:text-clay-900">
-                Report
-              </button>
-            </div>
-          </article>
+          </FieldCard>
 
           {thread.repliesLocked ? (
-            <div className="mt-5 rounded-xl border border-[#4E3A29] bg-[#4E3A29] text-[#D6BC93] p-4 flex items-center gap-3">
+            <FieldCard tone="ink" className="mt-5 flex items-center gap-3">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <rect x="3" y="7" width="10" height="7" rx="1.5" stroke="#D6BC93" strokeWidth="1.4" />
-                <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" stroke="#D6BC93" strokeWidth="1.4" />
+                <rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
+                <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" stroke="currentColor" strokeWidth="1.4" />
               </svg>
-              <div className="text-[12.5px]">
-                Replies are locked on official posts. Discuss in{" "}
-                <button type="button" className="underline font-semibold bg-transparent">
-                  #preparation
-                </button>{" "}
-                or{" "}
-                <button type="button" className="underline font-semibold bg-transparent">
-                  #form-help
-                </button>
-                .
-              </div>
-            </div>
+              <div className="text-[12.5px]">Replies are locked on official posts. Discuss in a related channel.</div>
+            </FieldCard>
           ) : (
             <ReplySection
               replies={replies}
@@ -878,25 +770,21 @@ function ReplySection({ replies, thread, channel, users, onChanged }) {
   return (
     <div className="mt-6">
       <div className="flex items-center justify-between mb-3">
-        <div className="font-heading text-[18px]">{thread.replies || 0} replies</div>
-        <div className="flex gap-1 bg-[#F3EADB] p-1 rounded-full border border-[#E7DECB]">
-          {["Top", "New", "Verified"].map((s, i) => (
-            <button
-              key={s}
-              type="button"
-              className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
-                i === 0 ? "bg-[#4E3A29] text-[#F3EADB]" : "text-clay-700"
-              }`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
+        <div className="font-sans text-[16px] font-semibold text-field-ink">{thread.replies || 0} replies</div>
+        <FieldSegmented
+          value="top"
+          onChange={() => {}}
+          options={[
+            { value: "top", label: "Top" },
+            { value: "new", label: "New" },
+            { value: "verified", label: "Verified" },
+          ]}
+        />
       </div>
 
       <ReplyComposer channelId={channel?.id} threadId={thread.id} onPosted={onChanged} />
 
-      <ul className="mt-5 space-y-3">
+      <ul className="mt-4 space-y-2">
         {replies.map((r, i) => (
           <ReplyItem
             key={r.id}
@@ -909,8 +797,8 @@ function ReplySection({ replies, thread, channel, users, onChanged }) {
           />
         ))}
         {replies.length === 0 ? (
-          <li className="rounded-xl border border-dashed border-[#D6C9AC] bg-[#FBF8F2] p-5 text-center text-[12.5px] text-clay-700">
-            No replies yet. Be the first to add a calm, sourced answer.
+          <li>
+            <FieldEmpty title="No replies yet." body="Be the first to add a calm, sourced answer." />
           </li>
         ) : null}
       </ul>
@@ -932,10 +820,7 @@ function ReplyItem({ reply, users, channelId, threadId, isFirst, onChanged }) {
     const prevNet = net;
     const r = await run({
       action: () =>
-        api.post(
-          `/api/community/channels/${channelId}/threads/${threadId}/replies/${reply.id}/vote`,
-          { direction },
-        ),
+        api.post(`/api/community/channels/${channelId}/threads/${threadId}/replies/${reply.id}/vote`, { direction }),
       optimistic: () => {
         setVote(wanted);
         setNet((v) => v + delta);
@@ -956,33 +841,23 @@ function ReplyItem({ reply, users, channelId, threadId, isFirst, onChanged }) {
   return (
     <li
       data-testid={`reply-${reply.id}`}
-      className={`rounded-xl border p-4 flex gap-4 ${
-        isVerified ? "border-[#94B28A] bg-[#F0F5EF]/40" : "border-[#E7DECB] bg-white/60"
+      className={`rounded-md border p-4 flex gap-4 ${
+        isVerified ? "border-field-accent/40 bg-field-accent-soft/30" : "border-field-line bg-field-canvas"
       }`}
     >
-      <VoteColumn
-        count={net}
-        voted={vote === 1 ? 1 : vote === -1 ? -1 : null}
-        onVote={(d) => castVote(d)}
-      />
+      <FieldVoteColumn value={net} vote={vote === 1 ? 1 : vote === -1 ? -1 : 0} onVote={(d) => castVote(d)} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <UserChip user={u} time={reply.createdAt || "2h"} compact />
-          {isVerified && isFirst ? (
-            <span className="pill pill-sage" style={{ fontSize: 9.5 }}>
-              Top verified answer
+          <div className="flex items-center gap-2">
+            <FieldAvatar user={u} size={22} />
+            <span className="text-[12px] font-medium text-field-ink">{u.name || reply.author}</span>
+            <span className="font-mono text-[10.5px] text-field-ink-quiet uppercase tracking-[0.06em]">
+              {reply.createdAt || "2h"}
             </span>
-          ) : null}
+          </div>
+          {isVerified && isFirst ? <FieldPill tone="accent">Top verified answer</FieldPill> : null}
         </div>
-        <p className="text-[13.5px] text-[#2E2218] mt-2 leading-[1.6] whitespace-pre-wrap">
-          {reply.body}
-        </p>
-        <div className="mt-2.5 flex items-center gap-3 text-[10.5px] text-clay-700">
-          <button type="button" className="hover:text-clay-900">Reply</button>
-          <button type="button" className="hover:text-clay-900">Save</button>
-          <button type="button" className="hover:text-clay-900">Share</button>
-          <button type="button" className="ml-auto hover:text-clay-900">Report</button>
-        </div>
+        <p className="text-[13.5px] text-field-ink mt-2.5 leading-[1.65] whitespace-pre-wrap">{reply.body}</p>
       </div>
     </li>
   );
@@ -999,10 +874,7 @@ function ReplyComposer({ channelId, threadId, onPosted }) {
     setPosting(true);
     setError(null);
     try {
-      await api.post(
-        `/api/community/channels/${channelId}/threads/${threadId}/replies`,
-        { body: text },
-      );
+      await api.post(`/api/community/channels/${channelId}/threads/${threadId}/replies`, { body: text });
       setBody("");
       onPosted && onPosted();
     } catch (e) {
@@ -1013,33 +885,35 @@ function ReplyComposer({ channelId, threadId, onPosted }) {
   }
 
   return (
-    <div className="rounded-xl border border-[#E7DECB] bg-white/80" data-testid="reply-composer">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-[#E7DECB] text-[10.5px] text-clay-700">
-        <span className="num-mono uppercase tracking-[0.18em]">Markdown supported</span>
+    <div className="rounded-md border border-field-line bg-field-canvas overflow-hidden" data-testid="reply-composer">
+      <div className="px-3 py-1.5 border-b border-field-line bg-field-paper">
+        <FieldLabel>Markdown supported</FieldLabel>
       </div>
       <textarea
-        rows="3"
+        rows="2"
         value={body}
         onChange={(e) => setBody(e.target.value)}
         placeholder="Share your thought, ask a follow-up, or post a counter-point…"
-        className="block w-full px-3 py-2.5 text-[13px] bg-transparent outline-none resize-none placeholder:text-[#A68057]"
+        className="block w-full px-3 py-2.5 text-[13px] bg-transparent outline-none resize-none placeholder:text-field-ink-quiet text-field-ink"
         data-testid="reply-body"
       />
-      <div className="flex items-center justify-between px-3 py-2 border-t border-[#E7DECB] gap-3 flex-wrap">
-        <span className="text-[10.5px] text-clay-700 flex-1">
-          {error ? <span className="text-[#7A3925]">{error}</span> : "Be calm. No pile-ons. Verified Topper answers may be promoted to the top."}
+      <div className="flex items-center justify-between px-3 py-2 border-t border-field-line gap-3 flex-wrap">
+        <span className="text-[11px] text-field-ink-quiet flex-1">
+          {error ? (
+            <span className="text-field-danger">{error}</span>
+          ) : (
+            "Be calm. No pile-ons. Verified Topper answers may be promoted to the top."
+          )}
         </span>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={submit}
-            disabled={posting || !body.trim()}
-            className="text-[11px] px-3 py-1 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold disabled:opacity-50"
-            data-testid="reply-submit"
-          >
-            {posting ? "Posting…" : "Post reply"}
-          </button>
-        </div>
+        <FieldButton
+          variant="primary"
+          size="xs"
+          onClick={submit}
+          disabled={posting || !body.trim()}
+          data-testid="reply-submit"
+        >
+          {posting ? "Posting…" : "Post reply"}
+        </FieldButton>
       </div>
     </div>
   );
@@ -1050,88 +924,60 @@ function ThreadSidebar({ thread, channel, users }) {
     const all = Object.values(users).filter((u) => u.badge && ["topper", "officer"].includes(u.badge.kind));
     return all.slice(0, 3);
   }, [users]);
+  const rules = CHANNEL_RULES[rulesKeyFor(channel)] || [];
   return (
     <aside className="space-y-4">
-      <Card padded={false}>
-        <div className="px-5 py-5">
-          <Eyebrow>Channel rules</Eyebrow>
-          <h3 className="font-heading text-[15px] mt-1">#{channel?.name}</h3>
-          <ul className="mt-2 space-y-1.5 text-[11.5px] text-[#3a2e22] list-disc pl-4">
-            {(CHANNEL_RULES[rulesKeyFor(channel)] || []).map((r, i) => (
+      <FieldCard className="!p-5">
+        <FieldLabel>Channel rules</FieldLabel>
+        <h3 className="font-sans text-[14px] font-semibold mt-1 text-field-ink">#{channel?.name}</h3>
+        {rules.length > 0 ? (
+          <ul className="mt-2 space-y-1.5 text-[12px] text-field-ink-muted list-disc pl-4">
+            {rules.map((r, i) => (
               <li key={i}>{r}</li>
             ))}
           </ul>
-        </div>
-      </Card>
+        ) : (
+          <p className="mt-2 text-[12px] text-field-ink-muted">Standard community rules apply.</p>
+        )}
+      </FieldCard>
 
       {thread.planRelevant ? (
-        <Card padded={false} className="!bg-[#F0F5EF] !border-[#B9CFAF]">
-          <div className="px-5 py-5">
-            <Eyebrow>From Study OS</Eyebrow>
-            <h3 className="font-heading text-[15px] mt-1 text-[#33482F]">{thread.planRelevant.reason}.</h3>
-            <p className="text-[11.5px] text-[#33482F] mt-1.5">
-              This thread covers <strong>{thread.planRelevant.topic}</strong>. Add a 30-minute drill to today's plan?
-            </p>
-            <button
-              type="button"
-              className="mt-2.5 text-[11px] px-2.5 py-1 rounded-full bg-[#33482F] text-[#F0F5EF] font-semibold"
-            >
-              Add to today →
-            </button>
-          </div>
-        </Card>
+        <FieldCard tone="accent" className="!p-5">
+          <FieldLabel>From Study OS</FieldLabel>
+          <h3 className="font-sans text-[14px] font-semibold mt-1 text-field-accent-ink">
+            {thread.planRelevant.reason}.
+          </h3>
+          <p className="text-[12px] text-field-accent-ink/85 mt-1.5">
+            This thread covers <strong className="font-semibold">{thread.planRelevant.topic}</strong>.
+          </p>
+        </FieldCard>
       ) : null}
 
-      <Card padded={false}>
-        <div className="px-5 py-5">
-          <Eyebrow>Verified contributors</Eyebrow>
-          <ul className="mt-2 space-y-2.5">
-            {verifiedHandles.map((u) => (
-              <li key={u.id} className="flex items-center gap-2">
-                <Avatar user={u} size={26} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-[12px] font-medium leading-tight truncate">{u.name}</div>
-                  <UserBadge user={u} compact />
+      <FieldCard className="!p-5">
+        <FieldLabel>Verified contributors</FieldLabel>
+        <ul className="mt-3 space-y-2.5">
+          {verifiedHandles.map((u) => (
+            <li key={u.id} className="flex items-center gap-2">
+              <FieldAvatar user={u} size={26} />
+              <div className="flex-1 min-w-0">
+                <div className="text-[12px] font-medium leading-tight truncate text-field-ink">{u.name}</div>
+                <div className="font-mono text-[10px] text-field-ink-quiet uppercase tracking-[0.06em]">
+                  {u.badge?.kind === "topper" ? "Topper" : u.badge?.kind === "officer" ? "Officer" : "Verified"}
                 </div>
-                <button type="button" className="text-[10px] text-clay-700 hover:text-clay-900">
-                  Follow
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </Card>
-
-      <Card padded={false}>
-        <div className="px-5 py-5">
-          <Eyebrow>Related threads</Eyebrow>
-          <ul className="mt-2 space-y-2 text-[12px]">
-            <li>
-              <button type="button" className="hover:underline bg-transparent text-left">
-                Mock 14 — 122/200 error breakdown
-              </button>
-              <div className="num-mono text-[10px] text-clay-700">96 ↑ · 38 replies</div>
+              </div>
             </li>
-            <li>
-              <button type="button" className="hover:underline bg-transparent text-left">
-                How I balance CA with deep Polity
-              </button>
-              <div className="num-mono text-[10px] text-clay-700">340 ↑ · 51 replies</div>
-            </li>
-            <li>
-              <button type="button" className="hover:underline bg-transparent text-left">
-                2022 Q41 — Article 263 answer clash
-              </button>
-              <div className="num-mono text-[10px] text-clay-700">642 ↑ · 48 replies</div>
-            </li>
-          </ul>
-        </div>
-      </Card>
+          ))}
+          {verifiedHandles.length === 0 ? (
+            <li className="text-[11.5px] text-field-ink-quiet italic">No verified contributors yet.</li>
+          ) : null}
+        </ul>
+      </FieldCard>
     </aside>
   );
 }
 
-/* ─── Composer drawer ──────────────────────────────────────────────────── */
+/* ─── Drawers ──────────────────────────────────────────────────────────── */
+
 function ComposerDrawer({ channel, onClose, onCreated }) {
   const [flair, setFlair] = useState("discussion");
   const [title, setTitle] = useState("");
@@ -1149,10 +995,11 @@ function ComposerDrawer({ channel, onClose, onCreated }) {
     setPosting(true);
     setError(null);
     try {
-      const newThread = await api.post(
-        `/api/community/channels/${channel.id}/threads`,
-        { title: title.trim(), body: body.trim(), flair },
-      );
+      const newThread = await api.post(`/api/community/channels/${channel.id}/threads`, {
+        title: title.trim(),
+        body: body.trim(),
+        flair,
+      });
       onCreated && onCreated(newThread);
       onClose();
     } catch (e) {
@@ -1163,76 +1010,75 @@ function ComposerDrawer({ channel, onClose, onCreated }) {
   }
 
   return (
-    <Drawer open onClose={onClose} title={`New thread in #${channel?.name || ""}`} width={560}>
+    <FieldDrawer
+      open
+      onClose={onClose}
+      title={`New thread in #${channel?.name || ""}`}
+      width={560}
+      footer={
+        <div className="flex justify-end gap-2">
+          <FieldButton variant="secondary" size="sm" onClick={onClose}>
+            Cancel
+          </FieldButton>
+          <FieldButton
+            variant="primary"
+            size="sm"
+            onClick={submit}
+            disabled={posting || title.trim().length < 6 || body.trim().length < 10}
+            data-testid="thread-submit"
+          >
+            {posting ? "Posting…" : "Post thread"}
+          </FieldButton>
+        </div>
+      }
+    >
       <div className="space-y-4" data-testid="composer-drawer">
-        <div>
-          <Eyebrow>Flair</Eyebrow>
-          <div className="mt-2 flex flex-wrap gap-1.5">
+        <FieldFieldGroup label="Flair">
+          <div className="flex flex-wrap gap-1.5">
             {flairOptions.map((k) => (
               <button
                 key={k}
                 type="button"
                 onClick={() => setFlair(k)}
-                className={`text-[11px] px-2.5 py-1 rounded-full border ${
+                className={`text-[11.5px] px-2.5 h-7 rounded-md border transition-colors ${
                   flair === k
-                    ? "bg-[#4E3A29] text-[#F3EADB] border-[#4E3A29]"
-                    : "border-[#E7DECB] text-clay-700"
+                    ? "bg-field-accent text-white border-field-accent"
+                    : "border-field-line text-field-ink-muted hover:bg-field-line-soft"
                 }`}
               >
                 {FLAIRS[k].label}
               </button>
             ))}
           </div>
-        </div>
-        <div>
-          <Eyebrow>Title</Eyebrow>
-          <input
+        </FieldFieldGroup>
+        <FieldFieldGroup label="Title">
+          <FieldInput
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            className="mt-2 w-full px-3 py-2 rounded-lg border border-[#E7DECB] bg-white/70 text-[14px] outline-none"
             placeholder="A clear, specific question or claim"
             data-testid="thread-title"
           />
-        </div>
-        <div>
-          <Eyebrow>Body</Eyebrow>
-          <textarea
-            rows="8"
+        </FieldFieldGroup>
+        <FieldFieldGroup label="Body" hint="Markdown supported. Cite sources. Be specific.">
+          <FieldTextarea
+            rows={8}
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            className="mt-2 w-full px-3 py-2 rounded-lg border border-[#E7DECB] bg-white/70 text-[13px] outline-none resize-none placeholder:text-[#A68057]"
             placeholder="Markdown supported. Cite sources. Be specific."
             data-testid="thread-body"
           />
-        </div>
-        <div className="rounded-lg bg-[#F0F5EF] border border-[#B9CFAF] p-3 text-[11.5px] text-[#33482F]">
-          <strong>Before posting:</strong> if this is a PYQ or factual claim, attach the year/question or a source link. The community moderation rule on misinformation is firm.
+        </FieldFieldGroup>
+        <div className="rounded-md border border-field-accent/30 bg-field-accent-soft p-3 text-[12px] text-field-accent-ink leading-relaxed">
+          <strong className="font-medium">Before posting:</strong> if this is a PYQ or factual claim, attach the
+          year/question or a source link. The community moderation rule on misinformation is firm.
         </div>
         {error ? (
-          <div className="rounded-lg bg-[#F2DDD6] border border-[#D9B4A6] p-3 text-[11.5px] text-[#7A3925]">
+          <div className="rounded-md border border-field-danger/30 bg-field-danger-soft p-3 text-[12px] text-field-danger">
             {error}
           </div>
         ) : null}
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-full border border-[#E7DECB] text-clay-700 font-semibold text-[12px]"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={posting || title.trim().length < 6 || body.trim().length < 10}
-            className="px-4 py-2 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold text-[12px] disabled:opacity-50"
-            data-testid="thread-submit"
-          >
-            {posting ? "Posting…" : "Post thread"}
-          </button>
-        </div>
       </div>
-    </Drawer>
+    </FieldDrawer>
   );
 }
 
@@ -1267,81 +1113,79 @@ function NewChannelDrawer({ space, onClose, onCreated }) {
   }
 
   return (
-    <Drawer open onClose={onClose} title={`New channel in ${space?.name || ""}`} width={520}>
+    <FieldDrawer
+      open
+      onClose={onClose}
+      title={`New channel in ${space?.name || ""}`}
+      width={520}
+      footer={
+        <div className="flex justify-end gap-2">
+          <FieldButton variant="secondary" size="sm" onClick={onClose}>
+            Cancel
+          </FieldButton>
+          <FieldButton
+            variant="primary"
+            size="sm"
+            onClick={submit}
+            disabled={submitting || !name.trim()}
+            data-testid="new-channel-submit"
+          >
+            {submitting ? "Creating…" : "Create channel"}
+          </FieldButton>
+        </div>
+      }
+    >
       <div className="space-y-4" data-testid="new-channel-drawer">
-        <div>
-          <Eyebrow>Channel name</Eyebrow>
-          <input
+        <FieldFieldGroup
+          label="Channel name"
+          hint="lowercase · letters, numbers, dashes only · 2–32 chars"
+        >
+          <FieldInput
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. mock-tests"
-            className="mt-2 w-full px-3 py-2 rounded-lg border border-[#E7DECB] bg-white/70 text-[14px] outline-none font-mono"
             data-testid="new-channel-name"
+            className="font-mono"
           />
-          <div className="num-mono text-[10px] text-clay-700 mt-1">
-            lowercase · letters, numbers, dashes only · 2–32 chars
-          </div>
-        </div>
-        <div>
-          <Eyebrow>Purpose</Eyebrow>
-          <input
+        </FieldFieldGroup>
+        <FieldFieldGroup label="Purpose">
+          <FieldInput
             value={purpose}
             onChange={(e) => setPurpose(e.target.value)}
             placeholder="What this channel is for (visible at the top)"
-            className="mt-2 w-full px-3 py-2 rounded-lg border border-[#E7DECB] bg-white/70 text-[14px] outline-none"
           />
-        </div>
+        </FieldFieldGroup>
         <label className="flex items-start gap-2.5 cursor-pointer">
           <input
             type="checkbox"
             checked={locked}
             onChange={(e) => setLocked(e.target.checked)}
-            className="mt-0.5"
+            className="mt-0.5 accent-field-accent"
           />
-          <span className="text-[12.5px] text-clay-900">
-            <strong>Admin-write only.</strong>
-            <span className="block text-[11px] text-clay-700 mt-0.5">
+          <span className="text-[12.5px] text-field-ink">
+            <strong className="font-medium">Admin-write only.</strong>
+            <span className="block text-[11px] text-field-ink-muted mt-0.5">
               Replies are locked. Only admin posts appear. Use for official update channels.
             </span>
           </span>
         </label>
         {error ? (
-          <div className="rounded-lg bg-[#F2DDD6] border border-[#D9B4A6] p-3 text-[11.5px] text-[#7A3925]">
+          <div className="rounded-md border border-field-danger/30 bg-field-danger-soft p-3 text-[12px] text-field-danger">
             {error}
           </div>
         ) : null}
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-full border border-[#E7DECB] text-clay-700 font-semibold text-[12px]"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={submitting || !name.trim()}
-            className="px-4 py-2 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold text-[12px] disabled:opacity-50"
-            data-testid="new-channel-submit"
-          >
-            {submitting ? "Creating…" : "Create channel"}
-          </button>
-        </div>
       </div>
-    </Drawer>
+    </FieldDrawer>
   );
 }
 
 function CommunityFooter({ space }) {
   return (
-    <div className="px-6 py-5 num-mono text-[10.5px] text-clay-700 flex items-center justify-between">
+    <div className="px-6 py-5 border-t border-field-line bg-field-canvas font-mono text-[10.5px] text-field-ink-quiet uppercase tracking-[0.06em] flex items-center justify-between">
       <span>
         community · {space?.name} · {space?.members.toLocaleString()} members
       </span>
-      <span className="flex items-center gap-2">
-        <StatusDot state="live" label="" /> live · /api/community/spaces
-      </span>
+      <FieldStatusDot state="live" label="live · /api/community/spaces" />
     </div>
   );
 }

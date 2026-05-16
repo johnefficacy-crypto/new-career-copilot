@@ -17,6 +17,12 @@ import Mocks from "../pages/study/Mocks";
 import Subjects from "../pages/study/Subjects";
 import WeeklyReview from "../pages/study/WeeklyReview";
 import StudyCompare from "../pages/study/Compare";
+import Notes from "../pages/Notes";
+import Flashcards from "../pages/study/Flashcards";
+import FlashcardsDeck from "../pages/study/FlashcardsDeck";
+import Mistakes from "../pages/study/Mistakes";
+import Revision from "../pages/study/Revision";
+import Reports from "../pages/Reports";
 import CommunityScreen from "../features/community/CommunityScreen";
 import StudyGroupsScreen from "../features/community/StudyGroupsScreen";
 import PartnersScreen from "../features/community/PartnersScreen";
@@ -31,7 +37,7 @@ import NotificationPreferences from "../pages/NotificationPreferences";
 import Pricing from "../pages/Pricing";
 
 export const appRouteElements = (
-  <Route element={<ProtectedRoute><DashShell /></ProtectedRoute>}>
+  <Route element={<ProtectedRoute requireBackend><DashShell /></ProtectedRoute>}>
     <Route element={<RouteErrorBoundary />}>
       <Route path="/app" element={<Dashboard />} />
       <Route path="/app/today" element={<Today />} />
@@ -47,6 +53,12 @@ export const appRouteElements = (
       <Route path="/app/study/subjects" element={<Subjects />} />
       <Route path="/app/study/review" element={<WeeklyReview />} />
       <Route path="/app/study/compare" element={<StudyCompare />} />
+      <Route path="/app/notes" element={<Notes />} />
+      <Route path="/app/flashcards" element={<Flashcards />} />
+      <Route path="/app/flashcards/:deckId" element={<FlashcardsDeck />} />
+      <Route path="/app/study/mistakes" element={<Mistakes />} />
+      <Route path="/app/study/revision" element={<Revision />} />
+      <Route path="/app/reports" element={<Reports />} />
       <Route path="/app/community" element={<CommunityScreen />} />
       <Route path="/app/community/:spaceId" element={<CommunityScreen />} />
       <Route path="/app/community/:spaceId/:channelId" element={<CommunityScreen />} />

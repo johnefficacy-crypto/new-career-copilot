@@ -78,8 +78,20 @@ def _audit(supabase, actor: dict, action: str, *, entity_type: str | None = None
                 "notes": "legacy_admin_scrape" ,
             }
         ).execute()
-    except Exception:  # noqa: BLE001
-        logger.exception("audit log insert failed")
+    except Exception as exc:  # noqa: BLE001
+        # Audit writes must be searchable post-incident: include actor,
+        # mutation, target, and exception class so logs are forensic-grade
+        # even if the row never landed in admin_audit_logs.
+        logger.error(
+            "admin_audit_insert_failed action=%s actor_id=%s entity_type=%s entity_id=%s exc=%s: %s",
+            action,
+            actor.get("id"),
+            entity_type,
+            entity_id,
+            type(exc).__name__,
+            exc,
+            exc_info=True,
+        )
 
 
 # ════════════════════════════════════════════════════════════════════════════

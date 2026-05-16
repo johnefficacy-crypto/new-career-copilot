@@ -51,7 +51,7 @@ export default function Marketplace() {
             data-testid={`mkt-filter-${t}`}
             className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition ${
               filter === t
-                ? "bg-[#2E2218] text-[#F3EADB]"
+                ? "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]"
                 : "bg-white/70 border border-[#E7DECB] text-clay-700 hover:bg-[#F3EADB]"
             }`}
           >

@@ -2,6 +2,8 @@
 
 _Last updated: 2026-05-16_
 
+> A separate, higher-level audit landed on `main` at the same filename (`Study OS Frontend Full Audit (Code-Only)`, ~110 lines, themes only — no file:line refs or fixes). This file is the detailed P0/P1/P2 findings ledger. The two corroborate each other; the themes there map to the specific findings here.
+
 Scope (read in full):
 
 **Pages:**

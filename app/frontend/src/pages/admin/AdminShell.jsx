@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
-  Bell, Bot, CreditCard, Database, ExternalLink, FileSearch, GaugeCircle,
-  GraduationCap, LayoutGrid, ListChecks, LogOut, Menu, MessagesSquare, Radar,
-  ScrollText, ShieldCheck, ShoppingBag, Sparkles, Users2, X,
+  Bell, Bot, Copyright as CopyrightIcon, CreditCard, Database, ExternalLink,
+  FileSearch, Flag, GaugeCircle, GraduationCap, LayoutGrid, LineChart,
+  ListChecks, LogOut, Menu, MessagesSquare, Radar, ScrollText, ShieldCheck,
+  ShoppingBag, Sparkles, Users2, X,
 } from "lucide-react";
 import { useAuth } from "../../lib/authContext";
 
@@ -19,6 +20,9 @@ const OPERATIONS_NAV = [
 
 const GOVERNANCE_NAV = [
   { to: "/admin", label: "Overview", icon: LayoutGrid, end: true, testId: "admin-nav-overview" },
+  { to: "/admin/kpis", label: "Leadership KPIs", icon: LineChart, testId: "admin-nav-kpis" },
+  { to: "/admin/moderation", label: "Moderation Queue", icon: Flag, testId: "admin-nav-moderation" },
+  { to: "/admin/copyright", label: "Copyright & Takedown", icon: CopyrightIcon, testId: "admin-nav-copyright" },
   { to: "/admin/organizations", label: "Organizations", icon: Users2, testId: "admin-nav-organizations" },
   { to: "/admin/audit", label: "Audit Trail", icon: ScrollText, testId: "admin-nav-audit-log" },
   { to: "/admin/rbac", label: "RBAC & Users", icon: ShieldCheck, testId: "admin-nav-rbac-&-users" },
