@@ -329,7 +329,7 @@ function MockList({ items, activeId, onPick }) {
                 onClick={() => onPick(m.id)}
                 aria-pressed={active}
                 className={`w-full text-left rounded-xl px-3.5 py-3 mb-1 transition ${
-                  active ? "bg-[#2E2218] text-[#F3EADB]" : "hover:bg-clay-50"
+                  active ? "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]" : "hover:bg-clay-50"
                 }`}
                 data-testid={`mock-row-${m.id}`}
               >
@@ -341,7 +341,7 @@ function MockList({ items, activeId, onPick }) {
                 </div>
                 <div
                   className={`flex items-center justify-between mt-1 text-[11.5px] ${
-                    active ? "text-[#D6BC93]" : "text-clay-700"
+                    active ? "text-clay-700" : "text-clay-700"
                   }`}
                 >
                   <span className="num-mono">{m.exam_slug || "—"}</span>

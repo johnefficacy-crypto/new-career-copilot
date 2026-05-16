@@ -418,7 +418,7 @@ function RailGroup({ title, channels, activeId, onPick, space, muted }) {
             </span>
             <span
               className={`block text-[10px] num-mono ${
-                activeId === ch.id ? "text-[#D6BC93]" : muted ? "text-[#C9B68F]" : "text-[#A68057]"
+                activeId === ch.id ? "text-clay-700" : muted ? "text-[#C9B68F]" : "text-[#A68057]"
               }`}
             >
               {ch.members ? `${ch.members.toLocaleString()} · ` : ""}
@@ -428,7 +428,7 @@ function RailGroup({ title, channels, activeId, onPick, space, muted }) {
           {ch.unread > 0 ? (
             <span
               className={`min-w-[20px] h-[18px] px-1.5 rounded-full text-[9.5px] font-bold flex items-center justify-center num-mono ${
-                activeId === ch.id ? "bg-[#D6BC93] text-[#2E2218]" : "bg-[#4E3A29] text-[#F3EADB]"
+                activeId === ch.id ? "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]" : "bg-[#4E3A29] text-[#F3EADB]"
               }`}
             >
               {ch.unread}
@@ -525,7 +525,7 @@ function ThreadToolbar({ sort, onSort, channel, count }) {
             onClick={() => onSort(s.v)}
             data-testid={`sort-${s.v}`}
             className={`px-3 py-1 rounded-full text-[11.5px] font-semibold ${
-              sort === s.v ? "bg-[#4E3A29] text-[#F3EADB]" : "text-clay-700 hover:bg-[#E7D6BA]"
+              sort === s.v ? "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]" : "text-clay-700 hover:bg-[#E7D6BA]"
             }`}
           >
             {s.label}
@@ -885,7 +885,7 @@ function ReplySection({ replies, thread, channel, users, onChanged }) {
               key={s}
               type="button"
               className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
-                i === 0 ? "bg-[#4E3A29] text-[#F3EADB]" : "text-clay-700"
+                i === 0 ? "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]" : "text-clay-700"
               }`}
             >
               {s}

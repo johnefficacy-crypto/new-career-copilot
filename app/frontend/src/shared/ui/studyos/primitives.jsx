@@ -188,7 +188,7 @@ export function Tabs({ value, onChange, options = [] }) {
           onClick={() => onChange && onChange(o.value)}
           className={`px-3.5 py-1.5 rounded-md text-[12px] font-semibold transition ${
             value === o.value
-              ? "bg-[#4E3A29] text-[#F3EADB]"
+              ? "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]"
               : "text-clay-700 hover:bg-[#E7D6BA]"
           }`}
         >
