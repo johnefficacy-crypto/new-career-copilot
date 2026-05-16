@@ -8,30 +8,41 @@ import React, {
 } from "react";
 
 import { auth as authApi } from "./api";
+import { isAdminRole, ROLES } from "./rbac";
 import { supabase } from "./supabase";
 
 const AuthCtx = createContext(null);
+
+function coerceRole(rawRole) {
+  return Object.values(ROLES).includes(rawRole) ? rawRole : ROLES.USER;
+}
+
+function safeGoalExams(value) {
+  return Array.isArray(value) ? value : [];
+}
 
 function mergeUser(supabaseUser, backendUser) {
   if (!supabaseUser && !backendUser) return null;
   const meta = supabaseUser?.user_metadata || {};
   const appMeta = supabaseUser?.app_metadata || {};
+  const role = coerceRole(backendUser?.role || appMeta.role || meta.role);
   return {
-    id: supabaseUser?.id || backendUser?.id,
-    email: supabaseUser?.email || backendUser?.email,
+    id: supabaseUser?.id || backendUser?.id || null,
+    email: supabaseUser?.email || backendUser?.email || null,
     name: backendUser?.name || meta.name || meta.full_name || null,
-    role: backendUser?.role || appMeta.role || meta.role || "user",
+    role,
+    permissions: Array.isArray(backendUser?.permissions) ? backendUser.permissions : [],
     avatar: backendUser?.avatar || meta.avatar_url || null,
     onboarded: backendUser?.onboarded ?? Boolean(meta.onboarded),
     plan: backendUser?.plan || meta.plan || "free",
-    goal_exams: backendUser?.goal_exams || meta.goal_exams || [],
+    goal_exams: safeGoalExams(backendUser?.goal_exams || meta.goal_exams),
     created_at: backendUser?.created_at || supabaseUser?.created_at || null,
   };
 }
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [status, setStatus] = useState("checking"); // checking | authed | guest
+  const [status, setStatus] = useState("checking"); // checking | guest | session_authed | backend_authed
 
   const hydrate = useCallback(async (session) => {
     if (!session?.user) {
@@ -39,14 +50,15 @@ export function AuthProvider({ children }) {
       setStatus("guest");
       return;
     }
+
     try {
       const { user: backendUser } = await authApi.me();
       setUser(mergeUser(session.user, backendUser));
+      setStatus("backend_authed");
     } catch {
-      // Backend unreachable — still treat as authed via Supabase session.
       setUser(mergeUser(session.user, null));
+      setStatus("session_authed");
     }
-    setStatus("authed");
   }, []);
 
   useEffect(() => {
@@ -76,7 +88,6 @@ export function AuthProvider({ children }) {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw new Error(error.message || "Unable to sign in");
     await hydrate(data.session);
-    // Re-read merged user from state (await async setState by recomputing).
     return mergeUser(data.user, null);
   }, [hydrate]);
 
@@ -88,7 +99,6 @@ export function AuthProvider({ children }) {
         options: { data: { name } },
       });
       if (error) throw new Error(error.message || "Unable to create account");
-      // If email confirmation is required, session may be null.
       if (data.session) {
         await hydrate(data.session);
       } else {
@@ -112,6 +122,7 @@ export function AuthProvider({ children }) {
       const { data } = await supabase.auth.getSession();
       const merged = mergeUser(data.session?.user, backendUser);
       setUser(merged);
+      setStatus(data.session?.user ? "backend_authed" : "guest");
       return merged;
     } catch {
       return null;
@@ -135,10 +146,11 @@ export function AuthProvider({ children }) {
     () => ({
       user,
       status,
-      isAuthed: status === "authed",
+      isAuthed: status === "session_authed" || status === "backend_authed",
+      hasBackendSession: status === "backend_authed",
       isChecking: status === "checking",
-      isAdmin: user && (user.role === "admin" || user.role === "super_admin"),
-      isSuperAdmin: user && user.role === "super_admin",
+      isAdmin: isAdminRole(user?.role),
+      isSuperAdmin: user?.role === ROLES.SUPER_ADMIN,
       login,
       register,
       logout,

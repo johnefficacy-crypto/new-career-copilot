@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ArrowLeft,
+  BarChart3,
   Bookmark,
   CheckCircle2,
   XCircle,
@@ -11,6 +12,12 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { api } from "../lib/api";
+import ExamIntelligenceTab from "../features/exams/ExamIntelligenceTab";
+
+const TABS = [
+  { id: "eligibility", label: "Eligibility & posts", icon: ShieldCheck },
+  { id: "intelligence", label: "Exam intelligence", icon: BarChart3 },
+];
 
 function VerdictBadge({ verdict }) {
   const map = {
@@ -31,6 +38,7 @@ export default function ExamDetail() {
   const { slug } = useParams();
   const [r, setR] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState("eligibility");
 
   async function load() {
     const d = await api.get(`/api/recruitments/${slug}`);
@@ -154,6 +162,32 @@ export default function ExamDetail() {
         </div>
       </div>
 
+      <div className="flex flex-wrap gap-1 border-b border-clay-200" role="tablist" data-testid="exam-detail-tabs">
+        {TABS.map((t) => {
+          const Icon = t.icon;
+          const active = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={active}
+              onClick={() => setTab(t.id)}
+              data-testid={`exam-detail-tab-${t.id}`}
+              className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                active
+                  ? "border-clay-700 text-clay-900"
+                  : "border-transparent text-muted-foreground hover:text-clay-800"
+              }`}
+            >
+              <Icon className="h-4 w-4" /> {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {tab === "intelligence" ? (
+        <ExamIntelligenceTab examSlug={r.exam_slug || r.exam?.slug} />
+      ) : (
       <div className="grid lg:grid-cols-3 gap-4">
         <div
           className="lg:col-span-2 soft-card rounded-2xl p-6"
@@ -237,6 +271,7 @@ export default function ExamDetail() {
           )}
         </aside>
       </div>
+      )}
     </div>
   );
 }

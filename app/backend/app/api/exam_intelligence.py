@@ -53,6 +53,11 @@ def get_exam_summary(
             "topics": [],
             "verified_pyq_counts": {},
             "verified_syllabus_mentions": 0,
+            "competition_series": [],
+            "cutoff_series": {},
+            "vacancy_series": {"total": [], "by_category": {}},
+            "pyq_papers": [],
+            "difficulty_heatmap": {"buckets": ["easy", "medium", "hard", "unknown"], "rows": [], "verified_question_count": 0},
             "verified_only": True,
             "error": str(exc)[:200],
         }

@@ -1,5 +1,6 @@
 import React from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Route, Routes } from "react-router-dom";
+import NotFound from "./pages/NotFound";
 import { adminRouteElements } from "./routes/adminRoutes";
 import { appRouteElements } from "./routes/appRoutes";
 import { publicRouteElements } from "./routes/publicRoutes";
@@ -10,7 +11,7 @@ export default function App() {
       {publicRouteElements}
       {appRouteElements}
       {adminRouteElements}
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<NotFound />} />
     </Routes>
   );
 }
