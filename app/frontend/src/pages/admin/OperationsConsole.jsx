@@ -246,6 +246,23 @@ export default function OperationsConsole() {
     });
   }, [runAction, loadAll]);
 
+  const rejectCandidate = useCallback(async (item) => {
+    if (!item?.id) return;
+    const title = item.recruitment || item.id;
+    const reason = window.prompt(`Reject "${title}"? Enter a reason (required):`, "");
+    if (reason == null) return; // user cancelled the prompt
+    const trimmed = reason.trim();
+    if (!trimmed) { setMsg("Reject cancelled — reason is required."); return; }
+    await runAction({
+      key: `reject-${item.id}`,
+      successMessage: "Candidate rejected.",
+      action: async () => {
+        await api.post(`/api/admin/scrape/items/${item.id}/reject`, { notes: trimmed });
+        await loadAll();
+      },
+    });
+  }, [runAction, loadAll]);
+
   const resolveConflict = useCallback(async (payload) => {
     const conflictId = payload?.conflict_id || conflictTarget?.id;
     if (!conflictId) return;
@@ -386,6 +403,7 @@ export default function OperationsConsole() {
             onPromote={promote}
             onMergeIntoExisting={openMergePreview}
             onMarkDuplicate={markDuplicate}
+            onRejectCandidate={rejectCandidate}
             onValidate={validate}
             onVerify={verify}
             onPublish={publish}
@@ -544,7 +562,7 @@ function ReviewAndPublish({
   queueFilter, onQueueFilter, onSelectQueue, onSelectRecruitment,
   onClearSource, onClearQueue, onClearRecruitment,
   onStepClick, onQueueFieldAction,
-  onPromote, onMergeIntoExisting, onMarkDuplicate,
+  onPromote, onMergeIntoExisting, onMarkDuplicate, onRejectCandidate,
   onValidate, onVerify, onPublish, onOpenOfficialSourceResolver,
   resolverOpen, mergeTarget, onCloseResolver, onCloseMerge,
   onResolveOfficialSource, onSourcesChanged, onConfirmMerge,
@@ -612,6 +630,7 @@ function ReviewAndPublish({
               onPromote={onPromote}
               onMergeIntoExisting={onMergeIntoExisting}
               onMarkDuplicate={onMarkDuplicate}
+              onRejectCandidate={onRejectCandidate}
               onValidate={onValidate}
               onVerify={onVerify}
               onPublish={onPublish}
