@@ -1,12 +1,11 @@
 import React from "react";
-import { Route } from "react-router-dom";
+import { Navigate, Route } from "react-router-dom";
 import RouteErrorBoundary from "../components/RouteErrorBoundary";
 import { ProtectedRoute } from "../lib/ProtectedRoute";
 import DashShell from "../pages/DashShell";
 import Dashboard from "../pages/Dashboard";
 import Today from "../pages/Today";
 import Profile from "../pages/Profile";
-import Onboarding from "../pages/Onboarding";
 import Exams from "../pages/Exams";
 import ExamDetail from "../pages/ExamDetail";
 import Saved from "../pages/Saved";
@@ -42,7 +41,7 @@ export const appRouteElements = (
       <Route path="/app" element={<Dashboard />} />
       <Route path="/app/today" element={<Today />} />
       <Route path="/app/profile" element={<Profile />} />
-      <Route path="/app/onboarding" element={<Onboarding />} />
+      <Route path="/app/onboarding" element={<Navigate to="/app/onboarding/chat?mode=discovery" replace />} />
       <Route path="/app/exams" element={<Exams />} />
       <Route path="/app/exams/:slug" element={<ExamDetail />} />
       <Route path="/app/saved" element={<Saved />} />
