@@ -1,21 +1,26 @@
 import React, { useCallback, useEffect, useState } from "react";
-import {
-  Avatar,
-  Eyebrow,
-  MiniBar,
-  PageHeader,
-  Pill,
-  SectionHeader,
-  StatusDot,
-  StudyCard as Card,
-} from "../../shared/ui/studyos";
 import { api } from "../../lib/api";
 import useApiAction from "../../lib/hooks/useApiAction";
 import { ACCOUNTABILITY, COMMUNITY_USERS } from "./data";
+import {
+  FieldAvatar,
+  FieldButton,
+  FieldCard,
+  FieldDivider,
+  FieldEmpty,
+  FieldHeader,
+  FieldLabel,
+  FieldPage,
+  FieldPill,
+  FieldProgress,
+  FieldSection,
+  FieldStatusDot,
+  FieldTable,
+  FieldTd,
+  FieldTextarea,
+} from "./ui";
 
-// Production port of docs/reference/UI_claude-code/screen-partners.jsx.
-
-const PARTNER_PALETTE = ["#A68057", "#54794E", "#7E6FB7", "#C58A6B", "#8FA68A"];
+const PARTNER_PALETTE = ["#5A554B", "#2F6A47", "#42588B", "#7B520C", "#6B2113"];
 
 function isUuid(value) {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
@@ -37,18 +42,13 @@ function adaptUser(u, fallback = {}) {
 }
 
 // Backend /api/community/partner returns a shape that doesn't match the UI's
-// expectations: `partner` is a `profiles` row (full_name, no avatarColor),
-// `partnership` is an `accountability_pairs` row (no streakDays, no `since`),
-// `thisWeek` may be `{}`. This adapter normalizes everything so the rest of
-// the screen renders without crashing or showing "undefined".
+// expectations: `partner` is a `profiles` row, `partnership` is an
+// `accountability_pairs` row, `thisWeek` may be `{}`. Adapter normalizes.
 function adaptPartnerState(prev, d) {
   if (!d || typeof d !== "object") return prev;
   const partner = d.partner ? adaptUser(d.partner, prev.partner || {}) : prev.partner;
   const you = d.you ? adaptUser(d.you, prev.you || {}) : prev.you;
-  const partnership = {
-    ...(prev.partnership || {}),
-    ...(d.partnership || {}),
-  };
+  const partnership = { ...(prev.partnership || {}), ...(d.partnership || {}) };
   if (partnership.since == null && d.partnership?.created_at) partnership.since = d.partnership.created_at;
   if (partnership.streakDays == null) partnership.streakDays = 0;
 
@@ -112,7 +112,7 @@ export default function PartnersScreen() {
       setState((prev) => adaptPartnerState(prev, d));
       setHasLiveData(true);
     } catch {
-      // Keep seed visible; user is offline or unauthenticated.
+      // Offline / unauthenticated — keep seed.
     }
   }, []);
 
@@ -141,126 +141,118 @@ export default function PartnersScreen() {
     });
 
   return (
-    <div className="space-y-6" data-testid="partners-page">
-      <PageHeader
+    <FieldPage testId="partners-page">
+      <FieldHeader
         eyebrow="Accountability partner"
-        title="One person. Daily ✅. Weekly truth."
+        title="One person. Daily check-in. Weekly truth."
         sub="A structured bilateral commitment. We surface what both of you said you'd do, and what actually happened — calmly."
         right={
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={endPartnership}
-              className="text-[12px] px-3 py-1.5 rounded-full border border-[#E7DECB] text-clay-700 font-semibold"
-            >
-              End partnership
-            </button>
-          </div>
+          <FieldButton variant="ghost" size="sm" onClick={endPartnership}>
+            End partnership
+          </FieldButton>
         }
       />
 
-      <PartnerHeroCard partner={state.partner} you={state.you} partnership={state.partnership} thisWeek={state.thisWeek} />
+      <PartnerHero partner={state.partner} you={state.you} partnership={state.partnership} thisWeek={state.thisWeek} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6 mt-6">
         <ThisWeekComparison state={state} />
         <DailyCheckinPartner onPosted={refresh} hasLiveData={hasLiveData} partner={state.partner} />
       </div>
 
-      <CommitmentDiffCard state={state} />
-      <CheckinHistory recentCheckIns={state.recentCheckIns} />
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <WeeklyReviewQuestionsCard questions={state.weeklyReviewQ} />
-        <PartnerCandidatesCard candidates={state.candidates} onChanged={refresh} hasLiveData={hasLiveData} />
+      <div className="mt-6">
+        <CommitmentDiff state={state} />
       </div>
-    </div>
+
+      <div className="mt-6">
+        <CheckinHistory recentCheckIns={state.recentCheckIns} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+        <WeeklyReviewQuestions questions={state.weeklyReviewQ} />
+        <PartnerCandidates candidates={state.candidates} onChanged={refresh} hasLiveData={hasLiveData} />
+      </div>
+    </FieldPage>
   );
 }
 
-function safePct(value, goal) {
-  if (!goal || goal <= 0) return 0;
-  return value / goal;
-}
-
-function PartnerHeroCard({ partner, you, partnership, thisWeek }) {
+function PartnerHero({ partner, you, partnership, thisWeek }) {
   const selfHours = thisWeek?.self?.hours || 0;
   const partnerHours = thisWeek?.partner?.hours || 0;
   const selfMocks = thisWeek?.self?.mocks || 0;
   const partnerMocks = thisWeek?.partner?.mocks || 0;
   const streak = partnership?.streakDays || 0;
+
   return (
-    <Card className="!bg-[#4E3A29] !border-[#4E3A29]">
-      <div className="flex items-center gap-6 flex-wrap" data-testid="partner-hero">
-        <div className="flex items-center gap-3">
-          <Avatar user={you} size={56} />
-          <div>
-            <div className="num-mono text-[10px] text-[#D6BC93] uppercase tracking-[0.18em]">You</div>
-            <div className="font-heading text-[18px] text-[#F3EADB] mt-0.5">{you?.name}</div>
-            {you?.exam ? (
-              <div className="num-mono text-[10.5px] text-[#A68057] mt-0.5">{you.exam}</div>
-            ) : null}
+    <FieldCard tone="ink" padded={false} className="overflow-hidden">
+      <div className="p-6 md:p-8 grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-6 items-center" data-testid="partner-hero">
+        <div className="flex items-center gap-4 min-w-0">
+          <FieldAvatar user={you} size={52} />
+          <div className="min-w-0">
+            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/55">You</div>
+            <div className="font-sans text-[18px] font-semibold mt-0.5 truncate">{you?.name || "—"}</div>
+            {you?.exam ? <div className="font-mono text-[11px] text-white/55 mt-0.5">{you.exam}</div> : null}
           </div>
         </div>
 
-        <div className="flex-1 min-w-[220px] flex flex-col items-center">
-          <svg
-            width="220"
-            height="44"
-            viewBox="0 0 220 44"
-            fill="none"
-            role="img"
-            aria-label={`${streak} consecutive days both checked in`}
-          >
-            <line x1="0" y1="22" x2="100" y2="22" stroke="#54794E" strokeWidth="1.6" strokeDasharray="3 4" />
-            <line x1="120" y1="22" x2="220" y2="22" stroke="#54794E" strokeWidth="1.6" strokeDasharray="3 4" />
-            <circle cx="110" cy="22" r="14" fill="#54794E" stroke="#F3EADB" strokeWidth="1.6" />
-            <text
-              x="110"
-              y="22"
-              textAnchor="middle"
-              dominantBaseline="central"
-              fontFamily="JetBrains Mono"
-              fontSize="11"
-              fill="#F3EADB"
-              fontWeight="700"
-              aria-hidden="true"
-            >
-              {streak}d
-            </text>
-          </svg>
-          <div className="num-mono text-[10px] text-[#D6BC93] uppercase tracking-[0.18em] mt-1">
-            consecutive days both checked in
-          </div>
-        </div>
+        <StreakRing streak={streak} />
 
-        <div className="flex items-center gap-3 justify-end">
-          <div className="text-right">
-            <div className="num-mono text-[10px] text-[#D6BC93] uppercase tracking-[0.18em]">Partner</div>
-            <div className="font-heading text-[18px] text-[#F3EADB] mt-0.5">{partner?.name || "—"}</div>
+        <div className="flex items-center gap-4 justify-end min-w-0 md:flex-row-reverse">
+          <FieldAvatar user={partner} size={52} />
+          <div className="min-w-0 text-right md:text-left">
+            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/55">Partner</div>
+            <div className="font-sans text-[18px] font-semibold mt-0.5 truncate">{partner?.name || "—"}</div>
             {partnership?.since ? (
-              <div className="num-mono text-[10.5px] text-[#A68057] mt-0.5">
+              <div className="font-mono text-[11px] text-white/55 mt-0.5">
                 {partner?.exam ? `${partner.exam} · ` : ""}since {partnership.since}
               </div>
             ) : null}
           </div>
-          <Avatar user={partner} size={56} />
         </div>
       </div>
 
-      <div className="rule mt-5 pt-4 grid grid-cols-1 sm:grid-cols-3 gap-4 text-[12px] text-[#D6BC93] border-[#4E3A29]">
-        <Stat k="Streak" v={`${streak} days`} />
-        <Stat k="Combined hours · week" v={`${(selfHours + partnerHours).toFixed(1)}h`} />
-        <Stat k="Mocks taken · week" v={`${selfMocks + partnerMocks}`} />
+      <div className="border-t border-white/10 px-6 md:px-8 py-4 grid grid-cols-3 gap-6">
+        <HeroStat label="Streak" value={`${streak} d`} />
+        <HeroStat label="Combined hours" value={`${(selfHours + partnerHours).toFixed(1)} h`} sub="this week" />
+        <HeroStat label="Mocks" value={`${selfMocks + partnerMocks}`} sub="this week" />
       </div>
-    </Card>
+    </FieldCard>
   );
 }
 
-function Stat({ k, v }) {
+function StreakRing({ streak }) {
   return (
-    <div>
-      <div className="num-mono text-[9.5px] tracking-[0.18em] uppercase">{k}</div>
-      <div className="font-heading text-[#F3EADB] text-[20px] mt-1">{v}</div>
+    <div className="flex flex-col items-center" aria-label={`${streak} consecutive days both checked in`}>
+      <svg width="180" height="40" viewBox="0 0 180 40" role="img" aria-hidden="true">
+        <line x1="0" y1="20" x2="78" y2="20" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" strokeDasharray="2 4" />
+        <line x1="102" y1="20" x2="180" y2="20" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" strokeDasharray="2 4" />
+        <circle cx="90" cy="20" r="14" fill="#2F6A47" />
+        <text
+          x="90"
+          y="20"
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontFamily="JetBrains Mono, monospace"
+          fontSize="10"
+          fontWeight="700"
+          fill="#FFFFFF"
+        >
+          {streak}d
+        </text>
+      </svg>
+      <div className="font-mono text-[9.5px] uppercase tracking-[0.18em] text-white/55 mt-1">
+        consecutive both-in days
+      </div>
+    </div>
+  );
+}
+
+function HeroStat({ label, value, sub }) {
+  return (
+    <div className="min-w-0">
+      <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/55">{label}</div>
+      <div className="font-sans text-[20px] font-semibold mt-1 leading-none truncate">{value}</div>
+      {sub ? <div className="font-mono text-[10.5px] text-white/55 mt-1">{sub}</div> : null}
     </div>
   );
 }
@@ -270,95 +262,108 @@ function ThisWeekComparison({ state }) {
   const partner = state.thisWeek?.partner || {};
   const selfC = state.selfCommitment || {};
   const partnerC = state.partnerCommitment || {};
+  const rows = [
+    {
+      metric: "Hours",
+      selfGoal: selfC.hoursPerWeek,
+      selfDone: self.hours ?? 0,
+      partnerGoal: partnerC.hoursPerWeek,
+      partnerDone: partner.hours ?? 0,
+      suffix: "h",
+      bars: true,
+    },
+    {
+      metric: "Tasks",
+      selfGoal: selfC.tasksPerWeek,
+      selfDone: self.tasks ?? 0,
+      partnerGoal: partnerC.tasksPerWeek,
+      partnerDone: partner.tasks ?? 0,
+      bars: true,
+    },
+    {
+      metric: "Mocks",
+      selfGoal: selfC.mocksPerWeek,
+      selfDone: self.mocks ?? 0,
+      partnerGoal: partnerC.mocksPerWeek,
+      partnerDone: partner.mocks ?? 0,
+    },
+  ];
+
   return (
-    <Card>
-      <SectionHeader
-        eyebrow="This week · side-by-side"
+    <FieldCard>
+      <FieldSection
+        label="This week · side-by-side"
         title="Same plan, two columns."
-        sub="No leaderboard. Just shared truth. Numbers are off your study OS — partner sees what you publish, nothing more."
-        right={<StatusDot state="live" />}
+        sub="Numbers are what each of you publishes — partner sees what you publish, nothing more."
+        right={<FieldStatusDot state="live" />}
       />
-      <div className="overflow-x-auto">
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th>Metric</th>
-              <th>Your commitment</th>
-              <th>You · this week</th>
-              <th>Partner commitment</th>
-              <th>Partner · this week</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>
-                <strong>Hours</strong>
-              </td>
-              <td className="num-mono">{selfC.hoursPerWeek ?? "—"}h</td>
-              <td>
-                <span className="num-mono">{self.hours ?? 0}h</span> ·{" "}
-                <MiniBar pct={safePct(self.hours, selfC.hoursPerWeek)} width={64} />
-              </td>
-              <td className="num-mono">{partnerC.hoursPerWeek ?? "—"}h</td>
-              <td>
-                <span className="num-mono">{partner.hours ?? 0}h</span> ·{" "}
-                <MiniBar pct={safePct(partner.hours, partnerC.hoursPerWeek)} width={64} color="#524864" />
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <strong>Tasks</strong>
-              </td>
-              <td className="num-mono">{selfC.tasksPerWeek ?? "—"}</td>
-              <td>
-                <span className="num-mono">{self.tasks ?? 0}</span> ·{" "}
-                <MiniBar pct={safePct(self.tasks, selfC.tasksPerWeek)} width={64} />
-              </td>
-              <td className="num-mono">{partnerC.tasksPerWeek ?? "—"}</td>
-              <td>
-                <span className="num-mono">{partner.tasks ?? 0}</span> ·{" "}
-                <MiniBar pct={safePct(partner.tasks, partnerC.tasksPerWeek)} width={64} color="#524864" />
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <strong>Mocks</strong>
-              </td>
-              <td className="num-mono">{selfC.mocksPerWeek ?? "—"}</td>
-              <td className="num-mono">{self.mocks ?? 0}</td>
-              <td className="num-mono">{partnerC.mocksPerWeek ?? "—"}</td>
-              <td className="num-mono">{partner.mocks ?? 0}</td>
-            </tr>
-            <tr>
-              <td>
-                <strong>Check-ins</strong>
-              </td>
-              <td className="num-mono">7/7</td>
-              <td>
-                <CheckinDots days={self.checkedInDays} fill="#54794E" />
-              </td>
-              <td className="num-mono">7/7</td>
-              <td>
-                <CheckinDots days={partner.checkedInDays} fill="#524864" />
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </Card>
+      <FieldTable
+        headers={["Metric", "Your commit", "You", "Partner commit", "Partner"]}
+        testId="partner-week-table"
+      >
+        {rows.map((r) => (
+          <tr key={r.metric}>
+            <FieldTd>
+              <strong className="font-medium">{r.metric}</strong>
+            </FieldTd>
+            <FieldTd mono>
+              {r.selfGoal ?? "—"}
+              {r.suffix || ""}
+            </FieldTd>
+            <FieldTd>
+              <div className="flex items-center gap-2">
+                <span className="font-mono tabular-nums">
+                  {r.selfDone}
+                  {r.suffix || ""}
+                </span>
+                {r.bars ? <FieldProgress value={r.selfDone} max={r.selfGoal || 0} height={3} className="w-16" /> : null}
+              </div>
+            </FieldTd>
+            <FieldTd mono>
+              {r.partnerGoal ?? "—"}
+              {r.suffix || ""}
+            </FieldTd>
+            <FieldTd>
+              <div className="flex items-center gap-2">
+                <span className="font-mono tabular-nums">
+                  {r.partnerDone}
+                  {r.suffix || ""}
+                </span>
+                {r.bars ? (
+                  <FieldProgress value={r.partnerDone} max={r.partnerGoal || 0} height={3} className="w-16" />
+                ) : null}
+              </div>
+            </FieldTd>
+          </tr>
+        ))}
+        <tr>
+          <FieldTd>
+            <strong className="font-medium">Check-ins</strong>
+          </FieldTd>
+          <FieldTd mono>7 / 7</FieldTd>
+          <FieldTd>
+            <CheckinDots days={self.checkedInDays} />
+          </FieldTd>
+          <FieldTd mono>7 / 7</FieldTd>
+          <FieldTd>
+            <CheckinDots days={partner.checkedInDays} />
+          </FieldTd>
+        </tr>
+      </FieldTable>
+    </FieldCard>
   );
 }
 
-function CheckinDots({ days, fill }) {
+function CheckinDots({ days }) {
   const arr = Array.isArray(days) ? days : Array.from({ length: 7 }, () => false);
+  const checked = arr.filter(Boolean).length;
   return (
-    <span className="inline-flex gap-1" aria-label={`${arr.filter(Boolean).length} of ${arr.length} days checked in`}>
+    <span className="inline-flex gap-1" aria-label={`${checked} of ${arr.length} days checked in`}>
       {arr.map((d, i) => (
         <span
           key={i}
-          className="w-3.5 h-3.5 rounded-sm"
-          style={{ background: d ? fill : "#E7DECB" }}
           aria-hidden="true"
+          className={`h-2.5 w-2.5 rounded-[2px] ${d ? "bg-field-accent" : "bg-field-line-soft border border-field-line"}`}
         />
       ))}
     </span>
@@ -386,203 +391,188 @@ function DailyCheckinPartner({ onPosted, hasLiveData, partner }) {
   }
 
   return (
-    <Card>
-      <SectionHeader
-        eyebrow="Today's check-in"
+    <FieldCard>
+      <FieldSection
+        label="Today's check-in"
         title="Did you study today?"
         sub="One tap. One sentence. That's the contract."
       />
-      <div className="rounded-xl border border-[#E7DECB] bg-[#FBF8F2] p-3.5">
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setDone(true)}
-            data-testid="checkin-yes"
-            aria-pressed={done === true}
-            className={`flex-1 py-2.5 rounded-lg text-[13px] font-semibold ${
-              done === true
-                ? "bg-[#33482F] text-[#F0F5EF]"
-                : "bg-white/70 border border-[#E7DECB] text-clay-900"
-            }`}
-          >
-            ✅ Yes, today
-          </button>
-          <button
-            type="button"
-            onClick={() => setDone(false)}
-            data-testid="checkin-no"
-            aria-pressed={done === false}
-            className={`flex-1 py-2.5 rounded-lg text-[13px] font-semibold ${
-              done === false
-                ? "bg-[#7A3925] text-[#F2DDD6]"
-                : "bg-white/70 border border-[#E7DECB] text-clay-900"
-            }`}
-          >
-            ○ Not yet
-          </button>
-        </div>
-        <textarea
-          rows="2"
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder="One line about today (visible to partner)…"
-          aria-label="Today's note for your partner"
-          className="mt-3 w-full bg-transparent outline-none text-[12.5px] placeholder:text-[#A68057] resize-none"
-        />
-        <div className="flex justify-between items-center mt-2 gap-2 flex-wrap">
-          <span className="num-mono text-[10.5px] text-clay-700">
-            Partner checks in by 22:00 IST · auto-prompt sent
-          </span>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={busy || done == null}
-            data-testid="partner-checkin-post"
-            className="text-[11px] px-3 py-1 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold disabled:opacity-50"
-          >
-            {posted ? "Posted ✓" : busy ? "Posting…" : "Post"}
-          </button>
-        </div>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => setDone(true)}
+          data-testid="checkin-yes"
+          aria-pressed={done === true}
+          className={`flex-1 h-10 rounded-md border text-[13px] font-medium transition-colors ${
+            done === true
+              ? "bg-field-accent text-white border-field-accent"
+              : "bg-field-canvas text-field-ink border-field-line hover:bg-field-line-soft"
+          }`}
+        >
+          Yes, today
+        </button>
+        <button
+          type="button"
+          onClick={() => setDone(false)}
+          data-testid="checkin-no"
+          aria-pressed={done === false}
+          className={`flex-1 h-10 rounded-md border text-[13px] font-medium transition-colors ${
+            done === false
+              ? "bg-field-danger text-white border-field-danger"
+              : "bg-field-canvas text-field-ink border-field-line hover:bg-field-line-soft"
+          }`}
+        >
+          Not yet
+        </button>
+      </div>
+      <FieldTextarea
+        rows={2}
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        placeholder="One line about today (visible to partner)…"
+        aria-label="Today's note for your partner"
+        className="mt-3"
+      />
+      <div className="mt-3 flex items-center justify-between gap-2 flex-wrap">
+        <FieldLabel>partner due 22:00 IST · auto-prompted</FieldLabel>
+        <FieldButton
+          variant="primary"
+          size="sm"
+          onClick={submit}
+          disabled={busy || done == null}
+          data-testid="partner-checkin-post"
+        >
+          {posted ? "Posted" : busy ? "Posting…" : "Post"}
+        </FieldButton>
       </div>
 
-      {hasLiveData ? null : (
-        <div className="rule mt-4 pt-3">
-          <Eyebrow>Partner's last check-in</Eyebrow>
+      {!hasLiveData ? (
+        <>
+          <FieldDivider className="my-5" />
+          <FieldLabel>Partner's last check-in</FieldLabel>
           <div className="mt-2 flex items-start gap-3">
-            <Avatar user={partner} size={28} />
-            <div>
-              <div className="text-[13px] italic text-clay-700">
-                Recent check-ins appear here once your partner posts theirs.
-              </div>
+            <FieldAvatar user={partner} size={28} />
+            <div className="text-[12.5px] italic text-field-ink-muted">
+              Appears here once your partner posts theirs.
             </div>
           </div>
-        </div>
-      )}
-    </Card>
+        </>
+      ) : null}
+    </FieldCard>
   );
 }
 
-function CommitmentDiffCard({ state }) {
+function CommitmentDiff({ state }) {
   const selfC = state.selfCommitment || {};
   const partnerC = state.partnerCommitment || {};
   return (
-    <Card>
-      <SectionHeader
-        eyebrow="What we promised"
+    <FieldCard>
+      <FieldSection
+        label="What we promised"
         title="Read the contract."
         sub="Both partners can update. Changes apply next Monday."
       />
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <div className="rounded-xl border border-[#E7DECB] bg-[#FBF8F2] p-4">
-          <Eyebrow>Your commitment</Eyebrow>
-          <ul className="mt-2 space-y-1.5 text-[13px]">
-            <li>· Study <strong>{selfC.hoursPerWeek ?? "—"}h</strong> per week</li>
-            <li>· Complete <strong>{selfC.tasksPerWeek ?? "—"} tasks</strong> per week</li>
-            <li>· Take <strong>{selfC.mocksPerWeek ?? "—"} mocks</strong> per week</li>
-            <li>· Daily check-in by <strong>22:00 IST</strong></li>
-          </ul>
-        </div>
-        <div className="rounded-xl border border-[#DDDAE3] bg-[#F7F5FB] p-4">
-          <Eyebrow>Partner's commitment</Eyebrow>
-          <ul className="mt-2 space-y-1.5 text-[13px] text-[#31293B]">
-            <li>· Study <strong>{partnerC.hoursPerWeek ?? "—"}h</strong> per week</li>
-            <li>· Complete <strong>{partnerC.tasksPerWeek ?? "—"} tasks</strong> per week</li>
-            <li>· Take <strong>{partnerC.mocksPerWeek ?? "—"} mocks</strong> per week</li>
-            <li>· Daily check-in by <strong>22:00 IST</strong></li>
-          </ul>
-        </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <CommitmentColumn title="Your commitment" c={selfC} />
+        <CommitmentColumn title="Partner's commitment" c={partnerC} />
       </div>
-    </Card>
+    </FieldCard>
+  );
+}
+
+function CommitmentColumn({ title, c }) {
+  return (
+    <div className="rounded-md border border-field-line p-4 bg-field-paper">
+      <FieldLabel>{title}</FieldLabel>
+      <ul className="mt-3 space-y-2 text-[13px] text-field-ink">
+        <li>
+          Study <strong className="font-medium">{c.hoursPerWeek ?? "—"} h</strong> per week
+        </li>
+        <li>
+          Complete <strong className="font-medium">{c.tasksPerWeek ?? "—"} tasks</strong> per week
+        </li>
+        <li>
+          Take <strong className="font-medium">{c.mocksPerWeek ?? "—"} mocks</strong> per week
+        </li>
+        <li>
+          Daily check-in by <strong className="font-medium">22:00 IST</strong>
+        </li>
+      </ul>
+    </div>
   );
 }
 
 function CheckinHistory({ recentCheckIns }) {
   return (
-    <Card>
-      <SectionHeader
-        eyebrow="Check-in log · last 5 days"
-        title="What both of you said."
-      />
-      <div className="overflow-x-auto">
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th>Day</th>
-              <th>You</th>
-              <th>Partner</th>
-              <th>Both?</th>
+    <FieldCard>
+      <FieldSection label="Check-in log · last 5 days" title="What both of you said." />
+      <FieldTable headers={["Day", "You", "Partner", "Both?"]}>
+        {recentCheckIns.map((c, i) => {
+          const selfText = typeof c.self === "string" ? c.self : c.self?.note || "—";
+          const partnerText = typeof c.partner === "string" ? c.partner : c.partner?.note || "—";
+          const partnerSkipped =
+            c.partner?.did_study === false || (typeof partnerText === "string" && /skip/i.test(partnerText));
+          const selfDone = c.self?.did_study !== false && !/skip/i.test(selfText);
+          const partnerDone = !partnerSkipped;
+          return (
+            <tr key={c.date || i}>
+              <FieldTd mono>{c.date}</FieldTd>
+              <FieldTd>{selfText}</FieldTd>
+              <FieldTd className={partnerSkipped ? "text-field-danger" : ""}>{partnerText}</FieldTd>
+              <FieldTd>
+                {selfDone && partnerDone ? (
+                  <FieldPill tone="accent">streak +1</FieldPill>
+                ) : (
+                  <FieldPill tone="warn">break</FieldPill>
+                )}
+              </FieldTd>
             </tr>
-          </thead>
-          <tbody>
-            {recentCheckIns.map((c, i) => {
-              const selfText = typeof c.self === "string" ? c.self : c.self?.note || "—";
-              const partnerText = typeof c.partner === "string" ? c.partner : c.partner?.note || "—";
-              const partnerSkipped = c.partner?.did_study === false || (typeof partnerText === "string" && /skip/i.test(partnerText));
-              const selfDone = c.self?.did_study !== false && !/skip/i.test(selfText);
-              const partnerDone = !partnerSkipped;
-              return (
-                <tr key={c.date || i}>
-                  <td className="num-mono">{c.date}</td>
-                  <td>{selfText}</td>
-                  <td className={partnerSkipped ? "text-[#7A3925]" : ""}>{partnerText}</td>
-                  <td>
-                    {selfDone && partnerDone ? (
-                      <Pill tone="sage">streak +1</Pill>
-                    ) : (
-                      <Pill tone="amber">break</Pill>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </Card>
+          );
+        })}
+      </FieldTable>
+    </FieldCard>
   );
 }
 
-function WeeklyReviewQuestionsCard({ questions }) {
+function WeeklyReviewQuestions({ questions }) {
   if (!questions || questions.length === 0) {
     return (
-      <Card>
-        <SectionHeader
-          eyebrow="Weekly review · Sunday 21:00"
-          title="Three questions, weekly."
-        />
-        <p className="text-[12.5px] text-clay-700">
+      <FieldCard>
+        <FieldSection label="Weekly review · Sunday 21:00" title="Three questions, weekly." />
+        <p className="text-[12.5px] text-field-ink-muted">
           The auto-prompted review will appear here on Sunday evening.
         </p>
-      </Card>
+      </FieldCard>
     );
   }
   return (
-    <Card>
-      <SectionHeader
-        eyebrow="Weekly review · Sunday 21:00"
+    <FieldCard>
+      <FieldSection
+        label="Weekly review · Sunday 21:00"
         title="Three questions. Both answer. Compared side-by-side."
         sub="No scoring. The conversation is the value."
       />
       <ol className="space-y-3">
         {questions.map((q, i) => (
           <li key={q} className="flex items-start gap-3">
-            <span className="num-mono text-[12px] text-[#A68057] pt-0.5">{String(i + 1).padStart(2, "0")}</span>
-            <span className="text-[13.5px] flex-1">{q}</span>
+            <span className="font-mono text-[11px] text-field-ink-quiet pt-0.5 w-6 shrink-0">
+              {String(i + 1).padStart(2, "0")}
+            </span>
+            <span className="text-[13.5px] leading-relaxed">{q}</span>
           </li>
         ))}
       </ol>
-      <div className="rule mt-4 pt-3 num-mono text-[10.5px] text-clay-700">
-        Auto-opens Sunday 21:00 IST · both partners notified
-      </div>
-    </Card>
+      <FieldDivider className="my-4" />
+      <FieldLabel>Auto-opens Sunday 21:00 IST · both partners notified</FieldLabel>
+    </FieldCard>
   );
 }
 
-function PartnerCandidatesCard({ candidates, onChanged, hasLiveData }) {
+function PartnerCandidates({ candidates, onChanged, hasLiveData }) {
   const { run, busy } = useApiAction();
-  // Seed candidate ids are "u_pooja"-style strings; backend rejects non-UUIDs
-  // with 400 ("Invalid candidate"). Disable the button until we have live data.
+  // Seed candidate ids are "u_pooja"-style; backend rejects non-UUIDs with 400.
   const actionable = (id) => hasLiveData && isUuid(id);
+
   async function invite(c) {
     if (!actionable(c.id)) return;
     await run({
@@ -592,60 +582,54 @@ function PartnerCandidatesCard({ candidates, onChanged, hasLiveData }) {
       onSuccess: onChanged,
     });
   }
+
   if (!candidates || candidates.length === 0) {
     return (
-      <Card>
-        <SectionHeader
-          eyebrow="If this partnership ends"
-          title="No suggestions yet."
-          sub="Candidates appear once your study profile is matched."
-        />
-      </Card>
+      <FieldCard>
+        <FieldSection label="If this partnership ends" title="No suggestions yet." />
+        <FieldEmpty title="Candidates appear once your study profile is matched." />
+      </FieldCard>
     );
   }
+
   return (
-    <Card>
-      <SectionHeader
-        eyebrow="If this partnership ends"
+    <FieldCard>
+      <FieldSection
+        label="If this partnership ends"
         title="Candidates we'd suggest."
-        sub="Match score from exam + phase + cadence + availability overlap."
+        sub="Match from exam, phase, cadence, and availability overlap."
       />
       <ul className="space-y-3">
         {candidates.map((c) => {
           const u = c.user || COMMUNITY_USERS[c.id] || { id: c.id, name: c.id };
           const disabled = c.invited || busy || !actionable(c.id);
+          const matchPct = typeof c.match === "number" ? Math.round(c.match * 100) : null;
           return (
-            <li key={c.id} className="grid grid-cols-[36px_1fr_110px] gap-3 items-center">
-              <Avatar user={u} size={32} />
-              <div>
+            <li key={c.id} className="flex items-center gap-3">
+              <FieldAvatar user={u} size={32} />
+              <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[13px] font-medium">{u.name}</span>
-                  {typeof c.match === "number" && c.match > 0 ? (
-                    <span className="num-mono text-[10.5px] text-[#33482F]">
-                      match {Math.round(c.match * 100)}%
-                    </span>
+                  <span className="text-[13px] font-medium text-field-ink">{u.name}</span>
+                  {matchPct != null && matchPct > 0 ? (
+                    <span className="font-mono text-[10.5px] text-field-accent-ink">{matchPct}% match</span>
                   ) : null}
                 </div>
-                <div className="text-[11.5px] text-clay-700 mt-0.5">{c.why}</div>
+                <div className="text-[11.5px] text-field-ink-muted mt-0.5 truncate">{c.why}</div>
               </div>
-              <button
-                type="button"
+              <FieldButton
+                variant={c.invited ? "accentSoft" : "primary"}
+                size="xs"
                 onClick={() => invite(c)}
-                data-testid={`invite-${c.id}`}
                 disabled={disabled}
+                data-testid={`invite-${c.id}`}
                 title={!actionable(c.id) ? "Sample candidate — real matches will appear here." : undefined}
-                className={`text-[11px] px-2.5 py-1 rounded-full font-semibold ${
-                  c.invited
-                    ? "border border-[#54794E] bg-[#F0F5EF] text-[#33482F]"
-                    : "bg-[#4E3A29] text-[#F3EADB] disabled:opacity-50"
-                }`}
               >
                 {c.invited ? "Invited" : "Invite"}
-              </button>
+              </FieldButton>
             </li>
           );
         })}
       </ul>
-    </Card>
+    </FieldCard>
   );
 }
