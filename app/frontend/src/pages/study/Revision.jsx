@@ -29,7 +29,8 @@ export default function Revision() {
     setToday(t.items || []);
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [days]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [days]);
 
   const complete = async (id, rating) => {
     await revisionService.complete(id, { rating });

@@ -19,7 +19,8 @@ export default function Copyright() {
     setClaims(list.claims || []);
     setStats(s);
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [status]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [status]);
 
   const triage = async (id, severity) => { await adminCopyrightService.triage(id, { severity }); load(); refresh(id); };
   const resolve = async (id, resolution, notes) => { await adminCopyrightService.resolve(id, { resolution, notes }); load(); setSelected(null); };

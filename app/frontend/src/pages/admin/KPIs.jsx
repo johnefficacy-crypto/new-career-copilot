@@ -24,7 +24,8 @@ export default function KPIs() {
       setErr(e.message || "Failed to load KPIs");
     }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [days]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [days]);
 
   const recompute = async () => {
     setRecomputing(true);

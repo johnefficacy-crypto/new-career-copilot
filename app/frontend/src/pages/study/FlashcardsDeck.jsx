@@ -17,7 +17,8 @@ export default function FlashcardsDeck() {
     const r = await flashcardsService.listCards(deckId);
     setCards(r.cards || []);
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [deckId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [deckId]);
 
   const addCard = async () => {
     if (!front.trim() || !back.trim()) return;

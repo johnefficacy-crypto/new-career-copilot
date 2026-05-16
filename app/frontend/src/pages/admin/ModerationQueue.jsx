@@ -28,7 +28,8 @@ export default function ModerationQueue() {
     setItems(q.items || []);
     setStats(s);
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [status, severity]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [status, severity]);
 
   const openDetail = async (id) => {
     setSelected(id);

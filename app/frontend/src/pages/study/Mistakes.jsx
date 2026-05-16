@@ -29,7 +29,8 @@ export default function Mistakes() {
     setSummary(s);
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [filter, statusFilter, dueOnly]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [filter, statusFilter, dueOnly]);
 
   return (
     <div className="space-y-6" data-testid="mistakes-page">
