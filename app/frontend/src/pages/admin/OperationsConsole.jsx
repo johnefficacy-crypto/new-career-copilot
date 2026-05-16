@@ -395,6 +395,7 @@ export default function OperationsConsole() {
             onCloseResolver={() => setResolverOpen(false)}
             onCloseMerge={() => setMergeTarget(null)}
             onResolveOfficialSource={resolveOfficialSource}
+            onSourcesChanged={loadAll}
             onConfirmMerge={confirmMerge}
             conflicts={conflicts}
             conflictTarget={conflictTarget}
@@ -546,7 +547,7 @@ function ReviewAndPublish({
   onPromote, onMergeIntoExisting, onMarkDuplicate,
   onValidate, onVerify, onPublish, onOpenOfficialSourceResolver,
   resolverOpen, mergeTarget, onCloseResolver, onCloseMerge,
-  onResolveOfficialSource, onConfirmMerge,
+  onResolveOfficialSource, onSourcesChanged, onConfirmMerge,
   conflicts, conflictTarget, onOpenConflict, onResolveConflict, onRejectConflict, onCloseConflict,
   busy, msg, actionError,
 }) {
@@ -628,6 +629,7 @@ function ReviewAndPublish({
               busy={busy}
               onClose={onCloseResolver}
               onSubmit={onResolveOfficialSource}
+              onSourcesChanged={onSourcesChanged}
             />
             <DuplicateMergePreview
               open={Boolean(mergeTarget && queueId)}

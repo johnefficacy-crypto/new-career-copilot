@@ -1504,6 +1504,36 @@ def run_scraping_pass(
         ).data or []
         inserted_id = inserted[0].get("id") if inserted else None
 
+        # Scraper-driven source_registry drafts: for every official URL
+        # the extractor pulled (notification/apply/pdf), surface the host
+        # as a needs_review draft if it isn't already registered. Admins
+        # see the new draft in the resolver dropdown immediately and can
+        # promote it to verified via /admin/sources/{id}/verify. The
+        # helper is idempotent — registered hosts are no-ops.
+        try:
+            from .source_drafts import extract_candidate_hosts, upsert_draft_sources
+
+            extracted_payload = queue_payload.get("extracted_data") or {}
+            host_candidates = extract_candidate_hosts(extracted_payload)
+            if host_candidates and not decision.is_duplicate:
+                drafts = upsert_draft_sources(
+                    supabase,
+                    host_candidates,
+                    queue_id=inserted_id,
+                )
+                if drafts.get("created"):
+                    logger.info(
+                        "scrape.source_drafts_created run_id=%s queue_id=%s hosts=%s",
+                        run_id, inserted_id,
+                        [r.get("source_name") for r in drafts["created"]],
+                    )
+        except Exception as exc:  # noqa: BLE001
+            # Draft creation is best-effort; never let it kill the run.
+            logger.warning(
+                "scrape.source_drafts_failed run_id=%s queue_id=%s err=%s",
+                run_id, inserted_id, exc,
+            )
+
         if decision.is_duplicate:
             total_dup += 1
         else:

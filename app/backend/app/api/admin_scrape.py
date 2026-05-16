@@ -1369,6 +1369,61 @@ def resolve_official_source_for_queue_item(
     }
 
 
+@router.post("/admin/scrape/items/{queue_id}/draft-sources")
+def draft_sources_from_queue_item(
+    queue_id: str,
+    admin: dict = Depends(require_permission("sources.manage")),
+) -> dict[str, Any]:
+    """Auto-create draft ``source_registry`` rows for every official-URL
+    host on this queue item that isn't already registered.
+
+    Idempotent: hosts already in ``source_registry`` are returned under
+    ``existing`` without a write. New rows land with
+    ``is_verified=false`` / ``verification_status='needs_review'`` so
+    they cannot back a promotion until an admin runs the existing
+    verify-source flow. The accompanying ``notes`` field records the
+    queue item that surfaced the host so the audit trail is intact.
+    """
+    from app.scraping.source_drafts import extract_candidate_hosts, upsert_draft_sources
+
+    _validate_queue_id(queue_id)
+    supabase = get_supabase_admin()
+    rows = (
+        supabase.table("scrape_queue")
+        .select("id, extracted_data")
+        .eq("id", queue_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+    candidates = extract_candidate_hosts(rows[0].get("extracted_data") or {})
+    if not candidates:
+        return {"queue_id": queue_id, "created": [], "existing": [], "candidates": []}
+
+    result = upsert_draft_sources(supabase, candidates, queue_id=queue_id)
+    if result.get("created"):
+        _audit(
+            supabase,
+            admin,
+            "source.auto_draft_from_queue",
+            entity_type="scrape_queue",
+            entity_id=queue_id,
+            new_value={
+                "created_ids": [r.get("id") for r in result["created"]],
+                "candidate_hosts": [h for h, _ in candidates],
+            },
+        )
+    return {
+        "queue_id": queue_id,
+        "created": result["created"],
+        "existing": result["existing"],
+        "candidates": [{"host": h, "source_url": u} for h, u in candidates],
+    }
+
+
 _MERGE_PREVIEW_FIELDS = [
     "official_notification_url",
     "official_apply_url",
