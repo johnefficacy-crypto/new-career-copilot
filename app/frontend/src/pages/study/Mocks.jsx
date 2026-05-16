@@ -9,6 +9,7 @@ import {
   SectionHeader,
 } from "../../shared/ui/studyos";
 import useApiAction from "../../lib/hooks/useApiAction";
+import { validateMockForm } from "./mocks/validateMockForm";
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 const ERROR_ROWS = [
@@ -62,6 +63,7 @@ export default function Mocks() {
     error_guess: "",
   });
   const [err, setErr] = useState("");
+  const [formError, setFormError] = useState("");
   const { run: runMockAction } = useApiAction();
 
   async function loadList() {
@@ -102,6 +104,12 @@ export default function Mocks() {
 
   async function submit(e) {
     e.preventDefault();
+    const validation = validateMockForm(form);
+    if (!validation.ok) {
+      setFormError(validation.message);
+      return;
+    }
+    setFormError("");
     const errorPatterns = {};
     ["concept", "calc", "time", "misread", "guess"].forEach((k) => {
       const v = Number(form[`error_${k}`]);
@@ -315,7 +323,18 @@ export default function Mocks() {
         </div>
       )}
 
-      {open && <LogMockModal form={form} setForm={setForm} onClose={() => setOpen(false)} onSubmit={submit} />}
+      {open && (
+        <LogMockModal
+          form={form}
+          setForm={setForm}
+          onClose={() => {
+            setOpen(false);
+            setFormError("");
+          }}
+          onSubmit={submit}
+          formError={formError}
+        />
+      )}
     </div>
   );
 }
@@ -699,7 +718,9 @@ function Stat({ label, value, foot }) {
 }
 
 // ── Log mock modal ───────────────────────────────────────────────────────
-function LogMockModal({ form, setForm, onClose, onSubmit }) {
+function LogMockModal({ form, setForm, onClose, onSubmit, formError }) {
+  const maxScoreNum = Number(form.max_score);
+  const attemptedNum = Number(form.attempted);
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4" onClick={onClose}>
       <form
@@ -720,20 +741,37 @@ function LogMockModal({ form, setForm, onClose, onSubmit }) {
               ))}
             </select>
           </F>
-          <F label="Score">
-            <input required type="number" className="input" value={form.score} onChange={(e) => setForm({ ...form, score: e.target.value })} />
-          </F>
           <F label="Max score">
-            <input required type="number" className="input" value={form.max_score} onChange={(e) => setForm({ ...form, max_score: e.target.value })} />
+            <input required type="number" min="1" step="0.01" className="input" value={form.max_score} onChange={(e) => setForm({ ...form, max_score: e.target.value })} />
+          </F>
+          <F label="Score">
+            <input
+              required
+              type="number"
+              min="0"
+              max={Number.isFinite(maxScoreNum) && maxScoreNum > 0 ? maxScoreNum : undefined}
+              step="0.01"
+              className="input"
+              value={form.score}
+              onChange={(e) => setForm({ ...form, score: e.target.value })}
+            />
           </F>
           <F label="Duration (min)">
-            <input required type="number" className="input" value={form.duration_min} onChange={(e) => setForm({ ...form, duration_min: e.target.value })} />
+            <input required type="number" min="1" className="input" value={form.duration_min} onChange={(e) => setForm({ ...form, duration_min: e.target.value })} />
           </F>
           <F label="Questions attempted">
-            <input required type="number" className="input" value={form.attempted} onChange={(e) => setForm({ ...form, attempted: e.target.value })} />
+            <input required type="number" min="0" className="input" value={form.attempted} onChange={(e) => setForm({ ...form, attempted: e.target.value })} />
           </F>
           <F label="Questions correct">
-            <input required type="number" className="input" value={form.correct} onChange={(e) => setForm({ ...form, correct: e.target.value })} />
+            <input
+              required
+              type="number"
+              min="0"
+              max={Number.isFinite(attemptedNum) && attemptedNum > 0 ? attemptedNum : undefined}
+              className="input"
+              value={form.correct}
+              onChange={(e) => setForm({ ...form, correct: e.target.value })}
+            />
           </F>
           <F label="Weak topics (comma-sep)">
             <input className="input" value={form.weak} onChange={(e) => setForm({ ...form, weak: e.target.value })} />
@@ -764,6 +802,15 @@ function LogMockModal({ form, setForm, onClose, onSubmit }) {
           </div>
         </div>
 
+        {formError ? (
+          <div
+            className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700"
+            role="alert"
+            data-testid="mock-form-error"
+          >
+            {formError}
+          </div>
+        ) : null}
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             Cancel
