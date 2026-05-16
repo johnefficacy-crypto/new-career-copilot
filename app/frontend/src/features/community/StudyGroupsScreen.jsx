@@ -56,17 +56,17 @@ export default function StudyGroupsScreen() {
   });
 
   return (
-    <div className="space-y-6" data-testid="groups-page">
+    <div className="community-workspace space-y-6" data-testid="groups-page">
       <PageHeader
         eyebrow="Study Groups"
         title="Pace yourself with people on the same exam."
         sub="2–8 members per group. Shared weekly goals. Daily check-ins. Study rooms with your link — we don't host video; we coordinate around it."
         right={
           <div className="flex gap-2">
-            <button type="button" className="text-[12px] px-3 py-1.5 rounded-full border border-[#E7DECB] text-clay-700 font-semibold">
+            <button type="button" className="text-[12px] px-3 py-1.5 rounded-md border border-[#E7DECB] text-clay-700 font-semibold hover:bg-[#F3EADB] transition">
               Find a group →
             </button>
-            <button type="button" className="text-[12px] px-3 py-1.5 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold" data-testid="create-group-btn">
+            <button type="button" className="text-[12px] px-3 py-1.5 rounded-md bg-[#4E3A29] text-[#F3EADB] font-semibold hover:bg-[#2E2218] transition" data-testid="create-group-btn">
               + Create group
             </button>
           </div>
@@ -117,8 +117,8 @@ function GroupListCard({ g, active, onPick }) {
       type="button"
       onClick={onPick}
       data-testid={`group-card-${g.id}`}
-      className={`w-full text-left rounded-xl border p-4 transition ${
-        active ? "bg-[#FBF6EF] border-[#4E3A29]" : "bg-white/70 border-[#E7DECB] hover:border-[#A68057]"
+      className={`community-action-card w-full text-left p-4 ${
+        active ? "bg-[#FBF6EF] border-[#4E3A29] shadow-[inset_3px_0_0_#4E3A29]" : ""
       }`}
     >
       <div className="flex items-start justify-between gap-2">
@@ -151,7 +151,7 @@ function GroupListCard({ g, active, onPick }) {
             {g.weeklyHoursDone}h / {g.weeklyHoursGoal}h
           </span>
         </div>
-        <div className="mt-1 h-[5px] bg-[#EFE2C9] rounded-full overflow-hidden">
+        <div className="mt-1 h-[5px] bg-[#EFE2C9] rounded-sm overflow-hidden">
           <div className="h-full bg-[#54794E]" style={{ width: `${Math.min(100, Math.round(pctH * 100))}%` }} />
         </div>
       </div>
@@ -228,7 +228,7 @@ function GroupDetail({ group }) {
 
 function GroupKPI({ k, v, sub, pct }) {
   return (
-    <div className="rounded-xl border border-[#E7DECB] bg-[#FBF8F2] p-3.5">
+    <div className="rounded-lg border border-[#E7DECB] bg-[#FBF8F2] p-3.5">
       <Eyebrow>{k}</Eyebrow>
       <div className="font-heading text-[22px] mt-1 leading-none">{v}</div>
       <div className="text-[11px] text-clay-700 mt-1.5">{sub}</div>
@@ -299,7 +299,7 @@ function DailyCheckinCard({ groupId }) {
         title="What did you study today?"
         sub="Auto-prompted at 21:30 IST · group sees a short summary, not your full plan."
       />
-      <div className="rounded-xl border border-[#E7DECB] bg-[#FBF8F2] p-3.5">
+      <div className="rounded-lg border border-[#E7DECB] bg-[#FBF8F2] p-3.5">
         <div className="flex items-center gap-2 num-mono text-[10.5px] text-clay-700 uppercase tracking-[0.16em]">
           <span>Today · May 14</span>
           <span>·</span>
@@ -423,7 +423,7 @@ function SharedResourcesCard() {
           { t: "PYQ archive · Polity 2018–24", by: "u_admin", trust: "official", up: 312 },
           { t: "Mock 13 walkthrough (video)", by: "u_kavya", trust: "community", up: 84 },
         ].map((r, i) => (
-          <li key={i} className="rounded-xl border border-[#E7DECB] bg-[#FBF8F2] p-3.5">
+          <li key={i} className="rounded-lg border border-[#E7DECB] bg-[#FBF8F2] p-3.5">
             <div className="flex items-center justify-between">
               <SourceTrustStamp trust={r.trust} />
               <span className="num-mono text-[10.5px] text-clay-700">↑ {r.up}</span>
