@@ -51,6 +51,7 @@ export default function AdminFixPanel({
   onPromote,
   onMergeIntoExisting,
   onMarkDuplicate,
+  onRejectCandidate,
   onValidate,
   onVerify,
   onPublish,
@@ -76,6 +77,7 @@ export default function AdminFixPanel({
           onPromote={onPromote}
           onMergeIntoExisting={onMergeIntoExisting}
           onMarkDuplicate={onMarkDuplicate}
+          onRejectCandidate={onRejectCandidate}
           onOpenOfficialSourceResolver={onOpenOfficialSourceResolver}
           onOpenConflict={onOpenConflict}
           onRejectConflict={onRejectConflict}
@@ -106,7 +108,7 @@ export default function AdminFixPanel({
   );
 }
 
-function QueueFixSection({ item, conflicts = [], onFieldAction, onPromote, onMergeIntoExisting, onMarkDuplicate, onOpenOfficialSourceResolver, onOpenConflict, onRejectConflict, busy }) {
+function QueueFixSection({ item, conflicts = [], onFieldAction, onPromote, onMergeIntoExisting, onMarkDuplicate, onRejectCandidate, onOpenOfficialSourceResolver, onOpenConflict, onRejectConflict, busy }) {
   const blockers = item.unverified_fields || [];
   const dups = item.duplicate_candidates || [];
   const officialUnresolved = item.official_source_resolved === false;
@@ -312,7 +314,15 @@ function QueueFixSection({ item, conflicts = [], onFieldAction, onPromote, onMer
         </div>
       </div>
       <div className="card-foot">
-        <button type="button" className="btn ghost small" disabled={busy}>Reject candidate</button>
+        <button
+          type="button"
+          className="btn ghost small"
+          disabled={busy || item.status === "rejected" || item.status === "approved"}
+          onClick={() => onRejectCandidate?.(item)}
+          data-testid="fix-panel-reject-candidate"
+        >
+          Reject candidate
+        </button>
         {dups.length ? (
           <button type="button" className="btn small" disabled={busy} onClick={() => onMarkDuplicate?.(item, dups[0])}>Mark duplicate</button>
         ) : null}
