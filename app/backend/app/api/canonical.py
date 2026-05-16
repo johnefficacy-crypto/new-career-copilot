@@ -67,7 +67,7 @@ router_recruitments = APIRouter(prefix="/recruitments", tags=["recruitments"])
 _REC_SELECT = (
     "id, slug, name, year, status, publish_status, "
     "notification_date, apply_start_date, apply_end_date, "
-    "total_vacancies, official_notification_url, "
+    "total_vacancies, official_notification_url, exam_id, "
     "organizations ( id, name, type, state )"
 )
 
@@ -317,6 +317,27 @@ async def get_recruitment(rec_ref: str, user: dict | None = Depends(get_optional
     out = _shape_recruitment(row, saved_ids)
     out["posts"] = row.get("posts") or []
     out["units"] = row.get("recruitment_units") or []
+    exam_id = row.get("exam_id")
+    exam_slug = None
+    if exam_id:
+        exam_rows = _safe(
+            lambda: supabase.table("exams")
+            .select("id, slug, name")
+            .eq("id", exam_id)
+            .limit(1)
+            .execute()
+            .data,
+            default=[],
+        ) or []
+        if exam_rows:
+            exam_slug = exam_rows[0].get("slug")
+            out["exam"] = {
+                "id": exam_rows[0].get("id"),
+                "slug": exam_slug,
+                "name": exam_rows[0].get("name"),
+            }
+    out["exam_id"] = exam_id
+    out["exam_slug"] = exam_slug
     out["eligibility_preview"] = {
         "verdict": (
             "eligible"
