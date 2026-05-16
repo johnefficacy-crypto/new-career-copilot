@@ -871,6 +871,29 @@ def list_scrape_queue(
         except Exception:
             evidence_by_queue = {qid: {} for qid in queue_ids}
             evidence_details_by_queue = {qid: [] for qid in queue_ids}
+
+    # Open consensus-conflict counts per queue item. Older deploys that
+    # have not run migration 087 surface no rows here, so every count
+    # silently falls back to zero.
+    open_conflicts_by_queue: dict[str, int] = {qid: 0 for qid in queue_ids}
+    if queue_ids:
+        try:
+            crows = (
+                supabase.table("recruitment_verification_conflicts")
+                .select("queue_id, status")
+                .in_("queue_id", queue_ids)
+                .eq("status", "open")
+                .execute()
+                .data
+                or []
+            )
+            for cr in crows:
+                qid = cr.get("queue_id")
+                if qid in open_conflicts_by_queue:
+                    open_conflicts_by_queue[qid] += 1
+        except Exception:
+            open_conflicts_by_queue = {qid: 0 for qid in queue_ids}
+
     for r in rows:
         cls = classify_item(r)
         r["relevance_category"] = r.get("relevance_category") or cls["relevance_category"]
@@ -892,7 +915,8 @@ def list_scrape_queue(
         r["field_evidence_status"] = reviewed
         missing = [f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified", "corrected"}]
         r["unverified_fields"] = sorted(missing)
-        r["promotable"] = len(missing) == 0
+        r["open_conflicts"] = int(open_conflicts_by_queue.get(r.get("id"), 0))
+        r["promotable"] = len(missing) == 0 and r["open_conflicts"] == 0
     return {
         "items": rows,
         "total": total,
@@ -1113,7 +1137,11 @@ def promote_queue_item(
 ) -> dict[str, Any]:
     from pydantic import ValidationError
 
-    from app.scraping.runner import DuplicatePromotionError, promote_to_recruitments
+    from app.scraping.runner import (
+        DuplicatePromotionError,
+        OpenConflictPromotionError,
+        promote_to_recruitments,
+    )
     from app.scraping.schemas import VerifiedRecruitmentForPromotion
 
     supabase = get_supabase_admin()
@@ -1170,9 +1198,23 @@ def promote_queue_item(
                     "invalid_fields": missing,
                 },
             ) from exc
-        rec_id = promote_to_recruitments(extracted, supabase, source_id=item.get("source_id"))
+        rec_id = promote_to_recruitments(
+            extracted,
+            supabase,
+            source_id=item.get("source_id"),
+            queue_id=queue_id,
+        )
     except HTTPException:
         raise
+    except OpenConflictPromotionError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Resolve consensus conflicts before promotion.",
+                "reason": "consensus_conflicts_open",
+                "unverified_fields": exc.field_keys,
+            },
+        ) from exc
     except DuplicatePromotionError as exc:
         raise HTTPException(status_code=409, detail={
             "message": "Recruitment already exists",
