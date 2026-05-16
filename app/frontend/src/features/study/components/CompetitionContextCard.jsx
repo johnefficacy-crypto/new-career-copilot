@@ -21,8 +21,15 @@ function fmtInt(v) {
 function fmtRatio(v) {
   if (v === null || v === undefined) return null;
   const n = Number(v);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  // e.g. 0.0073 -> "1 in 137"
+  if (!Number.isFinite(n) || n <= 0 || n > 1) return null;
+  // "1 in N" only makes intuitive sense for sparse selection ratios. Past
+  // ~10% the integer rounding produces noise ("1 in 2", "1 in 1") and is
+  // misleading; fall back to a percent display so callers always see a
+  // calibrated value.
+  if (n >= 0.1) {
+    const pct = Math.round(n * 100);
+    return `${pct}% select`;
+  }
   return `1 in ${Math.round(1 / n).toLocaleString()}`;
 }
 

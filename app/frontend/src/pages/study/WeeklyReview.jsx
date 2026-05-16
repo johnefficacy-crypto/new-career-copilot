@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import {
   Eyebrow,
@@ -334,36 +335,73 @@ function NextWeekChanges({ items }) {
         </p>
       )}
       <div className="rule mt-4 pt-3 flex gap-2 flex-wrap">
-        <button className="text-[12px] px-3 py-1.5 rounded-full bg-[#33482F] text-[#F0F5EF] font-semibold">
-          Preview adaptation
-        </button>
-        <button className="text-[12px] px-3 py-1.5 rounded-full border border-[#E7DECB] text-clay-700 font-semibold">
-          Discuss with mentor
-        </button>
+        <Link
+          to="/app/study/plan"
+          className="text-[12px] px-3 py-1.5 rounded-full bg-[#33482F] text-[#F0F5EF] font-semibold inline-flex items-center"
+        >
+          Preview adaptation →
+        </Link>
       </div>
     </StudyCard>
   );
 }
 
 // ── User correction checklist ────────────────────────────────────────────
+// Three reflective prompts the aspirant should answer when reviewing a week.
+// "Answer" is a deep-link into the surface where the change actually
+// happens — Plan settings, Subjects, Mocks. "Done" lets the user dismiss
+// the prompt for this session (kept in localStorage so a hard refresh
+// doesn't repeat the nudge). No fake interactive controls.
 function UserCorrectionChecklist({ data }) {
   const items = [
     {
+      key: "available-hours",
       t: "Confirm next week's available hours",
       body: `Last week: ${data.hours_studied == null ? "—" : `${data.hours_studied}h`}. Plan target ${data.hours_planned == null ? "—" : `${data.hours_planned}h`}.`,
+      to: "/app/study/plan",
+      cta: "Open plan settings",
     },
     {
+      key: "focus-topic",
       t: "Pick a focus topic to fully clear",
       body:
         data.declined && data.declined.length
           ? "Pick from the declined list above."
           : "Choose a weak topic from your subject tree.",
+      to: "/app/study/subjects",
+      cta: "Open subjects",
     },
     {
+      key: "mock-cadence",
       t: "Mock pace — keep weekly cadence?",
       body: `Mocks taken: ${data.mocks_taken == null ? "—" : data.mocks_taken}. Cadence options: keep, slow, accelerate.`,
+      to: "/app/study/mocks",
+      cta: "Open mocks",
     },
   ];
+  const [dismissed, setDismissed] = React.useState(() => {
+    try {
+      const raw = window.localStorage.getItem("weeklyReview.checklist.dismissed");
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+  function dismiss(key) {
+    setDismissed((prev) => {
+      const next = { ...prev, [key]: new Date().toISOString() };
+      try {
+        window.localStorage.setItem(
+          "weeklyReview.checklist.dismissed",
+          JSON.stringify(next),
+        );
+      } catch {
+        /* localStorage disabled — dismiss is session-only */
+      }
+      return next;
+    });
+  }
+  const visible = items.filter((c) => !dismissed[c.key]);
   return (
     <StudyCard>
       <SectionHeader
@@ -371,36 +409,44 @@ function UserCorrectionChecklist({ data }) {
         title="Three quick things from you."
         sub="Engine can adapt task selection; only you can adjust intent and availability."
       />
-      <ul className="space-y-3">
-        {items.map((c, i) => (
-          <li
-            key={i}
-            className="rounded-xl border border-[#E7DECB] bg-[#FBF8F2] p-3"
-          >
-            <div className="flex items-start gap-3">
-              <span className="tick mt-1.5" aria-hidden="true" />
-              <div className="flex-1">
-                <div className="text-[13px] font-medium">{c.t}</div>
-                <div className="text-[11.5px] text-clay-700 mt-1">{c.body}</div>
-                <div className="mt-2 flex gap-2">
-                  <button
-                    type="button"
-                    className="text-[11px] px-2.5 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold"
-                  >
-                    Answer
-                  </button>
-                  <button
-                    type="button"
-                    className="text-[11px] px-2.5 py-1 rounded-full border border-[#E7DECB] text-clay-700 font-semibold"
-                  >
-                    Skip
-                  </button>
+      {visible.length === 0 ? (
+        <p className="text-[12.5px] text-clay-700">
+          You’ve cleared this week’s prompts. The list resets next time the
+          weekly review recomputes.
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {visible.map((c) => (
+            <li
+              key={c.key}
+              className="rounded-xl border border-[#E7DECB] bg-[#FBF8F2] p-3"
+            >
+              <div className="flex items-start gap-3">
+                <span className="tick mt-1.5" aria-hidden="true" />
+                <div className="flex-1">
+                  <div className="text-[13px] font-medium">{c.t}</div>
+                  <div className="text-[11.5px] text-clay-700 mt-1">{c.body}</div>
+                  <div className="mt-2 flex gap-2">
+                    <Link
+                      to={c.to}
+                      className="text-[11px] px-2.5 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold inline-flex items-center"
+                    >
+                      {c.cta} →
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => dismiss(c.key)}
+                      className="text-[11px] px-2.5 py-1 rounded-full border border-[#E7DECB] text-clay-700 font-semibold"
+                    >
+                      Mark done
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          </li>
-        ))}
-      </ul>
+            </li>
+          ))}
+        </ul>
+      )}
     </StudyCard>
   );
 }
