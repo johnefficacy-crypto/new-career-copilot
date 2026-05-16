@@ -513,6 +513,17 @@
   word-break: break-all;
 }
 
+/* Briefly highlight a field row when an admin clicks a blocker pill on
+   the PromotionPreviewPanel. Removes itself after ~1.4s; the class is
+   added/removed by scrollToFieldAnchor in AdminFixPanel. */
+.fld-flash {
+  animation: fld-flash-anim 1.4s ease-out;
+}
+@keyframes fld-flash-anim {
+  0%   { background: rgba(244, 162, 97, 0.22); box-shadow: 0 0 0 2px rgba(244, 162, 97, 0.4); }
+  100% { background: transparent;              box-shadow: 0 0 0 0 transparent; }
+}
+
 /* Merge rows */
 .oc .merge-row {
   display: grid;

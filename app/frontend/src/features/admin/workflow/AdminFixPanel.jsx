@@ -1,14 +1,28 @@
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
 import FieldReviewGroup from "./FieldReviewGroup";
 import PostEligibilityReviewGroup from "./PostEligibilityReviewGroup";
 import BlockerList from "./BlockerList";
 import ConflictResolver from "./ConflictResolver";
+import PromotionPreviewPanel from "./PromotionPreviewPanel";
 import RecruitmentCriteriaPanel from "../recruitments/RecruitmentCriteriaPanel";
 import RecruitmentBlockerFixForm from "../recruitments/RecruitmentBlockerFixForm";
 import { HIGH_RISK_QUEUE_FIELDS, RECOMMENDED_REVIEW_FIELDS } from "./adminWorkflowContract";
 import { scoreToPct, isLowQuality } from "./scoreUtils";
+
+// Scroll a field-row anchor into view + briefly highlight it. The
+// PromotionPreviewPanel blocker pills and the inline error callouts
+// all dispatch through this so the admin doesn't have to hunt for
+// the right row in a long table.
+function scrollToFieldAnchor(field) {
+  if (!field || typeof document === "undefined") return;
+  const target = document.getElementById(`field-${field}`);
+  if (!target) return;
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  target.classList.add("fld-flash");
+  window.setTimeout(() => target.classList.remove("fld-flash"), 1400);
+}
 
 const AGGREGATOR_KINDS = new Set(["aggregator", "aggregator_listing"]);
 
@@ -118,9 +132,17 @@ function QueueFixSection({ item, conflicts = [], onFieldAction, onPromote, onMer
   const tier = tierForItem(item);
   const status = statusBadge(item);
   const posts = (item.raw_extracted_item || item.normalized_item || {}).posts;
-  const postCount = Array.isArray(posts) ? posts.length : 0;
   const title = item.recruitment || item.raw_extracted_item?.title || item.normalized_item?.title || "Untitled candidate";
   const blockedFromPromote = blockers.length > 0 || officialUnresolved || openConflicts.length > 0 || !item.promotable;
+  // Bump on every field action so PromotionPreviewPanel refetches and
+  // the admin sees the updated draft + blocker checklist immediately.
+  const [previewKey, setPreviewKey] = useState(0);
+  const bumpPreview = useCallback(() => setPreviewKey((n) => n + 1), []);
+  const queueFieldAction = useCallback((field, action, correctedValue, scope) => {
+    const r = onQueueFieldActionSafe(onFieldAction, item.id, field, action, correctedValue, scope);
+    bumpPreview();
+    return r;
+  }, [onFieldAction, item.id, bumpPreview]);
 
   return (
     <section className="card" data-testid="queue-fix-section">
@@ -139,28 +161,12 @@ function QueueFixSection({ item, conflicts = [], onFieldAction, onPromote, onMer
         </div>
       </div>
       <div className="card-body stack">
-        <div>
-          <div className="lbl" style={{ marginBottom: 6 }}>Promotion preview</div>
-          <div className="grid2">
-            <div className="field">
-              <div className="field-lbl">resulting status</div>
-              <div className="field-val">{item.promotable ? "needs_review" : "blocked"}</div>
-            </div>
-            <div className="field">
-              <div className="field-lbl">organization</div>
-              <div className="field-val">{item.organization || item.org || "link existing"}</div>
-            </div>
-            <div className="field">
-              <div className="field-lbl">posts</div>
-              <div className="field-val">{postCount ? `${postCount} will be created` : "—"}</div>
-              {postCount ? <div className="field-sub">{posts.map((p, i) => p?.post_name || `post ${i}`).slice(0, 3).join(" · ")}</div> : null}
-            </div>
-            <div className="field">
-              <div className="field-lbl">duplicates</div>
-              <div className={dups.length ? "field-val" : "field-val seal"}>{dups.length ? `${dups.length} candidate${dups.length === 1 ? "" : "s"}` : "none found"}</div>
-            </div>
-          </div>
-        </div>
+        <PromotionPreviewPanel
+          queueId={item.id}
+          open
+          refreshKey={previewKey}
+          onScrollToField={scrollToFieldAnchor}
+        />
 
         {officialUnresolved ? (
           <div style={{ background: "var(--pending-bg)", border: "1px solid var(--pending)", borderRadius: 3, padding: "10px 12px" }}>
@@ -248,7 +254,7 @@ function QueueFixSection({ item, conflicts = [], onFieldAction, onPromote, onMer
           evidenceDetails={item.field_evidence_details || []}
           requiredFields={HIGH_RISK_QUEUE_FIELDS}
           recommendedFields={RECOMMENDED_REVIEW_FIELDS}
-          onFieldAction={(field, action, correctedValue, scope) => onQueueFieldActionSafe(onFieldAction, item.id, field, action, correctedValue, scope)}
+          onFieldAction={queueFieldAction}
         />
 
         <div>
@@ -259,7 +265,7 @@ function QueueFixSection({ item, conflicts = [], onFieldAction, onPromote, onMer
           <PostEligibilityReviewGroup
             posts={posts}
             evidence={item.field_evidence_status || {}}
-            onFieldAction={(path, action, correctedValue) => onQueueFieldActionSafe(onFieldAction, item.id, path, action, correctedValue)}
+            onFieldAction={queueFieldAction}
           />
         </div>
 
@@ -285,7 +291,21 @@ function QueueFixSection({ item, conflicts = [], onFieldAction, onPromote, onMer
           </div>
         ) : null}
 
-        <div style={{ background: blockedFromPromote ? "var(--blocker-bg)" : "var(--resolved-bg)", border: `1px solid ${blockedFromPromote ? "var(--blocker)" : "var(--resolved)"}`, borderRadius: 3, padding: "10px 12px" }}>
+        <div
+          className="promote-bar"
+          style={{
+            position: "sticky",
+            bottom: 0,
+            zIndex: 5,
+            marginTop: 8,
+            background: blockedFromPromote ? "var(--blocker-bg)" : "var(--resolved-bg)",
+            border: `1px solid ${blockedFromPromote ? "var(--blocker)" : "var(--resolved)"}`,
+            borderRadius: 3,
+            padding: "10px 12px",
+            boxShadow: "0 -4px 12px rgba(0,0,0,0.05)",
+          }}
+          data-testid="promote-bar"
+        >
           <div className="row" style={{ justifyContent: "space-between" }}>
             <div>
               <div className="fld-key" style={{ color: blockedFromPromote ? "var(--blocker)" : "var(--resolved)" }}>
