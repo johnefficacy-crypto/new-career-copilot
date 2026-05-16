@@ -124,7 +124,7 @@ function FieldRow({ field, label, value, status, details, entityScope, onFieldAc
   const correctedValue = details?.corrected_value;
 
   return (
-    <div className="fld">
+    <div className="fld" id={`field-${field}`} data-field={field}>
       <div className="fld-head">
         <span className="fld-key">{heading}</span>
         <span className={meta.cls}>{meta.text}</span>
@@ -218,7 +218,7 @@ function ReviewSection({ title, description, fields, extracted, evidence, eviden
               );
             }
             return (
-              <div key={field} className="fld" style={{ background: "var(--paper-sunk)" }}>
+              <div key={field} className="fld" id={`field-${field}`} data-field={field} style={{ background: "var(--paper-sunk)" }}>
                 <div className="fld-head">
                   <span className="fld-key">{field} · per post</span>
                   <span className="badge pending">per post · unverified</span>
