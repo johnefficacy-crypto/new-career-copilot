@@ -237,7 +237,6 @@ _partner_requests: dict[str, list[str]] = defaultdict(list)
 # Mentor bookings
 _mentor_bookings: dict[str, list[dict]] = defaultdict(list)
 # AI chat history
-_ai_history: dict[str, list[dict]] = defaultdict(list)
 
 
 router_acc = APIRouter(prefix="/accountability", tags=["accountability"])
@@ -337,53 +336,6 @@ async def list_bookings(user: dict = Depends(get_current_user)):
     return {"items": _mentor_bookings[user["id"]]}
 
 
-# ───────────────────────────── AI Copilot ──────────────────────────────────
-
-router_ai = APIRouter(prefix="/ai", tags=["ai"])
-
-
-@router_ai.get("/guidance")
-async def guidance(user: dict = Depends(get_current_user)):
-    return {
-        "greeting": f"Hey {user.get('name') or 'aspirant'} — your Quant trend is up.",
-        "next_actions": [
-            {"label": "Close one weak topic today", "type": "study"},
-            {"label": "Take a 25-min focus block", "type": "focus"},
-            {"label": "Review last mock errors", "type": "review"},
-        ],
-        "warnings": [
-            "GA streak broken — pick it up before Friday.",
-        ],
-    }
-
-
-class ChatBody(BaseModel):
-    message: str
-    thread_id: str | None = None
-
-
-SCRIPTED_REPLIES = [
-    "Got it. Based on your last 7 days, the highest-leverage move is closing one Quant topic — pick the weakest and run a 60-minute drill.",
-    "Your focus streak is solid. Keep the morning slot sacred and add one full-length mock this weekend.",
-    "Don't overthink the GA gap. Use a single curated source and a 30-minute daily slot — that's enough to recover by Friday.",
-    "If RBI Grade B is on your list, prioritise ESI + F&M reading; objective is volume, not speed.",
-    "Consistency over intensity. A 75-minute day for 5 days beats a 6-hour Sunday binge.",
-]
-
-
-@router_ai.post("/chat")
-async def ai_chat(body: ChatBody, user: dict = Depends(get_current_user)):
-    history = _ai_history[user["id"]]
-    user_msg = {"role": "user", "content": body.message, "at": _now()}
-    reply = SCRIPTED_REPLIES[len(history) % len(SCRIPTED_REPLIES)]
-    bot_msg = {"role": "assistant", "content": reply, "at": _now()}
-    history.extend([user_msg, bot_msg])
-    return {"reply": bot_msg, "history": history[-20:]}
-
-
-@router_ai.get("/history")
-async def ai_history(user: dict = Depends(get_current_user)):
-    return {"items": _ai_history[user["id"]]}
 
 
 # ───────────────────────────── Admin ───────────────────────────────────────
@@ -398,35 +350,6 @@ def _require_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
-@router_admin.get("/overview")
-async def admin_overview(_admin: dict = Depends(_require_admin)):
-    return {
-        "kpis": {
-            "users": 1248,
-            "recruitments": len(RECRUITMENTS),
-            "threads": len(_threads),
-            "open_flags": 3,
-            "scrape_runs_today": 12,
-            "queue_depth": 4,
-        },
-        "recent_audit": [
-            {"actor": "system", "action": "scrape.run", "target": "ssc.gov.in", "at": _now()},
-            {"actor": "super_admin", "action": "rbac.invite", "target": "ops_admin@cc.in", "at": _now()},
-        ],
-    }
-
-
-@router_admin.get("/users")
-async def admin_users(_admin: dict = Depends(_require_admin)):
-    return {
-        "items": [
-            {"id": "u-1", "email": "aspirant@careercopilot.in", "name": "Priya Sharma", "role": "user", "plan": "free"},
-            {"id": "u-2", "email": "mentor@careercopilot.in", "name": "Rohan Iyer", "role": "mentor", "plan": "elite"},
-            {"id": "u-3", "email": "superadmin@careercopilot.in", "name": "Super Admin", "role": "super_admin", "plan": "elite"},
-        ]
-    }
-
-
 class CreateAdminBody(BaseModel):
     email: str
     name: str
@@ -439,17 +362,6 @@ async def admin_create_user(body: CreateAdminBody, user: dict = Depends(_require
     if user.get("role") != "super_admin":
         raise HTTPException(status_code=403, detail="Only super_admin can invite admins")
     return {"ok": True, "invite": {"email": body.email, "role": body.role, "scope": body.scope}}
-
-
-@router_admin.get("/audit")
-async def admin_audit(_admin: dict = Depends(require_permission("audit.view"))):
-    return {
-        "items": [
-            {"id": "a-1", "actor": "system", "action": "scrape.dry_run", "target": "ssc.gov.in", "at": _now()},
-            {"id": "a-2", "actor": "super_admin", "action": "promote.recruitment", "target": "ssc-cgl-2026", "at": _now()},
-            {"id": "a-3", "actor": "moderator", "action": "thread.unflag", "target": "form-mistake-signature-photo", "at": _now()},
-        ]
-    }
 
 
 @router_admin.get("/sources-static")
@@ -512,11 +424,6 @@ async def admin_marketplace(_admin: dict = Depends(_require_admin)):
     }
 
 
-@router_admin.get("/community/flags")
-async def admin_community_flags(_admin: dict = Depends(_require_admin)):
-    return {"items": []}
-
-
 @router_admin.get("/ai-policy")
 async def admin_ai_policy(_admin: dict = Depends(_require_admin)):
     rules = [
@@ -548,5 +455,4 @@ async def admin_ai_policy(_admin: dict = Depends(_require_admin)):
 # Aggregate router for easy include
 router = APIRouter()
 router.include_router(router_acc)
-router.include_router(router_ai)
 router.include_router(router_admin)

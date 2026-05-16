@@ -27,6 +27,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.api.admin_exam_intelligence import router as admin_exam_intel_router
+from app.api.admin_overview import router as admin_overview_router
+from app.api.ai import router as ai_router
 from app.api.admin_persona import router as admin_persona_router
 from app.api.admin_scrape import router as admin_scrape_router
 from app.api.admin_conflicts import router as admin_conflicts_router
@@ -199,6 +201,9 @@ api.include_router(onboarding_unified_router)  # unified guided onboarding — b
 api.include_router(community_runtime_router)  # durable community/social routes — must precede canonical seed fallbacks
 api.include_router(canonical_router)  # canonical Supabase routes — must precede placeholders
 api.include_router(community_people_router)  # community-people: groups, partner, mentors, resources
+# Real Supabase-backed AI + admin overview — must precede placeholders so route order wins.
+api.include_router(ai_router)
+api.include_router(admin_overview_router)
 # Phase-2 user surfaces: notes, flashcards, mistakes, revision, reports
 api.include_router(notes_router)
 api.include_router(flashcards_router)
