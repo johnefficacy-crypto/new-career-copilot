@@ -17,6 +17,31 @@ import { MENTORS, MENTOR_EARNINGS, MENTOR_SESSIONS } from "./data";
 
 // Production port of docs/reference/UI_claude-code/screen-mentors.jsx.
 
+// Backend mentor shape (community_runtime._shape_mentor_profile) is missing
+// several fields the screen depends on: `badge`, `color`, `blurb`, `served`.
+// We adapt here rather than reshape the backend response, which has other
+// consumers. MentorTopBadge in particular crashes on undefined.badge.
+const MENTOR_PALETTE = ["#A68057", "#54794E", "#7E6FB7", "#C58A6B", "#8FA68A", "#B79A6F"];
+
+function adaptMentor(m, idx = 0) {
+  if (!m || typeof m !== "object") return m;
+  const id = m.id || "";
+  const colorSeed = idx + (id ? id.charCodeAt(0) % MENTOR_PALETTE.length : 0);
+  const headline = m.headline || m.bio || "";
+  const exams = Array.isArray(m.exams) ? m.exams.filter(Boolean) : [];
+  return {
+    ...m,
+    badge: m.badge || (exams.length ? `Mentor · ${exams[0]}` : "Mentor"),
+    color: m.color || MENTOR_PALETTE[Math.abs(colorSeed) % MENTOR_PALETTE.length],
+    blurb: m.blurb || headline || "Mentor on Career Copilot.",
+    served: typeof m.served === "number" ? m.served : (m.sessions || 0),
+    topics: Array.isArray(m.topics) ? m.topics : [],
+    price: Array.isArray(m.price) && m.price.length === 2 ? m.price : [0, 0],
+    rating: typeof m.rating === "number" ? m.rating : 0,
+    sessions: typeof m.sessions === "number" ? m.sessions : 0,
+  };
+}
+
 export default function MentorsScreen() {
   const [view, setView] = useState("browse");
   const [activeMentor, setActiveMentor] = useState(null);
@@ -27,7 +52,14 @@ export default function MentorsScreen() {
   const reloadSessions = useCallback(async () => {
     try {
       const d = await api.get("/api/community/mentor-sessions");
-      if (Array.isArray(d?.items) && d.items.length) setSessions(d.items);
+      if (Array.isArray(d?.items) && d.items.length) {
+        setSessions(
+          d.items.map((s, i) => ({
+            ...s,
+            mentor: adaptMentor(s.mentor, i),
+          })),
+        );
+      }
     } catch {}
   }, []);
 
@@ -37,7 +69,7 @@ export default function MentorsScreen() {
       .get("/api/community/mentors")
       .then((d) => {
         if (cancelled || !Array.isArray(d?.items) || d.items.length === 0) return;
-        setMentors(d.items);
+        setMentors(d.items.map((m, i) => adaptMentor(m, i)));
       })
       .catch(() => {});
     reloadSessions();

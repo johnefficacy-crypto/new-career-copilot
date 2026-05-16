@@ -112,6 +112,32 @@ def _notify(sb, user_id: str | None, alert_type: str, explanation: dict | None =
     )
 
 
+def _rpc_inc(sb, fn_name: str, params: dict[str, Any], fallback_table: str, fallback_id: str, fallback_col: str, fallback_delta: int) -> int | None:
+    """Call an atomic-increment RPC. Returns the post-update counter value.
+
+    Falls back to a best-effort read-modify-write if the RPC is unavailable
+    (e.g. older deployments without migration 089). The fallback is racy by
+    construction and only exists so the endpoint doesn't 500 in that case.
+    """
+    try:
+        result = sb.rpc(fn_name, params).execute()
+        value = getattr(result, "data", None)
+        if isinstance(value, list) and value:
+            value = value[0]
+        if isinstance(value, dict):
+            value = next(iter(value.values()), None)
+        if value is not None:
+            return int(value)
+    except Exception:
+        pass
+    current = _first(sb.table(fallback_table).select(f"id, {fallback_col}").eq("id", fallback_id))
+    if not current:
+        return None
+    new_val = max(0, (current.get(fallback_col) or 0) + fallback_delta)
+    sb.table(fallback_table).update({fallback_col: new_val}).eq("id", fallback_id).execute()
+    return new_val
+
+
 # Community / forum
 
 
@@ -305,7 +331,12 @@ async def create_thread_reply(channel_id: str, thread_id: str, payload: ReplyCre
         sb.table("community_replies")
         .insert({"thread_id": thread_id, "author_id": user["id"], "body": payload.body.strip(), "status": "visible"})
     )
-    sb.table("community_threads").update({"reply_count": (thread.get("reply_count") or 0) + 1}).eq("id", thread_id).execute()
+    _rpc_inc(
+        sb,
+        "community_inc_thread_reply_count",
+        {"p_thread_id": thread_id, "p_delta": 1},
+        "community_threads", thread_id, "reply_count", 1,
+    )
     _event(sb, user["id"], "community.reply.created", {"thread_id": thread_id})
     _notify(sb, thread.get("author_id"), "community_reply", {"thread_id": thread_id})
     return _shape_reply(inserted[0], user["id"]) if inserted else {}
@@ -332,10 +363,56 @@ async def vote_channel_thread(channel_id: str, thread_id: str, payload: VotePayl
         sb.table("community_votes").update({"vote": new_vote}).eq("id", existing["id"]).execute()
     elif new_vote:
         sb.table("community_votes").insert({"thread_id": thread_id, "user_id": user["id"], "vote": new_vote}).execute()
-    net = (thread.get("vote_count") or 0) - old_vote + new_vote
-    sb.table("community_threads").update({"vote_count": net}).eq("id", thread_id).execute()
+    delta = new_vote - old_vote
+    net = _rpc_inc(
+        sb,
+        "community_inc_thread_vote_count",
+        {"p_thread_id": thread_id, "p_delta": delta},
+        "community_threads", thread_id, "vote_count", delta,
+    )
+    if net is None:
+        net = (thread.get("vote_count") or 0) + delta
     _event(sb, user["id"], "community.thread.voted", {"thread_id": thread_id, "vote": new_vote})
     return {"threadId": thread_id, "yourVote": new_vote, "netVotes": net}
+
+
+@router.post("/community/channels/{channel_id}/threads/{thread_id}/replies/{reply_id}/vote")
+async def vote_thread_reply(
+    channel_id: str,
+    thread_id: str,
+    reply_id: str,
+    payload: VotePayload,
+    user: dict = Depends(get_current_user),
+):
+    if payload.direction not in (-1, 0, 1):
+        raise HTTPException(status_code=400, detail="direction must be -1, 0, or 1")
+    sb = get_supabase_admin()
+    thread = _first(sb.table("community_threads").select("id").eq("id", thread_id).eq("channel_id", channel_id))
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    reply = _first(sb.table("community_replies").select("id, vote_count").eq("id", reply_id).eq("thread_id", thread_id))
+    if not reply:
+        raise HTTPException(status_code=404, detail="Reply not found")
+    existing = _first(sb.table("community_votes").select("id, vote").eq("reply_id", reply_id).eq("user_id", user["id"]))
+    old_vote = int((existing or {}).get("vote") or 0)
+    new_vote = 0 if payload.direction == 0 or old_vote == payload.direction else payload.direction
+    if existing and new_vote == 0:
+        sb.table("community_votes").delete().eq("id", existing["id"]).execute()
+    elif existing:
+        sb.table("community_votes").update({"vote": new_vote}).eq("id", existing["id"]).execute()
+    elif new_vote:
+        sb.table("community_votes").insert({"reply_id": reply_id, "user_id": user["id"], "vote": new_vote}).execute()
+    delta = new_vote - old_vote
+    net = _rpc_inc(
+        sb,
+        "community_inc_reply_vote_count",
+        {"p_reply_id": reply_id, "p_delta": delta},
+        "community_replies", reply_id, "vote_count", delta,
+    )
+    if net is None:
+        net = (reply.get("vote_count") or 0) + delta
+    _event(sb, user["id"], "community.reply.voted", {"reply_id": reply_id, "thread_id": thread_id, "vote": new_vote})
+    return {"replyId": reply_id, "threadId": thread_id, "yourVote": new_vote, "netVotes": net}
 
 
 class ReportBody(BaseModel):
@@ -841,13 +918,20 @@ async def vote_resource(resource_id: str, user: dict = Depends(get_current_user)
     existing = _first(sb.table("community_resource_votes").select("id").eq("resource_id", resource_id).eq("user_id", user["id"]))
     if existing:
         sb.table("community_resource_votes").delete().eq("id", existing["id"]).execute()
-        count = max(0, (resource.get("upvote_count") or 0) - 1)
+        delta = -1
         voted = False
     else:
         sb.table("community_resource_votes").insert({"resource_id": resource_id, "user_id": user["id"]}).execute()
-        count = (resource.get("upvote_count") or 0) + 1
+        delta = 1
         voted = True
-    sb.table("community_resources").update({"upvote_count": count}).eq("id", resource_id).execute()
+    count = _rpc_inc(
+        sb,
+        "community_inc_resource_upvote_count",
+        {"p_resource_id": resource_id, "p_delta": delta},
+        "community_resources", resource_id, "upvote_count", delta,
+    )
+    if count is None:
+        count = max(0, (resource.get("upvote_count") or 0) + delta)
     return {"voted": voted, "resourceId": resource_id, "upvotes": count}
 
 
@@ -862,8 +946,14 @@ async def report_resource(resource_id: str, payload: ReportBody, user: dict = De
             {"resource_id": resource_id, "reporter_id": user["id"], "reason": payload.reason.strip(), "status": "open"}
         )
     )
-    count = (resource.get("report_count") or 0) + 1
-    sb.table("community_resources").update({"report_count": count}).eq("id", resource_id).execute()
+    count = _rpc_inc(
+        sb,
+        "community_inc_resource_report_count",
+        {"p_resource_id": resource_id, "p_delta": 1},
+        "community_resources", resource_id, "report_count", 1,
+    )
+    if count is None:
+        count = (resource.get("report_count") or 0) + 1
     return {"reported": True, "resourceId": resource_id, "totalReports": count, "id": (row[0] or {}).get("id") if row else None}
 
 
@@ -899,7 +989,52 @@ async def admin_resolve_community_flag(flag_id: str, payload: ModerationAction, 
         rows = _rows(sb.table(table).select("*").eq("id", flag_id).limit(1))
         if not rows:
             continue
+        report = rows[0]
+        hidden_targets: dict[str, str] = {}
+        if payload.action == "hide":
+            hidden_targets = _hide_report_target(sb, table, report)
         sb.table(table).update({"status": status, "moderator_notes": payload.notes, "resolved_at": _now_iso()}).eq("id", flag_id).execute()
-        _audit(sb, admin, f"community.flag.{payload.action}", table, flag_id, {"status": status, "notes": payload.notes})
-        return {"ok": True, "id": flag_id, "status": status}
+        _audit(
+            sb,
+            admin,
+            f"community.flag.{payload.action}",
+            table,
+            flag_id,
+            {"status": status, "notes": payload.notes, "hidden": hidden_targets or None},
+        )
+        return {"ok": True, "id": flag_id, "status": status, "hidden": hidden_targets}
     raise HTTPException(status_code=404, detail="Flag not found")
+
+
+def _hide_report_target(sb, report_table: str, report: dict[str, Any]) -> dict[str, str]:
+    """Flip the target entity's status to 'hidden' for the entity referenced by the report.
+
+    Returns a map of {entity_type: entity_id} actually hidden. Idempotent — re-hiding
+    an already-hidden entity is a no-op but still recorded.
+    """
+    hidden: dict[str, str] = {}
+    now = _now_iso()
+    if report_table == "community_reports":
+        thread_id = report.get("thread_id")
+        reply_id = report.get("reply_id")
+        if thread_id:
+            sb.table("community_threads").update({"status": "hidden", "updated_at": now}).eq("id", thread_id).execute()
+            hidden["community_thread"] = thread_id
+        if reply_id:
+            sb.table("community_replies").update({"status": "hidden", "updated_at": now}).eq("id", reply_id).execute()
+            hidden["community_reply"] = reply_id
+    elif report_table == "forum_reports":
+        post_id = report.get("post_id")
+        comment_id = report.get("comment_id")
+        if post_id:
+            sb.table("forum_posts").update({"status": "hidden", "updated_at": now}).eq("id", post_id).execute()
+            hidden["forum_post"] = post_id
+        if comment_id:
+            sb.table("forum_comments").update({"status": "hidden", "updated_at": now}).eq("id", comment_id).execute()
+            hidden["forum_comment"] = comment_id
+    elif report_table == "community_resource_reports":
+        resource_id = report.get("resource_id")
+        if resource_id:
+            sb.table("community_resources").update({"status": "hidden", "updated_at": now}).eq("id", resource_id).execute()
+            hidden["community_resource"] = resource_id
+    return hidden
