@@ -151,9 +151,47 @@ class _Query:
         return _Exec(rows)
 
 
+class _RpcExec:
+    def __init__(self, data):
+        self.data = data
+
+
+class _RpcCall:
+    def __init__(self, value):
+        self._value = value
+
+    def execute(self):
+        return _RpcExec(self._value)
+
+
 class SBStub:
     def __init__(self, db: dict[str, list[dict[str, Any]]] | None = None):
         self.db: dict[str, list[dict[str, Any]]] = db or {}
 
     def table(self, name: str):
         return _Query(name, self.db)
+
+    def rpc(self, name: str, params: dict[str, Any] | None = None):
+        params = params or {}
+        # Emulate the atomic counter RPCs by performing the same UPDATE.
+        if name == "community_inc_thread_reply_count":
+            return _RpcCall(self._inc("community_threads", params.get("p_thread_id"), "reply_count", params.get("p_delta", 0), floor_at_zero=True))
+        if name == "community_inc_thread_vote_count":
+            return _RpcCall(self._inc("community_threads", params.get("p_thread_id"), "vote_count", params.get("p_delta", 0)))
+        if name == "community_inc_reply_vote_count":
+            return _RpcCall(self._inc("community_replies", params.get("p_reply_id"), "vote_count", params.get("p_delta", 0)))
+        if name == "community_inc_resource_upvote_count":
+            return _RpcCall(self._inc("community_resources", params.get("p_resource_id"), "upvote_count", params.get("p_delta", 0), floor_at_zero=True))
+        if name == "community_inc_resource_report_count":
+            return _RpcCall(self._inc("community_resources", params.get("p_resource_id"), "report_count", params.get("p_delta", 0), floor_at_zero=True))
+        return _RpcCall(None)
+
+    def _inc(self, table: str, row_id: Any, col: str, delta: int, floor_at_zero: bool = False) -> int | None:
+        for r in self.db.get(table, []):
+            if r.get("id") == row_id:
+                new_val = (r.get(col) or 0) + (delta or 0)
+                if floor_at_zero and new_val < 0:
+                    new_val = 0
+                r[col] = new_val
+                return new_val
+        return None

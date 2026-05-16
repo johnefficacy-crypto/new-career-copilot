@@ -9,13 +9,32 @@ mutations succeed without hitting the database.
 """
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+
+_log = logging.getLogger(__name__)
+
+
+def _log_deprecated_hit(request: Request) -> None:
+    """Log a warning each time a community_people endpoint serves a request.
+
+    community_people is seed-backed and being phased out in favour of
+    community_runtime (which is DB-backed). Routes here are kept mounted so
+    the router include order in server.py still wins on every shadowed path,
+    but a hit on any unshadowed path (or a regression in mount order) is a
+    signal that needs attention.
+    """
+    _log.warning(
+        "community_people deprecated route served %s %s — migrate to community_runtime",
+        request.method,
+        request.url.path,
+    )
 
 from app.api.community_seed import (
     ACCOUNTABILITY,
@@ -74,7 +93,12 @@ def _resource_shape(r: dict, uid: str | None) -> dict:
 #  STUDY GROUPS
 # ════════════════════════════════════════════════════════════════════════
 
-router = APIRouter(prefix="/community", tags=["community-people"])
+router = APIRouter(
+    prefix="/community",
+    tags=["community-people"],
+    deprecated=True,
+    dependencies=[Depends(_log_deprecated_hit)],
+)
 
 
 @router.get("/groups")
