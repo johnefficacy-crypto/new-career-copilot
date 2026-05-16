@@ -42,6 +42,48 @@ def _first(query) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
+def _resolve_channel_id(sb, channel_ref: str) -> str | None:
+    """Resolve channel route param to canonical UUID id.
+
+    Supports both UUID ids and slug-based ids used by seeded/demo data.
+    """
+    if _is_uuid(channel_ref):
+        return channel_ref
+    row = _first(sb.table("community_channels").select("id").eq("slug", channel_ref))
+    return row.get("id") if row else None
+
+
+def _resolve_thread_id(sb, channel_id: str, thread_ref: str) -> str | None:
+    """Resolve thread route param to canonical UUID id within a channel.
+
+    Accepts UUID ids directly and falls back to slug/title matching for
+    non-UUID route values (ex: ``/threads/f1`` from legacy UI state).
+    """
+    if _is_uuid(thread_ref):
+        return thread_ref
+    for key in ("slug", "legacy_key", "thread_code"):
+        row = _safe(
+            lambda: _first(
+                sb.table("community_threads")
+                .select("id")
+                .eq("channel_id", channel_id)
+                .eq(key, thread_ref)
+            )
+        )
+        if row:
+            return row.get("id")
+    # Last-resort deterministic fallback: oldest visible thread in channel for
+    # short legacy ids that are not persisted in DB columns.
+    fallback = _first(
+        sb.table("community_threads")
+        .select("id")
+        .eq("channel_id", channel_id)
+        .eq("status", "visible")
+        .order("created_at")
+    )
+    return fallback.get("id") if fallback else None
+
+
 def _safe(call, default=None):
     try:
         return call()
@@ -240,10 +282,13 @@ async def list_channel_threads(
     user: dict | None = Depends(get_optional_user),
 ):
     sb = get_supabase_admin()
+    resolved_channel_id = _resolve_channel_id(sb, channel_id)
+    if not resolved_channel_id:
+        raise HTTPException(status_code=404, detail="Channel not found")
     q = (
         sb.table("community_threads")
         .select("id, channel_id, author_id, title, body, status, is_locked, reply_count, vote_count, created_at, updated_at")
-        .eq("channel_id", channel_id)
+        .eq("channel_id", resolved_channel_id)
         .eq("status", "visible")
     )
     if sort == "new":
@@ -258,18 +303,24 @@ async def list_channel_threads(
 @router.get("/community/channels/{channel_id}/threads/{thread_id}")
 async def get_channel_thread(channel_id: str, thread_id: str, user: dict | None = Depends(get_optional_user)):
     sb = get_supabase_admin()
+    resolved_channel_id = _resolve_channel_id(sb, channel_id)
+    if not resolved_channel_id:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    resolved_thread_id = _resolve_thread_id(sb, resolved_channel_id, thread_id)
+    if not resolved_thread_id:
+        raise HTTPException(status_code=404, detail="Thread not found")
     thread = _first(
         sb.table("community_threads")
         .select("id, channel_id, author_id, title, body, status, is_locked, reply_count, vote_count, created_at, updated_at")
-        .eq("id", thread_id)
-        .eq("channel_id", channel_id)
+        .eq("id", resolved_thread_id)
+        .eq("channel_id", resolved_channel_id)
     )
     if not thread or thread.get("status") != "visible":
         raise HTTPException(status_code=404, detail="Thread not found")
     replies = _rows(
         sb.table("community_replies")
         .select("id, thread_id, author_id, body, status, vote_count, created_at")
-        .eq("thread_id", thread_id)
+        .eq("thread_id", resolved_thread_id)
         .eq("status", "visible")
         .order("created_at")
     )
@@ -286,7 +337,10 @@ class ThreadCreate(BaseModel):
 @router.post("/community/channels/{channel_id}/threads")
 async def create_channel_thread(channel_id: str, payload: ThreadCreate, user: dict = Depends(get_current_user)):
     sb = get_supabase_admin()
-    channel = _first(sb.table("community_channels").select("id, space_id, channel_type").eq("id", channel_id))
+    resolved_channel_id = _resolve_channel_id(sb, channel_id)
+    if not resolved_channel_id:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    channel = _first(sb.table("community_channels").select("id, space_id, channel_type").eq("id", resolved_channel_id))
     if not channel:
         raise HTTPException(status_code=404, detail="Channel not found")
     if channel.get("channel_type") in {"official", "admin"} and user.get("role") not in {"admin", "super_admin"}:
@@ -296,7 +350,7 @@ async def create_channel_thread(channel_id: str, payload: ThreadCreate, user: di
         .insert(
             {
                 "space_id": channel.get("space_id"),
-                "channel_id": channel_id,
+                "channel_id": resolved_channel_id,
                 "author_id": user["id"],
                 "title": payload.title.strip(),
                 "body": payload.body.strip(),
@@ -306,7 +360,7 @@ async def create_channel_thread(channel_id: str, payload: ThreadCreate, user: di
     )
     if not inserted:
         raise HTTPException(status_code=500, detail="Could not create thread")
-    _event(sb, user["id"], "community.thread.created", {"thread_id": inserted[0]["id"], "channel_id": channel_id})
+    _event(sb, user["id"], "community.thread.created", {"thread_id": inserted[0]["id"], "channel_id": resolved_channel_id})
     return _shape_thread(inserted[0], user["id"])
 
 
@@ -317,11 +371,17 @@ class ReplyCreate(BaseModel):
 @router.post("/community/channels/{channel_id}/threads/{thread_id}/replies")
 async def create_thread_reply(channel_id: str, thread_id: str, payload: ReplyCreate, user: dict = Depends(get_current_user)):
     sb = get_supabase_admin()
+    resolved_channel_id = _resolve_channel_id(sb, channel_id)
+    if not resolved_channel_id:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    resolved_thread_id = _resolve_thread_id(sb, resolved_channel_id, thread_id)
+    if not resolved_thread_id:
+        raise HTTPException(status_code=404, detail="Thread not found")
     thread = _first(
         sb.table("community_threads")
         .select("id, author_id, is_locked, reply_count")
-        .eq("id", thread_id)
-        .eq("channel_id", channel_id)
+        .eq("id", resolved_thread_id)
+        .eq("channel_id", resolved_channel_id)
     )
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found")
@@ -329,16 +389,16 @@ async def create_thread_reply(channel_id: str, thread_id: str, payload: ReplyCre
         raise HTTPException(status_code=423, detail="Replies are locked on this thread")
     inserted = _rows(
         sb.table("community_replies")
-        .insert({"thread_id": thread_id, "author_id": user["id"], "body": payload.body.strip(), "status": "visible"})
+        .insert({"thread_id": resolved_thread_id, "author_id": user["id"], "body": payload.body.strip(), "status": "visible"})
     )
     _rpc_inc(
         sb,
         "community_inc_thread_reply_count",
-        {"p_thread_id": thread_id, "p_delta": 1},
-        "community_threads", thread_id, "reply_count", 1,
+        {"p_thread_id": resolved_thread_id, "p_delta": 1},
+        "community_threads", resolved_thread_id, "reply_count", 1,
     )
-    _event(sb, user["id"], "community.reply.created", {"thread_id": thread_id})
-    _notify(sb, thread.get("author_id"), "community_reply", {"thread_id": thread_id})
+    _event(sb, user["id"], "community.reply.created", {"thread_id": resolved_thread_id})
+    _notify(sb, thread.get("author_id"), "community_reply", {"thread_id": resolved_thread_id})
     return _shape_reply(inserted[0], user["id"]) if inserted else {}
 
 
