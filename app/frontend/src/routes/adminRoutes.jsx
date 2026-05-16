@@ -6,7 +6,6 @@ import AdminOverview from "../pages/admin/Overview";
 import AdminRecruitments from "../pages/admin/Recruitments";
 import AdminEligibility from "../pages/admin/EligibilityQueue";
 import AdminOperationsConsole from "../pages/admin/OperationsConsole";
-import VerificationGatewayConsole from "../pages/admin/VerificationGatewayConsole";
 import AdminEligibilityOps from "../pages/admin/EligibilityOps";
 import AdminSources from "../pages/admin/Sources";
 import AdminOrganizations from "../pages/admin/Organizations";
@@ -26,7 +25,6 @@ export const adminRouteElements = (
   <Route element={<ProtectedRoute role={["admin", "super_admin"]}><AdminShell /></ProtectedRoute>}>
     <Route path="/admin" element={<AdminOverview />} />
     <Route path="/admin/operations" element={<AdminOperationsConsole />} />
-    <Route path="/admin/verification-gateway" element={<VerificationGatewayConsole />} />
     <Route path="/admin/recruitments" element={<AdminRecruitments />} />
     <Route path="/admin/eligibility-queue" element={<AdminEligibility />} />
     <Route path="/admin/promotion-queue" element={<AdminEligibility />} />
