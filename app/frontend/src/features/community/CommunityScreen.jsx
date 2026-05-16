@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   Avatar,
   ChannelIcon,
@@ -264,7 +264,6 @@ function CommunityTopNav({ spaces, activeId, onPick }) {
     <div className="px-3 pt-3 pb-2 border-b border-[#E7DECB] bg-[#F8EFE2]">
       <div className="flex items-center justify-between mb-2">
         <div className="num-mono text-[10px] tracking-[0.16em] text-[#8A6A45] uppercase">Community spaces</div>
-        <div className="text-[10px] text-clay-700">Quick jump</div>
       </div>
       <div className="flex flex-wrap gap-1.5">
         {spaces.map((s) => (
@@ -282,11 +281,6 @@ function CommunityTopNav({ spaces, activeId, onPick }) {
             {s.glyph} {s.name}
           </button>
         ))}
-      </div>
-      <div className="mt-2 flex items-center gap-1.5 text-[10.5px]">
-        <QuickLink to="/app/groups" icon="◇" label="Study groups" compact />
-        <QuickLink to="/app/resources" icon="◎" label="Resources" compact />
-        <QuickLink to="/app/partners" icon="∞" label="Partners" compact />
       </div>
     </div>
   );
@@ -419,23 +413,6 @@ function RailGroup({ title, channels, activeId, onPick, space, muted }) {
         </button>
       ))}
     </div>
-  );
-}
-
-function QuickLink({ to, icon, label, badge, compact = false }) {
-  return (
-    <Link
-      to={to}
-      className={
-        compact
-          ? "inline-flex items-center gap-1.5 px-2 py-1 rounded-full border border-[#E7DECB] text-[10.5px] text-clay-700 hover:bg-[#FBF6EF]"
-          : "flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-[#F3EADB] text-[11.5px] text-[#3a2e22]"
-      }
-    >
-      <span className={`${compact ? "text-[12px]" : "w-5 text-[14px]"} text-center text-[#A68057]`}>{icon}</span>
-      <span className={compact ? "" : "flex-1"}>{label}</span>
-      {badge ? <span className="num-mono text-[9.5px] text-clay-700">{badge}</span> : null}
-    </Link>
   );
 }
 
@@ -863,26 +840,14 @@ function ThreadDetail({ thread, channel, users, onBack, onChanged }) {
 function ReplySection({ replies, thread, channel, users, onChanged }) {
   return (
     <div className="mt-6">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-2">
         <div className="font-heading text-[18px]">{thread.replies || 0} replies</div>
-        <div className="flex gap-1 bg-[#F3EADB] p-1 rounded-full border border-[#E7DECB]">
-          {["Top", "New", "Verified"].map((s, i) => (
-            <button
-              key={s}
-              type="button"
-              className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
-                i === 0 ? "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]" : "text-clay-700"
-              }`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
+        <div className="num-mono text-[10.5px] text-clay-700">Telegram-style thread</div>
       </div>
 
       <ReplyComposer channelId={channel?.id} threadId={thread.id} onPosted={onChanged} />
 
-      <ul className="mt-5 space-y-3">
+      <ul className="mt-4 space-y-2">
         {replies.map((r, i) => (
           <ReplyItem
             key={r.id}
@@ -940,34 +905,28 @@ function ReplyItem({ reply, users, channelId, threadId, isFirst, onChanged }) {
   }
 
   return (
-    <li
-      data-testid={`reply-${reply.id}`}
-      className={`rounded-xl border p-4 flex gap-4 ${
-        isVerified ? "border-[#94B28A] bg-[#F0F5EF]/40" : "border-[#E7DECB] bg-white/60"
-      }`}
-    >
-      <VoteColumn
-        count={net}
-        voted={vote === 1 ? 1 : vote === -1 ? -1 : null}
-        onVote={(d) => castVote(d)}
-      />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <UserChip user={u} time={reply.createdAt || "2h"} compact />
-          {isVerified && isFirst ? (
-            <span className="pill pill-sage" style={{ fontSize: 9.5 }}>
-              Top verified answer
-            </span>
-          ) : null}
+    <li data-testid={`reply-${reply.id}`} className="flex gap-2.5 items-start">
+      <Avatar user={u} size={28} />
+      <div className="min-w-0 max-w-[86%]">
+        <div
+          className={`rounded-2xl px-3 py-2 border ${
+            isVerified ? "bg-[#F0F5EF] border-[#B9CFAF]" : "bg-white border-[#E7DECB]"
+          }`}
+        >
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-[11.5px] font-semibold text-[#2E2218] truncate">{u.name}</span>
+            {isVerified && isFirst ? <span className="text-[9.5px] text-[#54794E]">verified</span> : null}
+          </div>
+          <p className="text-[13px] text-[#2E2218] whitespace-pre-wrap leading-[1.5]">{reply.body}</p>
         </div>
-        <p className="text-[13.5px] text-[#2E2218] mt-2 leading-[1.6] whitespace-pre-wrap">
-          {reply.body}
-        </p>
-        <div className="mt-2.5 flex items-center gap-3 text-[10.5px] text-clay-700">
-          <button type="button" className="hover:text-clay-900">Reply</button>
-          <button type="button" className="hover:text-clay-900">Save</button>
-          <button type="button" className="hover:text-clay-900">Share</button>
-          <button type="button" className="ml-auto hover:text-clay-900">Report</button>
+        <div className="mt-1 px-1 flex items-center gap-3 text-[10px] text-clay-700">
+          <span className="num-mono">{reply.createdAt || "2h"}</span>
+          <button type="button" onClick={() => castVote(1)} className="hover:text-clay-900">
+            👍 {Math.max(0, net)}
+          </button>
+          <button type="button" onClick={() => castVote(-1)} className="hover:text-clay-900">
+            👎
+          </button>
         </div>
       </div>
     </li>
@@ -999,33 +958,28 @@ function ReplyComposer({ channelId, threadId, onPosted }) {
   }
 
   return (
-    <div className="rounded-xl border border-[#E7DECB] bg-white/80" data-testid="reply-composer">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-[#E7DECB] text-[10.5px] text-clay-700">
-        <span className="num-mono uppercase tracking-[0.18em]">Markdown supported</span>
-      </div>
+    <div className="rounded-2xl border border-[#E7DECB] bg-white" data-testid="reply-composer">
       <textarea
-        rows="3"
+        rows="2"
         value={body}
         onChange={(e) => setBody(e.target.value)}
-        placeholder="Share your thought, ask a follow-up, or post a counter-point…"
+        placeholder="Write a reply…"
         className="block w-full px-3 py-2.5 text-[13px] bg-transparent outline-none resize-none placeholder:text-[#A68057]"
         data-testid="reply-body"
       />
-      <div className="flex items-center justify-between px-3 py-2 border-t border-[#E7DECB] gap-3 flex-wrap">
-        <span className="text-[10.5px] text-clay-700 flex-1">
-          {error ? <span className="text-[#7A3925]">{error}</span> : "Be calm. No pile-ons. Verified Topper answers may be promoted to the top."}
+      <div className="flex items-center justify-between px-3 py-2 border-t border-[#E7DECB]">
+        <span className="text-[10.5px] text-clay-700 truncate">
+          {error ? <span className="text-[#7A3925]">{error}</span> : "Keep it helpful."}
         </span>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={submit}
-            disabled={posting || !body.trim()}
-            className="text-[11px] px-3 py-1 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold disabled:opacity-50"
-            data-testid="reply-submit"
-          >
-            {posting ? "Posting…" : "Post reply"}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={posting || !body.trim()}
+          className="text-[11px] px-3 py-1 rounded-full bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7] font-semibold disabled:opacity-50"
+          data-testid="reply-submit"
+        >
+          {posting ? "Sending…" : "Send"}
+        </button>
       </div>
     </div>
   );
