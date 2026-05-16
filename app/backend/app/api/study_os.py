@@ -144,6 +144,11 @@ async def mission_control(user: dict = Depends(get_current_user)) -> dict[str, A
             "meta": {
                 "source": "mission_control_v1",
                 "preview_flags": ["mission_control_degraded", "exam_intelligence_not_connected"],
+                "degraded": True,
+                "diagnostics": {
+                    "error_class": type(exc).__name__,
+                    "error_message": str(exc)[:200],
+                },
                 "error": str(exc)[:200],
             },
         }

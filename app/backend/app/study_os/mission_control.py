@@ -1033,6 +1033,7 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source": MISSION_CONTROL_SOURCE,
             "preview_flags": preview_flags,
+            "degraded": False,
         },
     }
 
