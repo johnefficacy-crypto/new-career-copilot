@@ -160,10 +160,12 @@ export default function ExamCycleTimeline() {
                 <span className="num-mono">plan v{plan.plan_version}</span>
               </>
             ) : null}
-            <span>·</span>
-            <span className="num-mono">
-              {plan.planner_version || "planner_v1"}
-            </span>
+            {plan.planner_version ? (
+              <>
+                <span>·</span>
+                <span className="num-mono">{plan.planner_version}</span>
+              </>
+            ) : null}
           </div>
         ) : null}
       </div>
