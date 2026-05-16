@@ -4,10 +4,19 @@ import { ExternalLink } from "lucide-react";
 import FieldReviewGroup from "./FieldReviewGroup";
 import PostEligibilityReviewGroup from "./PostEligibilityReviewGroup";
 import BlockerList from "./BlockerList";
+import ConflictResolver from "./ConflictResolver";
 import RecruitmentCriteriaPanel from "../recruitments/RecruitmentCriteriaPanel";
 import RecruitmentBlockerFixForm from "../recruitments/RecruitmentBlockerFixForm";
 import { HIGH_RISK_QUEUE_FIELDS, RECOMMENDED_REVIEW_FIELDS } from "./adminWorkflowContract";
 import { scoreToPct, isLowQuality } from "./scoreUtils";
+
+const AGGREGATOR_KINDS = new Set(["aggregator", "aggregator_listing"]);
+
+function conflictIsAggregatorOnly(conflict) {
+  const candidates = conflict?.candidates || [];
+  if (!candidates.length) return false;
+  return candidates.every((c) => AGGREGATOR_KINDS.has((c?.source_kind || "").toLowerCase()));
+}
 
 // Source-tier mapping: A = official, B = institutional, C = aggregator.
 function tierForItem(item) {
@@ -37,6 +46,8 @@ export default function AdminFixPanel({
   validateResult,
   sources = [],
   nextAction = null,
+  conflicts = [],
+  conflictTarget = null,
   onQueueFieldAction,
   onPromote,
   onMergeIntoExisting,
@@ -45,22 +56,30 @@ export default function AdminFixPanel({
   onVerify,
   onPublish,
   onOpenOfficialSourceResolver,
+  onOpenConflict,
+  onResolveConflict,
+  onRejectConflict,
+  onCloseConflict,
   onJumpToTarget,
   busy,
 }) {
   if (!queueItem && !recruitment) {
     return <NextActionEmpty nextAction={nextAction} onJump={onJumpToTarget} />;
   }
+  const openConflicts = (conflicts || []).filter((c) => (c?.status || "open") === "open");
   return (
     <div className="stack" data-testid="admin-fix-panel">
       {queueItem ? (
         <QueueFixSection
           item={queueItem}
+          conflicts={openConflicts}
           onFieldAction={onQueueFieldAction}
           onPromote={onPromote}
           onMergeIntoExisting={onMergeIntoExisting}
           onMarkDuplicate={onMarkDuplicate}
           onOpenOfficialSourceResolver={onOpenOfficialSourceResolver}
+          onOpenConflict={onOpenConflict}
+          onRejectConflict={onRejectConflict}
           busy={busy}
         />
       ) : null}
@@ -75,14 +94,23 @@ export default function AdminFixPanel({
           busy={busy}
         />
       ) : null}
+      <ConflictResolver
+        open={Boolean(conflictTarget)}
+        conflict={conflictTarget}
+        busy={busy}
+        onClose={onCloseConflict}
+        onSubmit={onResolveConflict}
+        onReject={onRejectConflict ? (({ reason }) => onRejectConflict(conflictTarget?.id, { reason })) : undefined}
+      />
     </div>
   );
 }
 
-function QueueFixSection({ item, onFieldAction, onPromote, onMergeIntoExisting, onMarkDuplicate, onOpenOfficialSourceResolver, busy }) {
+function QueueFixSection({ item, conflicts = [], onFieldAction, onPromote, onMergeIntoExisting, onMarkDuplicate, onOpenOfficialSourceResolver, onOpenConflict, onRejectConflict, busy }) {
   const blockers = item.unverified_fields || [];
   const dups = item.duplicate_candidates || [];
   const officialUnresolved = item.official_source_resolved === false;
+  const openConflicts = conflicts.filter((c) => (c?.status || "open") === "open");
   const dataQualityPct = scoreToPct(item.data_quality_score);
   const lowQuality = isLowQuality(item.data_quality_score);
   const tier = tierForItem(item);
@@ -90,7 +118,7 @@ function QueueFixSection({ item, onFieldAction, onPromote, onMergeIntoExisting, 
   const posts = (item.raw_extracted_item || item.normalized_item || {}).posts;
   const postCount = Array.isArray(posts) ? posts.length : 0;
   const title = item.recruitment || item.raw_extracted_item?.title || item.normalized_item?.title || "Untitled candidate";
-  const blockedFromPromote = blockers.length > 0 || officialUnresolved || !item.promotable;
+  const blockedFromPromote = blockers.length > 0 || officialUnresolved || openConflicts.length > 0 || !item.promotable;
 
   return (
     <section className="card" data-testid="queue-fix-section">
@@ -148,6 +176,70 @@ function QueueFixSection({ item, onFieldAction, onPromote, onMergeIntoExisting, 
           </div>
         ) : null}
 
+        {openConflicts.length > 0 ? (
+          <section className="card" data-testid="fix-panel-conflicts" id="fix-panel-conflicts">
+            <div className="card-head">
+              <div className="row" style={{ gap: 6 }}>
+                <h4 className="oc-title">Consensus conflicts</h4>
+                <span className="badge blocker">{openConflicts.length}</span>
+              </div>
+              <span className="row-sub">official sources disagree</span>
+            </div>
+            <div className="card-body stack">
+              <div className="anno">
+                Each row is a single canonical field with two or more candidate values.
+                Pick the winning value, attach evidence, and resolve. Promotion stays blocked
+                until every row is resolved or rejected.
+              </div>
+              {openConflicts.map((conflict) => {
+                const aggregatorOnly = conflictIsAggregatorOnly(conflict);
+                return (
+                  <div
+                    key={conflict.id}
+                    className="fld"
+                    data-testid={`conflict-row-${conflict.id}`}
+                  >
+                    <div className="fld-head">
+                      <div>
+                        <span className="fld-key" style={{ fontFamily: "var(--font-mono)" }}>
+                          {conflict.field_key}
+                        </span>
+                        <div className="field-sub" style={{ marginTop: 3 }}>
+                          {(conflict.candidates || []).length} candidate
+                          {(conflict.candidates || []).length === 1 ? "" : "s"}
+                          {aggregatorOnly ? " · aggregator dissent only" : ""}
+                        </div>
+                      </div>
+                      <div className="row" style={{ gap: 6 }}>
+                        <button
+                          type="button"
+                          className="btn small"
+                          onClick={() => onOpenConflict?.(conflict)}
+                          disabled={busy}
+                          data-testid={`conflict-resolve-${conflict.id}`}
+                        >
+                          Resolve
+                        </button>
+                        {aggregatorOnly && onRejectConflict ? (
+                          <button
+                            type="button"
+                            className="btn ghost small"
+                            onClick={() => onRejectConflict(conflict.id, { reason: "aggregator value rejected by policy" })}
+                            disabled={busy}
+                            data-testid={`conflict-reject-${conflict.id}`}
+                          >
+                            Reject (aggregator value)
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+
         <FieldReviewGroup
           extracted={item.raw_extracted_item || item.normalized_item || {}}
           evidence={item.field_evidence_status || {}}
@@ -199,7 +291,11 @@ function QueueFixSection({ item, onFieldAction, onPromote, onMergeIntoExisting, 
               </div>
               <div className="field-sub" style={{ color: blockedFromPromote ? "var(--blocker)" : "var(--resolved)", marginTop: 3 }}>
                 {blockedFromPromote
-                  ? `${blockers.length ? `Verify ${blockers.length} required field${blockers.length === 1 ? "" : "s"}` : ""}${blockers.length && officialUnresolved ? " · " : ""}${officialUnresolved ? "Resolve official source" : ""}`
+                  ? [
+                      blockers.length ? `Verify ${blockers.length} required field${blockers.length === 1 ? "" : "s"}` : "",
+                      officialUnresolved ? "Resolve official source" : "",
+                      openConflicts.length ? `Resolve ${openConflicts.length} consensus conflict${openConflicts.length === 1 ? "" : "s"}` : "",
+                    ].filter(Boolean).join(" · ")
                   : "All gates open. Promotion will create a recruitment draft."}
               </div>
             </div>

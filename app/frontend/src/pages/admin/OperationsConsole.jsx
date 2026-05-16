@@ -9,6 +9,7 @@ import useAdminNextActions from "../../features/admin/workflow/useAdminNextActio
 import OfficialSourceResolver from "../../features/admin/workflow/OfficialSourceResolver";
 import DuplicateMergePreview from "../../features/admin/workflow/DuplicateMergePreview";
 import SelectionContextBanner from "../../features/admin/workflow/SelectionContextBanner";
+import useConflicts from "../../features/admin/workflow/useConflicts";
 import { scoreToPct } from "../../features/admin/workflow/scoreUtils";
 
 const VIEWS = [
@@ -40,6 +41,9 @@ function itemBadge(item) {
   if (status === "rejected") return { cls: "badge neutral", text: "rejected" };
   if (status === "duplicate") return { cls: "badge neutral", text: "duplicate" };
   if (status === "merged") return { cls: "badge info", text: "merged" };
+  if ((item?.open_conflicts || 0) > 0) {
+    return { cls: "badge blocker", text: "conflict" };
+  }
   if (item?.unverified_fields?.length || item?.official_source_resolved === false) {
     return { cls: "badge blocker", text: "unresolved" };
   }
@@ -64,7 +68,10 @@ export default function OperationsConsole() {
   const [msg, setMsg] = useState(null);
   const [resolverOpen, setResolverOpen] = useState(false);
   const [mergeTarget, setMergeTarget] = useState(null);
+  const [conflictTarget, setConflictTarget] = useState(null);
   const [queueFilter, setQueueFilter] = useState(() => searchParams.get("queue_status") || "pending");
+
+  const { conflicts, refetch: refetchConflicts } = useConflicts(queueId);
 
   const { runAction, busyKey, error: actionError } = useAdminAction();
 
@@ -130,7 +137,8 @@ export default function OperationsConsole() {
     queueItem: selectedQueueItem,
     recruitment: selectedRecruitment,
     validateResult,
-  }), [selectedSource, latestRun, selectedQueueItem, selectedRecruitment, validateResult]);
+    conflicts,
+  }), [selectedSource, latestRun, selectedQueueItem, selectedRecruitment, validateResult, conflicts]);
 
   const checklistItems = useAdminNextActions(progressState);
   const nextAction = useMemo(
@@ -255,6 +263,42 @@ export default function OperationsConsole() {
     });
   }, [runAction, loadAll]);
 
+  const resolveConflict = useCallback(async (payload) => {
+    const conflictId = payload?.conflict_id || conflictTarget?.id;
+    if (!conflictId) return;
+    await runAction({
+      key: `resolve-conflict-${conflictId}`,
+      successMessage: "Conflict resolved. Promotion gate updated.",
+      action: async () => {
+        await api.post(`/api/admin/conflicts/${conflictId}/resolve`, {
+          value: payload?.value,
+          scope: payload?.scope,
+          reason: payload?.reason,
+          evidence_url: payload?.evidence_url,
+        });
+        setConflictTarget(null);
+        await refetchConflicts();
+        await loadAll();
+      },
+    });
+  }, [conflictTarget, runAction, refetchConflicts, loadAll]);
+
+  const rejectConflict = useCallback(async (conflictId, body) => {
+    if (!conflictId) return;
+    await runAction({
+      key: `reject-conflict-${conflictId}`,
+      successMessage: "Conflict rejected.",
+      action: async () => {
+        await api.post(`/api/admin/conflicts/${conflictId}/reject`, {
+          reason: body?.reason || "rejected by admin",
+        });
+        setConflictTarget(null);
+        await refetchConflicts();
+        await loadAll();
+      },
+    });
+  }, [runAction, refetchConflicts, loadAll]);
+
   const resolveOfficialSource = useCallback(async (payload) => {
     if (!queueId) return;
     await runAction({
@@ -372,6 +416,12 @@ export default function OperationsConsole() {
             onCloseMerge={() => setMergeTarget(null)}
             onResolveOfficialSource={resolveOfficialSource}
             onConfirmMerge={confirmMerge}
+            conflicts={conflicts}
+            conflictTarget={conflictTarget}
+            onOpenConflict={setConflictTarget}
+            onResolveConflict={resolveConflict}
+            onRejectConflict={rejectConflict}
+            onCloseConflict={() => setConflictTarget(null)}
             busy={Boolean(busyKey)}
             msg={msg}
             actionError={actionError}
@@ -516,7 +566,9 @@ function ReviewAndPublish({
   onPromote, onMergeIntoExisting, onMarkDuplicate,
   onValidate, onVerify, onPublish, onOpenOfficialSourceResolver,
   resolverOpen, mergeTarget, onCloseResolver, onCloseMerge,
-  onResolveOfficialSource, onConfirmMerge, busy, msg, actionError,
+  onResolveOfficialSource, onConfirmMerge,
+  conflicts, conflictTarget, onOpenConflict, onResolveConflict, onRejectConflict, onCloseConflict,
+  busy, msg, actionError,
 }) {
   const calloutTitle = nextAction?.label || "Pick a workflow target";
   const calloutMessage = nextAction?.reason || nextAction?.hint || "Select a queue item or recruitment to start working.";
@@ -590,6 +642,8 @@ function ReviewAndPublish({
               validateResult={validateResult}
               sources={sources}
               nextAction={nextAction}
+              conflicts={conflicts}
+              conflictTarget={conflictTarget}
               onJumpToTarget={onJumpToChecklistTarget}
               onQueueFieldAction={onQueueFieldAction}
               onPromote={onPromote}
@@ -599,6 +653,10 @@ function ReviewAndPublish({
               onVerify={onVerify}
               onPublish={onPublish}
               onOpenOfficialSourceResolver={onOpenOfficialSourceResolver}
+              onOpenConflict={onOpenConflict}
+              onResolveConflict={onResolveConflict}
+              onRejectConflict={onRejectConflict}
+              onCloseConflict={onCloseConflict}
               busy={busy}
             />
             <OfficialSourceResolver

@@ -9,8 +9,9 @@ export default function useAdminNextActions(state) {
 
 export function buildChecklist(state) {
   const items = [];
-  const { source, queueItem, recruitment, validateResult } = state;
+  const { source, queueItem, recruitment, validateResult, conflicts } = state;
   const progress = computeProgress(state);
+  const openConflictCount = (conflicts || []).filter((c) => (c?.status || "open") === "open").length;
 
   // ── Before scraping ────────────────────────────────────────────────
   items.push({
@@ -91,6 +92,17 @@ export function buildChecklist(state) {
       : "done",
     reason: queueItem?.official_source_resolved === false ? "Backend gate: unverified_official_source" : undefined,
     target: "fix-panel",
+  });
+  items.push({
+    id: "consensus_conflicts",
+    label: "Resolve consensus conflicts",
+    status: !queueItem ? "todo"
+      : openConflictCount > 0 ? "blocked"
+      : "done",
+    reason: openConflictCount > 0
+      ? `${openConflictCount} field${openConflictCount === 1 ? "" : "s"} disagree across sources`
+      : undefined,
+    target: "fix-panel-conflicts",
   });
   items.push({
     id: "duplicate_check",

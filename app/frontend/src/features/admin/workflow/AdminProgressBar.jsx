@@ -7,6 +7,7 @@ const STEPS = [
   { id: "queue_review", label: "Queue review" },
   { id: "field_fixes", label: "Field fixes" },
   { id: "official_source_resolved", label: "Official source resolved" },
+  { id: "conflicts_resolved", label: "Conflicts resolved" },
   { id: "promoted_draft", label: "Promoted draft" },
   { id: "draft_blockers_fixed", label: "Draft blockers fixed" },
   { id: "validated", label: "Validated" },
@@ -19,7 +20,8 @@ const STEPS = [
 // Returns { id -> { status: "pending"|"active"|"complete"|"blocked", reason?: string } }
 export function computeProgress(state = {}) {
   const out = {};
-  const { source, latestRun, queueItem, recruitment, validateResult, eligibilityOps } = state;
+  const { source, latestRun, queueItem, recruitment, validateResult, eligibilityOps, conflicts } = state;
+  const openConflicts = (conflicts || []).filter((c) => (c?.status || "open") === "open");
 
   const sourceType = source?.source_type || source?.kind;
   if (source) {
@@ -89,9 +91,20 @@ export function computeProgress(state = {}) {
     out.official_source_resolved = { status: "pending" };
   }
 
+  if (!queueItem) {
+    out.conflicts_resolved = { status: "pending" };
+  } else if (openConflicts.length > 0) {
+    out.conflicts_resolved = {
+      status: "blocked",
+      reason: `Open consensus conflicts: ${openConflicts.map((c) => c.field_key).filter(Boolean).join(", ") || openConflicts.length}`,
+    };
+  } else {
+    out.conflicts_resolved = { status: "complete" };
+  }
+
   if (queueItem?.promoted_recruitment_id || recruitment) {
     out.promoted_draft = { status: "complete" };
-  } else if (queueItem?.promotable) {
+  } else if (queueItem?.promotable && openConflicts.length === 0) {
     out.promoted_draft = { status: "active", reason: "Ready to promote." };
   } else {
     out.promoted_draft = { status: "pending", reason: "Promotion blocked until field & source gates pass." };
@@ -157,7 +170,7 @@ export function computeProgress(state = {}) {
 
 const PHASES = [
   { id: "discovery", label: "Discovery", stepIds: ["source_ready", "dry_scrape", "live_scrape"] },
-  { id: "review", label: "Review", stepIds: ["queue_review", "field_fixes", "official_source_resolved"] },
+  { id: "review", label: "Review", stepIds: ["queue_review", "field_fixes", "official_source_resolved", "conflicts_resolved"] },
   { id: "promote", label: "Promote", stepIds: ["promoted_draft", "draft_blockers_fixed"] },
   { id: "publish", label: "Publish & Monitor", stepIds: ["validated", "verified", "published", "eligibility_monitored"] },
 ];
@@ -203,7 +216,7 @@ export default function AdminProgressBar({ state = {}, onStepClick }) {
   return (
     <section className="card" data-testid="admin-progress-bar">
       <div className="card-body">
-        <div className="lbl" style={{ marginBottom: 8 }}>Pipeline · 4 phases · 12 steps</div>
+        <div className="lbl" style={{ marginBottom: 8 }}>Pipeline · 4 phases · 13 steps</div>
         <div className="phase-rail">
           {PHASES.map((phase, phaseIndex) => {
             const phaseStatus = rollupPhaseStatus(phase.stepIds, progress);
