@@ -13,6 +13,8 @@ import {
   VoteColumn,
 } from "../../shared/ui/studyos";
 import { api } from "../../lib/api";
+import useApiAction from "../../lib/hooks/useApiAction";
+import { useAuth } from "../../lib/authContext";
 import { COMMUNITY_USERS, RESOURCES } from "./data";
 
 // Production port of docs/reference/UI_claude-code/screen-resources.jsx.
@@ -27,24 +29,34 @@ const TYPE_ICONS = {
 };
 
 export default function ResourcesScreen() {
+  const { user } = useAuth();
+  // Default to the user's primary exam if known; otherwise show everything.
+  const defaultExam = Array.isArray(user?.goal_exams) && user.goal_exams.length > 0 ? user.goal_exams[0] : "all";
   const [type, setType] = useState("all");
   const [trust, setTrust] = useState("all");
-  const [exam, setExam] = useState("UPSC CSE");
+  const [exam, setExam] = useState(defaultExam);
   const [items, setItems] = useState(RESOURCES);
   const [contributeOpen, setContributeOpen] = useState(false);
+  const [reportFor, setReportFor] = useState(null);
+  const { run } = useApiAction();
 
   const reload = useCallback(async (params = {}) => {
     try {
-      const qs = new URLSearchParams(params).toString();
+      // Only forward non-empty, non-"all" filter values to the server.
+      const cleanedEntries = Object.entries(params).filter(([, v]) => v && v !== "all");
+      const qs = new URLSearchParams(cleanedEntries).toString();
       const d = await api.get(`/api/community/resources${qs ? `?${qs}` : ""}`);
-      if (Array.isArray(d?.items) && d.items.length) setItems(d.items);
-    } catch {}
+      if (Array.isArray(d?.items)) setItems(d.items);
+    } catch {
+      // Keep seed visible.
+    }
   }, []);
 
   useEffect(() => {
-    reload();
-  }, [reload]);
+    reload({ exam, type, trust });
+  }, [reload, exam, type, trust]);
 
+  // Final client-side filter belt-and-braces for snappy seed-mode toggling.
   const filtered = useMemo(
     () =>
       items.filter((r) => {
@@ -56,17 +68,32 @@ export default function ResourcesScreen() {
     [items, type, trust, exam],
   );
 
-  async function vote(id) {
-    try {
-      await api.post(`/api/community/resources/${id}/vote`, {});
-      reload();
-    } catch {}
+  async function vote(r) {
+    const prev = items;
+    await run({
+      action: () => api.post(`/api/community/resources/${r.id}/vote`, {}),
+      optimistic: () =>
+        setItems((list) =>
+          list.map((it) =>
+            it.id === r.id
+              ? { ...it, upvotes: (it.upvotes || 0) + (it.youVoted ? -1 : 1), youVoted: !it.youVoted }
+              : it,
+          ),
+        ),
+      rollback: () => setItems(prev),
+      onSuccess: () => reload({ exam, type, trust }),
+      errorMessage: "Could not record vote.",
+    });
   }
 
-  async function report(id, reason) {
-    try {
-      await api.post(`/api/community/resources/${id}/report`, { reason });
-    } catch {}
+  async function submitReport(reason) {
+    if (!reportFor) return;
+    await run({
+      action: () => api.post(`/api/community/resources/${reportFor.id}/report`, { reason }),
+      successMessage: "Report submitted. A moderator will review.",
+      errorMessage: "Could not submit report.",
+      onSuccess: () => setReportFor(null),
+    });
   }
 
   return (
@@ -87,7 +114,14 @@ export default function ResourcesScreen() {
         }
       />
       {contributeOpen ? (
-        <ContributeDrawer onClose={() => setContributeOpen(false)} onContributed={reload} />
+        <ContributeDrawer onClose={() => setContributeOpen(false)} onContributed={() => reload({ exam, type, trust })} />
+      ) : null}
+      {reportFor ? (
+        <ReportDrawer
+          resource={reportFor}
+          onClose={() => setReportFor(null)}
+          onSubmit={submitReport}
+        />
       ) : null}
 
       <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6">
@@ -127,7 +161,7 @@ export default function ResourcesScreen() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {filtered.map((r) => (
-                <ResourceCard key={r.id} r={r} onVote={() => vote(r.id)} onReport={() => report(r.id, "user-reported via UI")} />
+                <ResourceCard key={r.id} r={r} onVote={() => vote(r)} onReport={() => setReportFor(r)} />
               ))}
             </div>
           )}
@@ -291,18 +325,25 @@ function ResourceCard({ r, onVote, onReport }) {
       </div>
 
       <div className="rule mt-3 pt-2 flex gap-2">
-        <button
-          type="button"
-          className="flex-1 text-[11.5px] px-2.5 py-1.5 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold"
-        >
-          Open
-        </button>
-        <button
-          type="button"
-          className="text-[11.5px] px-2.5 py-1.5 rounded-full border border-[#E7DECB] text-clay-700 font-semibold"
-        >
-          Save
-        </button>
+        {r.sourceUrl ? (
+          <a
+            href={r.sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid={`resource-open-${r.id}`}
+            className="flex-1 text-center text-[11.5px] px-2.5 py-1.5 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold"
+          >
+            Open ↗
+          </a>
+        ) : (
+          <button
+            type="button"
+            disabled
+            className="flex-1 text-[11.5px] px-2.5 py-1.5 rounded-full bg-[#4E3A29]/50 text-[#F3EADB] font-semibold cursor-not-allowed"
+          >
+            Open
+          </button>
+        )}
         <button
           type="button"
           onClick={() => onReport && onReport()}
@@ -347,6 +388,85 @@ function FlaggedResourcesCard() {
         </div>
       </div>
     </Card>
+  );
+}
+
+const REPORT_REASONS = [
+  { k: "dmca", label: "DMCA / copyright concern" },
+  { k: "spam", label: "Spam / off-topic" },
+  { k: "incorrect", label: "Factually incorrect" },
+  { k: "broken", label: "Broken or dead link" },
+  { k: "other", label: "Other" },
+];
+
+function ReportDrawer({ resource, onClose, onSubmit }) {
+  const [reasonKey, setReasonKey] = useState("");
+  const [details, setDetails] = useState("");
+  const composed = useMemo(() => {
+    const labeled = REPORT_REASONS.find((r) => r.k === reasonKey)?.label;
+    const trimmed = details.trim();
+    if (!labeled && !trimmed) return "";
+    if (labeled && trimmed) return `${labeled}: ${trimmed}`;
+    return labeled || trimmed;
+  }, [reasonKey, details]);
+  // Backend enforces 3 <= reason <= 300.
+  const valid = composed.length >= 3 && composed.length <= 300;
+  return (
+    <Drawer open onClose={onClose} title="Report resource" width={480}>
+      <div className="space-y-4" data-testid="report-drawer">
+        <div className="rounded-lg border border-[#E7DECB] bg-[#FBF8F2] p-3">
+          <Eyebrow>Resource</Eyebrow>
+          <div className="font-heading text-[14px] mt-1">{resource.title}</div>
+        </div>
+        <div>
+          <Eyebrow>Reason</Eyebrow>
+          <div className="mt-2 flex flex-col gap-1">
+            {REPORT_REASONS.map((r) => (
+              <label key={r.k} className="flex items-center gap-2 text-[12.5px] cursor-pointer">
+                <input
+                  type="radio"
+                  name="report-reason"
+                  value={r.k}
+                  checked={reasonKey === r.k}
+                  onChange={() => setReasonKey(r.k)}
+                />
+                {r.label}
+              </label>
+            ))}
+          </div>
+        </div>
+        <div>
+          <Eyebrow>Details {reasonKey === "other" ? "(required)" : "(optional)"}</Eyebrow>
+          <textarea
+            rows="3"
+            value={details}
+            onChange={(e) => setDetails(e.target.value)}
+            placeholder="Describe what's wrong. Moderators read every report."
+            aria-label="Report details"
+            className="mt-2 w-full px-3 py-2 rounded-lg border border-[#E7DECB] bg-white/70 text-[13px] outline-none resize-none"
+          />
+          <div className="num-mono text-[10px] text-clay-700 mt-1">{composed.length}/300</div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-full border border-[#E7DECB] text-clay-700 font-semibold text-[12px]"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => onSubmit(composed)}
+            disabled={!valid}
+            data-testid="report-submit"
+            className="px-4 py-2 rounded-full bg-[#4E3A29] text-[#F3EADB] font-semibold text-[12px] disabled:opacity-50"
+          >
+            Submit report
+          </button>
+        </div>
+      </div>
+    </Drawer>
   );
 }
 
