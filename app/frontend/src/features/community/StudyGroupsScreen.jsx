@@ -130,7 +130,7 @@ function GroupListCard({ g, active, onPick }) {
       onClick={onPick}
       data-testid={`group-card-${g.id}`}
       className={`community-action-card w-full text-left p-4 ${
-        active ? "bg-[#FBF6EF] border-[#4E3A29] shadow-[inset_3px_0_0_#4E3A29]" : ""
+        active ? "bg-[#FFFDF9] border-[#CDBA97] shadow-[inset_3px_0_0_#CDBA97]" : ""
       }`}
     >
       <div className="flex items-start justify-between gap-2">

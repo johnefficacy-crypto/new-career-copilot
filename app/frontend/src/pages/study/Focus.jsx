@@ -167,7 +167,7 @@ export default function Focus() {
                     data-testid={`focus-preset-${p}`}
                     className={`text-[12px] px-3 py-1.5 rounded-full font-semibold transition ${
                       duration === p
-                        ? "bg-[#2E2218] text-[#F3EADB]"
+                        ? "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]"
                         : "border border-[#E7DECB] text-clay-700 hover:bg-clay-50"
                     }`}
                   >
