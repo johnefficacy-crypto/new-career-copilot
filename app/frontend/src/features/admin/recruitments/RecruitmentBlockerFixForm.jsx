@@ -2,6 +2,51 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../../lib/api";
 import { ErrorState } from "../../../shared/ui";
 
+const OFFICIAL_URL_FIELDS = [
+  "official_notification_url",
+  "official_apply_url",
+  "source_pdf_url",
+];
+const AGGREGATOR_HINTS = ["sarkari", "freejob", "jobalert"];
+
+function hostOf(url) {
+  if (!url || typeof url !== "string") return null;
+  try {
+    const u = new URL(url);
+    return (u.hostname || "").toLowerCase() || null;
+  } catch {
+    return null;
+  }
+}
+
+function looksAggregator(host) {
+  if (!host) return false;
+  return AGGREGATOR_HINTS.some((h) => host.includes(h));
+}
+
+function detectRecruitmentHosts(recruitment) {
+  if (!recruitment) return [];
+  const seen = new Set();
+  const out = [];
+  for (const f of OFFICIAL_URL_FIELDS) {
+    const url = recruitment[f];
+    const host = hostOf(url);
+    if (!host || seen.has(host) || looksAggregator(host)) continue;
+    seen.add(host);
+    out.push({ host, url });
+  }
+  return out;
+}
+
+function hostsInRegistry(sources) {
+  const out = new Set();
+  for (const s of sources || []) {
+    const h = hostOf(s?.official_url);
+    if (h) out.add(h);
+  }
+  return out;
+}
+
 // Inline editor for the non-criteria recruitment blockers reported by
 // validate-publish. Wraps PUT /api/admin/recruitments/{id} which only
 // accepts a whitelist of editable fields — that endpoint also auto-demotes
@@ -25,6 +70,7 @@ export default function RecruitmentBlockerFixForm({
   blockers = [],
   sources = [],
   onChanged,
+  onSourcesChanged,
 }) {
   const recruitmentId = recruitment?.id;
   const [organizations, setOrganizations] = useState([]);
@@ -32,6 +78,12 @@ export default function RecruitmentBlockerFixForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [msg, setMsg] = useState(null);
+  const [draftBusy, setDraftBusy] = useState(false);
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const [showManualAdd, setShowManualAdd] = useState(false);
+  const [manualName, setManualName] = useState("");
+  const [manualUrl, setManualUrl] = useState("");
+  const [manualType, setManualType] = useState("official_html");
 
   useEffect(() => {
     setForm(initialForm(recruitment));
@@ -47,10 +99,30 @@ export default function RecruitmentBlockerFixForm({
     return () => { cancelled = true; };
   }, []);
 
-  const verifiedNonAggregator = useMemo(
-    () => (sources || []).filter((s) => s.is_verified && s.source_type !== "aggregator" && !s.discovery_only),
+  // Show every non-aggregator, active source (drafts included). The
+  // submit path enforces verified-only via the backend gate, so widening
+  // the dropdown only improves discoverability of newly-created drafts.
+  const eligibleSources = useMemo(
+    () => (sources || []).filter((s) => s.source_type !== "aggregator" && !s.discovery_only && s.is_active !== false),
     [sources],
   );
+  const verifiedNonAggregator = useMemo(
+    () => eligibleSources.filter((s) => s.is_verified),
+    [eligibleSources],
+  );
+
+  const detectedHosts = useMemo(() => detectRecruitmentHosts(recruitment), [recruitment]);
+  const registeredHosts = useMemo(() => hostsInRegistry(sources), [sources]);
+  const unknownHosts = useMemo(
+    () => detectedHosts.filter((c) => !registeredHosts.has(c.host)),
+    [detectedHosts, registeredHosts],
+  );
+
+  const selectedSource = useMemo(
+    () => (sources || []).find((s) => s.id === form.source_id) || null,
+    [sources, form.source_id],
+  );
+  const selectedIsUnverified = !!selectedSource && !selectedSource.is_verified;
 
   const blockerSet = new Set(blockers);
   const needsOrganization = blockerSet.has("organization_missing");
@@ -78,6 +150,78 @@ export default function RecruitmentBlockerFixForm({
       setBusy(false);
     }
   }, [recruitmentId, onChanged]);
+
+  const draftAllUnknown = useCallback(async () => {
+    if (!recruitmentId) return;
+    setError(null); setMsg(null); setDraftBusy(true);
+    try {
+      const res = await api.post(`/api/admin/recruitments/${recruitmentId}/draft-sources`, {});
+      const created = res?.created || [];
+      const existing = res?.existing || [];
+      setMsg(`Drafts: ${created.length} created · ${existing.length} already registered.`);
+      await onSourcesChanged?.();
+      if (created.length === 1) update({ source_id: created[0].id });
+    } catch (e) {
+      setError(e);
+    } finally {
+      setDraftBusy(false);
+    }
+  }, [recruitmentId, onSourcesChanged]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const verifySelectedSource = useCallback(async () => {
+    if (!form.source_id) return;
+    setError(null); setMsg(null); setVerifyBusy(true);
+    try {
+      const res = await api.post(`/api/admin/sources/${form.source_id}/verify`, {});
+      const errs = res?.errors || [];
+      const warns = res?.warnings || [];
+      if (errs.length) {
+        setError(new Error(`Verify failed: ${errs.join("; ")}`));
+      } else if (warns.length) {
+        setMsg(`Verify completed with warnings: ${warns.join("; ")}. Source remains needs_review.`);
+      } else {
+        setMsg("Source verified.");
+      }
+      await onSourcesChanged?.();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setVerifyBusy(false);
+    }
+  }, [form.source_id, onSourcesChanged]);
+
+  const submitManualSource = useCallback(async () => {
+    setError(null); setMsg(null);
+    if (!manualName.trim()) { setError(new Error("Source name required.")); return; }
+    if (!manualUrl.trim()) { setError(new Error("Official URL required.")); return; }
+    try {
+      new URL(manualUrl.trim());
+    } catch {
+      setError(new Error("Official URL must be a valid http(s) link."));
+      return;
+    }
+    setDraftBusy(true);
+    try {
+      const res = await api.post(`/api/admin/sources`, {
+        source_name: manualName.trim(),
+        official_url: manualUrl.trim(),
+        source_type: manualType,
+        is_active: true,
+        is_verified: false,
+        verification_status: "needs_review",
+      });
+      const row = res?.item || res;
+      setMsg("Source created as draft. Verify it below before saving the recruitment.");
+      setManualName(""); setManualUrl("");
+      setShowManualAdd(false);
+      await onSourcesChanged?.();
+      if (row?.id) update({ source_id: row.id });
+    } catch (e) {
+      setError(e);
+    } finally {
+      setDraftBusy(false);
+    }
+  }, [manualName, manualUrl, manualType, onSourcesChanged]);
 
   if (!recruitmentId) return null;
   if (!blockers.length) return null;
@@ -123,25 +267,141 @@ export default function RecruitmentBlockerFixForm({
         )}
 
         {(sourceMissing || sourceUnverified) && (
-          <Field label="Source provenance" testId="fix-source">
+          <Field label="Source provenance" testId="fix-source" wide>
+            {unknownHosts.length > 0 ? (
+              <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 p-2 text-[11px]" data-testid="fix-source-detected-hosts">
+                <div className="font-semibold text-amber-900">
+                  Detected official hosts not in registry:{" "}
+                  {unknownHosts.map((c) => c.host).join(", ")}
+                </div>
+                <button
+                  type="button"
+                  className="mt-1 btn btn-ghost h-7 text-[11px]"
+                  onClick={draftAllUnknown}
+                  disabled={draftBusy || verifyBusy}
+                  data-testid="fix-source-draft-all"
+                >
+                  {draftBusy ? "Creating drafts…" : `Create ${unknownHosts.length} draft source${unknownHosts.length === 1 ? "" : "s"}`}
+                </button>
+              </div>
+            ) : null}
             <select
               className="input"
               value={form.source_id || ""}
               onChange={(e) => update({ source_id: e.target.value })}
               data-testid="fix-source-select"
             >
-              <option value="">Select verified source...</option>
-              {verifiedNonAggregator.map((s) => (
-                <option key={s.id} value={s.id}>{s.org || s.source_name} · {s.source_type}</option>
-              ))}
+              <option value="">Select source...</option>
+              {eligibleSources.length === 0 ? (
+                <option value="" disabled>No non-aggregator sources available</option>
+              ) : null}
+              {eligibleSources.map((s) => {
+                const status = s.is_verified ? null : (s.verification_status === "failed" ? "failed" : "draft");
+                return (
+                  <option key={s.id} value={s.id}>
+                    {s.source_name || s.org} · {s.source_type}{status ? ` · ${status}` : ""}
+                  </option>
+                );
+              })}
             </select>
-            {sourceUnverified ? (
+            {verifiedNonAggregator.length === 0 && eligibleSources.length > 0 ? (
               <div className="mt-1 text-[11px] text-amber-700">
-                Current source is not verified.{" "}
-                <a className="link-under" href="/admin/sources">Open Source Registry</a>.
+                All listed sources are drafts. Verify one before saving.
               </div>
             ) : null}
-            <FieldActions onSave={() => save({ source_id: form.source_id })} busy={busy} disabled={!form.source_id || form.source_id === recruitment.source_id} testId="save-source" />
+            {selectedIsUnverified ? (
+              <div className="mt-1 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-900" data-testid="fix-source-unverified-warn">
+                <span className="flex-1">
+                  Selected source is a draft. Verify before saving (Save is disabled until verified).
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-ghost h-6 text-[11px]"
+                  onClick={verifySelectedSource}
+                  disabled={verifyBusy || draftBusy}
+                  data-testid="fix-source-verify-selected"
+                >
+                  {verifyBusy ? "Verifying…" : "Verify now"}
+                </button>
+              </div>
+            ) : null}
+            <div className="mt-1">
+              <button
+                type="button"
+                className="btn btn-ghost h-7 text-[11px]"
+                onClick={() => setShowManualAdd((v) => !v)}
+                data-testid="fix-source-toggle-manual-add"
+              >
+                {showManualAdd ? "− Hide manual add" : "+ Add a new source manually"}
+              </button>
+            </div>
+            {showManualAdd ? (
+              <div className="mt-2 rounded-xl border border-border bg-white/60 p-2" data-testid="fix-source-manual-add">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className="block">
+                    <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Source name</div>
+                    <input
+                      className="input"
+                      value={manualName}
+                      onChange={(e) => setManualName(e.target.value)}
+                      placeholder="Union Public Service Commission"
+                      data-testid="fix-source-manual-name"
+                    />
+                  </label>
+                  <label className="block">
+                    <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Source type</div>
+                    <select
+                      className="input"
+                      value={manualType}
+                      onChange={(e) => setManualType(e.target.value)}
+                      data-testid="fix-source-manual-type"
+                    >
+                      <option value="official_html">official_html</option>
+                      <option value="official_pdf">official_pdf</option>
+                      <option value="rss">rss</option>
+                      <option value="api">api</option>
+                      <option value="sitemap">sitemap</option>
+                    </select>
+                  </label>
+                  <label className="block sm:col-span-2">
+                    <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Official URL</div>
+                    <input
+                      className="input"
+                      type="url"
+                      value={manualUrl}
+                      onChange={(e) => setManualUrl(e.target.value)}
+                      placeholder="https://upsc.gov.in/"
+                      data-testid="fix-source-manual-url"
+                    />
+                  </label>
+                </div>
+                <div className="mt-2 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    className="btn btn-ghost h-7 text-[11px]"
+                    onClick={() => { setShowManualAdd(false); setManualName(""); setManualUrl(""); }}
+                    disabled={draftBusy}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary h-7 text-[11px]"
+                    onClick={submitManualSource}
+                    disabled={draftBusy || !manualName.trim() || !manualUrl.trim()}
+                    data-testid="fix-source-manual-submit"
+                  >
+                    {draftBusy ? "Creating…" : "Create draft source"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            <FieldActions
+              onSave={() => save({ source_id: form.source_id })}
+              busy={busy}
+              disabled={!form.source_id || form.source_id === recruitment.source_id || selectedIsUnverified}
+              testId="save-source"
+            />
           </Field>
         )}
 

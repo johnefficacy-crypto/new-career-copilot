@@ -616,6 +616,7 @@ function ReviewAndPublish({
               onVerify={onVerify}
               onPublish={onPublish}
               onOpenOfficialSourceResolver={onOpenOfficialSourceResolver}
+              onSourcesChanged={onSourcesChanged}
               onOpenConflict={onOpenConflict}
               onResolveConflict={onResolveConflict}
               onRejectConflict={onRejectConflict}

@@ -55,6 +55,7 @@ export default function AdminFixPanel({
   onVerify,
   onPublish,
   onOpenOfficialSourceResolver,
+  onSourcesChanged,
   onOpenConflict,
   onResolveConflict,
   onRejectConflict,
@@ -86,6 +87,7 @@ export default function AdminFixPanel({
           recruitment={recruitment}
           validateResult={validateResult}
           sources={sources}
+          onSourcesChanged={onSourcesChanged}
           onValidate={onValidate}
           onVerify={onVerify}
           onPublish={onPublish}
@@ -324,7 +326,7 @@ function onQueueFieldActionSafe(handler, id, field, action, correctedValue, scop
   catch (err) { console.error("queue field action failed", err); return undefined; }
 }
 
-function RecruitmentFixSection({ recruitment, validateResult, sources = [], onValidate, onVerify, onPublish, busy }) {
+function RecruitmentFixSection({ recruitment, validateResult, sources = [], onSourcesChanged, onValidate, onVerify, onPublish, busy }) {
   const blockers = (validateResult?.blocking_issues || recruitment.blocking_issues || []);
   const [reviewing, setReviewing] = useState(false);
   const NON_CRITERIA_BLOCKERS = new Set([
@@ -387,6 +389,7 @@ function RecruitmentFixSection({ recruitment, validateResult, sources = [], onVa
               blockers={nonCriteriaBlockers}
               sources={sources}
               onChanged={() => onValidate?.(recruitment)}
+              onSourcesChanged={onSourcesChanged}
             />
           </div>
         ) : null}
