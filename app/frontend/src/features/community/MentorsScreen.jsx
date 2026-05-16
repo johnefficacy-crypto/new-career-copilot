@@ -104,7 +104,7 @@ export default function MentorsScreen() {
               type="button"
               onClick={() => setView("browse")}
               className={`px-3 py-1 rounded-full text-[12px] font-semibold ${
-                view === "browse" ? "bg-[#4E3A29] text-[#F3EADB]" : "text-clay-700"
+                view === "browse" ? "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]" : "text-clay-700"
               }`}
             >
               Browse
@@ -113,7 +113,7 @@ export default function MentorsScreen() {
               type="button"
               onClick={() => setView("earnings")}
               className={`px-3 py-1 rounded-full text-[12px] font-semibold ${
-                view === "earnings" ? "bg-[#4E3A29] text-[#F3EADB]" : "text-clay-700"
+                view === "earnings" ? "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]" : "text-clay-700"
               }`}
             >
               You as mentor
@@ -220,7 +220,7 @@ function FeaturedSessionsCard({ sessions, mentors, onBooked }) {
                     className={`text-[11.5px] px-3 py-1.5 rounded-full font-semibold whitespace-nowrap ${
                       s.youBooked
                         ? "border border-[#54794E] bg-[#F0F5EF] text-[#33482F]"
-                        : "bg-[#4E3A29] text-[#F3EADB]"
+                        : "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]"
                     }`}
                   >
                     {s.youBooked ? "Booked ✓" : `Book · ₹${s.price}`}
