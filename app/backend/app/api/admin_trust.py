@@ -216,6 +216,64 @@ def validate_publish(recruitment_id: str, admin: dict = Depends(require_permissi
     return result
 
 
+@router.post("/admin/recruitments/{recruitment_id}/draft-sources")
+def draft_sources_from_recruitment(
+    recruitment_id: str,
+    admin: dict = Depends(require_permission("sources.manage")),
+):
+    """Auto-create draft ``source_registry`` rows for every official-URL
+    host on this recruitment that isn't already registered.
+
+    Sister endpoint to ``/admin/scrape/items/{queue_id}/draft-sources``
+    — the helper is shared. Recruitments expose the same URL field
+    shape (``official_notification_url`` / ``official_apply_url`` /
+    ``source_pdf_url``), so we feed those keys into the same
+    ``extract_candidate_hosts`` and idempotent draft writer.
+    """
+    from app.scraping.source_drafts import extract_candidate_hosts, upsert_draft_sources
+
+    sb = get_supabase_admin()
+    rows = (
+        sb.table("recruitments")
+        .select("id, official_notification_url, official_apply_url, source_pdf_url")
+        .eq("id", recruitment_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Recruitment not found")
+    rec = rows[0]
+    # ``extract_candidate_hosts`` takes a dict with the URL fields under
+    # top-level keys — the recruitment row already matches.
+    candidates = extract_candidate_hosts({
+        "official_notification_url": rec.get("official_notification_url"),
+        "official_apply_url": rec.get("official_apply_url"),
+        "source_pdf_url": rec.get("source_pdf_url"),
+    })
+    if not candidates:
+        return {"recruitment_id": recruitment_id, "created": [], "existing": [], "candidates": []}
+
+    result = upsert_draft_sources(sb, candidates, queue_id=None)
+    if result.get("created"):
+        _audit(
+            sb, admin,
+            "source.auto_draft_from_recruitment", "recruitment", recruitment_id,
+            after_payload={
+                "created_ids": [r.get("id") for r in result["created"]],
+                "candidate_hosts": [h for h, _ in candidates],
+            },
+        )
+    return {
+        "recruitment_id": recruitment_id,
+        "created": result["created"],
+        "existing": result["existing"],
+        "candidates": [{"host": h, "source_url": u} for h, u in candidates],
+    }
+
+
+
 @router.post("/admin/recruitments/{recruitment_id}/verify")
 def verify_recruitment(recruitment_id: str, admin: dict = Depends(require_permission("recruitments.manage"))):
     sb = get_supabase_admin(); ready = validate_recruitment_publish_readiness(recruitment_id, admin)
