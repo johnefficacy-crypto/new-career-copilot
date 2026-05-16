@@ -491,3 +491,8 @@ details.faq:last-of-type .faq-body { border-bottom: 0; }
 .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
 @keyframes breathe { 0%, 100% { transform: scale(1); opacity: 0.9; } 50% { transform: scale(1.02); opacity: 1; } }
 .breathe { animation: breathe 4.5s ease-in-out infinite; }
+
+/* Field design system — used by features/community/. */
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fieldSlideIn { from { transform: translateX(8px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.field-surface { background: #FFFFFF; }
