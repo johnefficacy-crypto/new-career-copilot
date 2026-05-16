@@ -138,14 +138,16 @@ export default function CommunityScreen() {
       className="flex overflow-hidden"
       style={{ height: "calc(100vh - 60px)" }}
     >
-      <SpacesRail spaces={spaces} activeId={space?.id} onPick={pickSpace} />
-      <ChannelsRail
+      <section className="w-[286px] border-r border-[#E7DECB] bg-[#FBF4E8] flex flex-col shrink-0">
+        <CommunityTopNav spaces={spaces} activeId={space?.id} onPick={pickSpace} />
+        <ChannelsRail
         space={space}
         activeId={channel?.id}
         onPick={pickChannel}
         isAdmin={isAdmin}
         onCreateChannel={() => setNewChannelOpen(true)}
       />
+      </section>
 
       <section className="flex-1 min-w-0 flex flex-col bg-[#FBF6EF]">
         <ChannelHeader space={space} channel={channel} onCompose={() => setComposerOpen(true)} />
@@ -257,46 +259,36 @@ function isVerifiedAuthor(users, t) {
   return ["topper", "officer", "admin"].includes(u.badge.kind);
 }
 
-/* ─── Spaces rail ──────────────────────────────────────────────────────── */
-function SpacesRail({ spaces, activeId, onPick }) {
+function CommunityTopNav({ spaces, activeId, onPick }) {
   return (
-    <aside className="w-[64px] bg-[#F3EADB] border-r border-[#E7DECB] flex flex-col items-center py-4 gap-2 overflow-y-auto shrink-0">
-      <div className="num-mono text-[9px] text-[#A68057] tracking-[0.18em] mb-1">SPACES</div>
-      {spaces.map((s) => {
-        const totalUnread = s.channels.reduce((a, c) => a + (c.unread || 0), 0);
-        return (
+    <div className="px-3 pt-3 pb-2 border-b border-[#E7DECB] bg-[#F8EFE2]">
+      <div className="flex items-center justify-between mb-2">
+        <div className="num-mono text-[10px] tracking-[0.16em] text-[#8A6A45] uppercase">Community spaces</div>
+        <div className="text-[10px] text-clay-700">Quick jump</div>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {spaces.map((s) => (
           <button
             key={s.id}
-            onClick={() => onPick(s)}
-            className="relative group"
-            title={s.name}
-            data-testid={`space-${s.id}`}
             type="button"
+            onClick={() => onPick(s)}
+            data-testid={`space-chip-${s.id}`}
+            className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition ${
+              activeId === s.id
+                ? "bg-[#FFFDF9] text-[#2E2218] border-[#D9C7A7]"
+                : "bg-transparent text-clay-700 border-[#E7DECB] hover:bg-[#F3EADB]"
+            }`}
           >
-            <SpaceIcon space={s} size={44} active={activeId === s.id} />
-            {totalUnread > 0 ? (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#4E3A29] text-[#F3EADB] text-[9px] font-bold flex items-center justify-center num-mono">
-                {totalUnread}
-              </span>
-            ) : null}
-            <span className="absolute left-[52px] top-1/2 -translate-y-1/2 px-2 py-1 rounded-md bg-[#4E3A29] text-[#F3EADB] text-[10.5px] whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition z-10">
-              {s.name}
-            </span>
+            {s.glyph} {s.name}
           </button>
-        );
-      })}
-      <div className="mt-1 h-px w-8 bg-[#D6C9AC]" />
-      <button
-        type="button"
-        className="w-11 h-11 rounded-xl border border-dashed border-[#A68057] text-[#6C5038] flex items-center justify-center hover:bg-[#FBF6EF]"
-        title="Browse all spaces"
-        aria-label="Browse all spaces"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-        </svg>
-      </button>
-    </aside>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center gap-1.5 text-[10.5px]">
+        <QuickLink to="/app/groups" icon="◇" label="Study groups" compact />
+        <QuickLink to="/app/resources" icon="◎" label="Resources" compact />
+        <QuickLink to="/app/partners" icon="∞" label="Partners" compact />
+      </div>
+    </div>
   );
 }
 
@@ -309,7 +301,7 @@ function ChannelsRail({ space, activeId, onPick, isAdmin, onCreateChannel }) {
     quiet: space.channels.filter((c) => !c.lockedAdminWrite && (c.unread || 0) === 0),
   };
   return (
-    <aside className="w-[252px] border-r border-[#E7DECB] bg-[#FBF4E8] flex flex-col shrink-0">
+    <div className="flex-1 min-h-0 flex flex-col">
       <div className="px-4 pt-4 pb-3 border-b border-[#E7DECB]">
         <div className="flex items-center gap-3">
           <SpaceIcon space={space} size={36} active />
@@ -366,17 +358,7 @@ function ChannelsRail({ space, activeId, onPick, isAdmin, onCreateChannel }) {
           </button>
         ) : null}
       </div>
-
-      <div className="px-3 py-3 border-t border-[#E7DECB] bg-[#F3EADB]/40">
-        <div className="num-mono text-[9.5px] text-[#A68057] tracking-[0.18em] mb-1.5">QUICK JUMP</div>
-        <div className="flex flex-col gap-1.5">
-          <QuickLink to="/app/groups" icon="◇" label="Find a study group" />
-          <QuickLink to="/app/partners" icon="↔" label="Accountability partner" />
-          <QuickLink to="/app/mentors" icon="◊" label="Mentor sessions" />
-          <QuickLink to="/app/resources" icon="≣" label="Resource library" />
-        </div>
-      </div>
-    </aside>
+    </div>
   );
 }
 
@@ -440,14 +422,18 @@ function RailGroup({ title, channels, activeId, onPick, space, muted }) {
   );
 }
 
-function QuickLink({ to, icon, label, badge }) {
+function QuickLink({ to, icon, label, badge, compact = false }) {
   return (
     <Link
       to={to}
-      className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-[#F3EADB] text-[11.5px] text-[#3a2e22]"
+      className={
+        compact
+          ? "inline-flex items-center gap-1.5 px-2 py-1 rounded-full border border-[#E7DECB] text-[10.5px] text-clay-700 hover:bg-[#FBF6EF]"
+          : "flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-[#F3EADB] text-[11.5px] text-[#3a2e22]"
+      }
     >
-      <span className="w-5 text-center text-[14px] text-[#A68057]">{icon}</span>
-      <span className="flex-1">{label}</span>
+      <span className={`${compact ? "text-[12px]" : "w-5 text-[14px]"} text-center text-[#A68057]`}>{icon}</span>
+      <span className={compact ? "" : "flex-1"}>{label}</span>
       {badge ? <span className="num-mono text-[9.5px] text-clay-700">{badge}</span> : null}
     </Link>
   );
