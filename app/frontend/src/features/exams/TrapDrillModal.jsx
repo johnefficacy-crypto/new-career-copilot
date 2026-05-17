@@ -33,6 +33,7 @@ function reducer(state, action) {
         phase: "playing",
         questions: action.questions,
         meta: action.meta,
+        drillSeed: action.drillSeed ?? null,
       };
     case "error":
       return { ...INITIAL, phase: "error", error: action.message };
@@ -70,34 +71,78 @@ export default function TrapDrillModal({
   examSlug,
   topicId,
   size = 5,
+  initialSeed = null,
+  onSeedChange,
 }) {
   const [state, dispatch] = useReducer(reducer, INITIAL);
   const dialogRef = useRef(null);
   const closeBtnRef = useRef(null);
+  // Track which drill we've already logged so we don't double-write
+  // when React re-renders the "done" phase.
+  const loggedSeedRef = useRef(null);
 
-  const startDrill = useCallback(() => {
-    if (!examSlug) return;
-    dispatch({ type: "load" });
-    const params = new URLSearchParams();
-    if (topicId) params.set("topic_id", topicId);
-    if (size) params.set("size", String(size));
-    const qs = params.toString() ? `?${params.toString()}` : "";
-    api
-      .get(`/api/exam-intelligence/exams/${examSlug}/trap-drill${qs}`)
-      .then((d) => {
-        dispatch({
-          type: "loaded",
-          questions: d?.questions || [],
-          meta: {
-            total_pool_size: d?.total_pool_size || 0,
-            trap_annotated_pool_size: d?.trap_annotated_pool_size || 0,
-          },
+  const startDrill = useCallback(
+    (seed = initialSeed) => {
+      if (!examSlug) return;
+      dispatch({ type: "load" });
+      loggedSeedRef.current = null;
+      const params = new URLSearchParams();
+      if (topicId) params.set("topic_id", topicId);
+      if (size) params.set("size", String(size));
+      if (seed) params.set("seed", String(seed));
+      const qs = params.toString() ? `?${params.toString()}` : "";
+      api
+        .get(`/api/exam-intelligence/exams/${examSlug}/trap-drill${qs}`)
+        .then((d) => {
+          dispatch({
+            type: "loaded",
+            questions: d?.questions || [],
+            drillSeed: d?.drill_seed ?? null,
+            meta: {
+              total_pool_size: d?.total_pool_size || 0,
+              trap_annotated_pool_size: d?.trap_annotated_pool_size || 0,
+              adaptive_summary: d?.adaptive_summary || null,
+              personalised_for_user: Boolean(d?.personalised_for_user),
+            },
+          });
+          if (d?.drill_seed && onSeedChange) onSeedChange(d.drill_seed);
+        })
+        .catch((e) => {
+          dispatch({ type: "error", message: e?.message || "Couldn't load drill." });
         });
+    },
+    [examSlug, topicId, size, initialSeed, onSeedChange]
+  );
+
+  // Log the run on first transition to "done", once.
+  useEffect(() => {
+    if (state.phase !== "done") return;
+    if (!examSlug || !state.questions.length) return;
+    if (loggedSeedRef.current && loggedSeedRef.current === state.drillSeed) return;
+    const attempts = state.questions
+      .map((q, i) => {
+        const picked = state.pickedByIndex[i];
+        if (!picked) return null; // user closed mid-drill — skip the unanswered ones
+        return {
+          question_id: q.id,
+          option_id: picked,
+          is_correct: picked === q.correct_option_id,
+          topic_id: topicId || null,
+        };
       })
-      .catch((e) => {
-        dispatch({ type: "error", message: e?.message || "Couldn't load drill." });
+      .filter(Boolean);
+    if (!attempts.length) return;
+    loggedSeedRef.current = state.drillSeed ?? "logged";
+    api
+      .post(`/api/exam-intelligence/exams/${examSlug}/trap-drill/attempts`, {
+        drill_seed: state.drillSeed ?? null,
+        attempts,
+      })
+      .catch(() => {
+        // Fire-and-forget; surfacing this error would distract from
+        // the user's drill summary which is the important thing.
       });
-  }, [examSlug, topicId, size]);
+  }, [state.phase, state.questions, state.pickedByIndex, state.drillSeed, examSlug, topicId]);
 
   // Auto-start on open, reset on close.
   useEffect(() => {

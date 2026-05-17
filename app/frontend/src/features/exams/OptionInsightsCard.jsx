@@ -14,11 +14,22 @@ import { api } from "../../lib/api";
  * native ``<select>`` topic filter in its header; the selected topic
  * id is wired into the option-insights API call.
  */
-export default function OptionInsightsCard({ examSlug, topicId, topics }) {
+export default function OptionInsightsCard({
+  examSlug,
+  topicId,
+  topics,
+  onTopicChange,
+}) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [internalTopicId, setInternalTopicId] = useState("");
+
+  const handleInternalTopicChange = (e) => {
+    const v = e.target.value;
+    setInternalTopicId(v);
+    if (onTopicChange) onTopicChange(v || null);
+  };
 
   // Controlled-via-prop wins over the in-card picker so callers can
   // still force a specific topic if they want to.
@@ -134,7 +145,7 @@ export default function OptionInsightsCard({ examSlug, topicId, topics }) {
               <span aria-hidden="true">Topic:</span>
               <select
                 value={internalTopicId}
-                onChange={(e) => setInternalTopicId(e.target.value)}
+                onChange={handleInternalTopicChange}
                 aria-label="Filter trap-awareness tips by topic"
                 data-testid="option-insights-topic-filter"
                 className="rounded-md border border-clay-200 bg-white px-2 py-1 text-xs text-clay-800 focus:outline-none focus:ring-2 focus:ring-sage-300"

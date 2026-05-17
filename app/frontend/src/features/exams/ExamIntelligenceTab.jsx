@@ -128,6 +128,15 @@ export default function ExamIntelligenceTab({ examSlug }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  // Lifted out of OptionInsightsCard so the same selection drives the
+  // drill launcher below — one topic picker, two consumers.
+  const [selectedTopicId, setSelectedTopicId] = useState(null);
+
+  useEffect(() => {
+    // Reset when the user switches exams so a leftover t1 from UPSC
+    // doesn't bleed into SSC's launcher.
+    setSelectedTopicId(null);
+  }, [examSlug]);
 
   useEffect(() => {
     let cancelled = false;
@@ -400,9 +409,13 @@ export default function ExamIntelligenceTab({ examSlug }) {
         )}
       </div>
 
-      <OptionInsightsCard examSlug={examSlug} topics={data.topics} />
+      <OptionInsightsCard
+        examSlug={examSlug}
+        topics={data.topics}
+        onTopicChange={setSelectedTopicId}
+      />
 
-      <TrapDrillLauncher examSlug={examSlug} />
+      <TrapDrillLauncher examSlug={examSlug} topicId={selectedTopicId} />
 
       <div className="text-[11px] text-muted-foreground">
         Source: deterministic Exam Intelligence engine. Only rows reviewed and locked by admins are surfaced here. AI never publishes intelligence claims.
