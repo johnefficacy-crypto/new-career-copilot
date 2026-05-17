@@ -31,6 +31,7 @@ from app.api.admin_exam_intelligence import router as admin_exam_intel_router
 from app.api.admin_ops import router as admin_ops_router
 from app.api.admin_persona import router as admin_persona_router
 from app.api.admin_scrape import router as admin_scrape_router
+from app.api.admin_study_os import router as admin_study_os_router
 from app.api.admin_conflicts import router as admin_conflicts_router
 from app.api.admin_eligibility import router as admin_eligibility_router
 from app.api.admin_copyright import (
@@ -197,6 +198,7 @@ api.include_router(payments_router)  # razorpay + plans
 api.include_router(persona_router)  # internal aspirant persona v1
 api.include_router(persona_questions_router)  # PR2 progressive tiny questions
 api.include_router(study_os_router)  # PR3 Study OS Mission Control — before canonical so /study/mission-control wins
+api.include_router(admin_study_os_router)  # admin Study OS ops (flagged via ADMIN_STUDY_OS_ENABLED)
 api.include_router(study_compare_router)  # Study OS comparison + social + verification
 api.include_router(onboarding_unified_router)  # unified guided onboarding — before placeholders
 # Real Supabase-backed accountability + admin ops — must precede community_runtime

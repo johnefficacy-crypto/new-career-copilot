@@ -5,7 +5,7 @@ import {
   FileSearch, Flag, GaugeCircle, GraduationCap, LayoutGrid, LineChart,
   NotebookPen,
   ListChecks, LogOut, Menu, MessagesSquare, Radar, ScrollText, ShieldCheck,
-  ShoppingBag, Sparkles, Users2, X,
+  ShoppingBag, Sparkles, UserSearch, Users2, Wrench, X,
 } from "lucide-react";
 import { useAuth } from "../../lib/authContext";
 
@@ -40,9 +40,15 @@ const BUSINESS_NAV = [
   { to: "/admin/community", label: "Community", icon: MessagesSquare, testId: "admin-nav-community-moderation" },
 ];
 
+const STUDY_OS_NAV = [
+  { to: "/admin/study-os", label: "User Study Inspector", icon: UserSearch, end: true, testId: "admin-nav-studyos-inspector" },
+  { to: "/admin/study-os/plan-ops", label: "Plan Ops", icon: Wrench, testId: "admin-nav-studyos-planops" },
+];
+
 const SECTIONS = [
   { label: "Operations", items: OPERATIONS_NAV },
   { label: "Governance", items: GOVERNANCE_NAV },
+  { label: "Study OS", items: STUDY_OS_NAV },
   { label: "Business", items: BUSINESS_NAV },
 ];
 

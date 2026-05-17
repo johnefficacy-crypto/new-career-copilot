@@ -21,6 +21,11 @@ class Settings:
     NEXT_PUBLIC_RAZORPAY_KEY_ID: str = os.getenv("NEXT_PUBLIC_RAZORPAY_KEY_ID", "")
     RAZORPAY_WEBHOOK_SECRET: str = os.getenv("RAZORPAY_WEBHOOK_SECRET", "")
 
+    # Admin Study OS operations layer is off by default. When enabled,
+    # /api/admin/study-os/* routes serve and the AdminShell nav exposes
+    # the Study OS section. See docs/engineering/admin-study-os-operations.md.
+    ADMIN_STUDY_OS_ENABLED: bool = os.getenv("ADMIN_STUDY_OS_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
+
     BACKEND_CORS_ORIGINS: list[str] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
