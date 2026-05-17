@@ -374,6 +374,13 @@ export default function AdminScraper() {
 
   return (
     <div className="space-y-6" data-testid="admin-scraper">
+      <p
+        className="anno"
+        data-testid="scraper-role-banner"
+        style={{ margin: 0 }}
+      >
+        Scrape Monitor — run diagnostics &amp; deep inspection. Daily review is in Operations.
+      </p>
       <AdminWorkflowStepper currentStep={["Scrape", "Candidate review"]} />
       <NextActionCallout message={workflowMessage} href="/admin/recruitments" actionLabel="Open Recruitments" tone="info" />
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -499,7 +506,7 @@ export default function AdminScraper() {
                   <td className="px-3 py-3"><div className="truncate">{typeLabel(q.source_type)}</div><div className="truncate text-[10px] text-muted-foreground">{q.source_url}</div></td>
                   <td className="px-3 py-3"><StatusBadge status={state.key} label={state.label} /><div className="mt-1 truncate text-[10px] text-muted-foreground">{state.reason}</div></td>
                   <td className="px-3 py-3"><div>conf {formatScorePct(q.confidence_score)}</div><div className="text-[10px] text-muted-foreground">quality {formatScorePct(q.data_quality_score)}</div></td>
-                  <td className="px-3 py-3"><QueueRowAction item={q} state={state} onOpen={() => setSelected(q)} onPromote={() => act(q.id, "promote")} /></td>
+                  <td className="px-3 py-3"><QueueRowAction item={q} state={state} onOpen={() => setSelected(q)} /></td>
                 </tr>
               );
             })}
@@ -537,17 +544,34 @@ export default function AdminScraper() {
   );
 }
 
-function QueueRowAction({ item, state, onOpen, onPromote }) {
-  if (["blocked", "duplicate", "rejected"].includes(state.key)) {
-    return <button className="btn btn-primary h-8 text-xs" onClick={onOpen}><Eye className="h-3.5 w-3.5" />{state.key === "duplicate" ? "Compare / Merge" : state.key === "rejected" ? "View" : "Review fields"}</button>;
-  }
-  if (state.key === "ready") {
-    return <button className="btn btn-primary h-8 text-xs" onClick={onPromote}>Promote</button>;
-  }
-  if (["promoted", "merged"].includes(state.key) && item.promoted_recruitment_id) {
-    return <a className="btn btn-primary h-8 text-xs" href={`/admin/recruitments?open=${item.promoted_recruitment_id}`}>Open recruitment</a>;
-  }
-  return <button className="btn btn-ghost h-8 text-xs" onClick={onOpen}><Eye className="h-3.5 w-3.5" />View</button>;
+function QueueRowAction({ item, state, onOpen }) {
+  // Daily review is now centralised in Operations. The scraper page is
+  // for diagnostics & deep inspection; the row drawer stays as a
+  // secondary 'Inspect' action.
+  return (
+    <div className="flex flex-wrap gap-2">
+      <a
+        className="btn btn-primary h-8 text-xs"
+        href={`/admin/operations?queue_id=${item.id}&mode=queue`}
+        data-testid={`scrape-row-open-ops-${item.id}`}
+      >
+        Open in Operations →
+      </a>
+      <button
+        type="button"
+        className="btn btn-ghost h-8 text-xs"
+        onClick={onOpen}
+        data-testid={`scrape-row-inspect-${item.id}`}
+      >
+        <Eye className="h-3.5 w-3.5" /> Inspect
+      </button>
+      {["promoted", "merged"].includes(state.key) && item.promoted_recruitment_id ? (
+        <a className="btn btn-ghost h-8 text-xs" href={`/admin/recruitments?open=${item.promoted_recruitment_id}`}>
+          Open recruitment
+        </a>
+      ) : null}
+    </div>
+  );
 }
 
 function Info({ label, value }) {

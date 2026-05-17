@@ -21,6 +21,16 @@ const TABS = [
   { id: "impact", label: "Plan impact" },
 ];
 
+const TAB_HELPER_COPY = {
+  overview: "Snapshot of verified exam intelligence.",
+  exams: "Exams visible to users come from this list.",
+  review: "Items waiting for reviewer action.",
+  coverage: "Locked topics surface in Study OS.",
+  competition: "Verified competition metrics only.",
+  policy: "Reviewed policy items only.",
+  impact: "Effect of locked coverage on the planner.",
+};
+
 const COVERAGE_STATUSES = ["all", "draft", "pending_review", "reviewed", "locked", "rejected"];
 const POLICY_STATUSES = ["all", "pending", "verified", "rejected", "needs_correction"];
 const POLICY_SOURCE_TYPES = ["all", "official", "aggregator", "research", "opportunity", "unknown"];
@@ -341,6 +351,15 @@ export default function AdminExamIntelligence() {
           </button>
         ))}
       </nav>
+
+      {TAB_HELPER_COPY[tab] ? (
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid={`exam-intel-tab-helper-${tab}`}
+        >
+          {TAB_HELPER_COPY[tab]}
+        </p>
+      ) : null}
 
       {tab === "overview" ? (
         <section>
