@@ -1993,41 +1993,12 @@ class MockTopicBreakdown(BaseModel):
     error_types: dict[str, int] | None = None
 
 
-class MockEntry(BaseModel):
-    exam_name: str | None = None
-    exam: str | None = None  # legacy alias
-    test_name: str | None = None
-    score: float | None = None
-    accuracy: float | None = Field(default=None, ge=0, le=100)
-    total_marks: int | None = None
-    scored_marks: float | None = None
-    total_questions: int | None = None
-    correct_answers: int | None = None
-    wrong_answers: int | None = None
-    duration_mins: int | None = None
-    notes: str | None = None
-    # Optional canonical scoping + per-topic results. When topic_breakdowns
-    # is present it is persisted to mock_topic_breakdowns and feeds the
-    # Phase 6 user_topic_mastery recompute.
-    exam_id: str | None = None
-    exam_phase_id: str | None = None
-    topic_breakdowns: list[MockTopicBreakdown] | None = None
-
-
-@router_study.get("/mocks")
-async def list_mocks(user: dict = Depends(get_current_user)):
-    supabase = get_supabase_admin()
-    rows = _safe(
-        lambda: supabase.table("mock_tests")
-        .select("*")
-        .eq("user_id", user["id"])
-        .order("attempted_at", desc=True)
-        .limit(50)
-        .execute()
-        .data,
-        default=[],
-    ) or []
-    return {"items": rows}
+# NOTE: GET/POST /mocks and the MockEntry body model previously lived here
+# but were duplicated by app/api/study_os.py with different semantics.
+# study_os.py won at runtime via router precedence in server.py. Phase 5
+# of the admin Study OS ops layer removes the duplicates from canonical.py
+# so the single owner is study_os.py. ``_mock_breakdown_row`` is kept —
+# review_mock below still uses it.
 
 
 def _mock_breakdown_row(mock_test_id: str, b: "MockTopicBreakdown") -> dict[str, Any]:
@@ -2052,51 +2023,10 @@ def _mock_breakdown_row(mock_test_id: str, b: "MockTopicBreakdown") -> dict[str,
     return {k: v for k, v in row.items() if v is not None}
 
 
-@router_study.post("/mocks")
-async def add_mock(body: MockEntry, user: dict = Depends(get_current_user)):
-    supabase = get_supabase_admin()
-    payload: dict[str, Any] = {
-        "user_id": user["id"],
-        "exam_name": body.exam_name or body.exam,
-        "test_name": body.test_name,
-        "scored_marks": body.scored_marks if body.scored_marks is not None else body.score,
-        "total_marks": body.total_marks,
-        "total_questions": body.total_questions,
-        "correct_answers": body.correct_answers,
-        "wrong_answers": body.wrong_answers,
-        "duration_mins": body.duration_mins,
-        "notes": body.notes,
-        "exam_id": body.exam_id,
-        "exam_phase_id": body.exam_phase_id,
-        "attempted_at": _now_iso(),
-    }
-    payload = {k: v for k, v in payload.items() if v is not None}
-    inserted = supabase.table("mock_tests").insert(payload).execute().data or []
-    mock = inserted[0] if inserted else payload
-
-    # Persist per-topic results and refresh the user's mastery snapshot.
-    # Both are best-effort: a mock submission must still succeed even if
-    # the topic-intelligence side fails.
-    mock_id = mock.get("id")
-    if body.topic_breakdowns and mock_id:
-        rows = [_mock_breakdown_row(mock_id, b) for b in body.topic_breakdowns]
-        _safe(lambda: supabase.table("mock_topic_breakdowns").insert(rows).execute())
-        from app.study_os.mastery import recompute_topic_mastery
-
-        _safe(lambda: recompute_topic_mastery(supabase, user["id"]))
-
-        # Mastery just changed — event-driven regen refreshes the plan so
-        # newly-revealed weak areas surface immediately. Best-effort: a
-        # mock submission still succeeds even if regeneration fails.
-        from app.study_os.regen import regenerate_on_signal
-
-        _safe(
-            lambda: regenerate_on_signal(
-                supabase, user["id"], event_type="mock_logged", reason="mock_logged"
-            )
-        )
-
-    return mock
+# NOTE: POST /mocks previously lived here but was a duplicate of
+# app/api/study_os.py. study_os.py won at runtime via router precedence
+# in server.py. Phase 5 removes the canonical.py duplicate; study_os.py
+# is the single owner.
 
 
 class MockReviewBody(BaseModel):
@@ -2200,234 +2130,25 @@ async def review_mock(
     return refreshed[0]
 
 
-class MockCorrectionTasksBody(BaseModel):
-    """Optional inputs for ``POST /api/study/mocks/:id/correction-tasks``.
-
-    When ``topic_ids`` is omitted we pull every weak / error topic from
-    this mock's persisted breakdowns. ``add_to_today`` defaults to True so
-    correction tasks land on the user's today plan.
-    """
-
-    topic_ids: list[str] | None = None
-    add_to_today: bool = True
+# NOTE: MockCorrectionTasksBody + POST /mocks/{mock_id}/correction-tasks
+# previously lived here but were duplicates of app/api/study_os.py with
+# diverging behavior (different weak-topic heuristics). study_os.py won
+# at runtime via router precedence in server.py. Phase 5 of the admin
+# Study OS ops layer removes this duplicate so the single owner is
+# study_os.py.
 
 
-@router_study.post("/mocks/{mock_id}/correction-tasks")
-async def create_correction_tasks(
-    mock_id: str,
-    body: MockCorrectionTasksBody | None = None,
-    user: dict = Depends(get_current_user),
-):
-    """Create one ``mock_correction`` task per weak / errored topic on a mock.
+# NOTE: GET /subjects and GET /weekly-review previously lived here but
+# were duplicates of app/api/study_os.py with diverging response shapes.
+# study_os.py won at runtime via router precedence in server.py. Phase 5
+# of the admin Study OS ops layer removes these duplicates so the single
+# owner is study_os.py.
 
-    Reads the persisted ``mock_topic_breakdowns`` for the mock (or
-    ``body.topic_ids`` if supplied), and inserts a task per topic onto the
-    user's active plan. Returns the created tasks. Best-effort regen
-    signal so the planner's next pass picks up the new tasks.
-    """
-    body = body or MockCorrectionTasksBody()
-    supabase = get_supabase_admin()
-
-    mock_rows = _safe(
-        lambda: supabase.table("mock_tests").select("id, user_id, exam_id").eq("id", mock_id).limit(1).execute().data,
-        default=[],
-    ) or []
-    if not mock_rows or mock_rows[0].get("user_id") != user["id"]:
-        raise HTTPException(status_code=404, detail="Mock not found")
-    mock = mock_rows[0]
-
-    plan_id = _ensure_active_plan(supabase, user["id"])
-    if not plan_id:
-        return {"items": [], "reason": "no_active_plan"}
-
-    if body.topic_ids:
-        topic_ids = list(dict.fromkeys(body.topic_ids))
-    else:
-        breakdowns = _safe(
-            lambda: (
-                supabase.table("mock_topic_breakdowns")
-                .select("topic_id, accuracy, wrong_answers, error_types")
-                .eq("mock_test_id", mock_id)
-                .execute()
-                .data
-            ),
-            default=[],
-        ) or []
-        topic_ids = []
-        for b in breakdowns:
-            tid = b.get("topic_id")
-            if not tid:
-                continue
-            wrong = b.get("wrong_answers") or 0
-            accuracy = b.get("accuracy")
-            has_errors = bool(b.get("error_types"))
-            if wrong > 0 or has_errors or (accuracy is not None and accuracy < 70):
-                topic_ids.append(tid)
-        topic_ids = list(dict.fromkeys(topic_ids))
-
-    if not topic_ids:
-        return {"items": [], "reason": "no_weak_topics"}
-
-    topic_rows = _safe(
-        lambda: supabase.table("topics").select("id, name, subject_id").in_("id", topic_ids).execute().data,
-        default=[],
-    ) or []
-    topics_by_id = {t["id"]: t for t in topic_rows if t.get("id")}
-
-    today = datetime.now(timezone.utc).date().isoformat()
-    payloads = []
-    for tid in topic_ids:
-        topic = topics_by_id.get(tid) or {}
-        payloads.append(
-            {
-                "user_id": user["id"],
-                "plan_id": plan_id,
-                "topic_id": tid,
-                "subject_id": topic.get("subject_id"),
-                "exam_id": mock.get("exam_id"),
-                "task_type": "mock_correction",
-                "title": f"Correct {topic.get('name') or 'mock topic'} from this mock",
-                "topic": topic.get("name"),
-                "scheduled_date": today if body.add_to_today else None,
-                "day_label": "Today" if body.add_to_today else None,
-                "status": "planned",
-                "planned_minutes": 25,
-                "why_this_task": {
-                    "summary": "Correction task generated from a reviewed mock.",
-                    "mock_id": mock_id,
-                    "source": "mock_review",
-                },
-            }
-        )
-    payloads = [{k: v for k, v in p.items() if v is not None} for p in payloads]
-    inserted = _safe(
-        lambda: supabase.table("study_tasks").insert(payloads).execute().data,
-        default=[],
-    ) or []
-
-    from app.study_os.regen import regenerate_on_signal
-
-    _safe(
-        lambda: regenerate_on_signal(
-            supabase, user["id"], event_type="mock_correction_tasks_created", reason="mock_correction"
-        )
-    )
-
-    return {"items": inserted, "count": len(inserted)}
-
-
-@router_study.get("/subjects")
-async def subjects(user: dict = Depends(get_current_user)):
-    """Subject progress derived from completed study_tasks per subject."""
-    supabase = get_supabase_admin()
-    plan_id = _ensure_active_plan(supabase, user["id"])
-    if not plan_id:
-        return {"items": []}
-    rows = _safe(
-        lambda: supabase.table("study_tasks")
-        .select("subject, status")
-        .eq("plan_id", plan_id)
-        .execute()
-        .data,
-        default=[],
-    ) or []
-    by_subject: dict[str, dict[str, int]] = {}
-    for r in rows:
-        s = r.get("subject") or "General"
-        d = by_subject.setdefault(s, {"total": 0, "done": 0})
-        d["total"] += 1
-        if r.get("status") == "completed":
-            d["done"] += 1
-    items = [
-        {
-            "subject": s,
-            "progress": int(round((v["done"] / v["total"]) * 100)) if v["total"] else 0,
-            "trend": "up" if v["done"] >= v["total"] / 2 else "flat",
-        }
-        for s, v in by_subject.items()
-    ]
-    return {"items": items}
-
-
-@router_study.get("/weekly-review")
-async def weekly_review(user: dict = Depends(get_current_user)):
-    supabase = get_supabase_admin()
-    from datetime import timedelta
-
-    week_start = (datetime.now(timezone.utc) - timedelta(days=datetime.now(timezone.utc).weekday())).date().isoformat()
-    sessions = _safe(
-        lambda: supabase.table("study_sessions")
-        .select("duration_mins, started_at")
-        .eq("user_id", user["id"])
-        .gte("started_at", week_start)
-        .execute()
-        .data,
-        default=[],
-    ) or []
-    mocks = _safe(
-        lambda: supabase.table("mock_tests")
-        .select("id")
-        .eq("user_id", user["id"])
-        .gte("attempted_at", week_start)
-        .execute()
-        .data,
-        default=[],
-    ) or []
-    plan_id = _ensure_active_plan(supabase, user["id"])
-    closed = 0
-    skipped_tasks = 0
-    missed_tasks = 0
-    if plan_id:
-        closed_rows = _safe(
-            lambda: supabase.table("study_tasks")
-            .select("id")
-            .eq("plan_id", plan_id)
-            .eq("status", "completed")
-            .gte("completed_at", week_start)
-            .execute()
-            .data,
-            default=[],
-        ) or []
-        closed = len(closed_rows)
-        skipped_tasks = len(_safe(lambda: supabase.table("study_tasks").select("id").eq("plan_id", plan_id).eq("status", "skipped").gte("updated_at", week_start).execute().data, default=[]) or [])
-        missed_tasks = len(_safe(lambda: supabase.table("study_tasks").select("id").eq("plan_id", plan_id).in_("status", ["missed", "carried_forward"]).gte("updated_at", week_start).execute().data, default=[]) or [])
-    hours = round(sum((s.get("duration_mins") or 0) for s in sessions) / 60.0, 1)
-    profile = _ensure_profile_row(supabase, user["id"], user.get("email"))
-    hours_planned = float(profile.get("weekly_hours_goal") or 0)
-    if not hours_planned and plan_id:
-        planned_rows = _safe(
-            lambda: supabase.table("study_tasks")
-            .select("planned_minutes")
-            .eq("plan_id", plan_id)
-            .gte("scheduled_date", week_start)
-            .execute()
-            .data,
-            default=[],
-        ) or []
-        hours_planned = round(sum((r.get("planned_minutes") or 0) for r in planned_rows) / 60.0, 1)
-    total_tasks = 0
-    if plan_id:
-        total_tasks = len(_safe(lambda: supabase.table("study_tasks").select("id").eq("plan_id", plan_id).gte("scheduled_date", week_start).execute().data, default=[]) or [])
-    adherence = (hours / hours_planned) if hours_planned else 0
-    return {
-        "week_of": week_start or "This week",
-        "hours_studied": hours,
-        "hours_planned": hours_planned,
-        "adherence": round(adherence, 3),
-        "completed_tasks": closed,
-        "planned_tasks": total_tasks,
-        "skipped_tasks": skipped_tasks,
-        "missed_tasks": missed_tasks,
-        "task_completion_rate": round((closed / total_tasks), 3) if total_tasks else 0,
-        "mocks_taken": len(mocks),
-        "mock_trend": [],
-        "highlights": [],
-        "corrections": [],
-        "correction_actions": [],
-        "backlog_count": None,
-        "backlog_topics": [],
-        "revision_coverage": None,
-    }
+# Backwards-compat alias for in-process callers that imported
+# ``canonical.weekly_review`` directly (notifications.next_actions,
+# my_recommendations below, and tests that monkeypatch this attribute).
+# This is a thin re-export — not a duplicate route registration.
+from app.api.study_os import weekly_review_read as weekly_review  # noqa: E402
 
 
 @router_metadata.get("/certifications")

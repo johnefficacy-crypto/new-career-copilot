@@ -1,11 +1,11 @@
-"""Phase 6 — user-topic mastery derivation + topic-granular mock ingestion."""
+"""Phase 6 — user-topic mastery derivation (unit tests on the service).
+
+Integration tests that drove the deleted canonical-py mock-ingestion
+endpoint were removed in Phase 5; the public route is now owned by
+``app/api/study_os.py`` and covered in ``tests/study_os/test_mocks.py``.
+"""
 from __future__ import annotations
 
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
-from app.api import canonical
-from app.core.auth import get_current_user
 from app.study_os.mastery import recompute_topic_mastery
 from tests.persona_questions._stub import SBStub
 
@@ -103,52 +103,11 @@ def test_recompute_writes_error_patterns_with_valid_types():
     assert patterns["unknown"] == 1
 
 
-# ─── add_mock ingestion (integration) ─────────────────────────────────────
-def _mock_app(sb: SBStub, user_id: str = "u-1"):
-    app = FastAPI()
-    app.include_router(canonical.router_study, prefix="/api")
-    canonical.get_supabase_admin = lambda: sb  # type: ignore[assignment]
-    app.dependency_overrides[get_current_user] = lambda: {"id": user_id, "role": "user"}
-    return app
-
-
-def test_add_mock_without_breakdowns_still_works():
-    sb = SBStub({})
-    client = TestClient(_mock_app(sb))
-    r = client.post("/api/study/mocks", json={"exam_name": "SSC CGL", "score": 120})
-    assert r.status_code == 200
-    assert len(sb.db["mock_tests"]) == 1
-    # No breakdowns supplied → no topic intelligence side effects.
-    assert "mock_topic_breakdowns" not in sb.db or not sb.db["mock_topic_breakdowns"]
-
-
-def test_add_mock_with_breakdowns_persists_and_updates_mastery():
-    sb = SBStub({})
-    client = TestClient(_mock_app(sb))
-    r = client.post(
-        "/api/study/mocks",
-        json={
-            "exam_name": "SSC CGL",
-            "exam_id": "e1",
-            "exam_phase_id": "ph1",
-            "score": 120,
-            "topic_breakdowns": [
-                {"topic_id": "t1", "correct_answers": 7, "wrong_answers": 3,
-                 "error_types": {"careless": 3}},
-                {"topic_id": "t2", "correct_answers": 2, "wrong_answers": 8},
-            ],
-        },
-    )
-    assert r.status_code == 200
-    # Per-topic rows persisted, with accuracy backfilled.
-    breakdowns = sb.db["mock_topic_breakdowns"]
-    assert len(breakdowns) == 2
-    t1 = next(b for b in breakdowns if b["topic_id"] == "t1")
-    assert t1["accuracy"] == 70.0
-    # Mastery recompute ran off the freshly-inserted breakdowns.
-    mastery = {m["topic_id"]: m for m in sb.db["user_topic_mastery"]}
-    assert mastery["t1"]["accuracy_score"] == 70.0
-    assert mastery["t2"]["accuracy_score"] == 20.0
-    # Error pattern captured for the topic that reported one.
-    errs = sb.db["user_topic_error_patterns"]
-    assert any(e["topic_id"] == "t1" and e["error_type"] == "careless" for e in errs)
+# Phase 5: POST /api/study/mocks integration tests that previously
+# pinned canonical.py's add_mock handler have been removed. That
+# handler was a duplicate of app/api/study_os.py and was the loser at
+# runtime via router precedence. Coverage of the surviving
+# study_os.py implementation lives in tests/study_os/test_mocks.py
+# (test_api_create_then_list, test_create_mock_persists_row_and_
+# breakdowns). The unit-level mastery recompute tests above stay —
+# they exercise the recompute service directly, not the route.
