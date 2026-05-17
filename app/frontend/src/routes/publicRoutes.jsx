@@ -22,6 +22,8 @@ import PrototypeAdminMarket from "../prototype/screens/AdminMarket";
 import PrototypeAdminFunnel from "../prototype/screens/AdminFunnel";
 import PrototypeHandoff from "../prototype/screens/Handoff";
 import CopyrightSubmit from "../pages/CopyrightSubmit";
+import Blogs from "../pages/Blogs";
+import BlogDetail from "../pages/BlogDetail";
 
 const prototypeRouteElements = ENABLE_PROTOTYPE_ROUTES ? (
   <>
@@ -35,6 +37,8 @@ const prototypeRouteElements = ENABLE_PROTOTYPE_ROUTES ? (
     {/* Unified guided onboarding — both entry modes are publicly reachable
         so a guest can answer 2-3 questions before signing in. */}
     <Route path="/app/onboarding/chat" element={<OnboardingChat />} />
+    <Route path="/blog" element={<Blogs />} />
+    <Route path="/blog/:slug" element={<BlogDetail />} />
     <Route path="/go/:intent/:recruitmentSlug" element={<FunnelLandingRouter />} />
     <Route path="/go/:intent/:recruitmentSlug/:postSlug" element={<FunnelLandingRouter />} />
 
@@ -64,6 +68,8 @@ export const publicRouteElements = (
     <Route path="/forgot-password" element={<ForgotPassword />} />
     <Route path="/reset-password" element={<ResetPassword />} />
     <Route path="/app/onboarding/chat" element={<OnboardingChat />} />
+    <Route path="/blog" element={<Blogs />} />
+    <Route path="/blog/:slug" element={<BlogDetail />} />
     <Route path="/go/:intent/:recruitmentSlug" element={<FunnelLandingRouter />} />
     <Route path="/go/:intent/:recruitmentSlug/:postSlug" element={<FunnelLandingRouter />} />
     {prototypeRouteElements}
