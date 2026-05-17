@@ -133,6 +133,8 @@ def test_emit_signal_writes_user_signal_event_and_enqueues_recompute():
     # Recompute row enqueued.
     assert len(sb.db["persona_recompute_queue"]) == 1
     assert sb.db["persona_recompute_queue"][0]["user_id"] == "u-1"
+    assert result["drained"] >= 1
+    assert sb.db["persona_recompute_queue"][0]["status"] in {"completed", "processing", "failed"}
 
 
 def test_emit_signal_skipped_logs_event_but_no_recompute():

@@ -264,6 +264,12 @@ export default function Profile() {
               summary="Edit"
               defaultOpen={sectionOpen("certifications")}
             >
+              {state.optionalErrors?.certification_metadata && (
+                <p className="mb-2 text-xs text-amber-700">Certification catalog is temporarily unavailable.</p>
+              )}
+              {state.optionalErrors?.certifications && (
+                <p className="mb-2 text-xs text-amber-700">Unable to load saved certifications right now.</p>
+              )}
               <CertificationsSection certRegistry={state.certRegistry} newCert={state.newCert} setNewCert={state.setNewCert} certs={state.certs} setCerts={state.setCerts} />
             </SectionCard>
             <SectionCard
@@ -272,6 +278,9 @@ export default function Profile() {
               summary="Edit"
               defaultOpen={sectionOpen("experience")}
             >
+              {state.optionalErrors?.experience && (
+                <p className="mb-2 text-xs text-amber-700">Unable to load experience history right now.</p>
+              )}
               <ExperienceSection newExp={state.newExp} setNewExp={state.setNewExp} expRows={state.expRows} setExpRows={state.setExpRows} />
             </SectionCard>
             <SectionCard
@@ -280,6 +289,9 @@ export default function Profile() {
               summary="Edit"
               defaultOpen={sectionOpen("exam-attempts")}
             >
+              {state.optionalErrors?.exam_attempts && (
+                <p className="mb-2 text-xs text-amber-700">Unable to load exam attempts right now.</p>
+              )}
               <ExamAttemptsSection newAttempt={state.newAttempt} setNewAttempt={state.setNewAttempt} attemptRows={state.attemptRows} setAttemptRows={state.setAttemptRows} />
             </SectionCard>
 
