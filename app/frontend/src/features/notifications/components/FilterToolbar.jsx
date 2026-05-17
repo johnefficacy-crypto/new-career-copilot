@@ -25,7 +25,7 @@ export default function FilterToolbar({ filters, onChange, onReset }) {
         <option value="prepare_after_submission">Prepare after submission</option>
         <option value="complete_profile">Complete profile</option>
         <option value="study_backlog_recovery">Backlog recovery</option>
-        <option value="weekly_review_ready">Weekly review ready</option>
+        <option value="weekly_review_ready">Report Card ready</option>
         <option value="monitor_result">Monitor result</option>
         <option value="apply_deadline_urgent">Deadline urgent</option>
       </SelectField>

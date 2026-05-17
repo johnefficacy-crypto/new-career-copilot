@@ -97,7 +97,7 @@ export default function Subjects() {
         eyebrow="Subjects · topic intelligence"
         title="From subject to a concrete next action."
         sub="Subject progress comes from your study plan. Topic-level mastery and high-yield labels appear only once they have been verified and locked by review."
-        right={<StatusDot state="partial" label="Partial · progress live, topics review-gated" />}
+        right={<StatusDot state="partial" label="Partial · progress live, topics available after review" />}
       />
 
       <ExamContextCard examContext={examContext} />

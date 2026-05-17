@@ -26,7 +26,7 @@ const TRIGGER_LABEL = {
   user: "User action",
   user_action: "User action",
   scheduled: "Scheduled",
-  weekly_review: "Weekly review",
+  weekly_review: "Report Card",
   auto_regenerate: "Auto-regenerate",
   admin: "Admin",
   engine: "Engine",

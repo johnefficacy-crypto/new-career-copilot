@@ -3,7 +3,6 @@ import { Navigate, Route } from "react-router-dom";
 import RouteErrorBoundary from "../components/RouteErrorBoundary";
 import { ProtectedRoute } from "../lib/ProtectedRoute";
 import DashShell from "../pages/DashShell";
-import Dashboard from "../pages/Dashboard";
 import Today from "../pages/Today";
 import Profile from "../pages/Profile";
 import Exams from "../pages/Exams";
@@ -39,7 +38,8 @@ import Pricing from "../pages/Pricing";
 export const appRouteElements = (
   <Route element={<ProtectedRoute requireBackend><DashShell /></ProtectedRoute>}>
     <Route element={<RouteErrorBoundary />}>
-      <Route path="/app" element={<Dashboard />} />
+      <Route path="/app" element={<Navigate to="/app/today" replace />} />
+      <Route path="/app/dashboard" element={<Navigate to="/app/today" replace />} />
       <Route path="/app/today" element={<Today />} />
       <Route path="/app/profile" element={<Profile />} />
       <Route path="/app/onboarding" element={<Navigate to="/app/onboarding/chat?mode=discovery" replace />} />

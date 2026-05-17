@@ -1,3 +1,4 @@
+// DEPRECATED: superseded by Today.jsx (PR-B). Do not delete — pending follow-up cleanup PR.
 import React, { useMemo } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -278,7 +279,7 @@ export default function Dashboard() {
 
         <div className="soft-card rounded-2xl p-5">
           <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
-            Weekly Truth Panel
+            Weekly Progress vs Plan
           </div>
           <div className="mt-2 text-sm text-muted-foreground">
             Planned vs done:{" "}

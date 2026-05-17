@@ -46,7 +46,7 @@ export default function TruthPanelCard({ panel }) {
   return (
     <StudyCard data-testid="truth-panel">
       <SectionHeader
-        eyebrow="Truth panel · weekly"
+        eyebrow="Progress vs Plan · weekly"
         title="Honest read. No motivational fluff."
         sub={summary}
         right={<StatusDot state="live" label="" />}

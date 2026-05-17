@@ -538,7 +538,7 @@ function WeeklyReviewQuestions({ questions }) {
   if (!questions || questions.length === 0) {
     return (
       <FieldCard>
-        <FieldSection label="Weekly review · Sunday 21:00" title="Three questions, weekly." />
+        <FieldSection label="Report Card · Sunday 21:00" title="Three questions, weekly." />
         <p className="text-[12.5px] text-field-ink-muted">
           The auto-prompted review will appear here on Sunday evening.
         </p>
@@ -548,7 +548,7 @@ function WeeklyReviewQuestions({ questions }) {
   return (
     <FieldCard>
       <FieldSection
-        label="Weekly review · Sunday 21:00"
+        label="Report Card · Sunday 21:00"
         title="Three questions. Both answer. Compared side-by-side."
         sub="No scoring. The conversation is the value."
       />

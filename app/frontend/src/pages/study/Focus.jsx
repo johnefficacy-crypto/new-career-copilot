@@ -161,7 +161,7 @@ export default function Focus() {
         eyebrow="Focus · session"
         title="One task. Timed. With a reflection at the end."
         sub="The reflection feeds focus consistency back into your study policy — never used for diagnosis, eligibility or recruitment decisions."
-        right={<StatusDot state="live" label="Live · /api/study/focus" />}
+        right={<StatusDot state="live" label="Live" />}
       />
 
       <div className="grid lg:grid-cols-[1fr_380px] gap-6 items-start">

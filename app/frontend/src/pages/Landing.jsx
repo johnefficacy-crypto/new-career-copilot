@@ -413,7 +413,7 @@ function HowItWorks() {
       visual: <StepVisualCompile />,
     },
     { id: "plan", title: "Today's plan", sub: "One compiled day, every morning.", visual: <StepVisualPlan /> },
-    { id: "adapt", title: "Adapt weekly", sub: "Weekly review closes the loop.", visual: <StepVisualAdapt /> },
+    { id: "adapt", title: "Adapt weekly", sub: "Report Card closes the loop.", visual: <StepVisualAdapt /> },
   ];
   const [active, setActive] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -616,7 +616,7 @@ function StepVisualCompile() {
           <br />
           fired
         </div>
-        <div className="text-[11px] text-[#D6BC93] mt-2">2 held back · trust policy</div>
+        <div className="text-[11px] text-[#D6BC93] mt-2">2 held back</div>
         <div
           className="hairline my-3"
           style={{ background: "linear-gradient(90deg,transparent,#4E3A29,transparent)" }}
@@ -972,12 +972,12 @@ function FactTile({ k, v, sub, tone }) {
  * ----------------------------------------------------------------- */
 function ExploreScreens() {
   const screens = [
-    { tag: "Aspirant", title: "Today · Mission Control", sub: "Plan + reasoning trace per task", to: "/app/today", glyph: "◐" },
+    { tag: "Aspirant", title: "Today", sub: "Plan + reasoning trace per task", to: "/app/today", glyph: "◐" },
     { tag: "Aspirant", title: "Study Plan", sub: "Timeline + before/after adaptation", to: "/app/study-plan", glyph: "▤" },
     { tag: "Aspirant", title: "Subjects", sub: "Topic tree · locked priority · mastery", to: "/app/study/subjects", glyph: "❖" },
     { tag: "Aspirant", title: "Focus", sub: "25/50/90m timer · reflection drawer", to: "/app/study/focus", glyph: "◍" },
     { tag: "Aspirant", title: "Mocks", sub: "Error patterns → correction tasks", to: "/app/study/mocks", glyph: "△" },
-    { tag: "Aspirant", title: "Weekly review", sub: "Honest read · next-week preview", to: "/app/study/review", glyph: "↻" },
+    { tag: "Aspirant", title: "Report Card", sub: "Honest read · next-week preview", to: "/app/study/review", glyph: "↻" },
     { tag: "Aspirant", title: "Eligibility matches", sub: "Recruitments matched to your profile", to: "/app/exams", glyph: "⌖" },
     { tag: "Admin", title: "Exam Intelligence", sub: "7 tabs · verify + lock + plan-impact", to: "/admin/exam-intelligence", glyph: "⊞", dark: true },
     { tag: "Admin", title: "Eligibility verification", sub: "Criteria queue · match impact preview", to: "/admin/eligibility-queue", glyph: "⌗", dark: true },
@@ -1306,9 +1306,9 @@ function Pricing() {
             price="Free"
             note="forever"
             bullets={[
-              "Today · Mission Control",
+              "Today",
               "Subjects + topic tree",
-              "Weekly review (manual)",
+              "Report Card (manual)",
               "Update feed (read-only)",
             ]}
             cta="Start free"
@@ -1514,11 +1514,11 @@ function Footer() {
         <FooterCol
           h="The app"
           links={[
-            { l: "Today · Mission Control", to: "/app/today" },
+            { l: "Today", to: "/app/today" },
             { l: "Study Plan", to: "/app/study-plan" },
             { l: "Subjects", to: "/app/study/subjects" },
             { l: "Eligibility matches", to: "/app/exams" },
-            { l: "Weekly review", to: "/app/study/review" },
+            { l: "Report Card", to: "/app/study/review" },
             { l: "Admin · Exam Intelligence", to: "/admin/exam-intelligence" },
             { l: "Admin · Eligibility", to: "/admin/eligibility-queue" },
             { l: "Open the app", to: "/app" },
@@ -1527,7 +1527,7 @@ function Footer() {
         <FooterCol
           h="Company"
           links={[
-            { l: "Trust policy", h: "#trust" },
+            { l: "Trust & sources", h: "#trust" },
             { l: "Mentors", to: "/app/mentors" },
             { l: "Pricing", h: "#pricing" },
             { l: "Sign in", to: "/login" },
