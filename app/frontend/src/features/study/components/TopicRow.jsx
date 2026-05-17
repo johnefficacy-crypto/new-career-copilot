@@ -88,7 +88,7 @@ export default function TopicRow({ topic, defaultOpen = false }) {
               {t.revision_due ? <Pill tone="sage">Revision due</Pill> : null}
               {t.error_pattern_count ? <Pill tone="rose">Errors logged</Pill> : null}
               <span className="num-mono text-[10.5px] text-clay-700">
-                priority {Math.round(t.exam_priority_score || 0)}
+                priority {Math.round((Number(t.exam_priority_score) || 0) * 100)}%
               </span>
               <span className="num-mono text-[10.5px] text-clay-700">
                 · pyq {t.verified_pyq_count ?? 0}

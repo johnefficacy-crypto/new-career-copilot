@@ -4,18 +4,30 @@ import { Link } from "react-router-dom";
 import { Eyebrow } from "../../../shared/ui/studyos";
 
 const ACTION_TO_LINK = {
-  study_task: null, // stays on Today.jsx; consumer can wire scroll-to-task
-  progressive_question: null, // stays on Today.jsx (card lives here)
+  study_task: null, // intra-page scroll; see scrollToTodayTasks fallback below
+  progressive_question: null, // intra-page scroll; see scrollToTodayTasks fallback below
   focus_session: "/app/study/focus",
   mock_review: "/app/study/mocks",
   weekly_review: "/app/study/review",
   study_plan: "/app/study-plan",
 };
 
+// Default action when no `onPrimary` is wired: scroll the today-tasks card
+// into view if it's mounted on this page. Used to be a silent no-op which
+// produced the dead-button class that the audit flagged.
+function scrollToTodayTasks() {
+  if (typeof document === "undefined") return;
+  const target = document.querySelector('[data-testid="today-tasks"]');
+  if (target && typeof target.scrollIntoView === "function") {
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
 // Mirrors the prototype's dark "one decision now" card.
 export default function NextBestActionCard({ action, onPrimary }) {
   if (!action) return null;
   const link = ACTION_TO_LINK[action.action_type] || null;
+  const handlePrimary = onPrimary || scrollToTodayTasks;
 
   const Body = (
     <div className="px-7 py-6 flex items-start gap-5">
@@ -55,7 +67,7 @@ export default function NextBestActionCard({ action, onPrimary }) {
     );
   }
   return (
-    <button type="button" onClick={onPrimary} className={cardClass} data-testid="next-best-action">
+    <button type="button" onClick={handlePrimary} className={cardClass} data-testid="next-best-action">
       {Body}
     </button>
   );

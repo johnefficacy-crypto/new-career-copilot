@@ -1,64 +1,65 @@
 import React from "react";
 import { User, BookOpen, Newspaper, Cpu } from "lucide-react";
 
-// Preview-only descriptive layer panel. Real signal counts and items will arrive
-// when backend exam-intelligence + update-intelligence endpoints land. Until then
-// this panel shows the planning surface as documentation, never as live data.
+// Preview-only descriptive layer panel. Real signal counts and items will
+// arrive when backend exam-intelligence + update-intelligence endpoints
+// land. The captions and item values are deliberately phrased in
+// future tense so aspirants do NOT read this panel as live state.
 const LAYERS = [
   {
     key: "user",
     title: "User intelligence",
-    caption: "What we know about you",
+    caption: "What we’ll know about you",
     Icon: User,
     accent: "dusk",
     items: [
-      { k: "Availability", v: "Hours you said you have" },
-      { k: "Weak topics", v: "From mocks, drills, focus signals" },
-      { k: "Study history", v: "Sessions, adherence, streaks" },
-      { k: "Mock history", v: "Scores, trend, weak topics" },
-      { k: "Focus consistency", v: "Last 7 / 30 day pattern" },
+      { k: "Availability", v: "Will show hours you can study" },
+      { k: "Weak topics", v: "Will surface from mocks, drills, focus signals" },
+      { k: "Study history", v: "Will track sessions and adherence" },
+      { k: "Mock history", v: "Will plot scores, trend and weak topics" },
+      { k: "Focus consistency", v: "Will summarise your 7 / 30 day pattern" },
     ],
   },
   {
     key: "exam",
     title: "Exam intelligence",
-    caption: "What the exam looks like",
+    caption: "What the exam looks like (once connected)",
     Icon: BookOpen,
     accent: "sage",
     items: [
-      { k: "Family · exam · cycle", v: "Career Copilot exam catalog" },
-      { k: "Phase", v: "Prelims / mains / interview" },
-      { k: "Syllabus tree", v: "Subjects → topics → microtopics" },
-      { k: "PYQ trend", v: "Topic-level weight from past years" },
-      { k: "High-yield topics", v: "Where marks actually come from" },
+      { k: "Family · exam · cycle", v: "Will pull from the exam catalog" },
+      { k: "Phase", v: "Will show your current Prelims / Mains / Interview phase" },
+      { k: "Syllabus tree", v: "Will display Subjects → topics → microtopics" },
+      { k: "PYQ trend", v: "Will weight topics by past-year frequency" },
+      { k: "High-yield topics", v: "Will rank topics by realised marks" },
     ],
   },
   {
     key: "update",
     title: "Update intelligence",
-    caption: "What the world is saying",
+    caption: "What the world is saying (once connected)",
     Icon: Newspaper,
     accent: "clay",
     items: [
-      { k: "Official updates", v: "Notifications, dates, eligibility" },
-      { k: "Deadline changes", v: "Calendar deltas applied to plan" },
-      { k: "Pattern changes", v: "Syllabus, paper structure shifts" },
-      { k: "Syllabus changes", v: "Addendums, new microtopics" },
-      { k: "Current affairs", v: "Daily digest tied to weak topics" },
+      { k: "Official updates", v: "Will flow in from notifications, dates, eligibility" },
+      { k: "Deadline changes", v: "Will apply calendar deltas to your plan" },
+      { k: "Pattern changes", v: "Will surface syllabus and paper-structure shifts" },
+      { k: "Syllabus changes", v: "Will list addendums and new microtopics" },
+      { k: "Current affairs", v: "Will tie a daily digest to your weak topics" },
     ],
   },
   {
     key: "engine",
     title: "Study OS engine",
-    caption: "How it composes the plan",
+    caption: "How it will compose the plan",
     Icon: Cpu,
     accent: "ink",
     items: [
-      { k: "Prioritization", v: "Weak · prereq · cadence" },
-      { k: "Spaced revision", v: "Interval scheduling per topic" },
-      { k: "Weak-area drills", v: "Targeted practice loops" },
-      { k: "Plan regeneration", v: "Daily compile + weekly correct" },
-      { k: "Weekly correction", v: "Truth panel feeds next week" },
+      { k: "Prioritization", v: "Will weight by Weak · prereq · cadence" },
+      { k: "Spaced revision", v: "Will schedule intervals per topic" },
+      { k: "Weak-area drills", v: "Will queue targeted practice loops" },
+      { k: "Plan regeneration", v: "Will compile daily, correct weekly" },
+      { k: "Weekly correction", v: "Will feed the Truth panel into next week" },
     ],
   },
 ];
@@ -117,12 +118,15 @@ export default function IntelligenceLayersPanel({ title = "Planning Intelligence
             {title}
           </h2>
           <p className="text-xs text-muted-foreground mt-1 max-w-prose">
-            Study OS converts user signals, exam intelligence, world updates and study
-            history into the next best action. This panel is a preview — the metadata
-            layer isn't fully wired to live backend endpoints yet.
+            <strong>Reference card, not live data.</strong> Study OS will convert
+            user signals, exam intelligence, world updates and study history into
+            the next best action. The metadata layer isn’t wired to live backend
+            endpoints yet — every row below describes a future capability.
           </p>
         </div>
-        <span className="pill pill-amber" data-testid="layers-preview-tag">Preview</span>
+        <span className="pill pill-amber" data-testid="layers-preview-tag">
+          Preview · not live
+        </span>
       </div>
 
       <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-3">

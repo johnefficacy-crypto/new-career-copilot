@@ -72,13 +72,37 @@ export default function FocusReflectionPanel({ session, onDismiss, onSave, bare 
       distraction_count: distractions,
       confidence_after: confidence,
       should_revise: revise,
+      saved_at: new Date().toISOString(),
     };
     setSaving(true);
     setSaveError("");
     try {
-      // onSave is currently a no-op (no backend endpoint for reflection yet),
-      // but if a future caller wires it to a real endpoint we must only
-      // confirm "saved" once the promise resolves.
+      // Persist locally so the "kept on this device" copy is accurate even
+      // before a backend endpoint exists. Keyed by a stable session id when
+      // available; falls back to a session-anonymous bucket of recent
+      // reflections (cap at 50 to bound localStorage usage).
+      try {
+        const key = session?.id
+          ? `focus.reflection.${session.id}`
+          : "focus.reflection.recent";
+        if (session?.id) {
+          window.localStorage.setItem(key, JSON.stringify(reflection));
+        } else {
+          const prior = JSON.parse(
+            window.localStorage.getItem(key) || "[]",
+          );
+          const next = Array.isArray(prior) ? prior : [];
+          next.unshift(reflection);
+          window.localStorage.setItem(key, JSON.stringify(next.slice(0, 50)));
+        }
+      } catch {
+        // localStorage may be disabled (private mode / quota). Don't
+        // surface a false "saved" — if we couldn't persist AND there's
+        // no remote onSave, treat that as a save failure.
+        if (typeof onSave !== "function") {
+          throw new Error("Local storage is disabled — couldn’t save reflection.");
+        }
+      }
       if (typeof onSave === "function") await onSave(reflection);
       setSaved(true);
     } catch (e) {
