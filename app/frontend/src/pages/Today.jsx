@@ -146,11 +146,33 @@ export default function Today() {
     const done = tasks.filter((t) => t.done).length;
     return (
       <div className="space-y-6" data-testid="today-page">
-        {error ? (
-          <div className="rounded-xl bg-clay-50 text-clay-800 text-xs px-3 py-2">
-            {error}
+        {/* Prominent degraded banner: the simplified fallback hides
+            Mission-Control panels (engine trace, intelligence layers,
+            update intelligence, exam/competition context, preferences),
+            so the user needs a clear signal that the dashboard is in a
+            reduced state — not a quietly-redesigned page. */}
+        <div
+          className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 flex items-start justify-between gap-3"
+          role="status"
+          data-testid="today-degraded-banner"
+        >
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.18em] text-amber-800 font-semibold">
+              Mission Control is degraded
+            </div>
+            <div className="text-sm text-amber-900 mt-0.5">
+              {error || "Showing a simplified plan view — some panels are unavailable."}
+            </div>
           </div>
-        ) : null}
+          <button
+            type="button"
+            onClick={() => setReloadKey((k) => k + 1)}
+            className="text-[12px] font-semibold text-amber-900 underline underline-offset-2 hover:text-amber-950 shrink-0"
+            data-testid="today-degraded-retry"
+          >
+            Retry
+          </button>
+        </div>
         <header>
           <Eyebrow>Today · Study OS Mission Control{fallbackPlan.date ? ` · ${fallbackPlan.date}` : ""}</Eyebrow>
           <h1 className="font-heading text-[40px] leading-[1.05] mt-2">Today's plan</h1>

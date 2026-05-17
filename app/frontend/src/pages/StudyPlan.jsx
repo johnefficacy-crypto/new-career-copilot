@@ -119,15 +119,30 @@ export default function StudyPlan() {
   async function toggle(t) {
     const wasStatus = t.status || (t.done ? "completed" : "planned");
     const nextStatus = wasStatus === "completed" ? "planned" : "completed";
-    const patchTo = (status) => (p) => ({
+    const patchTo = (status, serverRow) => (p) => ({
       ...p,
       tasks: p.tasks.map((x) =>
-        x.id === t.id ? { ...x, done: status === "completed", status } : x,
+        x.id === t.id
+          ? {
+              // Accept the server-returned row as state-of-record if present.
+              // The server may canonicalise the status to something other than
+              // "completed"/"planned" (e.g. "carried_forward" / "rescheduled");
+              // forcing the local state to "completed" would mis-reconcile.
+              ...(serverRow || x),
+              done: (serverRow?.status || status) === "completed",
+              status: serverRow?.status || status,
+            }
+          : x,
       ),
     });
     await runTaskAction({
       optimistic: () => setPlan(patchTo(nextStatus)),
       action: () => api.put(`/api/study/tasks/${t.id}`, { status: nextStatus }),
+      onSuccess: (resp) => {
+        if (resp && typeof resp === "object" && resp.id) {
+          setPlan(patchTo(nextStatus, resp));
+        }
+      },
       rollback: () => setPlan(patchTo(wasStatus)),
       errorMessage: "Couldn't save task — try again.",
     });
