@@ -93,6 +93,16 @@ _REVIEWABLE = {
         ),
         "supports_notes": False,
     },
+    "pyq_option": {
+        "table": "pyq_options",
+        "select": (
+            "id, question_id, option_label, option_text, is_correct, "
+            "normalized_value, reviewer_status, reviewed_by, reviewed_at, "
+            "metadata, created_at"
+        ),
+        # pyq_options has no reviewer_notes column; notes ride on metadata.
+        "supports_notes": False,
+    },
 }
 
 _ALLOWED_STATUSES = {"pending", "verified", "rejected", "needs_correction"}
@@ -343,8 +353,8 @@ def list_items(
         # syllabus mentions and pyq question topic tags have exam-side joins.
         if kind == "syllabus_topic_mention":
             q = q.eq("exam_id", exam_id)
-        elif kind == "pyq_question_topic_tag":
-            # Tags are keyed via question → paper → exam.
+        elif kind in {"pyq_question_topic_tag", "pyq_option"}:
+            # Both are keyed via question → paper → exam.
             paper_rows = _safe(
                 lambda: (
                     sb.table("pyq_papers")
