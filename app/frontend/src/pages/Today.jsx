@@ -158,7 +158,7 @@ export default function Today() {
         >
           <div>
             <div className="text-[11px] uppercase tracking-[0.18em] text-amber-800 font-semibold">
-              Mission Control is degraded
+              Today is in a simplified view
             </div>
             <div className="text-sm text-amber-900 mt-0.5">
               {error || "Showing a simplified plan view — some panels are unavailable."}
@@ -174,7 +174,7 @@ export default function Today() {
           </button>
         </div>
         <header>
-          <Eyebrow>Today · Study OS Mission Control{fallbackPlan.date ? ` · ${fallbackPlan.date}` : ""}</Eyebrow>
+          <Eyebrow>Today{fallbackPlan.date ? ` · ${fallbackPlan.date}` : ""}</Eyebrow>
           <h1 className="font-heading text-[40px] leading-[1.05] mt-2">Today's plan</h1>
           <p className="text-clay-700 mt-2">
             {done} of {tasks.length} tasks complete
@@ -205,7 +205,7 @@ export default function Today() {
     );
   }
 
-  // ── Mission Control path ───────────────────────────────────────────────
+  // ── Today (full) path ──────────────────────────────────────────────────
   if (!mc) {
     return (
       <div className="space-y-6" data-testid="today-page">
@@ -245,14 +245,14 @@ export default function Today() {
       <header className="flex items-end justify-between gap-6 flex-wrap">
         <div>
           <Eyebrow>
-            Today · Study OS Mission Control{meta.generated_at ? ` · ${meta.generated_at}` : ""}
+            Today{meta.generated_at ? ` · ${meta.generated_at}` : ""}
           </Eyebrow>
           <h1 className="font-heading text-[40px] leading-[1.05] mt-2 max-w-[22ch]">
-            Your plan, adapted from verified signals and recent progress.
+            Your plan, adapted from your recent progress.
           </h1>
           <p className="text-[15px] text-clay-700 mt-2 max-w-[64ch]">
-            {tasks.length} task{tasks.length === 1 ? "" : "s"} today · compiled from your study
-            signals, exam intelligence and recent progress. Each task is traceable.
+            {tasks.length} task{tasks.length === 1 ? "" : "s"} today. Tap a task to see why
+            it's there.
           </p>
         </div>
         <div className="text-right shrink-0">
@@ -261,7 +261,7 @@ export default function Today() {
             {examContext?.exam || plan?.target || "Study OS"}
           </div>
           <div className="mt-2 flex justify-end">
-            <StatusDot state="live" label="Live · /api/study/mission-control" />
+            <StatusDot state="live" label="Live" />
           </div>
         </div>
       </header>
@@ -425,19 +425,24 @@ export default function Today() {
         isPreview={false}
       />
 
-      {/* Trust policy footer */}
-      <footer className="pt-2 pb-6 flex items-center justify-between flex-wrap gap-3">
-        <div className="num-mono text-[10.5px] text-clay-700">
-          Career Copilot · Study OS{meta.plan_version ? ` · ${meta.plan_version}` : ""}
+      {/* "Why this recommendation?" drawer: trust policy, source lanes, verified signals */}
+      <details className="pt-2 pb-6" data-testid="why-this-recommendation">
+        <summary className="num-mono text-[10.5px] text-clay-700 cursor-pointer select-none">
+          Why this recommendation?
+        </summary>
+        <div className="mt-3 flex items-center justify-between flex-wrap gap-3">
+          <div className="num-mono text-[10.5px] text-clay-700">
+            Career Copilot · Study OS{meta.plan_version ? ` · ${meta.plan_version}` : ""}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="num-mono text-[10.5px] text-clay-700">Source lanes:</span>
+            <TrustStamp kind="official" label="Auto-apply after review" />
+            <TrustStamp kind="aggregator" label="Discovery only" />
+            <TrustStamp kind="research" label="Hint only" />
+            <TrustStamp kind="opportunity" label="Adjacent" />
+          </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="num-mono text-[10.5px] text-clay-700">Trust policy:</span>
-          <TrustStamp kind="official" label="Auto-apply after review" />
-          <TrustStamp kind="aggregator" label="Discovery only" />
-          <TrustStamp kind="research" label="Hint only" />
-          <TrustStamp kind="opportunity" label="Adjacent" />
-        </div>
-      </footer>
+      </details>
     </div>
   );
 }

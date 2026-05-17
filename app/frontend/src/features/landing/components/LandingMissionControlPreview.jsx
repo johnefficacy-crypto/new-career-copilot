@@ -27,11 +27,11 @@ export default function LandingMissionControlPreview() {
     <div
       className="soft-card rounded-3xl p-6 space-y-5"
       data-testid="landing-mission-control-preview"
-      aria-label="Sample Study OS mission control preview"
+      aria-label="Sample Today preview"
     >
       <div className="flex items-center justify-between">
         <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
-          Today · Study OS Mission Control
+          Today
         </div>
         <span className="pill pill-dusk text-[10px]">Sample preview</span>
       </div>
@@ -86,7 +86,7 @@ export default function LandingMissionControlPreview() {
         {/* Engine trace */}
         <div className="rounded-2xl bg-clay-50 border border-clay-100 p-3">
           <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground font-semibold">
-            <Cpu className="h-3 w-3" aria-hidden="true" /> Engine trace
+            <Cpu className="h-3 w-3" aria-hidden="true" /> Why this recommendation?
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-foreground/70">
             {SAMPLE.trace.map((step, i) => (

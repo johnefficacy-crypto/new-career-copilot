@@ -34,7 +34,7 @@ export default function EngineTrace({ steps, planSummary }) {
     <StudyCard padded={false} data-testid="engine-trace">
       <div className="grid lg:grid-cols-[200px_1fr_220px]">
         <div className="p-5 lg:border-r border-[#EFE2C9]">
-          <Eyebrow>Engine trace</Eyebrow>
+          <Eyebrow>Why this recommendation?</Eyebrow>
           <div className="font-heading text-[22px] mt-1.5 leading-[1.1]">
             Why today
             <br />
@@ -52,7 +52,7 @@ export default function EngineTrace({ steps, planSummary }) {
             role="img"
             aria-labelledby="engine-trace-title engine-trace-desc"
           >
-            <title id="engine-trace-title">Engine trace diagram</title>
+            <title id="engine-trace-title">Why this recommendation diagram</title>
             <desc id="engine-trace-desc">
               {`Four-layer reasoning flow that composes today's plan: user intelligence (your signals), exam intelligence (syllabus and PYQ weight), update intelligence (notifications and changes) and the Study OS engine that adapts the daily plan. Current plan summary: ${planSummary || "compiled daily"}.`}
             </desc>

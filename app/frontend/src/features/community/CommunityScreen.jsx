@@ -1185,7 +1185,7 @@ function CommunityFooter({ space }) {
       <span>
         community · {space?.name} · {space?.members.toLocaleString()} members
       </span>
-      <FieldStatusDot state="live" label="live · /api/community/spaces" />
+      <FieldStatusDot state="live" label="live" />
     </div>
   );
 }

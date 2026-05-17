@@ -300,7 +300,7 @@ export default function Mocks() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <StatusDot state="live" label="Live · /api/study/mocks" />
+          <StatusDot state="live" label="Live" />
           <button onClick={() => setOpen(true)} className="btn btn-primary" data-testid="add-mock-btn">
             <Plus className="h-4 w-4" /> Log a mock
           </button>

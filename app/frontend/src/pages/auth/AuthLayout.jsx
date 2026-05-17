@@ -14,7 +14,7 @@ export default function AuthLayout({ title, subtitle, children, footer }) {
         </Link>
         <div>
           <blockquote className="font-serif italic text-3xl leading-snug text-foreground/80 max-w-lg">
-            "Cleared SSC CGL Tier I in my second attempt. The weekly truth panel was the only thing that told me the
+            "Cleared SSC CGL Tier I in my second attempt. The weekly Progress vs Plan was the only thing that told me the
             honest score; everything else flattered me."
           </blockquote>
           <div className="mt-5 flex items-center gap-3">
