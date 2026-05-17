@@ -4,6 +4,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 const mockGet = jest.fn();
 const mockPut = jest.fn();
 const mockPost = jest.fn();
+const mockDel = jest.fn();
 
 jest.mock("../lib/api", () => ({
   __esModule: true,
@@ -11,6 +12,7 @@ jest.mock("../lib/api", () => ({
     get: (...args) => mockGet(...args),
     put: (...args) => mockPut(...args),
     post: (...args) => mockPost(...args),
+    del: (...args) => mockDel(...args),
   },
 }));
 
@@ -29,7 +31,7 @@ import StudyPlan from "./StudyPlan";
 
 const EXAM_ID = "11111111-1111-4111-8111-111111111111";
 
-function setupApi({ selectedExam } = {}) {
+function setupApi({ selectedExam, trackedItems } = {}) {
   mockGet.mockReset();
   mockGet.mockImplementation((path) => {
     if (path === "/api/study/plan") return Promise.resolve({ plan: null, tasks: [] });
@@ -44,6 +46,9 @@ function setupApi({ selectedExam } = {}) {
       });
     }
     if (path === "/api/study/target-exam") return Promise.resolve({ selected_exam: selectedExam });
+    if (path === "/api/study/tracked-exams") {
+      return Promise.resolve({ items: trackedItems || [], primary_exam_id: selectedExam?.id || null });
+    }
     return Promise.resolve({});
   });
 }
@@ -52,6 +57,7 @@ afterEach(() => {
   mockGet.mockReset();
   mockPut.mockReset();
   mockPost.mockReset();
+  mockDel.mockReset();
 });
 
 test("hydrates selectedExamId from GET /api/study/target-exam on mount", async () => {
@@ -84,4 +90,41 @@ test("keeps empty state when no target exam is stored", async () => {
   await waitFor(() => {
     expect(screen.getByText(/Choose the exam you are preparing for\./i)).toBeTruthy();
   });
+});
+
+test("renders the tracked-exams strip with the primary flagged", async () => {
+  setupApi({
+    selectedExam: { id: EXAM_ID, slug: "ssc-cgl", name: "SSC CGL", is_active: true },
+    trackedItems: [
+      { id: EXAM_ID, slug: "ssc-cgl", name: "SSC CGL", is_active: true, planner_ready: true, is_primary: true },
+      { id: "22222222-2222-4222-8222-222222222222", slug: "upsc-cse", name: "UPSC CSE", is_active: true, planner_ready: false, is_primary: false },
+    ],
+  });
+
+  await act(async () => {
+    render(<StudyPlan />);
+  });
+
+  await waitFor(() => {
+    expect(screen.getByTestId("tracked-exams-strip")).toBeTruthy();
+  });
+  expect(mockGet).toHaveBeenCalledWith("/api/study/tracked-exams");
+  const primary = screen.getByTestId("tracked-exam-ssc-cgl");
+  expect(primary.getAttribute("data-primary")).toBe("true");
+  expect(primary.textContent).toMatch(/Primary/);
+  const secondary = screen.getByTestId("tracked-exam-upsc-cse");
+  expect(secondary.getAttribute("data-primary")).toBe("false");
+});
+
+test("strip is hidden when no tracked exams come back", async () => {
+  setupApi({ selectedExam: null, trackedItems: [] });
+
+  await act(async () => {
+    render(<StudyPlan />);
+  });
+
+  await waitFor(() => {
+    expect(mockGet).toHaveBeenCalledWith("/api/study/tracked-exams");
+  });
+  expect(screen.queryByTestId("tracked-exams-strip")).toBeNull();
 });

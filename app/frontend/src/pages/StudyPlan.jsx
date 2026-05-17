@@ -59,6 +59,7 @@ export default function StudyPlan() {
   const [applying, setApplying] = useState(false);
   const [examItems, setExamItems] = useState([]);
   const [selectedExamId, setSelectedExamId] = useState("");
+  const [trackedExams, setTrackedExams] = useState([]);
   const [reloadKey, setReloadKey] = useState(0);
   const { run: runTaskAction } = useApiAction();
   const { run: runApply } = useApiAction();
@@ -101,13 +102,46 @@ export default function StudyPlan() {
         if (id) setSelectedExamId(id);
       })
       .catch(() => {});
+    api
+      .get("/api/study/tracked-exams")
+      .then((d) => setTrackedExams(Array.isArray(d?.items) ? d.items : []))
+      .catch(() => setTrackedExams([]));
   }, [reloadKey]);
+
+  async function refreshTrackedExams() {
+    try {
+      const d = await api.get("/api/study/tracked-exams");
+      setTrackedExams(Array.isArray(d?.items) ? d.items : []);
+    } catch {
+      // best-effort UI refresh; the picker grid below still works.
+    }
+  }
+
+  async function removeTrackedExam(examId, examName, confirmPrimary = false) {
+    const suffix = confirmPrimary ? "?confirm=true" : "";
+    try {
+      await api.del(`/api/study/tracked-exams/${examId}${suffix}`);
+      await refreshTrackedExams();
+      // If we cleared the primary, mirror that in local state so the picker
+      // grid drops back to "Choose your exam".
+      if (confirmPrimary && selectedExamId === examId) setSelectedExamId("");
+    } catch (e) {
+      if (e?.status === 409 && !confirmPrimary) {
+        const ok = window.confirm(
+          `Remove ${examName}? It is your primary exam — this will clear your plan target.`,
+        );
+        if (ok) return removeTrackedExam(examId, examName, true);
+      }
+      throw e;
+    }
+  }
 
   async function chooseExam(examId, confirm = false) {
     const suffix = confirm ? "?confirm_archive=true" : "";
     try {
       await api.put(`/api/study/target-exam${suffix}`, { exam_id: examId });
       setSelectedExamId(examId);
+      await refreshTrackedExams();
     } catch (e) {
       if (e?.status === 409 && !confirm) {
         const ok = window.confirm("Replace current plan for the selected exam?");
@@ -254,6 +288,58 @@ export default function StudyPlan() {
       {err && <div className="rounded-xl bg-clay-50 text-clay-800 text-xs px-3 py-2">{err}</div>}
       <Card>
         <SectionHeader eyebrow="Study OS setup" title="Choose your exam" />
+        {trackedExams.length > 0 && (
+          <div className="mt-3" data-testid="tracked-exams-strip">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-clay-700 mb-2">
+              Your tracked exams
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {trackedExams.map((e) => (
+                <div
+                  key={e.id}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs ${
+                    e.is_primary
+                      ? "border-[#2E2218] bg-[#FBF6EF] text-[#2E2218]"
+                      : "border-clay-300 bg-white/70 text-clay-700"
+                  }`}
+                  data-testid={`tracked-exam-${e.slug}`}
+                  data-primary={e.is_primary ? "true" : "false"}
+                >
+                  {e.is_primary ? (
+                    <span className="font-semibold">{e.name}</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="link-under"
+                      onClick={() => chooseExam(e.id)}
+                      disabled={!e.planner_ready}
+                      title={
+                        e.planner_ready
+                          ? "Make primary"
+                          : "Planner not ready for this exam yet"
+                      }
+                    >
+                      {e.name}
+                    </button>
+                  )}
+                  {e.is_primary && (
+                    <span className="num-mono text-[9px] uppercase tracking-[0.18em] rounded-full border border-sage-400 bg-sage-50 text-sage-700 px-1.5 py-0.5">
+                      Primary
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${e.name}`}
+                    onClick={() => removeTrackedExam(e.id, e.name)}
+                    className="text-clay-700 hover:text-clay-900"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="mt-3 flex flex-wrap gap-2">
           {examItems.map((e) => (
             <button key={e.id} type="button" onClick={() => chooseExam(e.id)} className={`btn ${selectedExamId === e.id ? "btn-primary" : "btn-secondary"}`}>

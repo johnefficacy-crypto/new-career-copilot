@@ -221,6 +221,179 @@ async def set_target_exam(
     return {"ok": True, "selected_exam": {"id": exam["id"], "slug": exam.get("slug"), "name": exam.get("name")}}
 
 
+@router.get("/tracked-exams")
+async def list_tracked_exams(user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    """Return the user's tracked exams with the current primary flagged.
+
+    The tracked list is the slug list stored in
+    ``aspirant_preferences.target_exams`` (most-recent-first). The primary
+    is ``profiles.target_exam`` (UUID). Each item also reports
+    ``planner_ready`` so the frontend can disable switch-to-primary when
+    the exam has no locked topic coverage yet.
+    """
+    user_id = user.get("id")
+    supabase = get_supabase_admin()
+
+    pref_rows = (
+        supabase.table("aspirant_preferences")
+        .select("target_exams")
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    tracked_slugs: list[str] = list((pref_rows[0].get("target_exams") if pref_rows else []) or [])
+
+    profile_rows = (
+        supabase.table("profiles")
+        .select("target_exam")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    primary_exam_id = profile_rows[0].get("target_exam") if profile_rows else None
+
+    # Always include the primary in the response, even if it is somehow
+    # missing from the slug list (covers data drift from older flows).
+    exam_lookup: dict[str, dict[str, Any]] = {}
+    if tracked_slugs:
+        rows = (
+            supabase.table("exams")
+            .select("id,slug,name,is_active")
+            .in_("slug", tracked_slugs)
+            .execute()
+            .data
+            or []
+        )
+        for r in rows:
+            slug = r.get("slug")
+            if slug:
+                exam_lookup[slug] = r
+
+    primary_exam: dict[str, Any] | None = None
+    if primary_exam_id:
+        row = (
+            supabase.table("exams")
+            .select("id,slug,name,is_active")
+            .eq("id", primary_exam_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if row:
+            primary_exam = row[0]
+            if primary_exam.get("slug") and primary_exam["slug"] not in exam_lookup:
+                exam_lookup[primary_exam["slug"]] = primary_exam
+
+    ordered_slugs: list[str] = []
+    if primary_exam and primary_exam.get("slug"):
+        ordered_slugs.append(primary_exam["slug"])
+    for slug in tracked_slugs:
+        if slug not in ordered_slugs and slug in exam_lookup:
+            ordered_slugs.append(slug)
+
+    items: list[dict[str, Any]] = []
+    for slug in ordered_slugs:
+        exam = exam_lookup.get(slug)
+        if not exam:
+            continue
+        cov = (
+            supabase.table("exam_topic_coverage")
+            .select("id", count="exact")
+            .eq("exam_id", exam["id"])
+            .eq("reviewer_status", "locked")
+            .limit(1)
+            .execute()
+        )
+        locked_count = int(getattr(cov, "count", 0) or 0)
+        items.append(
+            {
+                "id": exam.get("id"),
+                "slug": exam.get("slug"),
+                "name": exam.get("name"),
+                "is_active": bool(exam.get("is_active")),
+                "planner_ready": bool(exam.get("is_active")) and locked_count > 0,
+                "is_primary": primary_exam_id is not None
+                and str(exam.get("id")) == str(primary_exam_id),
+            }
+        )
+
+    return {"items": items, "primary_exam_id": primary_exam_id}
+
+
+@router.delete("/tracked-exams/{exam_id}")
+async def remove_tracked_exam(
+    exam_id: UUID,
+    confirm: bool = False,
+    user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Drop one exam from the user's tracked list.
+
+    The primary exam can only be removed when ``confirm=true`` is passed,
+    because dropping it also clears ``profiles.target_exam`` and the
+    StudyPlan page will fall back to the "pick an exam" empty state. The
+    associated study plan is left in place (use ``PUT /target-exam`` to
+    switch the primary, which already archives the old plan).
+    """
+    user_id = user.get("id")
+    supabase = get_supabase_admin()
+
+    exam_rows = (
+        supabase.table("exams")
+        .select("id,slug")
+        .eq("id", str(exam_id))
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not exam_rows:
+        raise HTTPException(status_code=404, detail="exam_not_found")
+    exam_slug = exam_rows[0].get("slug")
+
+    profile_rows = (
+        supabase.table("profiles")
+        .select("target_exam")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    primary_exam_id = profile_rows[0].get("target_exam") if profile_rows else None
+    removing_primary = primary_exam_id is not None and str(primary_exam_id) == str(exam_id)
+
+    if removing_primary and not confirm:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "PRIMARY_EXAM_REMOVAL_REQUIRES_CONFIRM", "requires_confirmation": True},
+        )
+
+    pref_rows = (
+        supabase.table("aspirant_preferences")
+        .select("target_exams")
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    cur = list((pref_rows[0].get("target_exams") if pref_rows else []) or [])
+    next_exams = [s for s in cur if s != exam_slug]
+    supabase.table("aspirant_preferences").upsert(
+        {"user_id": user_id, "target_exams": next_exams}, on_conflict="user_id"
+    ).execute()
+
+    if removing_primary:
+        supabase.table("profiles").update({"target_exam": None}).eq("id", user_id).execute()
+
+    return {"ok": True, "removed_exam_id": str(exam_id), "primary_cleared": removing_primary}
+
+
 @router.get("/mission-control")
 async def mission_control(user: dict = Depends(get_current_user)) -> dict[str, Any]:
     user_id = user.get("id")
