@@ -117,6 +117,19 @@ def test_get_latest_returns_none_when_no_snapshot():
     assert get_latest_persona_snapshot(sb, "u-missing") is None
 
 
+def test_get_latest_returns_none_for_empty_or_placeholder_user_id():
+    # Even if a row happens to exist, the placeholder lookups must short-circuit
+    # before issuing a Supabase query (verified by the sentinel `_BoomSB` that
+    # raises on any table access).
+    class _BoomSB:
+        def table(self, name):  # noqa: D401
+            raise AssertionError(f"table({name}) called for placeholder user_id")
+
+    sb = _BoomSB()
+    for placeholder in (None, "", "None", "undefined", "null", "  ", " None "):
+        assert get_latest_persona_snapshot(sb, placeholder) is None
+
+
 # ─── safe defaults when optional sources are missing ───────────────────────
 def test_collect_signals_safe_when_tables_missing():
     class _BrokenSB:

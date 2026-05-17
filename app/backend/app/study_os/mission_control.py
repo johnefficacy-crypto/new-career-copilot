@@ -495,11 +495,12 @@ def _load_active_plan(supabase: Any, user_id: str) -> dict[str, Any] | None:
     if not rows:
         return None
     row = rows[0]
+    metadata = row.get("metadata") or {}
     return {
         "id": row.get("id"),
         "day": None,  # the existing /api/study/plan does not compute this
-        "theme": row.get("theme") or "Adaptive weekly plan",
-        "target": row.get("target") or "Complete planned blocks",
+        "theme": metadata.get("theme") or "Adaptive weekly plan",
+        "target": metadata.get("target") or "Complete planned blocks",
         "source": "existing_study_plan",
     }
 

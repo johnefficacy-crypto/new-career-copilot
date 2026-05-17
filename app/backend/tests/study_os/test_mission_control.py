@@ -68,6 +68,33 @@ def test_mission_control_uses_existing_persona_snapshot():
     assert out["user_context"]["dimensions"]["preparation_stage"] == "beginner"
 
 
+def test_mission_control_returns_metadata_theme_and_target():
+    # theme/target live in study_plans.metadata jsonb, not at the row top level.
+    sb = SBStub({
+        "aspirant_persona_snapshots": [_snapshot_row()],
+        "study_plans": [
+            {"id": "plan-1", "user_id": "u-1", "status": "active",
+             "metadata": {"theme": "SSC adaptive plan", "target": "Cover locked topics"}},
+        ],
+    })
+    out = build_mission_control(sb, "u-1")
+    assert out["plan"]["theme"] == "SSC adaptive plan"
+    assert out["plan"]["target"] == "Cover locked topics"
+
+
+def test_mission_control_plan_falls_back_when_metadata_missing():
+    sb = SBStub({
+        "aspirant_persona_snapshots": [_snapshot_row()],
+        "study_plans": [
+            {"id": "plan-1", "user_id": "u-1", "status": "active", "metadata": {}},
+        ],
+    })
+    out = build_mission_control(sb, "u-1")
+    # Defaults must still surface so the UI never reads None for these fields.
+    assert out["plan"]["theme"] == "Adaptive weekly plan"
+    assert out["plan"]["target"] == "Complete planned blocks"
+
+
 def test_mission_control_handles_missing_study_plan():
     sb = SBStub({"aspirant_persona_snapshots": [_snapshot_row()]})
     out = build_mission_control(sb, "u-1")
@@ -97,7 +124,7 @@ def test_incomplete_task_becomes_next_best_action():
     sb = SBStub({
         "aspirant_persona_snapshots": [_snapshot_row()],
         "study_plans": [
-            {"id": "plan-1", "user_id": "u-1", "status": "active", "theme": "T", "target": "X"}
+            {"id": "plan-1", "user_id": "u-1", "status": "active", "metadata": {"theme": "T", "target": "X"}}
         ],
         "study_tasks": [
             {"id": "task-1", "plan_id": "plan-1", "title": "Revise quant",
@@ -136,7 +163,7 @@ def test_next_best_action_falls_through_to_focus_when_no_focus_minutes():
     sb = SBStub({
         "aspirant_persona_snapshots": [_snapshot_row()],
         "study_plans": [
-            {"id": "plan-1", "user_id": "u-1", "status": "active", "theme": "T", "target": "X"}
+            {"id": "plan-1", "user_id": "u-1", "status": "active", "metadata": {"theme": "T", "target": "X"}}
         ],
         "study_tasks": [],
         "persona_question_bank": [],
@@ -150,7 +177,7 @@ def test_task_reasoning_is_attached_to_each_task():
     sb = SBStub({
         "aspirant_persona_snapshots": [_snapshot_row()],
         "study_plans": [
-            {"id": "plan-1", "user_id": "u-1", "status": "active", "theme": "T", "target": "X"}
+            {"id": "plan-1", "user_id": "u-1", "status": "active", "metadata": {"theme": "T", "target": "X"}}
         ],
         "study_tasks": [
             {"id": "task-1", "plan_id": "plan-1", "title": "Revise quant",
@@ -166,7 +193,7 @@ def test_task_reasoning_falls_back_when_metadata_missing():
     sb = SBStub({
         "aspirant_persona_snapshots": [],  # no persona
         "study_plans": [
-            {"id": "plan-1", "user_id": "u-1", "status": "active", "theme": "T", "target": "X"}
+            {"id": "plan-1", "user_id": "u-1", "status": "active", "metadata": {"theme": "T", "target": "X"}}
         ],
         "study_tasks": [
             {"id": "task-1", "plan_id": "plan-1", "title": "Untitled",

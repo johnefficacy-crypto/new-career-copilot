@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -39,6 +40,41 @@ def _require_canonical_exam_flag() -> bool:
         env = (os.getenv("ENV") or os.getenv("APP_ENV") or os.getenv("PYTHON_ENV") or "").lower()
         return env in {"dev", "development", "local", "test"}
     return str(raw).lower() in {"1", "true", "yes", "on"}
+
+
+_TARGET_EXAM_REQUIRED_DETAIL = {
+    "code": "TARGET_EXAM_REQUIRED",
+    "message": "Choose the exam you are preparing for.",
+}
+
+
+def _require_canonical_target(supabase: Any, user_id: str) -> str | None:
+    """Enforce the canonical-exam flag uniformly across plan endpoints.
+
+    Returns the stored ``profiles.target_exam`` value when the flag is on,
+    or ``None`` when the flag is off (callers should not branch on the
+    return value beyond passing it through). Raises a 400 with a stable
+    structured detail when the flag is on but no target is set.
+    """
+    if not _require_canonical_exam_flag():
+        return None
+    target = (
+        supabase.table("profiles")
+        .select("target_exam")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    value = target[0].get("target_exam") if target else None
+    if not value:
+        raise HTTPException(status_code=400, detail=_TARGET_EXAM_REQUIRED_DETAIL)
+    return value
+
+
+class SetTargetExamBody(BaseModel):
+    exam_id: UUID
 
 
 @router.get("/exams")
@@ -92,16 +128,58 @@ async def list_study_exams(
     return {"items": out}
 
 
+@router.get("/target-exam")
+async def get_target_exam(user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    """Return the user's current target exam, or ``{"selected_exam": None}``.
+
+    Lets the frontend hydrate the picker on mount without re-running plan
+    compute. Looks the exam up by id (UUID) so the response shape matches
+    ``PUT /target-exam`` and ``GET /plan/draft.selected_exam``.
+    """
+    user_id = user.get("id")
+    supabase = get_supabase_admin()
+    profile = (
+        supabase.table("profiles")
+        .select("target_exam")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    target_value = profile[0].get("target_exam") if profile else None
+    if not target_value:
+        return {"selected_exam": None}
+    exam_rows = (
+        supabase.table("exams")
+        .select("id,slug,name,is_active")
+        .eq("id", target_value)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not exam_rows:
+        return {"selected_exam": None}
+    ex = exam_rows[0]
+    return {
+        "selected_exam": {
+            "id": ex.get("id"),
+            "slug": ex.get("slug"),
+            "name": ex.get("name"),
+            "is_active": bool(ex.get("is_active")),
+        }
+    }
+
+
 @router.put("/target-exam")
 async def set_target_exam(
-    body: dict[str, Any],
+    body: SetTargetExamBody,
     confirm_archive: bool = False,
     user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
     user_id = user.get("id")
-    exam_id = body.get("exam_id")
-    if not exam_id:
-        raise HTTPException(status_code=400, detail="exam_id is required")
+    exam_id = str(body.exam_id)
     supabase = get_supabase_admin()
     exam_rows = (
         supabase.table("exams").select("id,slug,name,is_active").eq("id", exam_id).eq("is_active", True).limit(1).execute().data
@@ -326,13 +404,7 @@ async def get_plan_draft(user: dict = Depends(get_current_user)) -> dict[str, An
     """Preview today's deterministic plan without touching the active plan."""
     supabase = get_supabase_admin()
     user_id = user.get("id")
-    if _require_canonical_exam_flag():
-        target = (
-            supabase.table("profiles").select("target_exam").eq("id", user_id).limit(1).execute().data
-            or []
-        )
-        if not target or not (target[0].get("target_exam")):
-            raise HTTPException(status_code=400, detail="Choose the exam you are preparing for.")
+    _require_canonical_target(supabase, user_id)
     out = compute_draft_plan(supabase, user_id)
     try:
         from app.study_os.planner import _resolve_target_exam
@@ -348,7 +420,10 @@ async def get_plan_draft(user: dict = Depends(get_current_user)) -> dict[str, An
 @router.post("/plan/draft")
 async def post_plan_draft(user: dict = Depends(get_current_user)) -> dict[str, Any]:
     """Same payload as GET /plan/draft — write-style verb for explicit refresh."""
-    return compute_draft_plan(get_supabase_admin(), user.get("id"))
+    supabase = get_supabase_admin()
+    user_id = user.get("id")
+    _require_canonical_target(supabase, user_id)
+    return compute_draft_plan(supabase, user_id)
 
 
 @router.post("/plan/apply")
@@ -356,8 +431,11 @@ async def post_plan_apply(user: dict = Depends(get_current_user)) -> dict[str, A
     """Apply the deterministic plan candidate to the active plan."""
     user_id = user.get("id")
     supabase = get_supabase_admin()
+    _require_canonical_target(supabase, user_id)
     try:
         return apply_plan(supabase, user_id)
+    except HTTPException:
+        raise
     except Exception:  # noqa: BLE001
         logger.exception("plan apply failed for %s", user_id)
         raise HTTPException(status_code=500, detail="Plan apply is temporarily unavailable.")

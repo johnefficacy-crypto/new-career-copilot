@@ -176,7 +176,11 @@ def select_next_question(
     seen = answered | asked
     entry_mode = session.get("entry_mode") or "cold"
     user_id = session.get("user_id")
-    snapshot = _safe(lambda: get_latest_persona_snapshot(supabase, user_id), default=None)
+    if user_id:
+        snapshot = _safe(lambda: get_latest_persona_snapshot(supabase, user_id), default=None)
+    else:
+        logger.debug("question_selector: anonymous session, skipping persona snapshot lookup")
+        snapshot = None
     unknown_dims = _unknown_dimensions(snapshot)
 
     # 1. Intent gate — cold/discovery sessions open with the intent picker.
