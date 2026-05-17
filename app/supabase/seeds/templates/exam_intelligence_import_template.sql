@@ -19,11 +19,13 @@ insert into public.exams (id, exam_family_id, slug, name, exam_type, default_dif
 values ('<exam-uuid>', '<exam-family-uuid>', '<exam-slug>', '<Exam Name>', 'recruitment', 'medium', '<Description>', true)
 on conflict (id) do nothing;
 
+-- exam_cycles status check enforces ('expected', 'open', 'active', 'closed',
+-- 'completed', 'cancelled') — see migration 030.
 insert into public.exam_cycles (
   id, exam_id, year, cycle_name, status, notification_date, application_start,
   application_end, exam_start, exam_end, source_url
 ) values (
-  '<exam-cycle-uuid>', '<exam-uuid>', <year>, '<Cycle Name>', 'upcoming',
+  '<exam-cycle-uuid>', '<exam-uuid>', <year>, '<Cycle Name>', 'expected',
   '<YYYY-MM-DD>', '<YYYY-MM-DD>', '<YYYY-MM-DD>', '<YYYY-MM-DD>', '<YYYY-MM-DD>',
   '<official-notification-url>' -- must be official source URL
 )
@@ -110,12 +112,14 @@ insert into public.pyq_papers (
 )
 on conflict (id) do nothing;
 
+-- pyq_questions has no review_notes column (see migration 032). Reviewer
+-- notes ride on the `metadata` jsonb so the audit trail is preserved.
 insert into public.pyq_questions (
   id, pyq_paper_id, question_number, question_text, question_type,
-  observed_difficulty, expected_solve_time_sec, reviewer_status, review_notes
+  observed_difficulty, expected_solve_time_sec, reviewer_status, metadata
 ) values (
   '<pyq-question-uuid>', '<pyq-paper-uuid>', 1, '<Question text from trusted source>',
-  'mcq', 'medium', 60, 'pending', '<citation required>'
+  'mcq', 'medium', 60, 'pending', '{"review_notes":"<citation required>"}'::jsonb
 )
 on conflict (id) do nothing;
 
@@ -128,65 +132,81 @@ insert into public.pyq_options (
   ('<pyq-option-b-uuid>', '<pyq-question-uuid>', 'B', '<Option B>', false, '{"source_basis":"manual_import"}'::jsonb)
 on conflict (id) do nothing;
 
+-- pyq_question_topic_tags has no review_notes column (see migration 032).
+-- Mapping evidence rides on the `metadata` jsonb.
 insert into public.pyq_question_topic_tags (
   id, question_id, topic_id, tag_weight, tag_role, tagging_source,
-  confidence_score, reviewer_status, reviewed_at, review_notes
+  confidence_score, reviewer_status, reviewed_at, metadata
 ) values (
   '<pyq-tag-uuid>', '<pyq-question-uuid>', '<topic-uuid>', 1.0, 'primary', 'admin',
-  0.7, 'pending', null, '<mapping evidence required>'
+  0.7, 'pending', null, '{"review_notes":"<mapping evidence required>"}'::jsonb
 )
 on conflict (id) do nothing;
 
 -- -------------------------------------------------------------------------
 -- 5) Coverage + context (non-locked defaults)
 -- -------------------------------------------------------------------------
+-- exam_topic_coverage stores reviewer notes in `review_notes` (not
+-- reviewer_notes — see migration 030).
 insert into public.exam_topic_coverage (
   id, exam_id, exam_cycle_id, exam_phase_id, topic_id, coverage_depth,
   expected_difficulty, exam_priority_score, is_high_yield, confidence_score,
-  source_basis, reviewer_status, reviewed_at, reviewer_notes
+  source_basis, reviewer_status, reviewed_at, review_notes
 ) values (
   '<coverage-uuid>', '<exam-uuid>', '<exam-cycle-uuid>', '<phase-uuid>', '<topic-uuid>',
   'normal', 'medium', 50, false, 0.6,
-  'syllabus_only', 'pending', null, '<why included; evidence links>'
+  'official_syllabus', 'pending_review', null, '<why included; evidence links>'
 )
 on conflict (id) do nothing;
 
+-- exam_competition_metrics stores reviewer notes in `reviewer_notes`.
+-- source_basis enforces ('manual', 'official', 'reviewed_analysis',
+-- 'derived', 'model_generated'); reviewer_status enforces ('draft',
+-- 'pending_review', 'reviewed', 'locked', 'rejected') — see migration 055.
 insert into public.exam_competition_metrics (
   id, exam_id, exam_cycle_id, exam_phase_id, vacancy_total, applicant_count,
   selection_ratio, cutoff_trend, difficulty_trend, competition_pressure_score,
-  source_basis, confidence_score, evidence_count, reviewer_status, reviewed_at, review_notes
+  source_basis, confidence_score, evidence_count, reviewer_status, reviewed_at, reviewer_notes
 ) values (
   '<competition-metrics-uuid>', '<exam-uuid>', '<exam-cycle-uuid>', '<phase-uuid>',
   null, null, null, '{}'::jsonb, '{}'::jsonb, null,
-  'manual_research', 0.5, 0, 'pending', null, '<evidence count and source notes>'
+  'manual', 0.5, 0, 'pending_review', null, '<evidence count and source notes>'
 )
 on conflict (id) do nothing;
 
--- official policy update example (can affect plan only after verified)
+-- official policy update example (can affect plan only after verified).
+-- exam_policy_updates stores notes in `reviewer_notes`. update_type
+-- enforces ('notification_change', 'cycle_change', 'date_change',
+-- 'syllabus_change', 'pattern_change', 'vacancy_change',
+-- 'eligibility_change', 'reservation_change', 'document_rule_change',
+-- 'other'); claim_status enforces ('unverified', 'official_confirmed',
+-- 'superseded') — see migration 056.
 insert into public.exam_policy_updates (
   id, exam_id, exam_cycle_id, exam_phase_id, update_type, title, summary,
   source_url, source_type, claim_status, reviewer_status,
   affects_plan, affects_deadline, affects_eligibility, affects_documents, affects_syllabus, affects_vacancy,
-  published_at, effective_from, review_notes
+  published_at, effective_from, reviewer_notes
 ) values (
   '<policy-update-official-uuid>', '<exam-uuid>', '<exam-cycle-uuid>', '<phase-uuid>',
-  'notification', '<Official update title>', '<Short summary>',
-  '<official-update-url>', 'official', 'pending', 'pending',
+  'notification_change', '<Official update title>', '<Short summary>',
+  '<official-update-url>', 'official', 'unverified', 'pending',
   false, false, false, false, false, false,
   '<ISO-8601>', '<ISO-8601>', '<review evidence required before any affects_* true>'
 )
 on conflict (id) do nothing;
 
--- discovery-only policy row (aggregator/research/opportunity MUST stay non-impacting)
+-- discovery-only policy row (aggregator/research/opportunity MUST stay non-impacting).
+-- 'rumor' is not in the update_type check list; use 'other' for
+-- unstructured discovery items.
 insert into public.exam_policy_updates (
   id, exam_id, exam_cycle_id, exam_phase_id, update_type, title, summary,
   source_url, source_type, claim_status, reviewer_status,
   affects_plan, affects_deadline, affects_eligibility, affects_documents, affects_syllabus, affects_vacancy,
-  published_at, effective_from, review_notes
+  published_at, effective_from, reviewer_notes
 ) values (
   '<policy-update-discovery-uuid>', '<exam-uuid>', '<exam-cycle-uuid>', '<phase-uuid>',
-  'rumor', '<Discovery item title>', '<Unverified lead>',
-  '<aggregator-or-research-url>', 'aggregator', 'pending', 'pending',
+  'other', '<Discovery item title>', '<Unverified lead>',
+  '<aggregator-or-research-url>', 'aggregator', 'unverified', 'pending',
   false, false, false, false, false, false,
   '<ISO-8601>', null, '<discovery-only: never set affects_* true>'
 )
