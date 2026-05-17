@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   Bell, Bot, Copyright as CopyrightIcon, CreditCard, Database, ExternalLink,
   FileSearch, Flag, GaugeCircle, GraduationCap, LayoutGrid, LineChart,
+  NotebookPen,
   ListChecks, LogOut, Menu, MessagesSquare, Radar, ScrollText, ShieldCheck,
   ShoppingBag, Sparkles, Users2, X,
 } from "lucide-react";
@@ -13,6 +14,7 @@ const OPERATIONS_NAV = [
   { to: "/admin/sources", label: "Source Registry", icon: Database, testId: "admin-nav-source-registry" },
   { to: "/admin/scraper", label: "Scrape Runs", icon: Radar, testId: "admin-nav-scraper-monitor" },
   { to: "/admin/recruitments", label: "Recruitments", icon: FileSearch, testId: "admin-nav-recruitments" },
+  { to: "/admin/blogs", label: "Blog Funnel CMS", icon: NotebookPen, testId: "admin-nav-blogs" },
   { to: "/admin/eligibility-queue", label: "Promotion Queue", icon: ListChecks, testId: "admin-nav-promotion-queue" },
   { to: "/admin/eligibility-ops", label: "Eligibility Ops", icon: GaugeCircle, testId: "admin-nav-eligibility-ops" },
   { to: "/admin/notifications", label: "Notifications", icon: Bell, testId: "admin-nav-notifications" },
