@@ -43,6 +43,8 @@ from app.api.admin_copyright import (
     admin_router as admin_copyright_router,
 )
 from app.api.admin_kpis import router as admin_kpis_router
+from app.api.admin_ops import router as admin_ops_router
+
 from app.api.blogs import router as blogs_router, admin_router as admin_blogs_router
 from app.api.admin_moderation import (
     router as moderation_router,
