@@ -655,3 +655,97 @@ def test_options_endpoints_blocked_for_non_admin():
         client.post("/api/admin/exam-intelligence/options/recompute?exam_id=e1").status_code
         == 403
     )
+    assert (
+        client.post(
+            "/api/admin/exam-intelligence/options/backfill-hashes?exam_id=e1"
+        ).status_code
+        == 403
+    )
+
+
+def test_options_backfill_hashes_fills_nulls_idempotently():
+    """Recompute on the same seed once more after backfill should now key
+    on hashes, but the bucket totals don't change because the canonical
+    fallback already produced the same groupings."""
+    sb = SBStub(_options_seed())
+    client = TestClient(_build_app(sb))
+
+    before = [o.get("normalized_option_hash") for o in sb.db["pyq_options"]]
+    assert all(h in (None, "") for h in before)
+
+    r = client.post("/api/admin/exam-intelligence/options/backfill-hashes?exam_id=e1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["option_rows_scanned"] == 16
+    assert body["option_hashes_written"] == 16
+    # Questions are skipped by default.
+    assert body["question_hashes_written"] == 0
+
+    # All hashes are now populated, identical option_text → identical hash.
+    after = {o["option_text"]: o.get("normalized_option_hash") for o in sb.db["pyq_options"]}
+    assert all(after.values())
+    # "1 only" appears on 4 questions → all 4 share the same hash.
+    one_only_rows = [
+        o["normalized_option_hash"] for o in sb.db["pyq_options"] if o["option_text"] == "1 only"
+    ]
+    assert len(set(one_only_rows)) == 1
+
+    # Repeat call — nothing left to write.
+    r2 = client.post("/api/admin/exam-intelligence/options/backfill-hashes?exam_id=e1")
+    assert r2.json()["option_hashes_written"] == 0
+
+
+def test_options_backfill_hashes_dry_run_does_not_write():
+    sb = SBStub(_options_seed())
+    client = TestClient(_build_app(sb))
+    r = client.post(
+        "/api/admin/exam-intelligence/options/backfill-hashes?exam_id=e1&dry_run=true"
+    )
+    assert r.status_code == 200
+    assert r.json()["option_hashes_written"] == 16
+    # Nothing should have been written.
+    assert all(
+        not o.get("normalized_option_hash") for o in sb.db["pyq_options"]
+    )
+
+
+def test_options_backfill_hashes_includes_questions_when_requested():
+    sb = SBStub(_options_seed())
+    # Seed question rows need question_text for hashing to do anything.
+    for idx, q in enumerate(sb.db["pyq_questions"]):
+        q["question_text"] = f"Consider statements {idx + 1}: ..."
+    client = TestClient(_build_app(sb))
+    r = client.post(
+        "/api/admin/exam-intelligence/options/backfill-hashes"
+        "?exam_id=e1&include_questions=true"
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["question_rows_scanned"] == 4
+    assert body["question_hashes_written"] == 4
+    assert all(q.get("normalized_question_hash") for q in sb.db["pyq_questions"])
+
+
+def test_options_repetitions_uses_hash_when_present():
+    """Options that hash-collide via canonicalisation group together even
+    when the raw ``option_text`` differs (e.g. casing / leading label)."""
+    sb = SBStub(_options_seed())
+    # Swap the texts on q4's row to slightly-different-but-canonical
+    # variants: "1 ONLY" + "A. 2 only" + "Both 1 and 2." + " Neither 1 nor 2".
+    swaps = {
+        "opt-q4-A": "1 ONLY",
+        "opt-q4-B": "A. 2 only",
+        "opt-q4-C": "Both 1 and 2.",
+        "opt-q4-D": " Neither 1 nor 2 ",
+    }
+    for o in sb.db["pyq_options"]:
+        if o["id"] in swaps:
+            o["option_text"] = swaps[o["id"]]
+    client = TestClient(_build_app(sb))
+    # Backfill so the rollup keys on hash, not lowercased text.
+    client.post("/api/admin/exam-intelligence/options/backfill-hashes?exam_id=e1")
+    r = client.get("/api/admin/exam-intelligence/options/repetitions?exam_id=e1")
+    body = r.json()
+    # Four canonical groups, each still at count 4 — the variants merged.
+    assert body["total_groups"] == 4
+    assert all(g["occurrence_count"] == 4 for g in body["groups"])

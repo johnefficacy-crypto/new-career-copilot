@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import require_permission
 from app.db.supabase_client import get_supabase_admin
+from app.exam_intelligence.option_normalize import option_hash, question_hash
 from app.study_os.plan_impact import compute_plan_impact, record_plan_impact_decision
 
 logger = logging.getLogger("career_copilot.api.admin_exam_intelligence")
@@ -1348,4 +1349,126 @@ def recompute_option_analytics(
         "repetitions_upserted": rep_inserted,
         "patterns_upserted": pat_inserted,
         "groups_considered": len(groups),
+    }
+
+
+@router.post("/options/backfill-hashes")
+def backfill_option_hashes(
+    exam_id: str = Query(...),
+    include_questions: bool = Query(False),
+    dry_run: bool = Query(False),
+    _admin: dict = Depends(require_permission(ADMIN_PERM)),
+) -> dict[str, Any]:
+    """Populate ``normalized_option_hash`` (and optionally
+    ``normalized_question_hash``) for rows where it's still null.
+
+    Scoped to one exam at a time via papers → questions → options so an
+    operator can validate the rollout exam-by-exam. ``dry_run`` returns
+    the count that *would* be written without touching anything. Reads
+    every option for the exam regardless of reviewer_status — the hash
+    is a content property and is useful even on rejected/pending rows.
+    """
+    sb = get_supabase_admin()
+    paper_rows = _safe(
+        lambda: (
+            sb.table("pyq_papers")
+            .select("id")
+            .eq("exam_id", exam_id)
+            .limit(5000)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    paper_ids = [p["id"] for p in paper_rows if p.get("id")]
+    if not paper_ids:
+        return {
+            "exam_id": exam_id,
+            "dry_run": dry_run,
+            "option_rows_scanned": 0,
+            "option_hashes_written": 0,
+            "question_rows_scanned": 0,
+            "question_hashes_written": 0,
+        }
+
+    question_rows = _safe(
+        lambda: (
+            sb.table("pyq_questions")
+            .select("id, question_text, normalized_question_hash")
+            .in_("pyq_paper_id", paper_ids)
+            .limit(20000)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    question_ids = [q["id"] for q in question_rows if q.get("id")]
+
+    options = []
+    if question_ids:
+        options = _safe(
+            lambda: (
+                sb.table("pyq_options")
+                .select("id, question_id, option_text, normalized_option_hash")
+                .in_("question_id", question_ids)
+                .limit(80000)
+                .execute()
+                .data
+            ),
+            default=[],
+        ) or []
+
+    # Group updates by hash value so the stub's ``.eq("id", ...)`` path
+    # only fires when there's something to write. Skip rows that already
+    # carry a hash so the operation is safe to re-run.
+    option_writes: list[tuple[str, str]] = []
+    for o in options:
+        if o.get("normalized_option_hash"):
+            continue
+        h = option_hash(o.get("option_text"))
+        if not h:
+            continue
+        option_writes.append((o["id"], h))
+
+    question_writes: list[tuple[str, str]] = []
+    if include_questions:
+        for q in question_rows:
+            if q.get("normalized_question_hash"):
+                continue
+            h = question_hash(q.get("question_text"))
+            if not h:
+                continue
+            question_writes.append((q["id"], h))
+
+    if not dry_run:
+        for option_id, h in option_writes:
+            _safe(
+                lambda oid=option_id, hh=h: (
+                    sb.table("pyq_options")
+                    .update({"normalized_option_hash": hh})
+                    .eq("id", oid)
+                    .execute()
+                    .data
+                ),
+                default=None,
+            )
+        for question_id, h in question_writes:
+            _safe(
+                lambda qid=question_id, hh=h: (
+                    sb.table("pyq_questions")
+                    .update({"normalized_question_hash": hh})
+                    .eq("id", qid)
+                    .execute()
+                    .data
+                ),
+                default=None,
+            )
+
+    return {
+        "exam_id": exam_id,
+        "dry_run": dry_run,
+        "option_rows_scanned": len(options),
+        "option_hashes_written": len(option_writes),
+        "question_rows_scanned": len(question_rows) if include_questions else 0,
+        "question_hashes_written": len(question_writes),
     }
