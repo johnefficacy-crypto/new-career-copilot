@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Query
 from app.core.auth import get_current_user
 from app.db.supabase_client import get_supabase_admin
 from app.exam_intelligence.lookup import list_active_exams
+from app.exam_intelligence.option_insights import option_insights
 from app.exam_intelligence.status import exam_intelligence_summary
 
 logger = logging.getLogger("career_copilot.api.exam_intelligence")
@@ -59,5 +60,53 @@ def get_exam_summary(
             "pyq_papers": [],
             "difficulty_heatmap": {"buckets": ["easy", "medium", "hard", "unknown"], "rows": [], "verified_question_count": 0},
             "verified_only": True,
+            "error": str(exc)[:200],
+        }
+
+
+@router.get("/exams/{slug}/option-insights")
+def get_option_insights(
+    slug: str,
+    topic_id: str | None = Query(None),
+    limit: int = Query(8, ge=1, le=50),
+    _user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Aspirant-facing trap-awareness + elimination-heuristic tips.
+
+    Reads the materialised option-analytics rollups for the exam (the
+    admin recompute populates them). Returns clean, UI-shaped tips with
+    server-rendered human-readable lines, so the frontend stays dumb.
+    Returns gracefully empty payloads when no rollup data exists yet.
+    """
+    sb = get_supabase_admin()
+    exam_row = None
+    try:
+        rows = (
+            sb.table("exams").select("id, slug").eq("slug", slug).limit(1).execute().data
+            or []
+        )
+        exam_row = rows[0] if rows else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("option_insights exam lookup failed for %s: %s", slug, exc)
+    if not exam_row or not exam_row.get("id"):
+        return {
+            "exam_id": None,
+            "topic_id": topic_id,
+            "verified_only": True,
+            "has_data": False,
+            "recurring_distractors": [],
+            "elimination_tips": [],
+        }
+    try:
+        return option_insights(sb, exam_row["id"], topic_id=topic_id, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("option_insights compute failed for %s", slug)
+        return {
+            "exam_id": exam_row["id"],
+            "topic_id": topic_id,
+            "verified_only": True,
+            "has_data": False,
+            "recurring_distractors": [],
+            "elimination_tips": [],
             "error": str(exc)[:200],
         }
