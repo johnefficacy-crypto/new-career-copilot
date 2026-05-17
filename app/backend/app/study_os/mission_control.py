@@ -70,7 +70,7 @@ def _load_exam_intelligence(supabase: Any, user_id: str) -> dict[str, Any]:
     profile_rows = _safe(
         lambda: (
             supabase.table("profiles")
-            .select("target_exam, goal_exams")
+            .select("target_exam")
             .eq("id", user_id)
             .limit(1)
             .execute()
@@ -463,8 +463,7 @@ def _active_plan_id(supabase: Any, user_id: str) -> str | None:
     rows = _safe(
         lambda: (
             supabase.table("study_plans")
-            .select("id, status, day, theme, target, start_date, end_date, "
-                    "weekly_hours_goal, metadata")
+            .select("id")
             .eq("user_id", user_id)
             .eq("status", "active")
             .limit(1)
@@ -483,8 +482,7 @@ def _load_active_plan(supabase: Any, user_id: str) -> dict[str, Any] | None:
         lambda: (
             supabase.table("study_plans")
             .select(
-                "id, status, theme, target, start_date, end_date, "
-                "weekly_hours_goal, metadata"
+                "id, target_exam, metadata, start_date, end_date, weekly_hours_goal"
             )
             .eq("user_id", user_id)
             .eq("status", "active")

@@ -55,6 +55,13 @@ export function useUnifiedOnboardingSession(options = {}) {
     const anonymousId = getAnonymousId();
     anonRef.current = anonymousId;
     try {
+      if (isAuthed && anonymousId) {
+        try {
+          await api.post(`${BASE}/stitch-anonymous`, { anonymous_id: anonymousId });
+        } catch (e) {
+          if (process.env.NODE_ENV !== "production") console.warn("pre-resolve stitch failed", e);
+        }
+      }
       const query = buildResolveQuery({
         mode,
         intent,
@@ -70,7 +77,7 @@ export function useUnifiedOnboardingSession(options = {}) {
       patch({ status: "error", error: e });
       return null;
     }
-  }, [mode, intent, recruitmentSlug, postSlug, patch]);
+  }, [mode, intent, recruitmentSlug, postSlug, patch, isAuthed]);
 
   // Initial load + reload on option change — wait until auth state is known
   // so the first /resolve carries a token when the user is already logged in.

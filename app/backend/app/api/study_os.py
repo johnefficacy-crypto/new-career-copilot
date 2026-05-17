@@ -7,6 +7,7 @@ Kept as a separate router so PR3 doesn't touch the canonical file.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -30,6 +31,116 @@ from app.study_os import report_cards as report_cards_service
 logger = logging.getLogger("career_copilot.api.study_os")
 
 router = APIRouter(prefix="/study", tags=["study"])
+
+
+def _require_canonical_exam_flag() -> bool:
+    raw = os.getenv("STUDY_OS_REQUIRE_CANONICAL_EXAM")
+    if raw is None:
+        env = (os.getenv("ENV") or os.getenv("APP_ENV") or os.getenv("PYTHON_ENV") or "").lower()
+        return env in {"dev", "development", "local", "test"}
+    return str(raw).lower() in {"1", "true", "yes", "on"}
+
+
+@router.get("/exams")
+async def list_study_exams(
+    planner_ready: bool | None = None,
+    user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    del user
+    supabase = get_supabase_admin()
+    rows = (
+        supabase.table("exams")
+        .select("id,slug,name,exam_type,exam_family_id,default_difficulty_level,is_active")
+        .eq("is_active", True)
+        .order("name")
+        .limit(500)
+        .execute()
+        .data
+        or []
+    )
+    out = []
+    for r in rows:
+        cov = (
+            supabase.table("exam_topic_coverage")
+            .select("id", count="exact")
+            .eq("exam_id", r["id"])
+            .eq("reviewer_status", "locked")
+            .limit(1)
+            .execute()
+        )
+        locked_count = int(getattr(cov, "count", 0) or 0)
+        cycle = (
+            supabase.table("exam_cycles")
+            .select("id,year,cycle_name,exam_start")
+            .eq("exam_id", r["id"])
+            .gte("exam_start", __import__("datetime").datetime.utcnow().date().isoformat())
+            .order("exam_start")
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        ready = bool(r.get("is_active")) and locked_count > 0
+        row = {
+            **r,
+            "locked_coverage_count": locked_count,
+            "next_cycle": cycle[0] if cycle else None,
+            "planner_ready": ready,
+        }
+        if planner_ready is None or row["planner_ready"] == planner_ready:
+            out.append(row)
+    return {"items": out}
+
+
+@router.put("/target-exam")
+async def set_target_exam(
+    body: dict[str, Any],
+    confirm_archive: bool = False,
+    user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    user_id = user.get("id")
+    exam_id = body.get("exam_id")
+    if not exam_id:
+        raise HTTPException(status_code=400, detail="exam_id is required")
+    supabase = get_supabase_admin()
+    exam_rows = (
+        supabase.table("exams").select("id,slug,name,is_active").eq("id", exam_id).eq("is_active", True).limit(1).execute().data
+        or []
+    )
+    if not exam_rows:
+        raise HTTPException(status_code=400, detail="Invalid active exam_id")
+    exam = exam_rows[0]
+    active = (
+        supabase.table("study_plans")
+        .select("id,exam_id,target_exam,end_date,status")
+        .eq("user_id", user_id)
+        .eq("status", "active")
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if active:
+        p = active[0]
+        prev = p.get("exam_id") or p.get("target_exam")
+        if prev and str(prev) != str(exam_id):
+            if not confirm_archive:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "ACTIVE_PLAN_EXISTS", "requires_confirmation": True},
+                )
+            from datetime import datetime, timezone
+            today = datetime.now(timezone.utc).date().isoformat()
+            supabase.table("study_plans").update({"status": "archived", "end_date": today}).eq("id", p["id"]).execute()
+    supabase.table("profiles").update({"target_exam": exam_id}).eq("id", user_id).execute()
+    pref = (
+        supabase.table("aspirant_preferences").select("id,target_exams").eq("user_id", user_id).limit(1).execute().data
+        or []
+    )
+    cur = list((pref[0].get("target_exams") if pref else []) or [])
+    next_exams = [exam.get("slug")] + [x for x in cur if x != exam.get("slug")]
+    supabase.table("aspirant_preferences").upsert({"user_id": user_id, "target_exams": next_exams}, on_conflict="user_id").execute()
+    return {"ok": True, "selected_exam": {"id": exam["id"], "slug": exam.get("slug"), "name": exam.get("name")}}
 
 
 @router.get("/mission-control")
@@ -213,7 +324,25 @@ async def generate_study_plan(user: dict = Depends(get_current_user)) -> dict[st
 @router.get("/plan/draft")
 async def get_plan_draft(user: dict = Depends(get_current_user)) -> dict[str, Any]:
     """Preview today's deterministic plan without touching the active plan."""
-    return compute_draft_plan(get_supabase_admin(), user.get("id"))
+    supabase = get_supabase_admin()
+    user_id = user.get("id")
+    if _require_canonical_exam_flag():
+        target = (
+            supabase.table("profiles").select("target_exam").eq("id", user_id).limit(1).execute().data
+            or []
+        )
+        if not target or not (target[0].get("target_exam")):
+            raise HTTPException(status_code=400, detail="Choose the exam you are preparing for.")
+    out = compute_draft_plan(supabase, user_id)
+    try:
+        from app.study_os.planner import _resolve_target_exam
+        ex = _resolve_target_exam(supabase, user_id)
+        if ex:
+            cov = supabase.table("exam_topic_coverage").select("id", count="exact").eq("exam_id", ex["id"]).eq("reviewer_status", "locked").limit(1).execute()
+            out["selected_exam"] = {"id": ex.get("id"), "slug": ex.get("slug"), "name": ex.get("name"), "planner_ready": int(getattr(cov, "count", 0) or 0) > 0}
+    except Exception:
+        pass
+    return out
 
 
 @router.post("/plan/draft")

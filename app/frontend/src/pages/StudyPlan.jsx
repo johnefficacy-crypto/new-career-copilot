@@ -57,6 +57,8 @@ export default function StudyPlan() {
   const [draftLoading, setDraftLoading] = useState(false);
   const [draftOpen, setDraftOpen] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [examItems, setExamItems] = useState([]);
+  const [selectedExamId, setSelectedExamId] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const { run: runTaskAction } = useApiAction();
   const { run: runApply } = useApiAction();
@@ -86,9 +88,28 @@ export default function StudyPlan() {
       .get("/api/study/weekly-review")
       .then((d) => setReview(d || null))
       .catch(() => setReview(null));
+    api
+      .get("/api/study/exams")
+      .then((d) => setExamItems(Array.isArray(d?.items) ? d.items : []))
+      .catch(() => setExamItems([]));
   }, [reloadKey]);
 
+  async function chooseExam(examId, confirm = false) {
+    const suffix = confirm ? "?confirm_archive=true" : "";
+    try {
+      await api.put(`/api/study/target-exam${suffix}`, { exam_id: examId });
+      setSelectedExamId(examId);
+    } catch (e) {
+      if (e?.status === 409 && !confirm) {
+        const ok = window.confirm("Replace current plan for the selected exam?");
+        if (ok) return chooseExam(examId, true);
+      }
+      throw e;
+    }
+  }
+
   async function previewRegenerate() {
+    if (!selectedExamId) return;
     setDraftLoading(true);
     setDraftOpen(true);
     try {
@@ -102,6 +123,7 @@ export default function StudyPlan() {
   }
 
   async function applyDraft() {
+    if (!selectedExamId) return;
     setApplying(true);
     const result = await runApply({
       action: () => api.post("/api/study/plan/apply", {}),
@@ -216,10 +238,25 @@ export default function StudyPlan() {
       (review.mocks_taken || 0) > 0 ||
       (review.corrections || []).length > 0);
   const done = tasks.filter((t) => t.done || t.status === "completed").length;
+  const selectedExam = examItems.find((e) => e.id === selectedExamId);
 
   return (
     <div className="space-y-6" data-testid="study-plan-page">
       {err && <div className="rounded-xl bg-clay-50 text-clay-800 text-xs px-3 py-2">{err}</div>}
+      <Card>
+        <SectionHeader eyebrow="Study OS setup" title="Choose your exam" />
+        <div className="mt-3 flex flex-wrap gap-2">
+          {examItems.map((e) => (
+            <button key={e.id} type="button" onClick={() => chooseExam(e.id)} className={`btn ${selectedExamId === e.id ? "btn-primary" : "btn-secondary"}`}>
+              {e.name} {e.planner_ready ? "• ready" : "• not ready"}
+            </button>
+          ))}
+        </div>
+        {!selectedExamId && <p className="text-sm text-clay-700 mt-2">Choose the exam you are preparing for.</p>}
+        {selectedExam && !selectedExam.planner_ready && (
+          <p className="text-sm text-amber-700 mt-2">Planner not ready — no locked topic coverage.</p>
+        )}
+      </Card>
 
       <PageHeader
         eyebrow="Study Plan · timeline &amp; adaptation"
@@ -242,6 +279,7 @@ export default function StudyPlan() {
               type="button"
               className="btn btn-primary"
               onClick={previewRegenerate}
+              disabled={!selectedExamId}
               data-testid="preview-regenerate-btn"
             >
               <Sparkles className="h-3.5 w-3.5" /> Preview regenerated plan

@@ -201,6 +201,7 @@ def dispatch_pending_alerts(
     Returns ``{checked, in_app, emailed, skipped, failed, killed}``.
     """
     if kill_switch_enabled(supabase):
+        logger.info("notification dispatch skipped: kill_reason=notifications_paused")
         return {"checked": 0, "in_app": 0, "emailed": 0, "skipped": 0, "failed": 0, "killed": 1}
 
     try:

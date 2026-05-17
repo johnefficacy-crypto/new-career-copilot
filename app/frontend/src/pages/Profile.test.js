@@ -43,6 +43,7 @@ function setProfileState(overrides) {
     loading: false,
     error: null,
     reload: () => {},
+    optionalErrors: {},
     ...overrides,
   });
 }
@@ -96,4 +97,24 @@ test("does not render the missing-fields card when completion is 100%", () => {
 
   expect(screen.queryByTestId("profile-progressive-header")).toBeNull();
   expect(screen.queryByTestId("profile-continue-setup")).toBeNull();
+});
+
+test("renders core profile even when optional sections fail", () => {
+  setProfileState({
+    optionalErrors: { certifications: new Error("timeout") },
+    completion: {
+      identity_profile: { completion_pct: 100, missing_fields: [] },
+      education_profile: { completion_pct: 100, missing_fields: [] },
+      preferences_profile: { completion_pct: 100, missing_fields: [] },
+      study_profile: { completion_pct: 100, missing_fields: [] },
+      application_profile: { completion_pct: 100, missing_fields: [] },
+    },
+  });
+  render(
+    <MemoryRouter>
+      <Profile />
+    </MemoryRouter>,
+  );
+  expect(screen.getByTestId("profile-page")).toBeTruthy();
+  expect(screen.getByText(/Unable to load saved certifications/i)).toBeTruthy();
 });
