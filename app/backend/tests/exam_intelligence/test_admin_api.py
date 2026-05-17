@@ -1,6 +1,8 @@
 """Admin exam intelligence API tests (PR5)."""
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -484,3 +486,172 @@ def test_competition_and_policy_blocked_for_non_admin():
         "/api/admin/exam-intelligence/policy-updates",
     ]:
         assert client.get(path).status_code == 403
+
+
+# ─── Option-level analytics (repetitions / traps / elimination / recompute)
+def _options_seed():
+    """Two papers across two years, four questions, four options each.
+
+    The "1 only" / "2 only" / "Both 1 and 2" / "Neither 1 nor 2" pattern
+    is intentionally repeated across all four questions so the grouping
+    code has something to bucket. One question (q1) has the right answer
+    on option B; the rest have all wrong options.
+    """
+    db: dict[str, Any] = {
+        "exams": [{"id": "e1", "slug": "upsc-cse", "name": "UPSC CSE", "is_active": True}],
+        "pyq_papers": [
+            {"id": "p1", "exam_id": "e1", "year": 2023},
+            {"id": "p2", "exam_id": "e1", "year": 2024},
+        ],
+        "pyq_questions": [
+            {"id": "q1", "pyq_paper_id": "p1", "reviewer_status": "verified",
+             "created_at": "2026-05-01T00:00:00+00:00"},
+            {"id": "q2", "pyq_paper_id": "p1", "reviewer_status": "verified",
+             "created_at": "2026-05-01T00:00:00+00:00"},
+            {"id": "q3", "pyq_paper_id": "p2", "reviewer_status": "verified",
+             "created_at": "2026-05-01T00:00:00+00:00"},
+            {"id": "q4", "pyq_paper_id": "p2", "reviewer_status": "verified",
+             "created_at": "2026-05-01T00:00:00+00:00"},
+        ],
+        "pyq_question_topic_tags": [
+            {"id": "tag1", "question_id": "q1", "topic_id": "t1",
+             "tag_role": "primary", "reviewer_status": "verified",
+             "created_at": "2026-05-01T00:00:00+00:00"},
+            {"id": "tag2", "question_id": "q2", "topic_id": "t1",
+             "tag_role": "primary", "reviewer_status": "verified",
+             "created_at": "2026-05-01T00:00:00+00:00"},
+            {"id": "tag3", "question_id": "q3", "topic_id": "t2",
+             "tag_role": "primary", "reviewer_status": "verified",
+             "created_at": "2026-05-01T00:00:00+00:00"},
+            {"id": "tag4", "question_id": "q4", "topic_id": "t1",
+             "tag_role": "primary", "reviewer_status": "verified",
+             "created_at": "2026-05-01T00:00:00+00:00"},
+        ],
+        "pyq_options": [],
+        "pyq_option_repetitions": [],
+        "pyq_option_patterns": [],
+    }
+    options_template = [
+        ("A", "1 only", False),
+        ("B", "2 only", False),
+        ("C", "Both 1 and 2", False),
+        ("D", "Neither 1 nor 2", False),
+    ]
+    for qid in ("q1", "q2", "q3", "q4"):
+        for idx, (label, text, _) in enumerate(options_template):
+            is_correct = (qid == "q1" and label == "B")
+            db["pyq_options"].append(
+                {
+                    "id": f"opt-{qid}-{label}",
+                    "question_id": qid,
+                    "option_label": label,
+                    "option_text": text,
+                    "is_correct": is_correct,
+                    "reviewer_status": "verified",
+                }
+            )
+    return db
+
+
+def test_options_repetitions_groups_recurring_text():
+    sb = SBStub(_options_seed())
+    client = TestClient(_build_app(sb))
+    r = client.get("/api/admin/exam-intelligence/options/repetitions?exam_id=e1")
+    assert r.status_code == 200
+    body = r.json()
+    # Each of the four options appears once per question across 4 questions.
+    assert body["total_groups"] == 4
+    counts = {g["normalized_value"]: g["occurrence_count"] for g in body["groups"]}
+    assert counts == {"1 only": 4, "2 only": 4, "Both 1 and 2": 4, "Neither 1 nor 2": 4}
+    # Year range rolls up across both papers.
+    first_group = body["groups"][0]
+    assert first_group["first_seen_year"] == 2023
+    assert first_group["last_seen_year"] == 2024
+
+
+def test_options_repetitions_topic_filter_narrows_universe():
+    sb = SBStub(_options_seed())
+    client = TestClient(_build_app(sb))
+    r = client.get("/api/admin/exam-intelligence/options/repetitions?exam_id=e1&topic_id=t2")
+    assert r.status_code == 200
+    body = r.json()
+    # Only q3 has topic t2 → 4 options each appearing once → no group
+    # passes the default min_occurrences=2.
+    assert body["total_groups"] == 0
+    # Drop the threshold and t2's options show up.
+    r2 = client.get(
+        "/api/admin/exam-intelligence/options/repetitions?exam_id=e1&topic_id=t2&min_occurrences=1"
+    )
+    assert r2.status_code == 200
+    assert r2.json()["total_groups"] == 4
+
+
+def test_options_traps_ranks_wrong_repetitions():
+    sb = SBStub(_options_seed())
+    client = TestClient(_build_app(sb))
+    r = client.get("/api/admin/exam-intelligence/options/traps?exam_id=e1")
+    assert r.status_code == 200
+    body = r.json()
+    # All four group keys recur, three have all-wrong occurrences (count=4),
+    # "2 only" has one correct (q1.B) so wrong_count=3.
+    vals = {g["normalized_value"]: g for g in body["groups"]}
+    assert set(vals) == {"1 only", "Both 1 and 2", "Neither 1 nor 2", "2 only"}
+    # All-wrong groups have a higher trap_score than the mixed one.
+    assert vals["1 only"]["trap_score"] > vals["2 only"]["trap_score"]
+
+
+def test_options_elimination_patterns_bucketing():
+    sb = SBStub(_options_seed())
+    client = TestClient(_build_app(sb))
+    r = client.get("/api/admin/exam-intelligence/options/elimination-patterns?exam_id=e1")
+    assert r.status_code == 200
+    patterns = {p["pattern"]: p for p in r.json()["patterns"]}
+    # 4 questions × {single_only x2, both, neither} → expected counts.
+    assert patterns["single_only"]["occurrence_count"] == 8  # "1 only" + "2 only"
+    assert patterns["both_x_and_y"]["occurrence_count"] == 4
+    assert patterns["neither_x_nor_y"]["occurrence_count"] == 4
+    # "2 only" was the only correct option, so single_only carries 1 correct.
+    assert patterns["single_only"]["correct_count"] == 1
+    assert patterns["single_only"]["correct_rate"] == round(1 / 8, 3)
+
+
+def test_options_recompute_materialises_rollup_tables():
+    sb = SBStub(_options_seed())
+    client = TestClient(_build_app(sb))
+    r = client.post("/api/admin/exam-intelligence/options/recompute?exam_id=e1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["groups_considered"] == 4
+    # All 4 groups recur (count >= 2), each appears under 1+ topics.
+    assert body["repetitions_upserted"] >= 4
+    assert body["patterns_upserted"] > 0
+    # The rollup actually wrote into the stub DB.
+    reps = sb.db.get("pyq_option_repetitions") or []
+    assert reps and all(r["exam_id"] == "e1" for r in reps)
+    pats = sb.db.get("pyq_option_patterns") or []
+    elim = [p for p in pats if p["pattern_type"] == "elimination_pattern"]
+    assert elim, "elimination_pattern rows should be written"
+
+
+def test_options_recompute_is_idempotent():
+    sb = SBStub(_options_seed())
+    client = TestClient(_build_app(sb))
+    first = client.post("/api/admin/exam-intelligence/options/recompute?exam_id=e1").json()
+    second = client.post("/api/admin/exam-intelligence/options/recompute?exam_id=e1").json()
+    assert first["repetitions_upserted"] == second["repetitions_upserted"]
+    assert first["patterns_upserted"] == second["patterns_upserted"]
+
+
+def test_options_endpoints_blocked_for_non_admin():
+    sb = SBStub(_options_seed())
+    client = TestClient(_build_app(sb, role="user"))
+    for path in [
+        "/api/admin/exam-intelligence/options/repetitions?exam_id=e1",
+        "/api/admin/exam-intelligence/options/traps?exam_id=e1",
+        "/api/admin/exam-intelligence/options/elimination-patterns?exam_id=e1",
+    ]:
+        assert client.get(path).status_code == 403
+    assert (
+        client.post("/api/admin/exam-intelligence/options/recompute?exam_id=e1").status_code
+        == 403
+    )
