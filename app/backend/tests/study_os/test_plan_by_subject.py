@@ -99,11 +99,11 @@ def test_subject_is_locked_when_coverage_exists_for_it():
     assert english["trust_status"] == "preview"
 
 
-def test_manual_override_metadata_sets_source():
+def test_subject_without_locked_coverage_uses_weakness_source():
     sb = _seed_with_tasks(with_coverage=True)
     out = service.list_plan_by_subject(sb, "u-1")
     english = next(it for it in out["items"] if it["subject_name"] == "English")
-    assert english["source"] == "manual_override"
+    assert english["source"] == "weakness_map"
 
 
 def test_overall_trust_is_partial_when_mixed():

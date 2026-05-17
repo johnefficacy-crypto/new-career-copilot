@@ -72,7 +72,7 @@ def _load_week_tasks(
             supabase.table("study_tasks")
             .select(
                 "id, subject, topic, topic_id, scheduled_date, status, "
-                "planned_minutes, duration_mins, task_type, metadata"
+                "planned_minutes, duration_mins, task_type"
             )
             .eq("user_id", user_id)
             .gte("scheduled_date", week_start)
@@ -161,7 +161,6 @@ def list_plan_by_subject(
                 "subject_name": subject_name,
                 "planned_minutes": 0,
                 "task_count": 0,
-                "has_manual_override": False,
             },
         )
         minutes = t.get("planned_minutes") or t.get("duration_mins") or 0
@@ -170,9 +169,6 @@ def list_plan_by_subject(
         except (TypeError, ValueError):
             pass
         bucket["task_count"] += 1
-        meta = t.get("metadata") or {}
-        if isinstance(meta, dict) and meta.get("manual_override"):
-            bucket["has_manual_override"] = True
 
     total_minutes = sum(b["planned_minutes"] for b in buckets.values())
 
@@ -190,11 +186,7 @@ def list_plan_by_subject(
             locked_count += 1
         else:
             preview_count += 1
-        source = (
-            "manual_override"
-            if b["has_manual_override"]
-            else ("exam_intelligence" if is_locked else "weakness_map")
-        )
+        source = "exam_intelligence" if is_locked else "weakness_map"
         weight = round(b["planned_minutes"] / total_minutes, 3) if total_minutes else 0
         items.append({
             "subject_id": sid,

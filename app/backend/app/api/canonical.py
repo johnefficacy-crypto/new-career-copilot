@@ -1944,10 +1944,13 @@ from app.api.study_os import weekly_review_read as weekly_review  # noqa: E402
 @router_metadata.get("/certifications")
 async def metadata_certifications():
     sb = get_supabase_admin()
-    rows = _safe(lambda: sb.table("certifications").select("id,name,issuer,aliases,exam_families,sectors,qualification_levels,certification_type,is_active").eq("is_active", True).execute().data, default=None)
-    if rows is None:
-        rows = _safe(lambda: sb.table("certifications").select("id,name,issuer").execute().data, default=[]) or []
-    return {"items": rows}
+    rows = _safe(lambda: sb.table("certifications").select("id,name,issuing_body,aliases,exam_families,sectors,qualification_levels,certification_type,is_active").eq("is_active", True).execute().data, default=[]) or []
+    shaped = []
+    for r in rows:
+        row = dict(r)
+        row["issuer"] = row.get("issuing_body")
+        shaped.append(row)
+    return {"items": shaped}
 
 
 # ─── Aggregate router ───────────────────────────────────────────────────────
