@@ -51,16 +51,21 @@ function MiniSparkline({ series }) {
   if (!series || series.length === 0) {
     return <div className="text-xs text-clay-500">No data yet.</div>;
   }
-  const values = series.map((p) => Number(p.total_study_minutes || 0));
-  const max = Math.max(1, ...values);
+  // Key on each point's date instead of array index so React keeps bar
+  // heights aligned when a new day rolls in and the series shifts.
+  const points = series.map((p, i) => ({
+    key: p?.date ? String(p.date) : `pt-${i}`,
+    value: Number(p?.total_study_minutes || 0),
+  }));
+  const max = Math.max(1, ...points.map((p) => p.value));
   return (
     <div className="flex items-end gap-[3px] h-12">
-      {values.map((v, i) => (
+      {points.map((p) => (
         <div
-          key={i}
+          key={p.key}
           aria-hidden="true"
           className="w-2 rounded-sm bg-clay-400/70"
-          style={{ height: `${Math.max(2, (v / max) * 48)}px` }}
+          style={{ height: `${Math.max(2, (p.value / max) * 48)}px` }}
         />
       ))}
     </div>

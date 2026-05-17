@@ -33,10 +33,30 @@ export default function TopicRow({ topic, defaultOpen = false }) {
   const [evidence, setEvidence] = useState(null);
   const [evidenceError, setEvidenceError] = useState(false);
   const [loadingEvidence, setLoadingEvidence] = useState(false);
+  const evidenceRef = React.useRef(null);
   const t = topic || {};
 
+  function focusEvidence() {
+    const el = evidenceRef.current;
+    if (!el) return;
+    if (typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    if (typeof el.focus === "function") {
+      el.focus({ preventScroll: true });
+    }
+  }
+
   async function loadEvidence() {
-    if (evidence || loadingEvidence) return;
+    // Subsequent clicks (after evidence is loaded) used to silently no-op.
+    // Now they scroll the rendered block into view and focus it so
+    // keyboard / screen-reader users get visible feedback that the action
+    // succeeded.
+    if (evidence) {
+      focusEvidence();
+      return;
+    }
+    if (loadingEvidence) return;
     setLoadingEvidence(true);
     setEvidenceError(false);
     try {
@@ -179,11 +199,19 @@ export default function TopicRow({ topic, defaultOpen = false }) {
           </div>
 
           {evidence && evidence.row ? (
-            <pre className="mt-3 max-h-40 overflow-auto rounded-lg bg-clay-50 p-2.5 text-[11px] num-mono text-clay-800">
+            <pre
+              ref={evidenceRef}
+              tabIndex={-1}
+              className="mt-3 max-h-40 overflow-auto rounded-lg bg-clay-50 p-2.5 text-[11px] num-mono text-clay-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-clay-900"
+            >
               {JSON.stringify(evidence.row, null, 2)}
             </pre>
           ) : evidence && !evidence.row ? (
-            <p className="mt-3 text-[11.5px] text-clay-700">
+            <p
+              ref={evidenceRef}
+              tabIndex={-1}
+              className="mt-3 text-[11.5px] text-clay-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-clay-900 rounded"
+            >
               Detailed source row is admin-only. Trust status above is server-confirmed.
             </p>
           ) : loadingEvidence ? (

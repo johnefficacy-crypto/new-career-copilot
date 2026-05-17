@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getApiErrorMessage } from "../../lib/api";
 
 const EMPTY_FORM = {
@@ -27,7 +27,7 @@ export default function AdminBlogs() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     const params = new URLSearchParams();
     if (query) params.set("q", query);
     if (statusFilter) params.set("status", statusFilter);
@@ -35,8 +35,8 @@ export default function AdminBlogs() {
     if (missingCta) params.set("missing_cta", "true");
     const d = await api.get(`/api/admin/blogs?${params.toString()}`);
     setItems(d.items || []);
-  }
-  useEffect(() => { load().catch((e) => setError(getApiErrorMessage(e))); }, []);
+  }, [query, statusFilter, missingSeo, missingCta]);
+  useEffect(() => { load().catch((e) => setError(getApiErrorMessage(e))); }, [load]);
 
   const statusCounts = useMemo(() => items.reduce((acc, x) => {
     acc[x.status] = (acc[x.status] || 0) + 1; return acc;
