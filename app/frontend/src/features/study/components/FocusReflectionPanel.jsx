@@ -171,8 +171,8 @@ export default function FocusReflectionPanel({ session, onDismiss, onSave, bare 
             <div className="text-[11px] uppercase tracking-widest text-muted-foreground mb-1.5">
               Distractions
             </div>
-            <div className="flex gap-1.5" role="group" aria-label="Distraction count">
-              {[0, 1, 2, 3, 4, 5].map((n) => (
+            <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label="Distraction count">
+              {[0, 1, 2, 3, 4].map((n) => (
                 <button
                   key={n}
                   type="button"
@@ -185,9 +185,31 @@ export default function FocusReflectionPanel({ session, onDismiss, onSave, bare 
                       : "bg-white/70 text-foreground/80 border-border hover:bg-clay-50"
                   }`}
                 >
-                  {n === 5 ? "5+" : n}
+                  {n}
                 </button>
               ))}
+              {/* Free-form input for 5+: keeps an exact count instead of
+                  silently clamping at 5 the way the prior preset did. */}
+              <label className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span className="sr-only">5 or more — enter exact count</span>
+                <span aria-hidden="true">5+</span>
+                <input
+                  type="number"
+                  min="5"
+                  step="1"
+                  inputMode="numeric"
+                  value={distractions >= 5 ? distractions : ""}
+                  placeholder="N"
+                  aria-label="5 or more distractions — enter exact count"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === "") return setDistractions(4);
+                    const n = Number(v);
+                    if (Number.isFinite(n) && n >= 5) setDistractions(n);
+                  }}
+                  className="w-14 h-8 rounded-full border border-border bg-white/70 px-2 text-xs text-foreground/80 focus-visible:ring-2 focus-visible:ring-clay-900"
+                />
+              </label>
             </div>
           </div>
 

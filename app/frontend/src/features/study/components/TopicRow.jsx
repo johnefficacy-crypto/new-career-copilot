@@ -199,13 +199,11 @@ export default function TopicRow({ topic, defaultOpen = false }) {
           </div>
 
           {evidence && evidence.row ? (
-            <pre
-              ref={evidenceRef}
-              tabIndex={-1}
-              className="mt-3 max-h-40 overflow-auto rounded-lg bg-clay-50 p-2.5 text-[11px] num-mono text-clay-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-clay-900"
-            >
-              {JSON.stringify(evidence.row, null, 2)}
-            </pre>
+            <EvidenceFacts
+              row={evidence.row}
+              showRaw={typeof window !== "undefined" && window.location?.search?.includes("debug=1")}
+              evidenceRef={evidenceRef}
+            />
           ) : evidence && !evidence.row ? (
             <p
               ref={evidenceRef}
@@ -235,6 +233,64 @@ export default function TopicRow({ topic, defaultOpen = false }) {
         </div>
       ) : null}
     </li>
+  );
+}
+
+// Renders the admin evidence row as structured key/value pairs, with the
+// raw JSON tucked behind a `?debug=1` URL flag. The previous unstyled
+// <pre> dumped the entire row to whatever caller could see it, bypassing
+// the calibrated trust language elsewhere on the page.
+const EVIDENCE_LABEL = {
+  exam_priority_score: "Exam priority",
+  confidence_score: "Confidence",
+  is_high_yield: "High yield",
+  reviewer_status: "Reviewer status",
+  evidence_count: "Evidence count",
+  reviewed_at: "Reviewed at",
+  reviewed_by: "Reviewed by",
+  notes: "Notes",
+};
+
+function fmtEvidenceValue(key, value) {
+  if (value == null || value === "") return "—";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (key === "exam_priority_score" || key === "confidence_score") {
+    const n = Number(value);
+    if (Number.isFinite(n)) return `${Math.round(n * 100)}%`;
+  }
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function EvidenceFacts({ row, showRaw, evidenceRef }) {
+  const entries = Object.entries(row || {})
+    .filter(([k]) => k !== "id" && k !== "created_at" && k !== "updated_at");
+  return (
+    <div
+      ref={evidenceRef}
+      tabIndex={-1}
+      className="mt-3 rounded-lg bg-clay-50 p-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-clay-900"
+      data-testid="topic-row-evidence"
+    >
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11.5px]">
+        {entries.map(([k, v]) => (
+          <React.Fragment key={k}>
+            <dt className="text-clay-700">{EVIDENCE_LABEL[k] || k.replaceAll("_", " ")}</dt>
+            <dd className="text-clay-900 num-mono">{fmtEvidenceValue(k, v)}</dd>
+          </React.Fragment>
+        ))}
+      </dl>
+      {showRaw ? (
+        <details className="mt-3">
+          <summary className="text-[10px] uppercase tracking-wider text-clay-700 cursor-pointer">
+            Raw row (debug)
+          </summary>
+          <pre className="mt-1 max-h-40 overflow-auto text-[10px] num-mono text-clay-800">
+            {JSON.stringify(row, null, 2)}
+          </pre>
+        </details>
+      ) : null}
+    </div>
   );
 }
 
