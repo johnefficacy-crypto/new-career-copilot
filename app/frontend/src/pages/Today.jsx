@@ -23,6 +23,7 @@ import { useAuth } from "../lib/authContext";
 import { Eyebrow, Pill, StatusDot, StudyCard, TrustStamp } from "../shared/ui/studyos";
 import { mergeMissionControl } from "./today/mergeMissionControl";
 import useApiAction from "../lib/hooks/useApiAction";
+import EligibleExamsCard from "../features/exam-eligibility/EligibleExamsCard";
 
 const EMPTY_MC = {
   user_context: { dimensions: {}, scores: {}, safe_user_explanation: [] },
@@ -251,6 +252,7 @@ export default function Today() {
             </ul>
           </div>
         </StudyCard>
+        <EligibleExamsCard variant="card" />
         <PersonaQuestionCard />
       </div>
     );
@@ -344,6 +346,9 @@ export default function Today() {
         profileCompletion={dash.profileCompletion}
         take={3}
       />
+
+      {/* 3. Exam eligibility — baseline rules per exam against the saved profile */}
+      <EligibleExamsCard variant="card" />
 
       {/* 3. Progress summary (metrics row) */}
       <section
