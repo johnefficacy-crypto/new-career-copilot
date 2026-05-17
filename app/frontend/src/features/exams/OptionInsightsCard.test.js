@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 jest.mock("../../lib/api", () => {
   const get = jest.fn();
@@ -85,4 +85,96 @@ test("surfaces error state when api rejects", async () => {
   render(<OptionInsightsCard examSlug="upsc-cse" />);
   await waitFor(() => screen.getByTestId("option-insights-error"));
   expect(screen.getByText(/Couldn't load trap-awareness tips/i)).toBeTruthy();
+});
+
+test("topic filter only renders when topics prop provided and uncontrolled", async () => {
+  api.get.mockResolvedValue({
+    has_data: false,
+    recurring_distractors: [],
+    elimination_tips: [],
+  });
+  // No topics → no picker.
+  const { rerender } = render(<OptionInsightsCard examSlug="upsc-cse" />);
+  await waitFor(() => screen.getByTestId("option-insights-card"));
+  expect(screen.queryByTestId("option-insights-topic-filter")).toBeNull();
+
+  // Topics array supplied → picker renders.
+  rerender(
+    <OptionInsightsCard
+      examSlug="upsc-cse"
+      topics={[
+        { topic_id: "t1", topic_name: "Polity" },
+        { topic_id: "t2", topic_name: "Geography" },
+      ]}
+    />
+  );
+  await waitFor(() => screen.getByTestId("option-insights-topic-filter"));
+  expect(screen.getByText("All topics")).toBeTruthy();
+
+  // Externally controlled topicId → picker hidden so the parent owns it.
+  rerender(
+    <OptionInsightsCard
+      examSlug="upsc-cse"
+      topicId="t1"
+      topics={[
+        { topic_id: "t1", topic_name: "Polity" },
+        { topic_id: "t2", topic_name: "Geography" },
+      ]}
+    />
+  );
+  expect(screen.queryByTestId("option-insights-topic-filter")).toBeNull();
+});
+
+test("selecting a topic refetches with the new topic_id", async () => {
+  api.get.mockResolvedValue({
+    has_data: false,
+    recurring_distractors: [],
+    elimination_tips: [],
+  });
+  render(
+    <OptionInsightsCard
+      examSlug="upsc-cse"
+      topics={[
+        { topic_id: "t1", topic_name: "Polity" },
+        { topic_id: "t2", topic_name: "Geography" },
+      ]}
+    />
+  );
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith(
+      "/api/exam-intelligence/exams/upsc-cse/option-insights"
+    )
+  );
+  fireEvent.change(screen.getByTestId("option-insights-topic-filter"), {
+    target: { value: "t2" },
+  });
+  await waitFor(() =>
+    expect(api.get).toHaveBeenLastCalledWith(
+      "/api/exam-intelligence/exams/upsc-cse/option-insights?topic_id=t2"
+    )
+  );
+});
+
+test("topics list is deduped and sorted alphabetically", async () => {
+  api.get.mockResolvedValue({
+    has_data: false,
+    recurring_distractors: [],
+    elimination_tips: [],
+  });
+  render(
+    <OptionInsightsCard
+      examSlug="upsc-cse"
+      topics={[
+        { topic_id: "t-b", topic_name: "Banking" },
+        { topic_id: "t-a", topic_name: "Algebra" },
+        { topic_id: "t-b", topic_name: "Banking (dup)" },
+      ]}
+    />
+  );
+  await waitFor(() => screen.getByTestId("option-insights-topic-filter"));
+  const select = screen.getByTestId("option-insights-topic-filter");
+  const optionTexts = Array.from(select.querySelectorAll("option")).map(
+    (o) => o.textContent
+  );
+  expect(optionTexts).toEqual(["All topics", "Algebra", "Banking"]);
 });
