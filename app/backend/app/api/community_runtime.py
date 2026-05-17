@@ -46,9 +46,17 @@ def _resolve_channel_id(sb, channel_ref: str) -> str | None:
     """Resolve channel route param to canonical UUID id.
 
     Supports both UUID ids and slug-based ids used by seeded/demo data.
+    Non-UUID refs are looked up against the `id` column first (covers
+    seed/demo data whose id is itself slug-shaped) and then against the
+    `slug` column (real production data with a UUID id + separate slug).
     """
     if _is_uuid(channel_ref):
         return channel_ref
+    row = _safe(
+        lambda: _first(sb.table("community_channels").select("id").eq("id", channel_ref))
+    )
+    if row:
+        return row.get("id")
     row = _first(sb.table("community_channels").select("id").eq("slug", channel_ref))
     return row.get("id") if row else None
 
