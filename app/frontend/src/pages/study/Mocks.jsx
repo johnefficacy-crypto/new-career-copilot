@@ -779,6 +779,11 @@ function LogMockModal({ form, setForm, onClose, onSubmit, formError, examSlugs }
     Array.isArray(examSlugs) && examSlugs.length ? examSlugs : EXAM_SLUG_FALLBACK;
   const dialogRef = React.useRef(null);
   const firstFieldRef = React.useRef(null);
+  const onCloseRef = React.useRef(onClose);
+
+  React.useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   // Escape-to-close, autofocus on first field, and a basic focus trap that
   // keeps Tab cycling within the dialog. Closes the "keyboard users are
@@ -788,7 +793,7 @@ function LogMockModal({ form, setForm, onClose, onSubmit, formError, examSlugs }
     function onKey(e) {
       if (e.key === "Escape") {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current?.();
         return;
       }
       if (e.key !== "Tab") return;
@@ -810,7 +815,7 @@ function LogMockModal({ form, setForm, onClose, onSubmit, formError, examSlugs }
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, []);
 
   return (
     <div
