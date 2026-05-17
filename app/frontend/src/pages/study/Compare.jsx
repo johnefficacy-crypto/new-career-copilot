@@ -255,9 +255,15 @@ export default function StudyCompare() {
           title="Weekly behavior board"
           sub="Opt-in. Tier 1 (system-verified) only. Never mixed with self-reported mock scores."
           right={
-            <Pill tone={settings?.public_leaderboard_enabled ? "green" : "stone"}>
-              {settings?.public_leaderboard_enabled ? "You are listed" : "Private (opt-in)"}
-            </Pill>
+            settings === null ? (
+              <span className="num-mono text-[11px] text-clay-700">—</span>
+            ) : (
+              <Pill tone={settings?.public_leaderboard_enabled ? "sage" : "outline"}>
+                {settings?.public_leaderboard_enabled
+                  ? "You are listed"
+                  : "Private (opt-in)"}
+              </Pill>
+            )
           }
         />
         {leaderboard?.entries?.length ? (

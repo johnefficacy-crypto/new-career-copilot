@@ -454,6 +454,16 @@ function UserCorrectionChecklist({ data }) {
 // ── Backlog movement chart ───────────────────────────────────────────────
 function BacklogMovementChart({ start, end }) {
   const hasData = start !== null && end !== null;
+  // Autoscale: previously hardcoded Y-axis at 0..3 (×30 = 0..90); any
+  // backlog ≥ 4 caused bars to overflow the SVG frame. We compute a
+  // max-of-(start, end, 3) and split it into 4 grid divisions, scaling
+  // bar geometry off that so the chart renders cleanly at any size.
+  const yMax = hasData ? Math.max(start, end, 3) : 3;
+  const tickStep = yMax / 4;
+  const scale = 120 / yMax; // 120 = 140 (chart bottom) - 20 (chart top inset)
+  const yFor = (value) => 140 - value * scale;
+  const heightFor = (value) =>
+    Math.max(0, Math.min(120, value * scale));
   return (
     <StudyCard>
       <SectionHeader
@@ -469,22 +479,31 @@ function BacklogMovementChart({ start, end }) {
           role="img"
           aria-label="Backlog movement chart"
         >
-          {[0, 1, 2, 3].map((y) => (
-            <g key={y}>
-              <line x1="40" y1={140 - y * 30} x2="700" y2={140 - y * 30} stroke="#EFE7D4" />
-              <text
-                x="32"
-                y={140 - y * 30}
-                textAnchor="end"
-                dominantBaseline="central"
-                fontFamily="'JetBrains Mono', monospace"
-                fontSize="10"
-                fill="#6C5038"
-              >
-                {y}
-              </text>
-            </g>
-          ))}
+          {[0, 1, 2, 3, 4].map((step) => {
+            const value = Math.round(step * tickStep * 10) / 10;
+            return (
+              <g key={step}>
+                <line
+                  x1="40"
+                  y1={yFor(value)}
+                  x2="700"
+                  y2={yFor(value)}
+                  stroke="#EFE7D4"
+                />
+                <text
+                  x="32"
+                  y={yFor(value)}
+                  textAnchor="end"
+                  dominantBaseline="central"
+                  fontFamily="'JetBrains Mono', monospace"
+                  fontSize="10"
+                  fill="#6C5038"
+                >
+                  {Number.isInteger(value) ? value : value.toFixed(1)}
+                </text>
+              </g>
+            );
+          })}
           {["Start", "End"].map((label, i) => (
             <text
               key={label}
@@ -500,31 +519,31 @@ function BacklogMovementChart({ start, end }) {
           ))}
           <rect
             x={150}
-            y={Math.max(0, 140 - start * 30)}
+            y={yFor(start)}
             width="100"
-            height={Math.min(140, start * 30)}
+            height={heightFor(start)}
             fill="#A68057"
             rx="3"
           />
           <rect
             x={470}
-            y={Math.max(0, 140 - end * 30)}
+            y={yFor(end)}
             width="100"
-            height={Math.min(140, end * 30)}
+            height={heightFor(end)}
             fill={end > start ? "#7A3925" : "#54794E"}
             rx="3"
           />
           <line
             x1="40"
-            y1={140 - start * 30}
+            y1={yFor(start)}
             x2="700"
-            y2={140 - start * 30}
+            y2={yFor(start)}
             stroke="#33482F"
             strokeDasharray="4 3"
           />
           <text
             x="704"
-            y={140 - start * 30 - 4}
+            y={yFor(start) - 4}
             fontFamily="'JetBrains Mono', monospace"
             fontSize="10"
             fill="#33482F"

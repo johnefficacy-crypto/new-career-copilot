@@ -694,7 +694,7 @@ function MockScoreTrend({ points }) {
       >
         <line x1="40" y1="20" x2="40" y2="140" stroke="#E7DECB" />
         <line x1="40" y1="140" x2="580" y2="140" stroke="#E7DECB" />
-        {[25, 50, 75, 100].map((y) => (
+        {[0, 25, 50, 75, 100].map((y) => (
           <g key={y}>
             <line
               x1="40"

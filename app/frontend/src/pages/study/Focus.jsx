@@ -33,6 +33,12 @@ export default function Focus() {
   // Holds the just-finished session so the reflection drawer can render.
   const [reflectionSession, setReflectionSession] = useState(null);
   const tickRef = useRef(null);
+  // Wall-clock anchor for the running timer. setInterval throttles in
+  // background tabs and pauses on sleep; deriving `remaining` from
+  // (startedAt + duration*1000) - Date.now() on every tick keeps the
+  // displayed countdown accurate even after the tab loses focus.
+  const startedAtRef = useRef(null);
+  const durationMsRef = useRef(0);
   const { run: runFocusAction } = useApiAction();
 
   useEffect(() => {
@@ -53,18 +59,35 @@ export default function Focus() {
 
   useEffect(() => {
     if (!running) return undefined;
+    // Anchor the wall-clock starting point when the run flips on, then
+    // tick from that anchor instead of decrementing the React state by one
+    // each interval. The interval is just a re-render pump.
+    if (startedAtRef.current == null) {
+      startedAtRef.current = Date.now();
+      durationMsRef.current = remaining * 1000;
+    }
     tickRef.current = setInterval(() => {
-      setRemaining((r) => {
-        if (r <= 1) {
-          clearInterval(tickRef.current);
-          finish(true);
-          return 0;
-        }
-        return r - 1;
-      });
+      const elapsedMs = Date.now() - (startedAtRef.current || Date.now());
+      const remainingMs = Math.max(0, durationMsRef.current - elapsedMs);
+      const nextRemaining = Math.ceil(remainingMs / 1000);
+      if (nextRemaining <= 0) {
+        clearInterval(tickRef.current);
+        setRemaining(0);
+        finish(true);
+        return;
+      }
+      setRemaining(nextRemaining);
     }, 1000);
     return () => clearInterval(tickRef.current);
     // eslint-disable-next-line
+  }, [running]);
+
+  // Clear the anchor whenever the timer stops so the next Start resets it.
+  useEffect(() => {
+    if (!running) {
+      startedAtRef.current = null;
+      durationMsRef.current = 0;
+    }
   }, [running]);
 
   function pickLinkedTask(id) {
