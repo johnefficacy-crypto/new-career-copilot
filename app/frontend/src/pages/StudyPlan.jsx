@@ -473,7 +473,7 @@ export default function StudyPlan() {
       <Drawer
         open={draftOpen}
         onClose={() => setDraftOpen(false)}
-        title="Preview regenerated plan"
+        title={`Preview regenerated plan${selectedExam?.name ? ` · ${selectedExam.name}` : ""}`}
         width={520}
       >
         {draftLoading ? (
@@ -494,14 +494,19 @@ export default function StudyPlan() {
             ) : null}
           </div>
         ) : (
-          <DraftDiff draft={draft} onApply={applyDraft} applying={applying} />
+          <DraftDiff
+            draft={draft}
+            onApply={applyDraft}
+            applying={applying}
+            applyDisabled={!selectedExamId || (selectedExam && !selectedExam.planner_ready)}
+          />
         )}
       </Drawer>
     </div>
   );
 }
 
-function DraftDiff({ draft, onApply, applying }) {
+function DraftDiff({ draft, onApply, applying, applyDisabled = false }) {
   const changes = draft.changes || { added: [], removed: [], unchanged_count: 0 };
   const risk = draft.risk_level || "low";
   const before = draft.before_tasks || [];
@@ -579,7 +584,7 @@ function DraftDiff({ draft, onApply, applying }) {
           type="button"
           className="btn btn-primary"
           onClick={onApply}
-          disabled={applying}
+          disabled={applying || applyDisabled}
           data-testid="apply-draft-btn"
         >
           {applying ? "Applying…" : "Apply"}
