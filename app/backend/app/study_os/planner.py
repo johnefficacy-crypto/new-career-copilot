@@ -545,11 +545,10 @@ def _persist(
                     {
                         "user_id": user_id,
                         "status": "active",
-                        "theme": f"{exam.get('name') or 'Exam'} adaptive plan",
-                        "target": "Cover locked high-yield topics",
-                        "start_date": today,
+                                                "start_date": today,
                         "exam_id": exam_id,
                         "active_phase_id": plan_phase_id,
+                        "metadata": {"theme": f"{exam.get('name') or 'Exam'} adaptive plan", "target": "Cover locked high-yield topics"},
                         "generation_context": input_context,
                         "updated_at": _now_iso(),
                     }
