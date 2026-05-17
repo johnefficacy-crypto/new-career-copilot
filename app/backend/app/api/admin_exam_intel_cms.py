@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field
 from app.core.auth import require_permission
 from app.core.config import get_settings
 from app.db.supabase_client import get_supabase_admin
+from app.exam_intelligence.option_normalize import option_hash, question_hash
 
 logger = logging.getLogger("career_copilot.api.admin_exam_intel_cms")
 
@@ -666,6 +667,10 @@ def create_pyq_question(
     if row.get("question_type") and row["question_type"] not in _QUESTION_TYPES:
         raise HTTPException(status_code=422, detail=f"question_type must be one of {_QUESTION_TYPES}")
     row["reviewer_status"] = "pending"
+    if not row.get("normalized_question_hash"):
+        q_hash = question_hash(row.get("question_text"))
+        if q_hash:
+            row["normalized_question_hash"] = q_hash
     inserted = supabase.table("pyq_questions").insert(row).execute().data or []
     new_q = inserted[0] if inserted else row
     question_id = new_q.get("id")
@@ -680,6 +685,10 @@ def create_pyq_question(
             cleaned = {k: v for k, v in opt.items() if k in _OPTION_FIELDS}
             cleaned["question_id"] = question_id
             if cleaned.get("option_label") and cleaned.get("option_text"):
+                if not cleaned.get("normalized_option_hash"):
+                    o_hash = option_hash(cleaned.get("option_text"))
+                    if o_hash:
+                        cleaned["normalized_option_hash"] = o_hash
                 opt_rows.append(cleaned)
         if opt_rows:
             try:
@@ -720,6 +729,10 @@ def create_pyq_option(
     if not _safe_select(supabase, "pyq_questions", id=question_id):
         raise HTTPException(status_code=422, detail="question_id does not resolve")
     row["question_id"] = question_id
+    if not row.get("normalized_option_hash"):
+        o_hash = option_hash(row.get("option_text"))
+        if o_hash:
+            row["normalized_option_hash"] = o_hash
     inserted = supabase.table("pyq_options").insert(row).execute().data or []
     new = inserted[0] if inserted else row
     audit_id = _audit(
