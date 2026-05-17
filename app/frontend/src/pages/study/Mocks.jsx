@@ -720,9 +720,17 @@ function MockScoreTrend({ points }) {
         {polyline ? (
           <polyline points={polyline} fill="none" stroke="#54794E" strokeWidth="2" />
         ) : null}
-        {data.map((p, i) =>
-          p.percentage != null ? (
+        {data.map((p, i) => {
+          if (p.percentage == null) return null;
+          const fullName = p.name || `Mock ${i + 1}`;
+          const shortName =
+            fullName.length > 8 ? `${fullName.slice(0, 7)}…` : fullName;
+          return (
             <g key={p.id || i}>
+              {/* SVG <title> exposes the full name to hover + assistive
+                  tech, so truncation to 8 chars no longer hides the
+                  identity of the mock. */}
+              <title>{`${fullName} · ${Math.round(p.percentage)}%`}</title>
               <circle cx={xy(i, p.percentage)[0]} cy={xy(i, p.percentage)[1]} r="4" fill="#54794E" />
               <text
                 x={xy(i, p.percentage)[0]}
@@ -742,11 +750,11 @@ function MockScoreTrend({ points }) {
                 fontSize="10"
                 fill="#6C5038"
               >
-                {(p.name || "").slice(0, 6) || `M${i + 1}`}
+                {shortName}
               </text>
             </g>
-          ) : null,
-        )}
+          );
+        })}
       </svg>
     </StudyCard>
   );

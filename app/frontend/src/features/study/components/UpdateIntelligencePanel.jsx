@@ -33,7 +33,7 @@ const SAMPLE_UNVERIFIED = [
     summary:
       "Items from aggregator sites are surfaced for awareness only. They never silently rewrite your plan.",
     source: "(static example)",
-    kind: "aggregator",
+    source_type: "aggregator",
     tag: "Date rumor",
     effect: "No plan change",
   },
@@ -43,7 +43,7 @@ const SAMPLE_UNVERIFIED = [
     summary:
       "Research and trend analysis is shown as a hint, not as an official communication.",
     source: "(static example)",
-    kind: "research",
+    source_type: "research",
     tag: "Trend",
     effect: "Hint only",
   },
@@ -53,23 +53,28 @@ const SAMPLE_UNVERIFIED = [
     summary:
       "When you become eligible for an adjacent recruitment, it surfaces here — not in your main plan.",
     source: "(static example)",
-    kind: "opportunity",
+    source_type: "opportunity",
     tag: "Opportunity",
     effect: "Affects eligibility",
   },
 ];
 
+// Canonical contract is snake_case (matches the FastAPI backend default for
+// every other Study OS endpoint). The component renders camelCase
+// internally; this adapter is the only place that crosses the wire. The
+// SAMPLE_* preview cards are camelCase legacy and continue to work because
+// the adapter falls back when the snake_case key is absent.
 function normalizeUpdate(u) {
   return {
     id: u.id,
     title: u.title || "Update",
     summary: u.summary || "",
     source: u.source || "",
-    sourceUrl: u.source_url || u.sourceUrl,
+    sourceUrl: u.source_url ?? u.sourceUrl ?? null,
     tag: u.tag || "",
     effect: u.effect || "",
-    receivedAt: u.received_at || u.receivedAt || "",
-    kind: u.kind || u.sourceType || "official",
+    receivedAt: u.received_at ?? u.receivedAt ?? "",
+    kind: u.source_type ?? u.kind ?? "official",
   };
 }
 

@@ -64,13 +64,11 @@ export default function CycleSubjectProgress({ subjects }) {
                   <Pill tone="amber">behind</Pill>
                 )}
                 <TrustStamp
-                  kind={
-                    notPlanned
-                      ? "preview"
-                      : s.trust_status === "locked"
-                        ? "locked"
-                        : "preview"
-                  }
+                  // Pass the backend status through; the TrustStamp map
+                  // already handles "locked" / "needs" / "verified" /
+                  // "preview" / "notcon". Coercing every non-locked status
+                  // to "preview" mislabelled "needs verification" rows.
+                  kind={notPlanned ? "preview" : s.trust_status || "preview"}
                 />
               </div>
             </li>
