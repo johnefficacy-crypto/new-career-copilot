@@ -25,6 +25,8 @@ import AdminModerationQueue from "../pages/admin/ModerationQueue";
 import AdminKPIs from "../pages/admin/KPIs";
 import AdminCopyright from "../pages/admin/Copyright";
 import AdminBlogs from "../pages/admin/Blogs";
+import AdminUserStudyInspector from "../pages/admin/studyos/UserStudyInspector";
+import AdminStudyOsPlanOps from "../pages/admin/studyos/PlanOps";
 
 export const adminRouteElements = (
   <Route element={<ProtectedRoute role={ADMIN_ROLES} requireBackend><AdminShell /></ProtectedRoute>}>
@@ -51,5 +53,7 @@ export const adminRouteElements = (
     <Route path="/admin/kpis" element={<AdminKPIs />} />
     <Route path="/admin/copyright" element={<AdminCopyright />} />
     <Route path="/admin/blogs" element={<AdminBlogs />} />
+    <Route path="/admin/study-os" element={<AdminUserStudyInspector />} />
+    <Route path="/admin/study-os/plan-ops" element={<AdminStudyOsPlanOps />} />
   </Route>
 );
