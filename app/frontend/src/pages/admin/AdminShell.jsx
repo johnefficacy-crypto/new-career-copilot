@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
-  Bell, Bot, Copyright as CopyrightIcon, CreditCard, Database, ExternalLink,
-  FileSearch, Flag, GaugeCircle, GraduationCap, LayoutGrid, LineChart,
+  Award, Bell, Bot, Copyright as CopyrightIcon, CreditCard, Database, ExternalLink,
+  FileSearch, Files, Flag, GaugeCircle, GraduationCap, LayoutGrid, LineChart,
   NotebookPen,
   ListChecks, LogOut, Menu, MessagesSquare, Radar, ScrollText, ShieldCheck,
   ShoppingBag, Sparkles, UserSearch, Users2, Wrench, X,
@@ -43,6 +43,9 @@ const BUSINESS_NAV = [
 const STUDY_OS_NAV = [
   { to: "/admin/study-os", label: "User Study Inspector", icon: UserSearch, end: true, testId: "admin-nav-studyos-inspector" },
   { to: "/admin/study-os/plan-ops", label: "Plan Ops", icon: Wrench, testId: "admin-nav-studyos-planops" },
+  { to: "/admin/study-os/artifacts", label: "Artifact Admin", icon: Files, testId: "admin-nav-studyos-artifacts" },
+  { to: "/admin/study-os/mocks", label: "Mock Trust", icon: Award, testId: "admin-nav-studyos-mocks" },
+  { to: "/admin/study-os/reports", label: "Report Jobs", icon: NotebookPen, testId: "admin-nav-studyos-reports" },
 ];
 
 const SECTIONS = [

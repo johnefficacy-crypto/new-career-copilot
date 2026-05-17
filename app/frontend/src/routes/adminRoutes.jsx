@@ -27,6 +27,9 @@ import AdminCopyright from "../pages/admin/Copyright";
 import AdminBlogs from "../pages/admin/Blogs";
 import AdminUserStudyInspector from "../pages/admin/studyos/UserStudyInspector";
 import AdminStudyOsPlanOps from "../pages/admin/studyos/PlanOps";
+import AdminStudyOsArtifacts from "../pages/admin/studyos/Artifacts";
+import AdminStudyOsMockTrust from "../pages/admin/studyos/MockTrust";
+import AdminStudyOsReports from "../pages/admin/studyos/Reports";
 
 export const adminRouteElements = (
   <Route element={<ProtectedRoute role={ADMIN_ROLES} requireBackend><AdminShell /></ProtectedRoute>}>
@@ -55,5 +58,8 @@ export const adminRouteElements = (
     <Route path="/admin/blogs" element={<AdminBlogs />} />
     <Route path="/admin/study-os" element={<AdminUserStudyInspector />} />
     <Route path="/admin/study-os/plan-ops" element={<AdminStudyOsPlanOps />} />
+    <Route path="/admin/study-os/artifacts" element={<AdminStudyOsArtifacts />} />
+    <Route path="/admin/study-os/mocks" element={<AdminStudyOsMockTrust />} />
+    <Route path="/admin/study-os/reports" element={<AdminStudyOsReports />} />
   </Route>
 );
