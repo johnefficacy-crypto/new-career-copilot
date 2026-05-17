@@ -64,6 +64,7 @@ from app.api.exam_intelligence import router as exam_intelligence_router
 from app.api.canonical import router as canonical_router
 from app.api.community_runtime import router as community_runtime_router
 from app.api.eligibility import router as eligibility_router
+from app.api.exam_eligibility import router as exam_eligibility_router
 from app.api.marketplace import router as marketplace_router
 from app.api.admin_marketplace import router as admin_marketplace_router
 from app.api.notifications import router as notifications_router
@@ -206,6 +207,7 @@ async def db_health() -> DbHealth:
 
 api.include_router(auth_router)
 api.include_router(eligibility_router)
+api.include_router(exam_eligibility_router)  # PR-D1 exam-level baseline eligibility
 api.include_router(notifications_router)
 api.include_router(admin_scrape_router)  # admin scraper trust-gate routes
 api.include_router(admin_conflicts_router)  # consensus conflict resolution
