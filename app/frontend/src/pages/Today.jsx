@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import PersonaQuestionCard from "../features/persona-questions/PersonaQuestionCard";
 import StudyMetricCard from "../features/study/components/StudyMetricCard";
@@ -15,6 +16,10 @@ import PlanReasoningCard from "../features/study/components/PlanReasoningCard";
 import ExamContextCard from "../features/study/components/ExamContextCard";
 import CompetitionContextCard from "../features/study/components/CompetitionContextCard";
 import PlanPreferencesCard from "../features/study/components/PlanPreferencesCard";
+import TodaysActions, { buildTodayActions } from "../features/dashboard/components/TodaysActions";
+import useDashboardData from "../features/dashboard/hooks/useDashboardData";
+import { rankRecruitments } from "../lib/recruitmentRanking";
+import { useAuth } from "../lib/authContext";
 import { Eyebrow, Pill, StatusDot, StudyCard, TrustStamp } from "../shared/ui/studyos";
 import { mergeMissionControl } from "./today/mergeMissionControl";
 import useApiAction from "../lib/hooks/useApiAction";
@@ -52,7 +57,24 @@ function formatPercent(v) {
   return `${Math.round(Number(v) * 100)}%`;
 }
 
+function Drawer({ title, defaultOpen = false, testId, children }) {
+  return (
+    <details
+      className="soft-card rounded-2xl px-5 py-3"
+      data-testid={testId}
+      open={defaultOpen || undefined}
+    >
+      <summary className="cursor-pointer select-none text-[12px] uppercase tracking-[0.18em] text-clay-700 font-semibold">
+        {title}
+      </summary>
+      <div className="pt-4">{children}</div>
+    </details>
+  );
+}
+
 export default function Today() {
+  const auth = useAuth();
+  const dash = useDashboardData();
   const [mc, setMc] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -63,6 +85,35 @@ export default function Today() {
   // mission control is refetched.
   const [reloadKey, setReloadKey] = useState(0);
   const { run: runToggle } = useApiAction();
+
+  // Home-style "Today's top actions" — reused from the deprecated Dashboard
+  // page. Same useDashboardData hook + ranking, so no new API calls beyond
+  // what Dashboard already issued. Computed up here to keep hook ordering
+  // stable across the loading / fallback / full render paths.
+  const dashApps = useMemo(() => dash.apps || [], [dash.apps]);
+  const appByRecruitmentId = useMemo(
+    () => Object.fromEntries(dashApps.map((a) => [a.recruitment_id, a])),
+    [dashApps],
+  );
+  const dashBacklogHigh =
+    (dash.review?.backlog_count || 0) > 3 || (dash.review?.missed_tasks || 0) > 3;
+  const rankedFallbackMatches = useMemo(
+    () =>
+      rankRecruitments(dash.recruitments?.items || [], auth.user, {
+        appByRecruitmentId,
+        backlogHigh: dashBacklogHigh,
+        studyHoursWeek: dash.focus?.total_hours_7d || 0,
+      }),
+    [dash.recruitments, auth.user, appByRecruitmentId, dashBacklogHigh, dash.focus],
+  );
+  const dashTopMatches = (
+    dash.recommendationsAvailable ? dash.recommendations?.items || [] : rankedFallbackMatches
+  ).slice(0, 6);
+  const dashInProgressForms = dashApps.filter((a) => a.status === "in_progress").length;
+  const dashPendingDocs = dashApps.reduce(
+    (n, a) => n + (Array.isArray(a.documents_pending) ? a.documents_pending.length : 0),
+    0,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -233,6 +284,15 @@ export default function Today() {
   const done = tasks.filter((t) => t.done || t.status === "completed").length;
   const pct = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
 
+  const todayActions = buildTodayActions({
+    topMatches: dashTopMatches,
+    pendingDocs: dashPendingDocs,
+    inProgressForms: dashInProgressForms,
+    backlogHigh: dashBacklogHigh,
+    profileCompletion: dash.profileCompletion,
+  });
+  const heroAction = todayActions[0];
+
   return (
     <div className="space-y-6" data-testid="today-page">
       {error ? (
@@ -241,75 +301,51 @@ export default function Today() {
         </div>
       ) : null}
 
-      {/* Header */}
-      <header className="flex items-end justify-between gap-6 flex-wrap">
-        <div>
-          <Eyebrow>
-            Today{meta.generated_at ? ` · ${meta.generated_at}` : ""}
-          </Eyebrow>
-          <h1 className="font-heading text-[40px] leading-[1.05] mt-2 max-w-[22ch]">
-            Your plan, adapted from your recent progress.
-          </h1>
-          <p className="text-[15px] text-clay-700 mt-2 max-w-[64ch]">
-            {tasks.length} task{tasks.length === 1 ? "" : "s"} today. Tap a task to see why
-            it's there.
-          </p>
-        </div>
-        <div className="text-right shrink-0">
-          <Eyebrow>Status</Eyebrow>
-          <div className="font-heading text-[20px] mt-1">
-            {examContext?.exam || plan?.target || "Study OS"}
-          </div>
-          <div className="mt-2 flex justify-end">
-            <StatusDot state="live" label="Live" />
-          </div>
-        </div>
-      </header>
-
-      {/* Active plan */}
-      {plan ? (
-        <StudyCard data-testid="active-plan">
+      {/* ── Above the fold ─────────────────────────────────────────────── */}
+      {/* 1. Hero next action (single primary CTA) */}
+      {heroAction ? (
+        <StudyCard data-testid="hero-next-action">
           <div className="flex items-start justify-between gap-6 flex-wrap">
             <div>
-              <Eyebrow>Active plan</Eyebrow>
-              <h2 className="font-heading text-[22px] mt-1">{plan.theme || "Your study plan"}</h2>
-              {plan.target ? (
-                <p className="text-[13px] text-clay-700 mt-1.5 max-w-[60ch]">{plan.target}</p>
-              ) : null}
-              <div className="mt-3 flex flex-wrap gap-2 items-center">
-                {examContext?.exam ? <Pill tone="ink">{examContext.exam}</Pill> : null}
-                {examContext?.phase ? <Pill tone="sage">{examContext.phase}</Pill> : null}
-                {examContext?.days_remaining != null ? (
-                  <Pill tone="clay">{examContext.days_remaining}d to D-day</Pill>
-                ) : null}
-              </div>
+              <Eyebrow>Next action{meta.generated_at ? ` · ${meta.generated_at}` : ""}</Eyebrow>
+              <h1 className="font-heading text-[28px] leading-[1.1] mt-2">
+                {heroAction.label}
+              </h1>
+              <p className="text-[13px] text-clay-700 mt-1.5">
+                Tap to start. The rest of today's actions are below.
+              </p>
             </div>
-            <div className="text-right shrink-0">
-              {meta.plan_version ? (
-                <div className="num-mono text-[10.5px] text-clay-700">{meta.plan_version}</div>
-              ) : null}
-              <div className="mt-3 flex justify-end">
-                <StatusDot state="live" label="" />
-              </div>
+            <div className="flex items-center gap-3">
+              <Link
+                to={heroAction.to}
+                className="btn btn-primary"
+                data-testid="hero-next-action-cta"
+              >
+                Start now
+              </Link>
+              <Link
+                to="/app/tracker"
+                className="text-[12px] font-semibold link-under text-clay-700"
+                data-testid="hero-view-all-actions"
+              >
+                View all today's actions →
+              </Link>
             </div>
           </div>
         </StudyCard>
-      ) : (
-        <StudyCard data-testid="active-plan-empty">
-          <Eyebrow>Active plan</Eyebrow>
-          <p className="text-sm text-clay-700 mt-2">
-            No active study plan yet. You can set one up from{" "}
-            <a className="text-clay-800 underline underline-offset-2" href="/app/study-plan">
-              Study Plan
-            </a>
-            .
-          </p>
-        </StudyCard>
-      )}
+      ) : null}
 
-      <SafeExplanationCard explanations={safeExplanation} />
+      {/* 2. Today's top 3 actions */}
+      <TodaysActions
+        topMatches={dashTopMatches}
+        pendingDocs={dashPendingDocs}
+        inProgressForms={dashInProgressForms}
+        backlogHigh={dashBacklogHigh}
+        profileCompletion={dash.profileCompletion}
+        take={3}
+      />
 
-      {/* Metrics row */}
+      {/* 3. Progress summary (metrics row) */}
       <section
         className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3"
         data-testid="metrics-row"
@@ -359,15 +395,14 @@ export default function Today() {
         />
       </section>
 
-      {nextBest ? <NextBestActionCard action={nextBest} /> : null}
+      {/* ── Below the fold (all collapsed by default) ──────────────────── */}
 
-      {/* Tasks + reasoning sidebar */}
-      <div className="grid lg:grid-cols-[1fr_360px] gap-6 items-start">
-        <StudyCard padded={false} data-testid="today-tasks">
+      <Drawer title="Today's tasks" testId="drawer-todays-tasks">
+        {nextBest ? <div className="mb-4"><NextBestActionCard action={nextBest} /></div> : null}
+        <StudyCard padded={false}>
           <div className="px-7 pt-6 pb-4 flex items-end justify-between gap-4">
             <div>
-              <Eyebrow>Today's tasks</Eyebrow>
-              <h2 className="font-heading text-[22px] mt-1 leading-tight">
+              <h2 className="font-heading text-[22px] leading-tight">
                 Each task carries its reasoning.
               </h2>
               <p className="text-[12.5px] text-clay-700 mt-1">
@@ -398,51 +433,104 @@ export default function Today() {
             )}
           </div>
         </StudyCard>
-        <div className="space-y-6">
+        <div className="mt-4">
           <PersonaQuestionCard />
-          <PlanReasoningCard reasoning={planReasoning} />
         </div>
-      </div>
+      </Drawer>
 
-      <PlanPreferencesCard onRegenerated={() => setReloadKey((k) => k + 1)} />
-
-      <StudyPolicyPreview policy={policy} />
-
-      <TruthPanelCard panel={truth} />
-
-      <div className="grid lg:grid-cols-2 gap-6">
-        <ExamContextCard examContext={examContext} />
-        <CompetitionContextCard competitionContext={competitionContext} />
-      </div>
-
-      <EngineTrace steps={engine} />
-
-      <IntelligenceLayersPanel />
-
-      <UpdateIntelligencePanel
-        official={updateContext.official_updates}
-        unverified={updateContext.needs_verification}
-        isPreview={false}
-      />
-
-      {/* "Why this recommendation?" drawer: trust policy, source lanes, verified signals */}
-      <details className="pt-2 pb-6" data-testid="why-this-recommendation">
-        <summary className="num-mono text-[10.5px] text-clay-700 cursor-pointer select-none">
-          Why this recommendation?
-        </summary>
-        <div className="mt-3 flex items-center justify-between flex-wrap gap-3">
-          <div className="num-mono text-[10.5px] text-clay-700">
+      <Drawer title="Why this recommendation?" testId="drawer-why">
+        <SafeExplanationCard explanations={safeExplanation} />
+        <div className="mt-4">
+          <EngineTrace steps={engine} />
+        </div>
+        <div className="mt-4 flex items-center justify-between flex-wrap gap-3 num-mono text-[10.5px] text-clay-700">
+          <div>
             Career Copilot · Study OS{meta.plan_version ? ` · ${meta.plan_version}` : ""}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="num-mono text-[10.5px] text-clay-700">Source lanes:</span>
+            <span>Source lanes:</span>
             <TrustStamp kind="official" label="Auto-apply after review" />
             <TrustStamp kind="aggregator" label="Discovery only" />
             <TrustStamp kind="research" label="Hint only" />
             <TrustStamp kind="opportunity" label="Adjacent" />
           </div>
         </div>
-      </details>
+      </Drawer>
+
+      <Drawer title="Progress vs Plan" testId="drawer-progress-vs-plan">
+        <TruthPanelCard panel={truth} />
+      </Drawer>
+
+      <Drawer title="Exam context" testId="drawer-exam-context">
+        {plan ? (
+          <StudyCard data-testid="active-plan">
+            <div className="flex items-start justify-between gap-6 flex-wrap">
+              <div>
+                <Eyebrow>Active plan</Eyebrow>
+                <h2 className="font-heading text-[22px] mt-1">{plan.theme || "Your study plan"}</h2>
+                {plan.target ? (
+                  <p className="text-[13px] text-clay-700 mt-1.5 max-w-[60ch]">{plan.target}</p>
+                ) : null}
+                <div className="mt-3 flex flex-wrap gap-2 items-center">
+                  {examContext?.exam ? <Pill tone="ink">{examContext.exam}</Pill> : null}
+                  {examContext?.phase ? <Pill tone="sage">{examContext.phase}</Pill> : null}
+                  {examContext?.days_remaining != null ? (
+                    <Pill tone="clay">{examContext.days_remaining}d to D-day</Pill>
+                  ) : null}
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                {meta.plan_version ? (
+                  <div className="num-mono text-[10.5px] text-clay-700">{meta.plan_version}</div>
+                ) : null}
+                <div className="mt-3 flex justify-end">
+                  <StatusDot state="live" label="" />
+                </div>
+              </div>
+            </div>
+          </StudyCard>
+        ) : (
+          <StudyCard data-testid="active-plan-empty">
+            <Eyebrow>Active plan</Eyebrow>
+            <p className="text-sm text-clay-700 mt-2">
+              No active study plan yet. You can set one up from{" "}
+              <a className="text-clay-800 underline underline-offset-2" href="/app/study-plan">
+                Study Plan
+              </a>
+              .
+            </p>
+          </StudyCard>
+        )}
+        <div className="mt-4">
+          <ExamContextCard examContext={examContext} />
+        </div>
+      </Drawer>
+
+      <Drawer title="Competition context" testId="drawer-competition-context">
+        <CompetitionContextCard competitionContext={competitionContext} />
+      </Drawer>
+
+      <Drawer title="Intelligence layers" testId="drawer-intelligence-layers">
+        <IntelligenceLayersPanel />
+      </Drawer>
+
+      <Drawer title="Update intelligence" testId="drawer-update-intelligence">
+        <UpdateIntelligencePanel
+          official={updateContext.official_updates}
+          unverified={updateContext.needs_verification}
+          isPreview={false}
+        />
+      </Drawer>
+
+      <Drawer title="Study policy / Plan reasoning" testId="drawer-study-policy">
+        <StudyPolicyPreview policy={policy} />
+        <div className="mt-4">
+          <PlanReasoningCard reasoning={planReasoning} />
+        </div>
+        <div className="mt-4">
+          <PlanPreferencesCard onRegenerated={() => setReloadKey((k) => k + 1)} />
+        </div>
+      </Drawer>
     </div>
   );
 }

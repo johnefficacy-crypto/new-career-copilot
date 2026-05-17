@@ -1,3 +1,4 @@
+// DEPRECATED: superseded by Today.jsx (PR-B). Do not delete — pending follow-up cleanup PR.
 import React, { useMemo } from "react";
 import { Link } from "react-router-dom";
 import {
