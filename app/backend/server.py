@@ -38,6 +38,7 @@ from app.api.admin_copyright import (
     admin_router as admin_copyright_router,
 )
 from app.api.admin_kpis import router as admin_kpis_router
+from app.api.blogs import router as blogs_router, admin_router as admin_blogs_router
 from app.api.admin_moderation import (
     router as moderation_router,
     admin_router as admin_moderation_router,
@@ -215,6 +216,8 @@ api.include_router(reports_router)
 api.include_router(moderation_router)  # /moderation/report, /moderation/my-reports
 api.include_router(admin_moderation_router)  # /admin/moderation/...
 api.include_router(admin_kpis_router)  # /admin/kpis/...
+api.include_router(blogs_router)  # /blogs public list/detail
+api.include_router(admin_blogs_router)  # /admin/blogs CRUD
 api.include_router(copyright_public_router)  # /copyright/submit (public DMCA intake)
 api.include_router(admin_copyright_router)  # /admin/copyright/...
 api.include_router(placeholders_router)
