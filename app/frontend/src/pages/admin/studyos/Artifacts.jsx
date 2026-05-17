@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { RotateCcw, X as XIcon, FileText, Layers, AlertOctagon, CalendarClock } from "lucide-react";
+import { RotateCcw, X as XIcon, FileText, Layers, AlertOctagon, CalendarClock, Eye } from "lucide-react";
 import { api, getApiErrorMessage } from "../../../lib/api";
 
 function fmt(iso) {
@@ -98,6 +98,25 @@ export default function AdminStudyOsArtifacts() {
     }
   }
 
+  async function openArtifact(kind, artifactId) {
+    const reason = window.prompt(`Reason for opening this ${kind} content (≥8 chars, logged to support_content_access)?`);
+    if (!reason || reason.trim().length < 8) {
+      setStatus({ ok: false, message: "Reason must be ≥8 chars." });
+      return;
+    }
+    const path = `/api/admin/study-os/users/${encodeURIComponent(active)}/artifacts/${kind === "note" ? "notes" : kind === "flashcard" ? "flashcards" : "mistakes"}/${encodeURIComponent(artifactId)}/open`;
+    try {
+      const r = await api.post(path, { reason: reason.trim() });
+      const content = r.note || r.card || r.mistake;
+      // Stringified preview is enough — the audit log captures the actual access.
+      const preview = JSON.stringify(content, null, 2).slice(0, 4000);
+      window.alert(`Logged. access_log_id=${r.access_log_id}\nFields: ${(r.fields_returned || []).join(", ")}\n\n${preview}`);
+      setStatus({ ok: true, message: `Opened ${kind} ${artifactId}. access_log_id=${r.access_log_id}` });
+    } catch (e) {
+      setStatus({ ok: false, message: getApiErrorMessage(e) });
+    }
+  }
+
   async function cancelItem(itemId) {
     const reason = window.prompt("Reason for cancellation (≥8 chars)?");
     if (!reason || reason.trim().length < 8) {
@@ -184,9 +203,19 @@ export default function AdminStudyOsArtifacts() {
               <ul className="space-y-1 text-xs">
                 {notes.items.map((n) => (
                   <li key={n.id} className="border-b border-border/40 py-1">
-                    <div className="flex justify-between gap-2">
+                    <div className="flex justify-between gap-2 items-center">
                       <span className="font-medium truncate">{n.title || "(no title)"}</span>
-                      <span className="text-muted-foreground shrink-0">{fmt(n.updated_at)}</span>
+                      <span className="flex gap-2 items-center shrink-0">
+                        <span className="text-muted-foreground">{fmt(n.updated_at)}</span>
+                        <button
+                          type="button"
+                          onClick={() => openArtifact("note", n.id)}
+                          className="text-[11px] underline hover:no-underline"
+                          data-testid={`open-note-${n.id}`}
+                        >
+                          <Eye className="inline h-3 w-3" /> Open
+                        </button>
+                      </span>
                     </div>
                     <div className="text-muted-foreground">
                       {n.is_pinned ? "📌 " : ""}{n.is_archived ? "archived · " : ""}
@@ -218,10 +247,20 @@ export default function AdminStudyOsArtifacts() {
               <ul className="space-y-1 text-xs">
                 {cards.items.slice(0, 12).map((c) => (
                   <li key={c.id} className="border-b border-border/40 py-1 font-mono">
-                    <div className="flex justify-between gap-2">
+                    <div className="flex justify-between gap-2 items-center">
                       <span className="truncate">{c.id.slice(0, 8)}…</span>
-                      <span className="text-muted-foreground shrink-0">
-                        ease={c.ease?.toFixed?.(2) ?? c.ease} · int={c.interval_days}d · rep={c.repetitions} · laps={c.lapses}
+                      <span className="flex gap-2 items-center shrink-0">
+                        <span className="text-muted-foreground">
+                          ease={c.ease?.toFixed?.(2) ?? c.ease} · int={c.interval_days}d · rep={c.repetitions} · laps={c.lapses}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => openArtifact("flashcard", c.id)}
+                          className="text-[11px] underline hover:no-underline"
+                          data-testid={`open-card-${c.id}`}
+                        >
+                          <Eye className="inline h-3 w-3" /> Open
+                        </button>
                       </span>
                     </div>
                     <div className="text-muted-foreground">
@@ -238,9 +277,19 @@ export default function AdminStudyOsArtifacts() {
               <ul className="space-y-1 text-xs">
                 {mistakes.items.slice(0, 12).map((m) => (
                   <li key={m.id} className="border-b border-border/40 py-1">
-                    <div className="flex justify-between gap-2">
+                    <div className="flex justify-between gap-2 items-center">
                       <span className="font-medium">{m.root_cause} · diff {m.difficulty}</span>
-                      <span className="text-muted-foreground shrink-0">{m.status}</span>
+                      <span className="flex gap-2 items-center shrink-0">
+                        <span className="text-muted-foreground">{m.status}</span>
+                        <button
+                          type="button"
+                          onClick={() => openArtifact("mistake", m.id)}
+                          className="text-[11px] underline hover:no-underline"
+                          data-testid={`open-mistake-${m.id}`}
+                        >
+                          <Eye className="inline h-3 w-3" /> Open
+                        </button>
+                      </span>
                     </div>
                     <div className="text-muted-foreground">
                       reviews: {m.review_count} · next: {fmt(m.next_review_at)}

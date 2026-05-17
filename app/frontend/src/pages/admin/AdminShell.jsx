@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
-  Award, Bell, Bot, Copyright as CopyrightIcon, CreditCard, Database, ExternalLink,
+  Award, Bell, Bot, BookText, Copyright as CopyrightIcon, CreditCard, Database, ExternalLink,
   FileSearch, Files, Flag, GaugeCircle, GraduationCap, LayoutGrid, LineChart,
   NotebookPen,
-  ListChecks, LogOut, Menu, MessagesSquare, Radar, ScrollText, ShieldCheck,
+  ListChecks, LogOut, Menu, MessagesSquare, Network, Radar, ScrollText, ShieldCheck,
   ShoppingBag, Sparkles, UserSearch, Users2, Wrench, X,
 } from "lucide-react";
 import { useAuth } from "../../lib/authContext";
@@ -46,6 +46,8 @@ const STUDY_OS_NAV = [
   { to: "/admin/study-os/artifacts", label: "Artifact Admin", icon: Files, testId: "admin-nav-studyos-artifacts" },
   { to: "/admin/study-os/mocks", label: "Mock Trust", icon: Award, testId: "admin-nav-studyos-mocks" },
   { to: "/admin/study-os/reports", label: "Report Jobs", icon: NotebookPen, testId: "admin-nav-studyos-reports" },
+  { to: "/admin/study-os/social", label: "Social Admin", icon: Network, testId: "admin-nav-studyos-social" },
+  { to: "/admin/study-os/exam-intel-cms", label: "Exam Intel CMS", icon: BookText, testId: "admin-nav-studyos-exam-intel-cms" },
 ];
 
 const SECTIONS = [
