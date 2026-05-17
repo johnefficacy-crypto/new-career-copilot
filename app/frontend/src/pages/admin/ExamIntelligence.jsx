@@ -14,12 +14,22 @@ import { Drawer, PageHeader, StatusDot } from "../../shared/ui/studyos";
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "exams", label: "Exams" },
-  { id: "review", label: "Review queue" },
-  { id: "coverage", label: "Topic Coverage" },
-  { id: "competition", label: "Competition Metrics" },
-  { id: "policy", label: "Policy Updates" },
-  { id: "impact", label: "Plan Impact" },
+  { id: "review", label: "Pending review" },
+  { id: "coverage", label: "Topic coverage" },
+  { id: "competition", label: "Competition" },
+  { id: "policy", label: "Policy updates" },
+  { id: "impact", label: "Plan impact" },
 ];
+
+const TAB_HELPER_COPY = {
+  overview: "Snapshot of verified exam intelligence.",
+  exams: "Exams visible to users come from this list.",
+  review: "Items waiting for reviewer action.",
+  coverage: "Locked topics surface in Study OS.",
+  competition: "Verified competition metrics only.",
+  policy: "Reviewed policy items only.",
+  impact: "Effect of locked coverage on the planner.",
+};
 
 const COVERAGE_STATUSES = ["all", "draft", "pending_review", "reviewed", "locked", "rejected"];
 const POLICY_STATUSES = ["all", "pending", "verified", "rejected", "needs_correction"];
@@ -341,6 +351,15 @@ export default function AdminExamIntelligence() {
           </button>
         ))}
       </nav>
+
+      {TAB_HELPER_COPY[tab] ? (
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid={`exam-intel-tab-helper-${tab}`}
+        >
+          {TAB_HELPER_COPY[tab]}
+        </p>
+      ) : null}
 
       {tab === "overview" ? (
         <section>

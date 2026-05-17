@@ -105,7 +105,7 @@ export default function AdminEligibilityQueue() {
       <div className="soft-card rounded-2xl p-4">
         <div className="text-[11px] uppercase tracking-widest text-muted-foreground mb-2">Items awaiting promotion review</div>
         {d.pending.length === 0 ? (
-          <EmptyState title="Queue is empty" description="Run a dry scrape from Scraper / Queue Review to populate it." actionLabel="Open scraper" actionHref="/admin/scraper" />
+          <EmptyState title="Queue is empty" description="Run a dry scrape from Scraper / Candidate review to populate it." actionLabel="Open scraper" actionHref="/admin/scraper" />
         ) : (
           <ul className="space-y-2">
             {d.pending.map((p) => {

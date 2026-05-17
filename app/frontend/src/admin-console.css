@@ -928,3 +928,88 @@
 /* Drawer used by older pages */
 .oc .linen-bg, .oc .paper-bg { background: var(--paper); }
 
+
+/* PR-B: collapsible sidebar group toggle. .oc-section already exists as a
+   label; this turns it into a button-shaped row when used as a group
+   header. The chevron flips per data-expanded on the parent. */
+.oc-sidebar .oc-section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 12px 12px 4px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ink-mute);
+  font: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-family: var(--fmono);
+  font-size: 10px;
+}
+.oc-sidebar .oc-section-toggle:hover { color: var(--ink-soft); }
+.oc-sidebar .oc-section-toggle:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.oc-sidebar .nav-chevron {
+  width: 12px;
+  height: 12px;
+  opacity: 0.6;
+  transition: transform 120ms ease;
+  flex-shrink: 0;
+}
+
+/* PR-C: current-action card uses a slightly tighter top border to read as
+   a single decision row instead of a card-of-cards. */
+.oc .oc-current-action { border-top: 2px solid var(--ink); }
+
+/* PR-C: segmented control above the operations left rail. Picks between
+   Candidates and Drafts; mutually exclusive selection — only one list at
+   a time. */
+.oc .oc-segmented {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--paper-card);
+}
+.oc .oc-segmented__option {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.oc .oc-segmented__option + .oc-segmented__option {
+  border-left: 1px solid var(--rule);
+}
+.oc .oc-segmented__option:hover { color: var(--ink); background: var(--paper-sunk); }
+.oc .oc-segmented__option.active {
+  background: var(--ink);
+  color: var(--paper);
+}
+.oc .oc-segmented__option:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+
+/* PR-C: progressive disclosure inside AdminFixPanel. Uses <details> for
+   keyboard-accessible default-collapsed sections without inventing a new
+   accordion component. */
+.oc .fx-disclosure {
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 8px 10px;
+  background: var(--paper-card);
+}
+.oc .fx-disclosure[open] { padding-bottom: 12px; }
+.oc .fx-disclosure-summary {
+  cursor: pointer;
+  font-family: var(--fmono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--ink-mute);
+  list-style: revert;
+}
+.oc .fx-disclosure[open] > .fx-disclosure-summary { color: var(--ink); }

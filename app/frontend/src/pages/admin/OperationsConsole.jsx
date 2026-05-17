@@ -2,12 +2,14 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, getApiUnverifiedFields } from "../../lib/api";
 import useAdminAction from "../../features/admin/shared/useAdminAction";
-import AdminProgressBar from "../../features/admin/workflow/AdminProgressBar";
+import AdminProgressBar, { computeProgress } from "../../features/admin/workflow/AdminProgressBar";
+import CurrentActionCard from "../../features/admin/workflow/CurrentActionCard";
 import AdminFixPanel from "../../features/admin/workflow/AdminFixPanel";
 import DuplicateMergePreview from "../../features/admin/workflow/DuplicateMergePreview";
 import SelectionContextBanner from "../../features/admin/workflow/SelectionContextBanner";
 import useConflicts from "../../features/admin/workflow/useConflicts";
 import { scoreToPct } from "../../features/admin/workflow/scoreUtils";
+import { Drawer } from "../../shared/ui/studyos";
 
 const VIEWS = [
   { id: "source", label: "Setup & run" },
@@ -72,6 +74,8 @@ export default function OperationsConsole() {
   const [rejectTarget, setRejectTarget] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
   const [queueFilter, setQueueFilter] = useState(() => searchParams.get("queue_status") || "pending");
+  const [workflowOpen, setWorkflowOpen] = useState(false);
+  const [leftView, setLeftView] = useState(() => (recruitmentId ? "drafts" : "candidates"));
 
   const { conflicts, refetch: refetchConflicts } = useConflicts(queueId);
 
@@ -108,6 +112,14 @@ export default function OperationsConsole() {
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Keep the segmented selector in sync with URL-driven selection. Opening
+  // a recruitment via deep link should switch the rail to "drafts"; clearing
+  // it should fall back to "candidates" unless the admin manually toggled.
+  useEffect(() => {
+    if (recruitmentId) setLeftView("drafts");
+    else if (!queueId) setLeftView("candidates");
+  }, [recruitmentId, queueId]);
 
   const selectedSource = useMemo(
     () => sources.find((s) => s.id === sourceId) || null,
@@ -335,7 +347,7 @@ export default function OperationsConsole() {
     return (
       <div className="card">
         <div className="card-body">
-          <div className="err-row">Failed to load Operations Console · {loadError.message}</div>
+          <div className="err-row">Failed to load Operations · {loadError.message}</div>
           <div style={{ marginTop: 10 }}>
             <button className="btn small" onClick={loadAll}>Retry</button>
           </div>
@@ -390,8 +402,13 @@ export default function OperationsConsole() {
             validateResult={validateResult}
             queueFilter={queueFilter}
             onQueueFilter={(value) => { setQueueFilter(value); updateParams({ queue_status: value === "pending" ? null : value }); }}
-            onSelectQueue={(id) => updateParams({ queue_id: id })}
-            onSelectRecruitment={(id) => updateParams({ recruitment_id: id })}
+            onSelectQueue={(id) => updateParams({ queue_id: id, recruitment_id: null })}
+            onSelectRecruitment={(id) => updateParams({ recruitment_id: id, queue_id: null })}
+            leftView={leftView}
+            onLeftView={setLeftView}
+            workflowOpen={workflowOpen}
+            onOpenWorkflow={() => setWorkflowOpen(true)}
+            onCloseWorkflow={() => setWorkflowOpen(false)}
             onClearSource={() => updateParams({ source_id: null })}
             onClearQueue={() => updateParams({ queue_id: null })}
             onClearRecruitment={() => updateParams({ recruitment_id: null })}
@@ -617,16 +634,18 @@ function ReviewAndPublish({
   onSourcesChanged, onConfirmMerge,
   conflicts, conflictTarget, onOpenConflict, onResolveConflict, onRejectConflict, onCloseConflict,
   busy, msg, actionError,
+  leftView, onLeftView, workflowOpen, onOpenWorkflow, onCloseWorkflow,
 }) {
+  const progress = computeProgress(progressState);
   return (
     <>
       <section className="scrn" style={{ padding: "0 0 18px", border: "none" }}>
         <div className="scrn-head">
           <h3 className="oc-title">Review pipeline state</h3>
-          <span className="scrn-tag">progress + selection context</span>
+          <span className="scrn-tag">current action + selection context</span>
         </div>
         <div className="stack">
-          <AdminProgressBar state={progressState} onStepClick={onStepClick} />
+          <CurrentActionCard progress={progress} onOpenDetails={onOpenWorkflow} />
           <SelectionContextBanner
             source={selectedSource}
             queueItem={selectedQueueItem}
@@ -640,6 +659,15 @@ function ReviewAndPublish({
         </div>
       </section>
 
+      <Drawer
+        open={workflowOpen}
+        onClose={onCloseWorkflow}
+        title="Workflow details"
+        width={640}
+      >
+        <AdminProgressBar state={progressState} onStepClick={onStepClick} />
+      </Drawer>
+
       <section className="scrn" style={{ borderTop: "1px solid var(--rule)" }}>
         <div className="scrn-head">
           <h3 className="oc-title">Workspace</h3>
@@ -647,24 +675,56 @@ function ReviewAndPublish({
         </div>
         <div className="grid" style={{ display: "grid", gridTemplateColumns: "minmax(280px, 340px) 1fr", gap: 16 }}>
           <div className="stack" data-testid="ops-left-column">
-            <div className="card">
-              <div className="filter-bar">
-                {QUEUE_FILTERS.map((f) => (
-                  <button
-                    key={f.key}
-                    type="button"
-                    className={`filter${queueFilter === f.key ? " active" : ""}`}
-                    onClick={() => onQueueFilter(f.key)}
-                    data-testid={`queue-filter-${f.key}`}
-                  >
-                    {f.label}
-                  </button>
-                ))}
-              </div>
-              <QueueList items={queue} filter={queueFilter} selectedId={queueId} onSelect={onSelectQueue} />
+            <div
+              className="oc-segmented"
+              role="tablist"
+              aria-label="Left rail selection"
+              data-testid="ops-left-segmented"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={leftView === "candidates"}
+                className={`oc-segmented__option${leftView === "candidates" ? " active" : ""}`}
+                onClick={() => onLeftView("candidates")}
+                data-testid="ops-left-tab-candidates"
+              >
+                Candidates
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={leftView === "drafts"}
+                className={`oc-segmented__option${leftView === "drafts" ? " active" : ""}`}
+                onClick={() => onLeftView("drafts")}
+                data-testid="ops-left-tab-drafts"
+              >
+                Drafts
+              </button>
             </div>
 
-            <RecruitmentList items={recruitments} selectedId={recruitmentId} onSelect={onSelectRecruitment} />
+            {leftView === "candidates" ? (
+              <div className="card" data-testid="ops-left-candidates">
+                <div className="filter-bar">
+                  {QUEUE_FILTERS.map((f) => (
+                    <button
+                      key={f.key}
+                      type="button"
+                      className={`filter${queueFilter === f.key ? " active" : ""}`}
+                      onClick={() => onQueueFilter(f.key)}
+                      data-testid={`queue-filter-${f.key}`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+                <QueueList items={queue} filter={queueFilter} selectedId={queueId} onSelect={onSelectQueue} />
+              </div>
+            ) : (
+              <div data-testid="ops-left-drafts">
+                <RecruitmentList items={recruitments} selectedId={recruitmentId} onSelect={onSelectRecruitment} />
+              </div>
+            )}
           </div>
 
           <div className="stack" data-testid="ops-workspace">
@@ -750,7 +810,15 @@ function QueueList({ items, filter, selectedId, onSelect }) {
 }
 
 function RecruitmentList({ items, selectedId, onSelect }) {
-  if (!items.length) return null;
+  if (!items.length) {
+    return (
+      <section className="card">
+        <div className="card-body">
+          <div className="empty"><div className="empty-title">No drafts</div>No recruitment drafts yet.</div>
+        </div>
+      </section>
+    );
+  }
   return (
     <section className="card">
       <div className="card-head">

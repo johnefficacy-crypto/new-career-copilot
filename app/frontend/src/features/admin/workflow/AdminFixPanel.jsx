@@ -162,13 +162,6 @@ function QueueFixSection({ item, conflicts = [], sources = [], onFieldAction, on
         </div>
       </div>
       <div className="card-body stack">
-        <PromotionPreviewPanel
-          queueId={item.id}
-          open
-          refreshKey={previewKey}
-          onScrollToField={scrollToFieldAnchor}
-        />
-
         {officialUnresolved ? (
           <OfficialSourceQuickResolver
             queueItem={item}
@@ -243,26 +236,60 @@ function QueueFixSection({ item, conflicts = [], sources = [], onFieldAction, on
           </section>
         ) : null}
 
-        <FieldReviewGroup
-          extracted={item.raw_extracted_item || item.normalized_item || {}}
-          evidence={item.field_evidence_status || {}}
-          evidenceDetails={item.field_evidence_details || []}
-          requiredFields={HIGH_RISK_QUEUE_FIELDS}
-          recommendedFields={RECOMMENDED_REVIEW_FIELDS}
-          onFieldAction={queueFieldAction}
-        />
-
-        <div>
-          <div className="lbl" style={{ marginBottom: 6 }}>Post-level eligibility review</div>
-          <div className="anno" style={{ marginBottom: 6 }}>
-            Eligibility matching relies on per-post age, education, and vacancy fields. Corrections use dotted paths (posts.0.min_age).
-          </div>
-          <PostEligibilityReviewGroup
-            posts={posts}
+        {blockers.length > 0 ? (
+          <FieldReviewGroup
+            extracted={item.raw_extracted_item || item.normalized_item || {}}
             evidence={item.field_evidence_status || {}}
+            evidenceDetails={item.field_evidence_details || []}
+            requiredFields={HIGH_RISK_QUEUE_FIELDS}
+            recommendedFields={[]}
             onFieldAction={queueFieldAction}
           />
-        </div>
+        ) : null}
+
+        <details className="fx-disclosure" data-testid="fx-quality-review">
+          <summary className="fx-disclosure-summary">Quality review</summary>
+          <div style={{ marginTop: 10 }}>
+            <FieldReviewGroup
+              extracted={item.raw_extracted_item || item.normalized_item || {}}
+              evidence={item.field_evidence_status || {}}
+              evidenceDetails={item.field_evidence_details || []}
+              requiredFields={[]}
+              recommendedFields={RECOMMENDED_REVIEW_FIELDS}
+              onFieldAction={queueFieldAction}
+            />
+          </div>
+        </details>
+
+        <details
+          className="fx-disclosure"
+          open={blockers.includes("requires_domicile")}
+          data-testid="fx-post-eligibility"
+        >
+          <summary className="fx-disclosure-summary">Post-level eligibility review</summary>
+          <div style={{ marginTop: 8 }}>
+            <div className="anno" style={{ marginBottom: 6 }}>
+              Eligibility matching relies on per-post age, education, and vacancy fields. Corrections use dotted paths (posts.0.min_age).
+            </div>
+            <PostEligibilityReviewGroup
+              posts={posts}
+              evidence={item.field_evidence_status || {}}
+              onFieldAction={queueFieldAction}
+            />
+          </div>
+        </details>
+
+        <details className="fx-disclosure" data-testid="fx-promotion-preview">
+          <summary className="fx-disclosure-summary">Promotion preview details</summary>
+          <div style={{ marginTop: 8 }}>
+            <PromotionPreviewPanel
+              queueId={item.id}
+              open
+              refreshKey={previewKey}
+              onScrollToField={scrollToFieldAnchor}
+            />
+          </div>
+        </details>
 
         {dups.length ? (
           <div>
@@ -310,7 +337,7 @@ function QueueFixSection({ item, conflicts = [], sources = [], onFieldAction, on
                 {blockedFromPromote
                   ? [
                       blockers.length ? `Verify ${blockers.length} required field${blockers.length === 1 ? "" : "s"}` : "",
-                      officialUnresolved ? "Resolve official source" : "",
+                      officialUnresolved ? "Attach official proof" : "",
                       openConflicts.length ? `Resolve ${openConflicts.length} consensus conflict${openConflicts.length === 1 ? "" : "s"}` : "",
                     ].filter(Boolean).join(" · ")
                   : "All gates open. Promotion will create a recruitment draft."}
@@ -440,7 +467,7 @@ function RecruitmentFixSection({ recruitment, validateResult, sources = [], onSo
           onClick={async () => { setReviewing(true); try { await onValidate?.(recruitment); } finally { setReviewing(false); } }}
           data-testid="fix-panel-validate"
         >
-          {reviewing ? "Validating…" : "Validate publish readiness"}
+          {reviewing ? "Validating…" : "Validate publish readiness — server-side check"}
         </button>
         <button
           type="button"
