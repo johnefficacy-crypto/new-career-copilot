@@ -206,6 +206,32 @@ export default function UnifiedOnboardingShell({
     navigate(isAuthed ? "/app" : "/");
   }
 
+  // Derive these — and run the analytics effects — before any conditional
+  // return so the hook order stays stable across renders. Each effect is
+  // already self-guarded, so loading/error renders don't fire events.
+  const answeredCount = data?.progress?.answered || 0;
+  const hasValuePreview = Boolean(data?.readiness) || answeredCount >= 4;
+  const showLoginCta = !isAuthed && !data?.complete && answeredCount >= 2 && hasValuePreview;
+
+  useEffect(() => {
+    if (!data?.question) return;
+    trackOnboardingEvent("question_shown", {
+      entry_mode: data?.entry_mode,
+      question_source: data?.question_source,
+      question_key: data?.question?.question_key,
+      answered_count: answeredCount,
+    });
+  }, [data?.entry_mode, data?.question, data?.question_source, answeredCount]);
+
+  useEffect(() => {
+    if (!showLoginCta) return;
+    trackOnboardingEvent("login_cta_shown", {
+      entry_mode: data?.entry_mode,
+      question_source: data?.question_source,
+      answered_count: answeredCount,
+    });
+  }, [showLoginCta, data?.entry_mode, data?.question_source, answeredCount]);
+
   if (status === "loading") {
     return (
       <div className="flex items-center justify-center py-20 text-muted-foreground">
@@ -232,29 +258,6 @@ export default function UnifiedOnboardingShell({
       </div>
     );
   }
-
-  const answeredCount = data?.progress?.answered || 0;
-  const hasValuePreview = Boolean(data?.readiness) || answeredCount >= 4;
-  const showLoginCta = !isAuthed && !data?.complete && answeredCount >= 2 && hasValuePreview;
-
-  useEffect(() => {
-    if (!data?.question) return;
-    trackOnboardingEvent("question_shown", {
-      entry_mode: data?.entry_mode,
-      question_source: data?.question_source,
-      question_key: data?.question?.question_key,
-      answered_count: answeredCount,
-    });
-  }, [data?.entry_mode, data?.question, data?.question_source, answeredCount]);
-
-  useEffect(() => {
-    if (!showLoginCta) return;
-    trackOnboardingEvent("login_cta_shown", {
-      entry_mode: data?.entry_mode,
-      question_source: data?.question_source,
-      answered_count: answeredCount,
-    });
-  }, [showLoginCta, data?.entry_mode, data?.question_source, answeredCount]);
 
   return (
     <div className="space-y-4">
