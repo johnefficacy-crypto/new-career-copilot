@@ -10,8 +10,12 @@ const TREND = {
 
 // SubjectCard — single grained tile rendering subject progress + trend.
 // Pure presentational: progress / trend / pills come from the server.
-export default function SubjectCard({ s, color, onSelect }) {
+// `target` is the mastery threshold (0..100); the per-card pill must use
+// the same number as the cohort-wide MasteryDistribution target so the
+// two surfaces on the same page never contradict each other.
+export default function SubjectCard({ s, color, onSelect, target = 65 }) {
   const pct = Math.max(0, Math.min(100, Math.round(Number(s.progress) || 0)));
+  const targetPct = Number.isFinite(Number(target)) && Number(target) > 0 ? Number(target) : 65;
   const trend = TREND[s.trend] || TREND.flat;
   const TrendIcon = trend.Icon;
   const active = !!onSelect;
@@ -46,7 +50,11 @@ export default function SubjectCard({ s, color, onSelect }) {
       </div>
       <div className="mt-2 flex items-center justify-between text-[10.5px] text-clay-700">
         <span className="num-mono">{pct}% closed</span>
-        {pct < 65 ? <Pill tone="amber">below 65%</Pill> : <Pill tone="sage">on target</Pill>}
+        {pct < targetPct ? (
+          <Pill tone="amber">below {targetPct}%</Pill>
+        ) : (
+          <Pill tone="sage">on target</Pill>
+        )}
       </div>
       {s.weak_count ? (
         <div className="mt-1.5 text-[10.5px] text-[#7A3925]">

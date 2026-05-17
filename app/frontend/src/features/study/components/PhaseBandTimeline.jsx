@@ -32,18 +32,28 @@ export default function PhaseBandTimeline({ bands, today }) {
       </p>
     );
   }
-  const todayMs = today ? new Date(today).valueOf() : Date.now();
+  // Compare on YYYY-MM-DD strings so the phase boundary doesn't shift
+  // by the user's UTC offset. A user in IST near midnight previously
+  // saw a phase flip from "Current" to "Past" up to 5.5h early because
+  // `new Date('2026-05-16')` parses as UTC midnight and the local
+  // comparison was effectively ~05:30 behind the backend's day boundary.
+  function localDateIso() {
+    const d = new Date();
+    const tz = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - tz).toISOString().slice(0, 10);
+  }
+  const todayIso = today ? String(today).slice(0, 10) : localDateIso();
   return (
     <div className="space-y-2" data-testid="phase-band-timeline">
       <Eyebrow>Study phases · derived from cycle bounds</Eyebrow>
       <ul className="space-y-1.5">
         {rows.map((b) => {
-          const startMs = b.start ? new Date(b.start).valueOf() : null;
-          const endMs = b.end ? new Date(b.end).valueOf() : null;
+          const startIso = b.start ? String(b.start).slice(0, 10) : null;
+          const endIso = b.end ? String(b.end).slice(0, 10) : null;
           let state = "upcoming";
-          if (startMs !== null && endMs !== null) {
-            if (todayMs >= endMs) state = "past";
-            else if (todayMs >= startMs) state = "current";
+          if (startIso !== null && endIso !== null) {
+            if (todayIso > endIso) state = "past";
+            else if (todayIso >= startIso) state = "current";
           }
           return (
             <li
