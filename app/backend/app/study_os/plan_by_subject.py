@@ -71,7 +71,7 @@ def _load_week_tasks(
         lambda: (
             supabase.table("study_tasks")
             .select(
-                "id, subject, topic, topic_id, scheduled_date, status, "
+                "id, subject, subject_id, topic, topic_id, scheduled_date, status, "
                 "planned_minutes, duration_mins, task_type"
             )
             .eq("user_id", user_id)

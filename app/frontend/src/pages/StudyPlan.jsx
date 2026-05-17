@@ -92,6 +92,15 @@ export default function StudyPlan() {
       .get("/api/study/exams")
       .then((d) => setExamItems(Array.isArray(d?.items) ? d.items : []))
       .catch(() => setExamItems([]));
+    // Hydrate the picker from the user's stored target so the "Choose your
+    // exam" empty state only shows when nothing is selected server-side.
+    api
+      .get("/api/study/target-exam")
+      .then((d) => {
+        const id = d?.selected_exam?.id;
+        if (id) setSelectedExamId(id);
+      })
+      .catch(() => {});
   }, [reloadKey]);
 
   async function chooseExam(examId, confirm = false) {

@@ -36,6 +36,21 @@ def test_cold_session_with_unknown_intent_returns_intent_picker_first():
     assert result["question"]["question_key"] == INTENT_PICKER_KEY
 
 
+def test_anonymous_session_skips_persona_snapshot_lookup():
+    # Anonymous sessions must never issue a Supabase read against
+    # ``aspirant_persona_snapshots`` with a null user_id.
+    seen_tables: list[str] = []
+
+    class _TrackingSB(SBStub):
+        def table(self, name):  # type: ignore[override]
+            seen_tables.append(name)
+            return super().table(name)
+
+    sb = _TrackingSB({"persona_question_bank": persona_bank()})
+    select_next_question(sb, _cold_session(intent="prepare_exam"))
+    assert "aspirant_persona_snapshots" not in seen_tables
+
+
 def test_cold_session_with_intent_returns_persona_question():
     sb = SBStub({"persona_question_bank": persona_bank()})
     result = select_next_question(sb, _cold_session(intent="prepare_exam"))
