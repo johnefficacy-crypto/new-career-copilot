@@ -19,6 +19,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
+from app.onboarding_unified.entry_resolver import load_field_registry
+
 logger = logging.getLogger("career_copilot.onboarding_unified.anonymous_stitching")
 
 
@@ -102,6 +104,9 @@ def _existing_onboarding_answer_keys(
 
 def _fan_out_answers(supabase: Any, anonymous_id: str, user_id: str) -> dict[str, int]:
     """Replay the unified answer log into its canonical per-source tables."""
+    # Lazy import to avoid a circular module load
+    # (profile_adapter ← question_selector ← session ← anonymous_stitching).
+    from app.onboarding_unified.profile_adapter import apply_profile_mapping
     log_rows = _safe(
         lambda: (
             supabase.table("onboarding_session_answers")
@@ -121,6 +126,10 @@ def _fan_out_answers(supabase: Any, anonymous_id: str, user_id: str) -> dict[str
     onboarding_existing: dict[str, set[str]] = {}
     persona_written = 0
     recruitment_written = 0
+    canonical_writes = 0
+
+    # Loaded lazily — only needed if at least one recruitment row exists.
+    registry: dict[str, dict[str, Any]] | None = None
 
     for row in log_rows:
         if row.get("skipped"):
@@ -154,6 +163,16 @@ def _fan_out_answers(supabase: Any, anonymous_id: str, user_id: str) -> dict[str
             if inserted is not None:
                 persona_existing.add(key)
                 persona_written += 1
+            mapping_result = apply_profile_mapping(
+                supabase,
+                user_id,
+                question_source=source,
+                question={"question_key": key},
+                normalized_value=row.get("normalized_value"),
+                session_id=row.get("session_id"),
+            )
+            if mapping_result.get("applied"):
+                canonical_writes += 1
 
         elif source == "recruitment_question_requirements":
             session_id = row.get("session_id")
@@ -184,11 +203,25 @@ def _fan_out_answers(supabase: Any, anonymous_id: str, user_id: str) -> dict[str
             if inserted is not None:
                 onboarding_existing[session_id].add(key)
                 recruitment_written += 1
+            if registry is None:
+                registry = load_field_registry(supabase)
+            mapping_result = apply_profile_mapping(
+                supabase,
+                user_id,
+                question_source=source,
+                question={"field_key": key, "question_key": key},
+                normalized_value=row.get("normalized_value"),
+                registry=registry,
+                session_id=session_id,
+            )
+            if mapping_result.get("applied"):
+                canonical_writes += 1
         # intent_picker answers stay session-only — nothing to fan out.
 
     return {
         "persona_answers_written": persona_written,
         "recruitment_answers_written": recruitment_written,
+        "canonical_writes": canonical_writes,
     }
 
 
@@ -234,6 +267,10 @@ def stitch_anonymous_sessions(
     fan_out = _fan_out_answers(supabase, anonymous_id, user_id)
     session = _resumable_session(supabase, user_id)
 
+    recompute_enqueued = False
+    if fan_out.get("canonical_writes"):
+        recompute_enqueued = _enqueue_recompute(supabase, user_id)
+
     return {
         "stitched": True,
         "claimed": {
@@ -242,5 +279,20 @@ def stitch_anonymous_sessions(
             "onboarding_session_answers": claimed_answers,
         },
         **fan_out,
+        "recompute_enqueued": recompute_enqueued,
         "session": session,
     }
+
+
+def _enqueue_recompute(supabase: Any, user_id: str) -> bool:
+    """Same path used by ``PUT /api/profile/me`` and unified onboarding complete."""
+    try:
+        from app.eligibility.recompute_queue import enqueue_eligibility_recompute
+
+        enqueue_eligibility_recompute(
+            supabase, user_id, reason="unified_onboarding_stitch"
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("anonymous_stitching recompute enqueue failed: %s", exc)
+        return False
