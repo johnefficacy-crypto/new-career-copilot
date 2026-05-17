@@ -36,8 +36,14 @@ const GOVERNANCE_NAV = [
 const BUSINESS_NAV = [
   { to: "/admin/marketplace", label: "Marketplace", icon: ShoppingBag, testId: "admin-nav-marketplace" },
   { to: "/admin/plans", label: "Pricing & Plans", icon: CreditCard, testId: "admin-nav-pricing-&-plans" },
-  { to: "/admin/mentors", label: "Mentors", icon: Users2, testId: "admin-nav-mentor-verification" },
-  { to: "/admin/community", label: "Community", icon: MessagesSquare, testId: "admin-nav-community-moderation" },
+];
+
+const COMMUNITY_GOV_NAV = [
+  { to: "/admin/community", label: "Community Hub", icon: MessagesSquare, end: true, testId: "admin-nav-community-hub" },
+  { to: "/admin/community/groups", label: "Study Groups", icon: Users2, testId: "admin-nav-community-groups" },
+  { to: "/admin/community/partners", label: "Partner Pairs", icon: Users2, testId: "admin-nav-community-partners" },
+  { to: "/admin/community/resources", label: "Resource Queue", icon: NotebookPen, testId: "admin-nav-community-resources" },
+  { to: "/admin/mentors", label: "Mentor Verification", icon: ShieldCheck, testId: "admin-nav-mentor-verification" },
 ];
 
 const STUDY_OS_NAV = [
@@ -54,6 +60,7 @@ const STUDY_OS_NAV = [
 const SECTIONS = [
   { label: "Operations", items: OPERATIONS_NAV },
   { label: "Governance", items: GOVERNANCE_NAV },
+  { label: "Community Governance", items: COMMUNITY_GOV_NAV },
   { label: "Study OS", items: STUDY_OS_NAV },
   { label: "Business", items: BUSINESS_NAV },
 ];

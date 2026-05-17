@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { AlertTriangle, Store } from "lucide-react";
+import { Link } from "react-router-dom";
+import { AlertTriangle, ExternalLink, Store } from "lucide-react";
 import { api } from "../../lib/api";
 import { EmptyState, LoadingSkeleton, StatusBadge } from "../../shared/ui";
 
@@ -46,13 +47,15 @@ export default function AdminMarketplace() {
                         <div className="truncate font-semibold">{flag.target}</div>
                         <div className="mt-1 text-xs text-muted-foreground">{flag.kind} / {flag.raised}</div>
                       </div>
-                      <div className="flex gap-2">
-                        <button className="btn btn-ghost text-xs">Dismiss</button>
-                        <button className="btn btn-primary text-xs">Open</button>
-                      </div>
+                      <Link to="/admin/moderation" className="btn btn-primary text-xs inline-flex items-center gap-1" title="Open in trust desk">
+                        Open in trust desk <ExternalLink className="h-3 w-3" />
+                      </Link>
                     </div>
                   </article>
                 ))}
+                <p className="text-xs text-muted-foreground">
+                  Flag actions live on the central trust desk (<Link to="/admin/moderation" className="underline">/admin/moderation</Link>) and the per-area governance consoles. This view is read-only.
+                </p>
               </div>
             )}
           </section>
