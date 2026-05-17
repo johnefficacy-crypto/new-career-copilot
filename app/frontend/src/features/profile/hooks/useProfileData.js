@@ -13,17 +13,14 @@ export default function useProfileData() {
   const [newAttempt, setNewAttempt] = useState({ exam_id: "", attempts_used: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [optionalErrors, setOptionalErrors] = useState({});
 
   const reload = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [u, c, cs, ex, at, reg] = await Promise.all([
+      const [u, c] = await Promise.all([
         api.get("/api/profile/me"),
         api.get("/api/profile/completion"),
-        api.get("/api/profile/certifications"),
-        api.get("/api/profile/experience"),
-        api.get("/api/profile/exam-attempts"),
-        api.get("/api/metadata/certifications").catch(() => ({ items: [] })),
       ]);
       setForm({
         name: u.name || "", email: u.email || "", phone: u.profile?.phone || "", gender: u.profile?.gender || "", date_of_birth: u.profile?.date_of_birth || "",
@@ -33,11 +30,28 @@ export default function useProfileData() {
         percentage: u.profile?.percentage || "", cgpa: u.profile?.cgpa || "", goal_exams: u.profile?.goal_exams || [], preferred_states: u.profile?.preferred_states || [], preferred_sectors: u.profile?.preferred_sectors || [],
         willing_to_relocate: u.profile?.willing_to_relocate ?? true, study_mode: u.profile?.study_mode || "", weekly_hours_goal: u.profile?.weekly_hours_goal || "", target_exam_year: u.profile?.target_exam_year || "",
       });
-      setCompletion(c || {}); setCerts(cs?.items || []); setExpRows(ex?.items || []); setAttemptRows(at?.items || []); setCertRegistry(reg?.items || []);
+      setCompletion(c || {});
+      const optional = await Promise.allSettled([
+        api.get("/api/profile/certifications"),
+        api.get("/api/profile/experience"),
+        api.get("/api/profile/exam-attempts"),
+        api.get("/api/metadata/certifications"),
+      ]);
+      const [cs, ex, at, reg] = optional;
+      const errs = {};
+      if (cs.status === "fulfilled") setCerts(cs.value?.items || []);
+      else { setCerts([]); errs.certifications = cs.reason; }
+      if (ex.status === "fulfilled") setExpRows(ex.value?.items || []);
+      else { setExpRows([]); errs.experience = ex.reason; }
+      if (at.status === "fulfilled") setAttemptRows(at.value?.items || []);
+      else { setAttemptRows([]); errs.exam_attempts = at.reason; }
+      if (reg.status === "fulfilled") setCertRegistry(reg.value?.items || []);
+      else { setCertRegistry([]); errs.certification_metadata = reg.reason; }
+      setOptionalErrors(errs);
     } catch (err) { setError(err); } finally { setLoading(false); }
   }, []);
 
   useEffect(() => { reload(); }, [reload]);
 
-  return { form, setForm, completion, setCompletion, certs, setCerts, expRows, setExpRows, attemptRows, setAttemptRows, certRegistry, newCert, setNewCert, newExp, setNewExp, newAttempt, setNewAttempt, loading, error, reload };
+  return { form, setForm, completion, setCompletion, certs, setCerts, expRows, setExpRows, attemptRows, setAttemptRows, certRegistry, newCert, setNewCert, newExp, setNewExp, newAttempt, setNewAttempt, loading, error, optionalErrors, reload };
 }

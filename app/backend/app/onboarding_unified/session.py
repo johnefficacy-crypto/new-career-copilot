@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Any, Callable
+from app.onboarding_unified.anonymous_stitching import stitch_anonymous_sessions
 
 logger = logging.getLogger("career_copilot.onboarding_unified.session")
 
@@ -90,6 +91,45 @@ def _list_active_sessions(
     return list(rows)
 
 
+def _list_active_sessions_by_user_and_anonymous(
+    supabase: Any, *, user_id: str, anonymous_id: str
+) -> list[dict[str, Any]]:
+    user_rows = _safe(
+        lambda: (
+            supabase.table("onboarding_sessions")
+            .select(_SESSION_COLUMNS)
+            .eq("user_id", user_id)
+            .eq("status", "active")
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    anon_rows = _safe(
+        lambda: (
+            supabase.table("onboarding_sessions")
+            .select(_SESSION_COLUMNS)
+            .eq("anonymous_id", anonymous_id)
+            .eq("status", "active")
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    seen = set()
+    out = []
+    for row in [*anon_rows, *user_rows]:
+        sid = row.get("id")
+        if sid and sid not in seen:
+            seen.add(sid)
+            out.append(row)
+    return out
+
+
 def _find_resumable_session(
     supabase: Any,
     *,
@@ -103,9 +143,14 @@ def _find_resumable_session(
     If the incoming context doesn't match any active session we let the
     caller create a fresh one rather than cross-wiring contexts.
     """
-    sessions = _list_active_sessions(
-        supabase, user_id=user_id, anonymous_id=anonymous_id
-    )
+    if user_id and anonymous_id:
+        sessions = _list_active_sessions_by_user_and_anonymous(
+            supabase, user_id=user_id, anonymous_id=anonymous_id
+        )
+    else:
+        sessions = _list_active_sessions(
+            supabase, user_id=user_id, anonymous_id=anonymous_id
+        )
     for sess in sessions:
         if recruitment_id:
             if sess.get("recruitment_id") == recruitment_id:
@@ -165,6 +210,11 @@ def get_or_create_session(
         recruitment_id=recruitment_id,
     )
     if existing:
+        if user_id and anonymous_id and not existing.get("user_id") and existing.get("anonymous_id") == anonymous_id:
+            stitched = stitch_anonymous_sessions(supabase, anonymous_id, user_id)
+            resumed = stitched.get("session")
+            if isinstance(resumed, dict) and resumed.get("id"):
+                return resumed
         patch: dict[str, Any] = {}
         # Backfill context that becomes known mid-flow (e.g. intent picked,
         # or an anonymous session that just learned its user_id).

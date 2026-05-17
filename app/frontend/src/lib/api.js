@@ -74,18 +74,17 @@ export function getApiNextActions(error) {
 }
 
 function buildApiError({ status, data, detail, message }) {
-  return {
-    status,
-    message,
-    detail,
-    data,
-    blocking_issues: getApiErrorFieldList({ data, detail }, "blocking_issues"),
-    unverified_fields: getApiErrorFieldList({ data, detail }, "unverified_fields"),
-    warnings: getApiErrorFieldList({ data, detail }, "warnings"),
-    code: (detail && typeof detail === "object" ? detail.code : undefined) || data?.code,
-    existing_recruitment_id: getApiExistingRecruitmentId({ data, detail }),
-    next_actions: getApiNextActions({ data, detail }),
-  };
+  const err = new Error(message || formatApiErrorDetail(detail));
+  err.status = status;
+  err.detail = detail;
+  err.data = data;
+  err.blocking_issues = getApiErrorFieldList({ data, detail }, "blocking_issues");
+  err.unverified_fields = getApiErrorFieldList({ data, detail }, "unverified_fields");
+  err.warnings = getApiErrorFieldList({ data, detail }, "warnings");
+  err.code = (detail && typeof detail === "object" ? detail.code : undefined) || data?.code;
+  err.existing_recruitment_id = getApiExistingRecruitmentId({ data, detail });
+  err.next_actions = getApiNextActions({ data, detail });
+  return err;
 }
 
 function resolveHeaders(options = {}) {
