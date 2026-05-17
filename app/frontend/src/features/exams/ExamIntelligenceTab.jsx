@@ -14,6 +14,7 @@ import {
 import { BarChart3, ExternalLink, FileText, ShieldCheck, TrendingUp } from "lucide-react";
 import { api } from "../../lib/api";
 import OptionInsightsCard from "./OptionInsightsCard";
+import TrapDrillLauncher from "./TrapDrillLauncher";
 
 const CATEGORY_LABELS = {
   general: "General",
@@ -400,6 +401,8 @@ export default function ExamIntelligenceTab({ examSlug }) {
       </div>
 
       <OptionInsightsCard examSlug={examSlug} />
+
+      <TrapDrillLauncher examSlug={examSlug} />
 
       <div className="text-[11px] text-muted-foreground">
         Source: deterministic Exam Intelligence engine. Only rows reviewed and locked by admins are surfaced here. AI never publishes intelligence claims.
