@@ -14,6 +14,10 @@ const VIEWS = [
   { id: "queue", label: "Review & publish" },
 ];
 
+// Filter ``key`` matches scrape_queue.status verbatim so the backend can do
+// the filtering; ``approved`` is the storage value for a row that has been
+// promoted into a recruitment draft. The label is always "Promoted" because
+// "approved" leaks an internal state name and was confusable with publish.
 const QUEUE_FILTERS = [
   { key: "pending", label: "Pending" },
   { key: "approved", label: "Promoted" },
@@ -65,6 +69,8 @@ export default function OperationsConsole() {
   const [msg, setMsg] = useState(null);
   const [mergeTarget, setMergeTarget] = useState(null);
   const [conflictTarget, setConflictTarget] = useState(null);
+  const [rejectTarget, setRejectTarget] = useState(null);
+  const [rejectReason, setRejectReason] = useState("");
   const [queueFilter, setQueueFilter] = useState(() => searchParams.get("queue_status") || "pending");
 
   const { conflicts, refetch: refetchConflicts } = useConflicts(queueId);
@@ -244,22 +250,28 @@ export default function OperationsConsole() {
     });
   }, [runAction, loadAll]);
 
-  const rejectCandidate = useCallback(async (item) => {
+  const rejectCandidate = useCallback((item) => {
     if (!item?.id) return;
-    const title = item.recruitment || item.id;
-    const reason = window.prompt(`Reject "${title}"? Enter a reason (required):`, "");
-    if (reason == null) return; // user cancelled the prompt
-    const trimmed = reason.trim();
+    setRejectReason("");
+    setRejectTarget(item);
+  }, []);
+
+  const confirmReject = useCallback(async () => {
+    if (!rejectTarget?.id) return;
+    const trimmed = (rejectReason || "").trim();
     if (!trimmed) { setMsg("Reject cancelled — reason is required."); return; }
+    const target = rejectTarget;
     await runAction({
-      key: `reject-${item.id}`,
+      key: `reject-${target.id}`,
       successMessage: "Candidate rejected.",
       action: async () => {
-        await api.post(`/api/admin/scrape/items/${item.id}/reject`, { notes: trimmed });
+        await api.post(`/api/admin/scrape/items/${target.id}/reject`, { notes: trimmed });
+        setRejectTarget(null);
+        setRejectReason("");
         await loadAll();
       },
     });
-  }, [runAction, loadAll]);
+  }, [rejectTarget, rejectReason, runAction, loadAll]);
 
   const resolveConflict = useCallback(async (payload) => {
     const conflictId = payload?.conflict_id || conflictTarget?.id;
@@ -407,6 +419,62 @@ export default function OperationsConsole() {
             actionError={actionError}
           />
         )}
+      </div>
+      <RejectCandidateDialog
+        open={Boolean(rejectTarget)}
+        item={rejectTarget}
+        reason={rejectReason}
+        onReasonChange={setRejectReason}
+        onCancel={() => { setRejectTarget(null); setRejectReason(""); }}
+        onConfirm={confirmReject}
+        busy={Boolean(busyKey)}
+      />
+    </div>
+  );
+}
+
+function RejectCandidateDialog({ open, item, reason, onReasonChange, onCancel, onConfirm, busy }) {
+  if (!open || !item) return null;
+  const title = item.recruitment || item.id;
+  const trimmed = (reason || "").trim();
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="ops-reject-title"
+      data-testid="ops-reject-dialog"
+    >
+      <div className="absolute inset-0" onClick={onCancel} />
+      <div className="card" style={{ position: "relative", maxWidth: 460, width: "90%" }}>
+        <div className="card-head-col">
+          <div className="lbl">Reject candidate</div>
+          <h3 id="ops-reject-title" className="oc-title" style={{ fontSize: 17 }}>{title}</h3>
+        </div>
+        <div className="card-body stack">
+          <div className="anno">A reason is required. It is recorded in the audit log.</div>
+          <textarea
+            className="input"
+            value={reason}
+            onChange={(e) => onReasonChange(e.target.value)}
+            placeholder="Why is this candidate being rejected?"
+            data-testid="ops-reject-reason"
+            autoFocus
+            style={{ minHeight: 90 }}
+          />
+        </div>
+        <div className="card-foot">
+          <button type="button" className="btn ghost small" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button
+            type="button"
+            className="btn primary small"
+            onClick={onConfirm}
+            disabled={busy || !trimmed}
+            data-testid="ops-reject-confirm"
+          >
+            {busy ? "Rejecting…" : "Reject candidate"}
+          </button>
+        </div>
       </div>
     </div>
   );

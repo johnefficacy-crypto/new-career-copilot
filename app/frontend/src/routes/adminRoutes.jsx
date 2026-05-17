@@ -1,5 +1,5 @@
 import React from "react";
-import { Route } from "react-router-dom";
+import { Navigate, Route } from "react-router-dom";
 import { ProtectedRoute } from "../lib/ProtectedRoute";
 import { ADMIN_ROLES } from "../lib/rbac";
 import AdminShell from "../pages/admin/AdminShell";
@@ -43,7 +43,9 @@ export const adminRouteElements = (
     <Route path="/admin/operations" element={<AdminOperationsConsole />} />
     <Route path="/admin/recruitments" element={<AdminRecruitments />} />
     <Route path="/admin/eligibility-queue" element={<AdminEligibility />} />
-    <Route path="/admin/promotion-queue" element={<AdminEligibility />} />
+    {/* Legacy alias — keep a permanent redirect so deep links from older
+        emails/blogs reach the canonical promotion queue route. */}
+    <Route path="/admin/promotion-queue" element={<Navigate to="/admin/eligibility-queue" replace />} />
     <Route path="/admin/eligibility-ops" element={<AdminEligibilityOps />} />
     <Route path="/admin/sources" element={<AdminSources />} />
     <Route path="/admin/organizations" element={<AdminOrganizations />} />

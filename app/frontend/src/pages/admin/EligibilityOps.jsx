@@ -6,6 +6,7 @@ export default function AdminEligibilityOps() {
   const [error, setError] = useState(null);
   const [failedRows, setFailedRows] = useState([]);
   const [retryingId, setRetryingId] = useState(null);
+  const [retryingAll, setRetryingAll] = useState(false);
 
   async function load() {
     setError(null);
@@ -23,12 +24,27 @@ export default function AdminEligibilityOps() {
   async function retry(id) {
     setRetryingId(id);
     try {
-      await api.post(`/api/admin/eligibility-ops/retry/${id}`, {});
+      await api.post(`/api/admin/eligibility-recompute-queue/${id}/retry`, {});
       await load();
     } catch (e) {
       setError(e);
     } finally {
       setRetryingId(null);
+    }
+  }
+
+  async function retryAllFailed() {
+    if (!failedRows.length) return;
+    if (!window.confirm(`Retry ${failedRows.length} failed recompute row${failedRows.length === 1 ? "" : "s"}? Each is reset to pending so the worker picks it up.`)) return;
+    setRetryingAll(true);
+    try {
+      for (const row of failedRows) {
+        try { await api.post(`/api/admin/eligibility-recompute-queue/${row.id}/retry`, {}); }
+        catch (e) { /* surface the last failure but keep retrying the rest */ setError(e); }
+      }
+      await load();
+    } finally {
+      setRetryingAll(false);
     }
   }
 
@@ -99,9 +115,18 @@ export default function AdminEligibilityOps() {
           </div>
           <div className="card-foot">
             <button type="button" className="btn ghost small" onClick={load}>Refresh</button>
-            <button type="button" className="btn primary small" disabled>
-              Recompute now · {data?.onboarded_users || 0} users
+            <button
+              type="button"
+              className="btn primary small"
+              onClick={retryAllFailed}
+              disabled={retryingAll || failedRows.length === 0}
+              data-testid="elig-ops-retry-all"
+            >
+              {retryingAll ? "Retrying…" : `Retry ${failedRows.length} failed`}
             </button>
+            <span className="anno" style={{ marginLeft: "auto" }}>
+              {data?.onboarded_users || 0} onboarded users · per-recruitment fan-out lives in Recruitments
+            </span>
           </div>
         </div>
       </section>
