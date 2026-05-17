@@ -136,3 +136,39 @@ def test_cta_session_returns_verified_recruitment_question():
     result = select_next_question(sb, session)
     assert result["source"] == "recruitment_question_requirements"
     assert result["question"]["question_key"] == "has_marathi_knowledge"
+
+
+def test_persona_questions_targeting_unknown_dimensions_are_boosted():
+    bank = [
+        {
+            "question_key": "higher_priority_known",
+            "question_text": "Known dim",
+            "data_type": "single_select",
+            "options": [{"value": "x", "label": "X"}],
+            "target_dimension": "study_policy",
+            "priority": 10,
+            "is_active": True,
+        },
+        {
+            "question_key": "lower_priority_unknown",
+            "question_text": "Unknown dim",
+            "data_type": "single_select",
+            "options": [{"value": "y", "label": "Y"}],
+            "target_dimension": "execution_risk",
+            "priority": 80,
+            "is_active": True,
+        },
+    ]
+    sb = SBStub({
+        "persona_question_bank": bank,
+        "aspirant_persona_snapshots": [
+            {
+                "user_id": "u-1",
+                "is_current": True,
+                "dimensions": {"execution_risk": "unknown", "study_policy": "structured"},
+            }
+        ],
+    })
+    session = _cold_session(id="sess-u", user_id="u-1", intent="prepare_exam")
+    result = select_next_question(sb, session)
+    assert result["question"]["question_key"] == "lower_priority_unknown"

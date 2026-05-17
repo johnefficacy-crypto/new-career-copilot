@@ -14,6 +14,17 @@ export default function Login() {
   const location = useLocation();
   const redirectTo = location.state?.from?.pathname || "/app";
 
+  async function handleGoogleSignIn() {
+    setLoading(true);
+    setError(null);
+    try {
+      await auth.loginWithGoogle({ redirectTo: `${window.location.origin}${redirectTo}` });
+    } catch (err) {
+      setError(err.message || "Unable to sign in with Google");
+      setLoading(false);
+    }
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setLoading(true);
@@ -46,6 +57,16 @@ export default function Login() {
       }
     >
       <form onSubmit={handleSubmit} className="space-y-5" data-testid="login-form">
+        <button
+          type="button"
+          onClick={handleGoogleSignIn}
+          disabled={loading}
+          data-testid="login-google"
+          className="btn btn-ghost w-full disabled:opacity-60"
+        >
+          Continue with Google
+        </button>
+        <div className="text-[11px] uppercase tracking-widest text-muted-foreground text-center">or sign in with email</div>
         <div>
           <label className="block text-[11px] uppercase tracking-widest text-muted-foreground mb-1.5">Email</label>
           <input

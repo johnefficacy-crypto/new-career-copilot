@@ -5,6 +5,7 @@ import { AlertCircle, ArrowRight, CheckCircle2, Loader2, Sparkles } from "lucide
 import { useUnifiedOnboardingSession } from "./useUnifiedOnboardingSession";
 import OnboardingQuestionCard from "./OnboardingQuestionCard";
 import ReadinessMeter from "./ReadinessMeter";
+import { trackOnboardingEvent } from "./analytics";
 
 // The single shell both entry modes render into:
 //   * cold/discovery — homepage, intent unknown, opens with the intent picker
@@ -77,7 +78,10 @@ function FallbackNotice({ data }) {
   );
 }
 
-function LoginCta({ from }) {
+function LoginCta({ from, source }) {
+  const actionCopy = source === "recruitment_question_requirements"
+    ? "Save your eligibility check and continue."
+    : "Save your study profile and continue.";
   return (
     <div
       data-testid="onboarding-login-cta"
@@ -87,7 +91,7 @@ function LoginCta({ from }) {
         <Sparkles className="h-4 w-4 text-clay-500 mt-0.5 shrink-0" aria-hidden="true" />
         <div className="flex-1">
           <p className="text-sm font-medium text-clay-900">
-            Save your answers and sign in to continue.
+            {actionCopy}
           </p>
           <p className="text-xs text-muted-foreground mt-0.5">
             You won&apos;t need to repeat these details again — we&apos;ll pick
@@ -230,7 +234,27 @@ export default function UnifiedOnboardingShell({
   }
 
   const answeredCount = data?.progress?.answered || 0;
-  const showLoginCta = !isAuthed && !data?.complete && answeredCount >= 2;
+  const hasValuePreview = Boolean(data?.readiness) || answeredCount >= 4;
+  const showLoginCta = !isAuthed && !data?.complete && answeredCount >= 2 && hasValuePreview;
+
+  useEffect(() => {
+    if (!data?.question) return;
+    trackOnboardingEvent("question_shown", {
+      entry_mode: data?.entry_mode,
+      question_source: data?.question_source,
+      question_key: data?.question?.question_key,
+      answered_count: answeredCount,
+    });
+  }, [data?.entry_mode, data?.question, data?.question_source, answeredCount]);
+
+  useEffect(() => {
+    if (!showLoginCta) return;
+    trackOnboardingEvent("login_cta_shown", {
+      entry_mode: data?.entry_mode,
+      question_source: data?.question_source,
+      answered_count: answeredCount,
+    });
+  }, [showLoginCta, data?.entry_mode, data?.question_source, answeredCount]);
 
   return (
     <div className="space-y-4">
@@ -270,7 +294,7 @@ export default function UnifiedOnboardingShell({
         </div>
       )}
 
-      {showLoginCta && <LoginCta from={fromPath} />}
+      {showLoginCta && <LoginCta from={fromPath} source={data?.question_source} />}
 
       {!data?.complete && data?.readiness && (
         <ReadinessMeter readiness={data.readiness} />
