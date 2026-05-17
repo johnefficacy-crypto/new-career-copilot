@@ -29,6 +29,7 @@ import MentorsScreen from "../features/community/MentorsScreen";
 import ResourcesScreen from "../features/community/ResourcesScreen";
 import Marketplace from "../pages/Marketplace";
 import ResourceDetail from "../pages/ResourceDetail";
+import CoursePlayer from "../pages/CoursePlayer";
 import MentorDetail from "../pages/MentorDetail";
 import AIChat from "../pages/AIChat";
 import Notifications from "../pages/Notifications";
@@ -67,6 +68,7 @@ export const appRouteElements = (
       <Route path="/app/resources" element={<ResourcesScreen />} />
       <Route path="/app/marketplace" element={<Marketplace />} />
       <Route path="/app/marketplace/:id" element={<ResourceDetail />} />
+      <Route path="/app/marketplace/:id/learn" element={<CoursePlayer />} />
       <Route path="/app/mentors" element={<MentorsScreen />} />
       <Route path="/app/mentors/:id" element={<MentorDetail />} />
       <Route path="/app/accountability" element={<PartnersScreen />} />

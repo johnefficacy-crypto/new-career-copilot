@@ -63,6 +63,8 @@ from app.api.exam_intelligence import router as exam_intelligence_router
 from app.api.canonical import router as canonical_router
 from app.api.community_runtime import router as community_runtime_router
 from app.api.eligibility import router as eligibility_router
+from app.api.marketplace import router as marketplace_router
+from app.api.admin_marketplace import router as admin_marketplace_router
 from app.api.notifications import router as notifications_router
 from app.api.onboarding_unified import router as onboarding_unified_router
 from app.api.payments import router as payments_router
@@ -226,6 +228,8 @@ api.include_router(onboarding_unified_router)  # unified guided onboarding — b
 api.include_router(accountability_router)
 api.include_router(_load_required_router("app.api.admin_ops"))
 api.include_router(community_runtime_router)  # durable community/social routes — must precede canonical seed fallbacks
+api.include_router(marketplace_router)  # marketplace catalogue + Razorpay course purchase — before canonical
+api.include_router(admin_marketplace_router)  # admin marketplace CRUD + refunds
 api.include_router(canonical_router)  # canonical Supabase routes — must precede placeholders
 # NOTE: community_people_router was removed — every route under that prefix
 # duplicated community_runtime_router's. The legacy file's own docstring
