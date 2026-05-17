@@ -16,6 +16,8 @@ const PROOF_PATTERNS = [
   /0 aggregator items applied silently/,
   /41 signals/,
   /7 rules fired/,
+  /verified criteria/,
+  /rules per match/,
 ];
 
 function isInsideExampleBlock(line, allLines, idx) {

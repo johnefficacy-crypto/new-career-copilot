@@ -1,8 +1,11 @@
 import React, { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import AuthLayout from "./AuthLayout";
 import { useAuth } from "../../lib/authContext";
+import { resolvePostAuthRedirect } from "../../lib/resolvePostAuthRedirect";
+
+const SIGNUP_DEFAULT = "/app/onboarding/chat?mode=discovery";
 
 export default function Signup() {
   const [name, setName] = useState("");
@@ -12,13 +15,16 @@ export default function Signup() {
   const [error, setError] = useState(null);
   const auth = useAuth();
   const nav = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const redirectTo = resolvePostAuthRedirect(location, searchParams, SIGNUP_DEFAULT);
 
   async function handleGoogleSignup() {
     setLoading(true);
     setError(null);
     try {
       await auth.loginWithGoogle({
-        redirectTo: `${window.location.origin}/app/onboarding/chat?mode=discovery`,
+        redirectTo: `${window.location.origin}${redirectTo}`,
       });
     } catch (err) {
       setError(err.message || "Unable to continue with Google");
@@ -32,7 +38,7 @@ export default function Signup() {
     setError(null);
     try {
       await auth.register({ email: email.trim(), password, name: name.trim() });
-      nav("/app/onboarding/chat?mode=discovery", { replace: true });
+      nav(redirectTo, { replace: true });
     } catch (err) {
       setError(err.message || "Unable to create account");
     } finally {

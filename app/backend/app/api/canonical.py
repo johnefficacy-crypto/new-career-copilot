@@ -742,7 +742,7 @@ async def profile_completion(user: dict = Depends(get_current_user)):
             "next_action": "Select target exams and preferred states.",
         },
         "study_profile": {
-            "fields": ["weekly_hours_goal", "career_goal"],
+            "fields": ["weekly_hours_goal"],
             "why_it_matters": "Study rhythm powers planning and backlog risk signals.",
             "next_action": "Set study rhythm and target outcome.",
         },

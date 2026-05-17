@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import AuthLayout from "./AuthLayout";
 import { useAuth } from "../../lib/authContext";
+import { resolvePostAuthRedirect } from "../../lib/resolvePostAuthRedirect";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -12,7 +13,8 @@ export default function Login() {
   const auth = useAuth();
   const nav = useNavigate();
   const location = useLocation();
-  const redirectTo = location.state?.from?.pathname || "/app";
+  const [searchParams] = useSearchParams();
+  const redirectTo = resolvePostAuthRedirect(location, searchParams, "/app");
 
   async function handleGoogleSignIn() {
     setLoading(true);
