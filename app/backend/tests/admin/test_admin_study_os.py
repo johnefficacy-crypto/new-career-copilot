@@ -211,13 +211,13 @@ def _seed_minimal_user() -> ExtSBStub:
                 }
             ],
             "admin_audit_logs": [],
-            "user_notes": [],
+            "personal_notes": [],
             "flashcards": [],
             "mistake_entries": [],
-            "revision_schedule": [],
+            "revision_items": [],
             "saved_recruitments": [],
             "user_recruitment_applications": [],
-            "mock_results": [],
+            "mock_tests": [],
             "flashcard_decks": [],
             "weekly_reviews": [],
             "study_report_cards": [],
@@ -436,3 +436,534 @@ def test_preview_draft_calls_compute_draft(monkeypatch):
         a["action"] == "study_os.plan_ops.preview_draft"
         for a in sb.db["admin_audit_logs"]
     )
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  Phase 2 — Learning Artifact Admin tests
+# ════════════════════════════════════════════════════════════════════════
+
+
+def _seed_artifacts(sb: ExtSBStub) -> None:
+    """Seed the Phase 2 tables on top of the minimal fixture."""
+    now = datetime.now(timezone.utc).isoformat()
+    sb.db.setdefault("personal_notes", []).extend(
+        [
+            {
+                "id": "note-1",
+                "user_id": "user-1",
+                "title": "Reaction kinetics",
+                "tags": ["chem"],
+                "exam_slug": "exam-x",
+                "is_pinned": True,
+                "is_archived": False,
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "id": "note-2",
+                "user_id": "user-1",
+                "title": "(archived)",
+                "tags": [],
+                "is_archived": True,
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "id": "note-3",
+                "user_id": "user-other",
+                "title": "should not appear",
+                "is_archived": False,
+                "created_at": now,
+                "updated_at": now,
+            },
+        ]
+    )
+    sb.db.setdefault("flashcard_decks", []).append(
+        {
+            "id": "deck-1",
+            "user_id": "user-1",
+            "name": "Chem deck",
+            "card_count": 2,
+            "due_count": 1,
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    sb.db.setdefault("flashcards", []).extend(
+        [
+            {
+                "id": "card-1",
+                "user_id": "user-1",
+                "deck_id": "deck-1",
+                "ease": 2.5,
+                "interval_days": 4,
+                "repetitions": 3,
+                "lapses": 1,
+                "due_at": now,
+                "last_reviewed_at": now,
+                "is_suspended": False,
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "id": "card-2",
+                "user_id": "user-1",
+                "deck_id": "deck-1",
+                "ease": 2.3,
+                "interval_days": 1,
+                "repetitions": 1,
+                "lapses": 0,
+                "due_at": now,
+                "is_suspended": True,
+                "created_at": now,
+                "updated_at": now,
+            },
+        ]
+    )
+    sb.db.setdefault("flashcard_reviews", []).append(
+        {
+            "card_id": "card-1",
+            "user_id": "user-1",
+            "rating": 4,
+            "duration_ms": 1500,
+            "prev_interval_days": 2,
+            "new_interval_days": 4,
+            "reviewed_at": now,
+        }
+    )
+    sb.db.setdefault("mistake_entries", []).append(
+        {
+            "id": "mis-1",
+            "user_id": "user-1",
+            "root_cause": "concept",
+            "difficulty": 3,
+            "tags": [],
+            "status": "open",
+            "review_count": 0,
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    sb.db.setdefault("revision_items", []).extend(
+        [
+            {
+                "id": "rev-1",
+                "user_id": "user-1",
+                "source_kind": "note",
+                "source_id": "note-1",
+                "title": "Reaction kinetics",
+                "scheduled_for": "2026-06-01",
+                "interval_days": 1,
+                "ease": 2.5,
+                "repetitions": 0,
+                "status": "scheduled",
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "id": "rev-2",
+                "user_id": "user-1",
+                "source_kind": "flashcard_deck",
+                "source_id": "deck-1",
+                "title": "Chem deck",
+                "scheduled_for": "2026-06-02",
+                "status": "completed",
+                "completed_at": now,
+                "created_at": now,
+                "updated_at": now,
+            },
+        ]
+    )
+
+
+def test_artifacts_notes_returns_metadata_only_for_owner():
+    sb = _seed_minimal_user()
+    _seed_artifacts(sb)
+    app = _app(sb)
+    r = TestClient(app).get("/api/admin/study-os/users/user-1/artifacts/notes")
+    assert r.status_code == 200
+    items = r.json()["items"]
+    # Only user-1 notes; other user's note never appears.
+    assert {n["id"] for n in items} == {"note-1", "note-2"}
+    # Metadata only — body / source_url MUST NOT leak.
+    for n in items:
+        assert "body" not in n and "source_url" not in n
+
+
+def test_artifacts_notes_filters_by_is_archived():
+    sb = _seed_minimal_user()
+    _seed_artifacts(sb)
+    app = _app(sb)
+    r = TestClient(app).get("/api/admin/study-os/users/user-1/artifacts/notes?is_archived=true")
+    assert r.status_code == 200
+    assert [n["id"] for n in r.json()["items"]] == ["note-2"]
+
+
+def test_artifacts_flashcards_returns_srs_state_without_front_back():
+    sb = _seed_minimal_user()
+    _seed_artifacts(sb)
+    app = _app(sb)
+    r = TestClient(app).get("/api/admin/study-os/users/user-1/artifacts/flashcards")
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert {c["id"] for c in items} == {"card-1", "card-2"}
+    for c in items:
+        assert "front" not in c and "back" not in c and "hint" not in c
+        # SRS state surfaced for the inspector.
+        assert "ease" in c and "interval_days" in c and "due_at" in c
+
+
+def test_artifacts_flashcard_srs_inspector_returns_card_and_history():
+    sb = _seed_minimal_user()
+    _seed_artifacts(sb)
+    app = _app(sb)
+    r = TestClient(app).get("/api/admin/study-os/users/user-1/artifacts/flashcards/card-1/srs")
+    assert r.status_code == 200
+    payload = r.json()
+    assert payload["card"]["id"] == "card-1"
+    # History rows surface rating/duration/interval transitions.
+    assert len(payload["recent_reviews"]) == 1
+    assert payload["recent_reviews"][0]["rating"] == 4
+
+
+def test_artifacts_revision_reschedule_updates_date_and_audits():
+    sb = _seed_minimal_user()
+    _seed_artifacts(sb)
+    app = _app(sb)
+    r = TestClient(app).post(
+        "/api/admin/study-os/users/user-1/artifacts/revision/rev-1/reschedule",
+        json={
+            "reason": "user travelling — pushing back",
+            "payload": {"scheduled_for": "2026-06-10"},
+        },
+    )
+    assert r.status_code == 200, r.text
+    item = next(i for i in sb.db["revision_items"] if i["id"] == "rev-1")
+    assert item["scheduled_for"] == "2026-06-10"
+    assert any(
+        a["action"] == "study_os.artifacts.revision.reschedule"
+        for a in sb.db["admin_audit_logs"]
+    )
+
+
+def test_artifacts_revision_reschedule_rejects_completed_items():
+    sb = _seed_minimal_user()
+    _seed_artifacts(sb)
+    app = _app(sb)
+    r = TestClient(app).post(
+        "/api/admin/study-os/users/user-1/artifacts/revision/rev-2/reschedule",
+        json={"reason": "trying to re-arm completed", "payload": {"scheduled_for": "2026-06-10"}},
+    )
+    assert r.status_code == 409
+
+
+def test_artifacts_revision_cancel_flips_status_to_skipped():
+    sb = _seed_minimal_user()
+    _seed_artifacts(sb)
+    app = _app(sb)
+    r = TestClient(app).post(
+        "/api/admin/study-os/users/user-1/artifacts/revision/rev-1/cancel",
+        json={"reason": "user requested cancellation"},
+    )
+    assert r.status_code == 200
+    assert next(i for i in sb.db["revision_items"] if i["id"] == "rev-1")["status"] == "skipped"
+
+
+def test_snapshot_artifact_counts_use_correct_tables():
+    """Phase 1 had table-name typos (user_notes / revision_schedule / mock_results);
+    Phase 2 fixes them. This test pins the correct names so it can't regress."""
+    sb = _seed_minimal_user()
+    _seed_artifacts(sb)
+    sb.db.setdefault("mock_tests", []).append(
+        {"id": "m-1", "user_id": "user-1", "exam_name": "x", "attempted_at": "2026-05-01T00:00:00+00:00"}
+    )
+    app = _app(sb)
+    r = TestClient(app).get("/api/admin/study-os/users/user-1/snapshot")
+    assert r.status_code == 200
+    arts = r.json()["artifacts"]
+    assert arts["notes"] == 2  # not 0 — proves we hit personal_notes
+    assert arts["revision_items"] == 2  # proves we hit revision_items
+    assert arts["mocks"] == 1  # proves we hit mock_tests
+    assert arts["mistakes"] == 1
+    assert arts["flashcard_decks"] == 1
+    assert arts["flashcards"] == 2
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  Phase 2 — Mock Trust Console tests
+# ════════════════════════════════════════════════════════════════════════
+
+
+def _seed_mocks(sb: ExtSBStub) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    sb.db.setdefault("mock_tests", []).extend(
+        [
+            {
+                "id": "mock-1",
+                "user_id": "user-1",
+                "exam_name": "exam-x",
+                "test_name": "Full Length 1",
+                "scored_marks": 80,
+                "total_marks": 100,
+                "review_state": "unreviewed",
+                "attempted_at": now,
+                "created_at": now,
+            },
+            {
+                "id": "mock-2",
+                "user_id": "user-other",
+                "exam_name": "exam-x",
+                "test_name": "Sectional 1",
+                "scored_marks": 60,
+                "total_marks": 100,
+                "review_state": "reviewed",
+                "attempted_at": now,
+                "created_at": now,
+            },
+        ]
+    )
+    sb.db.setdefault("mock_score_verification", []).append(
+        {
+            "mock_test_id": "mock-1",
+            "user_id": "user-1",
+            "verification_tier": "tier_3",
+            "verification_status": "unverified",
+            "attester_role": "self",
+        }
+    )
+    sb.db.setdefault("mock_subject_breakdowns", []).append(
+        {"id": "br-1", "mock_test_id": "mock-1", "subject": "Chem", "correct_answers": 8}
+    )
+    sb.db.setdefault("mock_correction_tasks", []).append(
+        {"id": "corr-1", "mock_test_id": "mock-1", "category": "concept_gap", "status": "open", "created_at": now}
+    )
+
+
+def test_mocks_queue_lists_recent_mocks_with_verification():
+    sb = _seed_minimal_user()
+    _seed_mocks(sb)
+    app = _app(sb)
+    r = TestClient(app).get("/api/admin/study-os/mocks/queue?limit=10")
+    assert r.status_code == 200
+    items = r.json()["items"]
+    by_id = {m["id"]: m for m in items}
+    assert "mock-1" in by_id and "mock-2" in by_id
+    # mock-1 has a verification row; mock-2 doesn't.
+    assert by_id["mock-1"]["verification"]["verification_tier"] == "tier_3"
+    assert by_id["mock-2"]["verification"] is None
+
+
+def test_mocks_queue_filters_by_user():
+    sb = _seed_minimal_user()
+    _seed_mocks(sb)
+    app = _app(sb)
+    r = TestClient(app).get("/api/admin/study-os/mocks/queue?user_id=user-1")
+    assert r.status_code == 200
+    assert [m["id"] for m in r.json()["items"]] == ["mock-1"]
+
+
+def test_mocks_detail_returns_breakdowns_and_corrections():
+    sb = _seed_minimal_user()
+    _seed_mocks(sb)
+    app = _app(sb)
+    r = TestClient(app).get("/api/admin/study-os/mocks/mock-1")
+    assert r.status_code == 200
+    p = r.json()
+    assert p["mock"]["id"] == "mock-1"
+    assert p["subject_breakdowns"][0]["subject"] == "Chem"
+    assert p["correction_tasks"][0]["category"] == "concept_gap"
+    assert p["verification"]["verification_tier"] == "tier_3"
+
+
+def test_mocks_set_verification_tier_upserts_and_audits():
+    sb = _seed_minimal_user()
+    _seed_mocks(sb)
+    app = _app(sb)
+    r = TestClient(app).post(
+        "/api/admin/study-os/mocks/mock-1/set-verification-tier",
+        json={"reason": "screenshot reviewed by ops", "payload": {"tier": "tier_2", "evidence_url": "https://x/y.png"}},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["verification_tier"] == "tier_2"
+    assert body["verification_status"] == "pending"
+    # Row updated in place.
+    row = next(v for v in sb.db["mock_score_verification"] if v["mock_test_id"] == "mock-1")
+    assert row["verification_tier"] == "tier_2"
+    assert row["attester_role"] == "admin"
+    # Audit row written with previous_tier captured.
+    audit = next(
+        a for a in sb.db["admin_audit_logs"] if a["action"] == "study_os.mocks.set_verification_tier"
+    )
+    assert audit["new_value"]["previous_tier"] == "tier_3"
+    assert audit["new_value"]["new_tier"] == "tier_2"
+
+
+def test_mocks_set_verification_tier_rejects_invalid_tier():
+    sb = _seed_minimal_user()
+    _seed_mocks(sb)
+    app = _app(sb)
+    r = TestClient(app).post(
+        "/api/admin/study-os/mocks/mock-1/set-verification-tier",
+        json={"reason": "trying a bad tier", "payload": {"tier": "tier_999"}},
+    )
+    assert r.status_code == 422
+
+
+def test_mocks_set_verification_tier_404_for_unknown_mock():
+    sb = _seed_minimal_user()
+    _seed_mocks(sb)
+    app = _app(sb)
+    r = TestClient(app).post(
+        "/api/admin/study-os/mocks/no-such-mock/set-verification-tier",
+        json={"reason": "ghost mock attempt", "payload": {"tier": "tier_1"}},
+    )
+    assert r.status_code == 404
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  Phase 2 — Report Job Admin tests
+# ════════════════════════════════════════════════════════════════════════
+
+
+def _seed_reports(sb: ExtSBStub) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    sb.db.setdefault("report_exports", []).extend(
+        [
+            {
+                "id": "rep-1",
+                "user_id": "user-1",
+                "report_type": "mock_analytics",
+                "format": "pdf",
+                "status": "failed",
+                "error_message": "pdfkit blew up",
+                "requested_at": now,
+                "created_at": now,
+                "updated_at": now,
+                "expires_at": "2027-01-01T00:00:00+00:00",
+            },
+            {
+                "id": "rep-2",
+                "user_id": "user-1",
+                "report_type": "weekly_summary",
+                "format": "pdf",
+                "status": "pending",
+                "requested_at": now,
+                "created_at": now,
+                "updated_at": now,
+                "expires_at": "2027-01-01T00:00:00+00:00",
+            },
+            {
+                "id": "rep-3",
+                "user_id": "user-other",
+                "report_type": "mistake_book",
+                "format": "csv",
+                "status": "ready",
+                "requested_at": now,
+                "created_at": now,
+                "updated_at": now,
+                "expires_at": "2027-01-01T00:00:00+00:00",
+            },
+        ]
+    )
+
+
+def test_reports_queue_returns_rows_with_per_status_counts():
+    sb = _seed_minimal_user()
+    _seed_reports(sb)
+    app = _app(sb)
+    r = TestClient(app).get("/api/admin/study-os/reports/queue")
+    assert r.status_code == 200
+    p = r.json()
+    assert len(p["items"]) == 3
+    # Counts include every known status, with zeros for empty buckets.
+    assert p["counts"]["failed"] == 1
+    assert p["counts"]["pending"] == 1
+    assert p["counts"]["ready"] == 1
+    assert p["counts"]["generating"] == 0
+
+
+def test_reports_queue_filters_by_status_and_user():
+    sb = _seed_minimal_user()
+    _seed_reports(sb)
+    app = _app(sb)
+    r = TestClient(app).get("/api/admin/study-os/reports/queue?status=failed&user_id=user-1")
+    assert r.status_code == 200
+    assert [it["id"] for it in r.json()["items"]] == ["rep-1"]
+
+
+def test_reports_detail_404_for_unknown():
+    sb = _seed_minimal_user()
+    _seed_reports(sb)
+    app = _app(sb)
+    r = TestClient(app).get("/api/admin/study-os/reports/no-such")
+    assert r.status_code == 404
+
+
+def test_reports_retry_resets_failed_row_to_pending_and_clears_error():
+    sb = _seed_minimal_user()
+    _seed_reports(sb)
+    app = _app(sb)
+    r = TestClient(app).post(
+        "/api/admin/study-os/reports/rep-1/retry",
+        json={"reason": "worker fixed, retrying"},
+    )
+    assert r.status_code == 200, r.text
+    row = next(rp for rp in sb.db["report_exports"] if rp["id"] == "rep-1")
+    assert row["status"] == "pending"
+    assert row["error_message"] is None
+
+
+def test_reports_retry_rejects_non_failed_rows():
+    sb = _seed_minimal_user()
+    _seed_reports(sb)
+    app = _app(sb)
+    r = TestClient(app).post(
+        "/api/admin/study-os/reports/rep-2/retry",
+        json={"reason": "trying to retry pending"},
+    )
+    assert r.status_code == 409
+
+
+def test_reports_cancel_pending_row_lands_as_failed_with_marker():
+    sb = _seed_minimal_user()
+    _seed_reports(sb)
+    app = _app(sb)
+    r = TestClient(app).post(
+        "/api/admin/study-os/reports/rep-2/cancel",
+        json={"reason": "user no longer needs it"},
+    )
+    assert r.status_code == 200
+    row = next(rp for rp in sb.db["report_exports"] if rp["id"] == "rep-2")
+    assert row["status"] == "failed"
+    assert "[admin:admin@example.com] cancelled:" in (row["error_message"] or "")
+
+
+def test_reports_cancel_rejects_ready_row():
+    sb = _seed_minimal_user()
+    _seed_reports(sb)
+    app = _app(sb)
+    r = TestClient(app).post(
+        "/api/admin/study-os/reports/rep-3/cancel",
+        json={"reason": "ready cancel not allowed"},
+    )
+    assert r.status_code == 409
+
+
+def test_phase2_writes_reject_short_reason_uniformly():
+    sb = _seed_minimal_user()
+    _seed_artifacts(sb)
+    _seed_mocks(sb)
+    _seed_reports(sb)
+    app = _app(sb)
+    client = TestClient(app)
+    body = {"reason": "tiny"}
+    # All Phase 2 write endpoints share StudyOpsWriteBody.
+    for path in [
+        "/api/admin/study-os/users/user-1/artifacts/revision/rev-1/reschedule",
+        "/api/admin/study-os/users/user-1/artifacts/revision/rev-1/cancel",
+        "/api/admin/study-os/mocks/mock-1/set-verification-tier",
+        "/api/admin/study-os/reports/rep-1/retry",
+        "/api/admin/study-os/reports/rep-2/cancel",
+    ]:
+        assert client.post(path, json=body).status_code == 422, path
