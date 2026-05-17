@@ -11,6 +11,8 @@ Supabase-backed implementation.
 from __future__ import annotations
 
 import logging
+import importlib
+
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -28,7 +30,6 @@ from pydantic import BaseModel
 
 from app.api.accountability import router as accountability_router
 from app.api.admin_exam_intelligence import router as admin_exam_intel_router
-from app.api.admin_ops import router as admin_ops_router
 from app.api.admin_overview import router as admin_overview_router
 from app.api.ai import router as ai_router
 from app.api.admin_persona import router as admin_persona_router
@@ -126,6 +127,20 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 api = APIRouter(prefix="/api")
 
 
+def _load_required_router(module_path: str, attr: str = "router") -> APIRouter:
+    """Load a required APIRouter with an explicit runtime error message."""
+    try:
+        mod = importlib.import_module(module_path)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Failed to import router module '{module_path}': {exc}") from exc
+    router_obj = getattr(mod, attr, None)
+    if not isinstance(router_obj, APIRouter):
+        raise RuntimeError(
+            f"Module '{module_path}' does not expose APIRouter '{attr}'"
+        )
+    return router_obj
+
+
 class Health(BaseModel):
     status: str
     service: str
@@ -208,7 +223,7 @@ api.include_router(onboarding_unified_router)  # unified guided onboarding — b
 # Real Supabase-backed accountability + admin ops — must precede community_runtime
 # and placeholders so route order wins for /accountability/mentors/* and /admin/*.
 api.include_router(accountability_router)
-api.include_router(admin_ops_router)
+api.include_router(_load_required_router("app.api.admin_ops"))
 api.include_router(community_runtime_router)  # durable community/social routes — must precede canonical seed fallbacks
 api.include_router(canonical_router)  # canonical Supabase routes — must precede placeholders
 api.include_router(community_people_router)  # community-people: groups, partner, mentors, resources
