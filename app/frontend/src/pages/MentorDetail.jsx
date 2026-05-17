@@ -17,8 +17,13 @@ export default function MentorDetail() {
   async function book() {
     if (!slot) return;
     try {
-      const b = await api.post("/api/accountability/mentors/book", { mentor_id: id, slot, agenda });
-      setStatus(`Requested · ${b.id}. You'll be notified once the mentor confirms.`);
+      const b = await api.post("/api/accountability/mentors/book", {
+        mentor_id: id,
+        slot,
+        notes: agenda || null,
+      });
+      const bookingId = (b.id || "").slice(0, 8);
+      setStatus(`Requested · ${bookingId}. Status: ${b.status}. Confirmation will follow once the mentor accepts.`);
     } catch (e) {
       setStatus(e.message);
     }

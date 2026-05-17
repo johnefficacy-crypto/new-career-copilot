@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Activity, Target, Timer, Trophy, ShieldCheck } from "lucide-react";
 import { api } from "../../lib/api";
+import useApiAction from "../../lib/hooks/useApiAction";
 import {
   Card,
   Chip,
@@ -28,10 +29,10 @@ const COMPONENT_LABELS = {
 };
 
 function rankBandTone(band) {
-  if (band === "ahead") return "green";
-  if (band === "on_track") return "amber";
+  if (band === "ahead") return "sage";
+  if (band === "on_track") return "ink";
   if (band === "behind") return "rose";
-  return "stone";
+  return "outline";
 }
 
 function rankBandLabel(band) {
@@ -74,6 +75,7 @@ export default function StudyCompare() {
   const [trust, setTrust] = useState(null);
   const [settings, setSettings] = useState(null);
   const [err, setErr] = useState("");
+  const { run: runSettingAction } = useApiAction();
 
   const loadAll = useCallback(async () => {
     try {
@@ -108,12 +110,15 @@ export default function StudyCompare() {
   }, [loadAll]);
 
   async function updateSetting(patch) {
-    try {
-      const next = await api.put("/api/study/compare/settings", patch);
-      setSettings(next);
-    } catch (e) {
-      if (process.env.NODE_ENV !== "production") console.error(e);
-    }
+    const prior = settings;
+    await runSettingAction({
+      optimistic: () => setSettings((s) => ({ ...(s || {}), ...patch })),
+      action: () => api.put("/api/study/compare/settings", patch),
+      onSuccess: (next) => setSettings(next),
+      rollback: () => setSettings(prior),
+      errorMessage:
+        "Couldn’t save privacy setting — your previous setting is still in effect.",
+    });
   }
 
   const behaviorIndex = me?.behavior_index;
@@ -172,7 +177,7 @@ export default function StudyCompare() {
                 >
                   <span className="text-clay-700">{label}</span>
                   <div className="flex items-center gap-2 min-w-[140px]">
-                    <MiniBar value={Number(components[k] || 0)} />
+                    <MiniBar pct={Number(components[k] || 0)} />
                     <span className="num-mono w-[44px] text-right text-clay-800">
                       {pct(components[k])}
                     </span>
@@ -250,9 +255,15 @@ export default function StudyCompare() {
           title="Weekly behavior board"
           sub="Opt-in. Tier 1 (system-verified) only. Never mixed with self-reported mock scores."
           right={
-            <Pill tone={settings?.public_leaderboard_enabled ? "green" : "stone"}>
-              {settings?.public_leaderboard_enabled ? "You are listed" : "Private (opt-in)"}
-            </Pill>
+            settings === null ? (
+              <span className="num-mono text-[11px] text-clay-700">—</span>
+            ) : (
+              <Pill tone={settings?.public_leaderboard_enabled ? "sage" : "outline"}>
+                {settings?.public_leaderboard_enabled
+                  ? "You are listed"
+                  : "Private (opt-in)"}
+              </Pill>
+            )
           }
         />
         {leaderboard?.entries?.length ? (

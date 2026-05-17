@@ -8,6 +8,8 @@ import {
   StudyCard,
   SectionHeader,
 } from "../../shared/ui/studyos";
+import useApiAction from "../../lib/hooks/useApiAction";
+import { validateMockForm } from "./mocks/validateMockForm";
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 const ERROR_ROWS = [
@@ -37,6 +39,17 @@ function pct(m) {
   return Number(m?.percentage ?? 0);
 }
 
+// Fallback list used only if both `/api/recruitments` and the exam
+// intelligence catalogue are unavailable. Kept short and deliberately
+// unmarked as canonical — production-active slugs come from the network.
+const EXAM_SLUG_FALLBACK = [
+  "ssc-cgl-2026",
+  "ibps-po-xv",
+  "rbi-grade-b-2026",
+  "upsc-cse-2026",
+  "sbi-clerk-2026",
+];
+
 // ── Mocks page ───────────────────────────────────────────────────────────
 export default function Mocks() {
   const [items, setItems] = useState([]);
@@ -45,9 +58,10 @@ export default function Mocks() {
   const [analysis, setAnalysis] = useState(null);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [open, setOpen] = useState(false);
+  const [examSlugs, setExamSlugs] = useState(EXAM_SLUG_FALLBACK);
   const [form, setForm] = useState({
     name: "",
-    exam_slug: "ssc-cgl-2026",
+    exam_slug: "",
     score: "",
     max_score: 200,
     duration_min: 60,
@@ -61,6 +75,8 @@ export default function Mocks() {
     error_guess: "",
   });
   const [err, setErr] = useState("");
+  const [formError, setFormError] = useState("");
+  const { run: runMockAction } = useApiAction();
 
   async function loadList() {
     try {
@@ -93,6 +109,39 @@ export default function Mocks() {
     loadList();
   }, []);
 
+  // Load the live recruitment catalogue for the exam dropdown so the list
+  // does not rot when admins add or close cycles. Best-effort: failure
+  // silently keeps the static fallback so new mocks can still be logged.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get("/api/recruitments")
+      .then((d) => {
+        if (cancelled) return;
+        const slugs = (Array.isArray(d?.items) ? d.items : [])
+          .map((r) => r?.slug)
+          .filter((s) => typeof s === "string" && s.length > 0);
+        if (slugs.length) {
+          setExamSlugs(Array.from(new Set(slugs)));
+          // Pre-fill the form's exam_slug to the user's top match (first row)
+          // — much more accurate than the hardcoded SSC CGL default.
+          setForm((prev) => (prev.exam_slug ? prev : { ...prev, exam_slug: slugs[0] }));
+        } else {
+          setForm((prev) =>
+            prev.exam_slug ? prev : { ...prev, exam_slug: EXAM_SLUG_FALLBACK[0] },
+          );
+        }
+      })
+      .catch(() => {
+        setForm((prev) =>
+          prev.exam_slug ? prev : { ...prev, exam_slug: EXAM_SLUG_FALLBACK[0] },
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     if (selectedId) loadAnalysis(selectedId);
     else setAnalysis(null);
@@ -100,6 +149,12 @@ export default function Mocks() {
 
   async function submit(e) {
     e.preventDefault();
+    const validation = validateMockForm(form);
+    if (!validation.ok) {
+      setFormError(validation.message);
+      return;
+    }
+    setFormError("");
     const errorPatterns = {};
     ["concept", "calc", "time", "misread", "guess"].forEach((k) => {
       const v = Number(form[`error_${k}`]);
@@ -142,73 +197,84 @@ export default function Mocks() {
 
   async function changeReviewState(state) {
     if (!selectedId) return;
-    try {
-      const updated = await api.patch(
-        `/api/study/mocks/${selectedId}/review-state`,
-        { state },
-      );
-      setItems((prev) =>
-        prev.map((m) => (m.id === selectedId ? { ...m, review_state: updated.review_state } : m)),
-      );
-      setAnalysis((a) => (a ? { ...a, review_state: updated.review_state } : a));
-    } catch (e) {
-      if (process.env.NODE_ENV !== "production") console.error(e);
-    }
+    await runMockAction({
+      action: () =>
+        api.patch(`/api/study/mocks/${selectedId}/review-state`, { state }),
+      onSuccess: (updated) => {
+        setItems((prev) =>
+          prev.map((m) =>
+            m.id === selectedId ? { ...m, review_state: updated.review_state } : m,
+          ),
+        );
+        setAnalysis((a) => (a ? { ...a, review_state: updated.review_state } : a));
+      },
+      errorMessage: "Couldn't update review state — try again.",
+    });
   }
 
   async function draftCorrections() {
     if (!selectedId) return;
-    try {
-      const out = await api.post(`/api/study/mocks/${selectedId}/correction-tasks`);
-      setAnalysis((a) =>
-        a ? { ...a, correction_tasks: Array.isArray(out?.items) ? out.items : [], review_state: "correction_drafted" } : a,
-      );
-      setItems((prev) =>
-        prev.map((m) => (m.id === selectedId ? { ...m, review_state: "correction_drafted" } : m)),
-      );
-    } catch (e) {
-      if (process.env.NODE_ENV !== "production") console.error(e);
-    }
+    await runMockAction({
+      action: () => api.post(`/api/study/mocks/${selectedId}/correction-tasks`),
+      onSuccess: (out) => {
+        setAnalysis((a) =>
+          a
+            ? {
+                ...a,
+                correction_tasks: Array.isArray(out?.items) ? out.items : [],
+                review_state: "correction_drafted",
+              }
+            : a,
+        );
+        setItems((prev) =>
+          prev.map((m) =>
+            m.id === selectedId ? { ...m, review_state: "correction_drafted" } : m,
+          ),
+        );
+      },
+      successMessage: "Correction tasks drafted.",
+      errorMessage: "Couldn't draft correction tasks — try again.",
+    });
   }
 
   async function applyCorrection(correctionId) {
-    try {
-      const updated = await api.post(
-        `/api/study/mocks/correction-tasks/${correctionId}/apply`,
-      );
-      setAnalysis((a) =>
-        a
-          ? {
-              ...a,
-              correction_tasks: (a.correction_tasks || []).map((c) =>
-                c.id === correctionId ? updated : c,
-              ),
-            }
-          : a,
-      );
-    } catch (e) {
-      if (process.env.NODE_ENV !== "production") console.error(e);
-    }
+    await runMockAction({
+      action: () =>
+        api.post(`/api/study/mocks/correction-tasks/${correctionId}/apply`),
+      onSuccess: (updated) => {
+        setAnalysis((a) =>
+          a
+            ? {
+                ...a,
+                correction_tasks: (a.correction_tasks || []).map((c) =>
+                  c.id === correctionId ? updated : c,
+                ),
+              }
+            : a,
+        );
+      },
+      errorMessage: "Couldn't add correction to plan — try again.",
+    });
   }
 
   async function dismissCorrection(correctionId) {
-    try {
-      const updated = await api.post(
-        `/api/study/mocks/correction-tasks/${correctionId}/dismiss`,
-      );
-      setAnalysis((a) =>
-        a
-          ? {
-              ...a,
-              correction_tasks: (a.correction_tasks || []).map((c) =>
-                c.id === correctionId ? updated : c,
-              ),
-            }
-          : a,
-      );
-    } catch (e) {
-      if (process.env.NODE_ENV !== "production") console.error(e);
-    }
+    await runMockAction({
+      action: () =>
+        api.post(`/api/study/mocks/correction-tasks/${correctionId}/dismiss`),
+      onSuccess: (updated) => {
+        setAnalysis((a) =>
+          a
+            ? {
+                ...a,
+                correction_tasks: (a.correction_tasks || []).map((c) =>
+                  c.id === correctionId ? updated : c,
+                ),
+              }
+            : a,
+        );
+      },
+      errorMessage: "Couldn't dismiss correction — try again.",
+    });
   }
 
   const avg = items.length
@@ -302,7 +368,19 @@ export default function Mocks() {
         </div>
       )}
 
-      {open && <LogMockModal form={form} setForm={setForm} onClose={() => setOpen(false)} onSubmit={submit} />}
+      {open && (
+        <LogMockModal
+          form={form}
+          setForm={setForm}
+          onClose={() => {
+            setOpen(false);
+            setFormError("");
+          }}
+          onSubmit={submit}
+          formError={formError}
+          examSlugs={examSlugs}
+        />
+      )}
     </div>
   );
 }
@@ -616,7 +694,7 @@ function MockScoreTrend({ points }) {
       >
         <line x1="40" y1="20" x2="40" y2="140" stroke="#E7DECB" />
         <line x1="40" y1="140" x2="580" y2="140" stroke="#E7DECB" />
-        {[25, 50, 75, 100].map((y) => (
+        {[0, 25, 50, 75, 100].map((y) => (
           <g key={y}>
             <line
               x1="40"
@@ -686,7 +764,11 @@ function Stat({ label, value, foot }) {
 }
 
 // ── Log mock modal ───────────────────────────────────────────────────────
-function LogMockModal({ form, setForm, onClose, onSubmit }) {
+function LogMockModal({ form, setForm, onClose, onSubmit, formError, examSlugs }) {
+  const maxScoreNum = Number(form.max_score);
+  const attemptedNum = Number(form.attempted);
+  const slugOptions =
+    Array.isArray(examSlugs) && examSlugs.length ? examSlugs : EXAM_SLUG_FALLBACK;
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4" onClick={onClose}>
       <form
@@ -701,26 +783,49 @@ function LogMockModal({ form, setForm, onClose, onSubmit }) {
             <input required className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           </F>
           <F label="Exam">
-            <select className="input" value={form.exam_slug} onChange={(e) => setForm({ ...form, exam_slug: e.target.value })}>
-              {["ssc-cgl-2026", "ibps-po-xv", "rbi-grade-b-2026", "upsc-cse-2026", "sbi-clerk-2026"].map((x) => (
-                <option key={x}>{x}</option>
+            <select
+              className="input"
+              value={form.exam_slug}
+              onChange={(e) => setForm({ ...form, exam_slug: e.target.value })}
+            >
+              {slugOptions.map((x) => (
+                <option key={x} value={x}>
+                  {x}
+                </option>
               ))}
             </select>
           </F>
-          <F label="Score">
-            <input required type="number" className="input" value={form.score} onChange={(e) => setForm({ ...form, score: e.target.value })} />
-          </F>
           <F label="Max score">
-            <input required type="number" className="input" value={form.max_score} onChange={(e) => setForm({ ...form, max_score: e.target.value })} />
+            <input required type="number" min="1" step="0.01" className="input" value={form.max_score} onChange={(e) => setForm({ ...form, max_score: e.target.value })} />
+          </F>
+          <F label="Score">
+            <input
+              required
+              type="number"
+              min="0"
+              max={Number.isFinite(maxScoreNum) && maxScoreNum > 0 ? maxScoreNum : undefined}
+              step="0.01"
+              className="input"
+              value={form.score}
+              onChange={(e) => setForm({ ...form, score: e.target.value })}
+            />
           </F>
           <F label="Duration (min)">
-            <input required type="number" className="input" value={form.duration_min} onChange={(e) => setForm({ ...form, duration_min: e.target.value })} />
+            <input required type="number" min="1" className="input" value={form.duration_min} onChange={(e) => setForm({ ...form, duration_min: e.target.value })} />
           </F>
           <F label="Questions attempted">
-            <input required type="number" className="input" value={form.attempted} onChange={(e) => setForm({ ...form, attempted: e.target.value })} />
+            <input required type="number" min="0" className="input" value={form.attempted} onChange={(e) => setForm({ ...form, attempted: e.target.value })} />
           </F>
           <F label="Questions correct">
-            <input required type="number" className="input" value={form.correct} onChange={(e) => setForm({ ...form, correct: e.target.value })} />
+            <input
+              required
+              type="number"
+              min="0"
+              max={Number.isFinite(attemptedNum) && attemptedNum > 0 ? attemptedNum : undefined}
+              className="input"
+              value={form.correct}
+              onChange={(e) => setForm({ ...form, correct: e.target.value })}
+            />
           </F>
           <F label="Weak topics (comma-sep)">
             <input className="input" value={form.weak} onChange={(e) => setForm({ ...form, weak: e.target.value })} />
@@ -751,6 +856,15 @@ function LogMockModal({ form, setForm, onClose, onSubmit }) {
           </div>
         </div>
 
+        {formError ? (
+          <div
+            className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700"
+            role="alert"
+            data-testid="mock-form-error"
+          >
+            {formError}
+          </div>
+        ) : null}
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             Cancel

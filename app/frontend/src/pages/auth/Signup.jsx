@@ -13,13 +13,26 @@ export default function Signup() {
   const auth = useAuth();
   const nav = useNavigate();
 
+  async function handleGoogleSignup() {
+    setLoading(true);
+    setError(null);
+    try {
+      await auth.loginWithGoogle({
+        redirectTo: `${window.location.origin}/app/onboarding/chat?mode=discovery`,
+      });
+    } catch (err) {
+      setError(err.message || "Unable to continue with Google");
+      setLoading(false);
+    }
+  }
+
   async function onSubmit(e) {
     e.preventDefault();
     setLoading(true);
     setError(null);
     try {
       await auth.register({ email: email.trim(), password, name: name.trim() });
-      nav("/app/onboarding", { replace: true });
+      nav("/app/onboarding/chat?mode=discovery", { replace: true });
     } catch (err) {
       setError(err.message || "Unable to create account");
     } finally {
@@ -39,6 +52,16 @@ export default function Signup() {
       }
     >
       <form onSubmit={onSubmit} className="space-y-5" data-testid="signup-form">
+        <button
+          type="button"
+          onClick={handleGoogleSignup}
+          disabled={loading}
+          data-testid="signup-google"
+          className="btn btn-ghost w-full disabled:opacity-60"
+        >
+          Continue with Google
+        </button>
+        <div className="text-[11px] uppercase tracking-widest text-muted-foreground text-center">or create with email</div>
         <div>
           <label className="block text-[11px] uppercase tracking-widest text-muted-foreground mb-1.5">Full name</label>
           <input

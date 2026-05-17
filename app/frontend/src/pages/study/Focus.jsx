@@ -10,13 +10,18 @@ import {
   PageHeader,
   Drawer,
 } from "../../shared/ui/studyos";
+import useApiAction from "../../lib/hooks/useApiAction";
 
 const PRESETS = [25, 50, 90];
 const RING_CIRCUMFERENCE = 540; // 2·π·r, r = 86
 
 export default function Focus() {
-  const [subject, setSubject] = useState("Quant");
-  const [topic, setTopic] = useState("Percentage & Ratio");
+  // Subject + topic start empty. Pre-filling fictional values like "Quant" /
+  // "Percentage & Ratio" pollutes per-subject focus telemetry — users who
+  // forget to overwrite log every block against the placeholder. The "Link a
+  // task" selector below populates these from today's plan when picked.
+  const [subject, setSubject] = useState("");
+  const [topic, setTopic] = useState("");
   const [duration, setDuration] = useState(50);
   const [remaining, setRemaining] = useState(50 * 60);
   const [running, setRunning] = useState(false);
@@ -28,6 +33,13 @@ export default function Focus() {
   // Holds the just-finished session so the reflection drawer can render.
   const [reflectionSession, setReflectionSession] = useState(null);
   const tickRef = useRef(null);
+  // Wall-clock anchor for the running timer. setInterval throttles in
+  // background tabs and pauses on sleep; deriving `remaining` from
+  // (startedAt + duration*1000) - Date.now() on every tick keeps the
+  // displayed countdown accurate even after the tab loses focus.
+  const startedAtRef = useRef(null);
+  const durationMsRef = useRef(0);
+  const { run: runFocusAction } = useApiAction();
 
   useEffect(() => {
     api.get("/api/study/focus/summary").then(setSummary).catch(() => {});
@@ -47,18 +59,35 @@ export default function Focus() {
 
   useEffect(() => {
     if (!running) return undefined;
+    // Anchor the wall-clock starting point when the run flips on, then
+    // tick from that anchor instead of decrementing the React state by one
+    // each interval. The interval is just a re-render pump.
+    if (startedAtRef.current == null) {
+      startedAtRef.current = Date.now();
+      durationMsRef.current = remaining * 1000;
+    }
     tickRef.current = setInterval(() => {
-      setRemaining((r) => {
-        if (r <= 1) {
-          clearInterval(tickRef.current);
-          finish(true);
-          return 0;
-        }
-        return r - 1;
-      });
+      const elapsedMs = Date.now() - (startedAtRef.current || Date.now());
+      const remainingMs = Math.max(0, durationMsRef.current - elapsedMs);
+      const nextRemaining = Math.ceil(remainingMs / 1000);
+      if (nextRemaining <= 0) {
+        clearInterval(tickRef.current);
+        setRemaining(0);
+        finish(true);
+        return;
+      }
+      setRemaining(nextRemaining);
     }, 1000);
     return () => clearInterval(tickRef.current);
     // eslint-disable-next-line
+  }, [running]);
+
+  // Clear the anchor whenever the timer stops so the next Start resets it.
+  useEffect(() => {
+    if (!running) {
+      startedAtRef.current = null;
+      durationMsRef.current = 0;
+    }
   }, [running]);
 
   function pickLinkedTask(id) {
@@ -72,12 +101,17 @@ export default function Focus() {
   }
 
   async function start() {
-    const s = await api.post("/api/study/focus/start", {
-      subject,
-      topic,
-      duration_min: duration,
+    const result = await runFocusAction({
+      action: () =>
+        api.post("/api/study/focus/start", {
+          subject,
+          topic,
+          duration_min: duration,
+        }),
+      errorMessage: "Couldn't start focus session — try again.",
     });
-    setSessionId(s.id);
+    if (!result.ok) return;
+    setSessionId(result.data?.id);
     setRunning(true);
     setReflectionSession(null);
   }
@@ -87,10 +121,17 @@ export default function Focus() {
   async function finish(auto = false) {
     const completedMin = Math.round((duration * 60 - remaining) / 60);
     if (sessionId) {
-      await api.post("/api/study/focus/stop", {
-        id: sessionId,
-        completed_min: auto ? duration : completedMin,
+      const result = await runFocusAction({
+        action: () =>
+          api.post("/api/study/focus/stop", {
+            id: sessionId,
+            completed_min: auto ? duration : completedMin,
+          }),
+        errorMessage: "Couldn't save focus session — your timer state is preserved; tap End again to retry.",
       });
+      // On failure: leave sessionId/running intact so the user can retry.
+      // No reflection is offered because nothing was logged.
+      if (!result.ok) return;
       // Offer a post-session reflection (kept local — see FocusReflectionPanel).
       setReflectionSession({
         subject,
@@ -229,8 +270,10 @@ export default function Focus() {
               {!running && remaining > 0 ? (
                 <button
                   onClick={start}
+                  disabled={!subject.trim()}
                   data-testid="focus-start"
-                  className="px-5 py-2.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold text-[13px]"
+                  title={!subject.trim() ? "Set a subject below before starting" : undefined}
+                  className="px-5 py-2.5 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold text-[13px] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Start
                 </button>

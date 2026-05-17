@@ -24,18 +24,29 @@ const KIND_TONE = {
 };
 
 function rangeFor(milestones, phaseBands) {
-  const dated = (milestones || []).filter((m) => m.date);
-  if (!dated.length) return null;
-  const dates = dated.map((m) => new Date(m.date).valueOf()).filter((n) => !Number.isNaN(n));
-  if (!dates.length) return null;
-  let min = Math.min(...dates);
-  let max = Math.max(...dates);
-  (phaseBands || []).forEach((b) => {
-    if (b.start) min = Math.min(min, new Date(b.start).valueOf());
-    if (b.end) max = Math.max(max, new Date(b.end).valueOf());
+  const datedMilestones = (milestones || []).filter((m) => m.date);
+  const datedTimes = new Set();
+  datedMilestones.forEach((m) => {
+    const t = new Date(m.date).valueOf();
+    if (!Number.isNaN(t)) datedTimes.add(t);
   });
-  if (min === max) max = min + 86400000;
-  return { min, max };
+  (phaseBands || []).forEach((b) => {
+    if (b.start) {
+      const t = new Date(b.start).valueOf();
+      if (!Number.isNaN(t)) datedTimes.add(t);
+    }
+    if (b.end) {
+      const t = new Date(b.end).valueOf();
+      if (!Number.isNaN(t)) datedTimes.add(t);
+    }
+  });
+  // Require at least two distinct dated points before rendering the rail.
+  // A single milestone (or a phase band with identical start/end) used to
+  // collapse the rail to a 1-day span with the "today" dot stuck at 0% or
+  // 100%, with no indication of why.
+  if (datedTimes.size < 2) return null;
+  const arr = Array.from(datedTimes);
+  return { min: Math.min(...arr), max: Math.max(...arr) };
 }
 
 function pctOf(dateStr, range) {
@@ -65,7 +76,7 @@ export default function CycleProgressRail({ milestones, phaseBands }) {
           const tone = KIND_TONE[m.kind] || "#6C5038";
           return (
             <div
-              key={`${m.kind}-${i}`}
+              key={`${m.kind}-${m.date}-${i}`}
               className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2"
               style={{ left: `${left}%` }}
               title={`${KIND_COPY[m.kind] || m.label} · ${m.date}`}
@@ -103,7 +114,7 @@ export default function CycleProgressRail({ milestones, phaseBands }) {
 
       <ul className="flex flex-wrap gap-x-4 gap-y-1 text-[10.5px] text-clay-700">
         {dated.map((m, i) => (
-          <li key={`leg-${i}`} className="flex items-center gap-1.5">
+          <li key={`leg-${m.kind}-${m.date}-${i}`} className="flex items-center gap-1.5">
             <span
               className="w-2 h-2 rounded-full"
               style={{ background: KIND_TONE[m.kind] || "#6C5038" }}

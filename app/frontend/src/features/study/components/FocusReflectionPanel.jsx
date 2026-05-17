@@ -59,8 +59,10 @@ export default function FocusReflectionPanel({ session, onDismiss, onSave, bare 
   const [confidence, setConfidence] = useState(60);
   const [revise, setRevise] = useState(null);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  function handleSave() {
+  async function handleSave() {
     const reflection = {
       subject: session?.subject || "",
       topic: session?.topic || "",
@@ -70,9 +72,44 @@ export default function FocusReflectionPanel({ session, onDismiss, onSave, bare 
       distraction_count: distractions,
       confidence_after: confidence,
       should_revise: revise,
+      saved_at: new Date().toISOString(),
     };
-    if (typeof onSave === "function") onSave(reflection);
-    setSaved(true);
+    setSaving(true);
+    setSaveError("");
+    try {
+      // Persist locally so the "kept on this device" copy is accurate even
+      // before a backend endpoint exists. Keyed by a stable session id when
+      // available; falls back to a session-anonymous bucket of recent
+      // reflections (cap at 50 to bound localStorage usage).
+      try {
+        const key = session?.id
+          ? `focus.reflection.${session.id}`
+          : "focus.reflection.recent";
+        if (session?.id) {
+          window.localStorage.setItem(key, JSON.stringify(reflection));
+        } else {
+          const prior = JSON.parse(
+            window.localStorage.getItem(key) || "[]",
+          );
+          const next = Array.isArray(prior) ? prior : [];
+          next.unshift(reflection);
+          window.localStorage.setItem(key, JSON.stringify(next.slice(0, 50)));
+        }
+      } catch {
+        // localStorage may be disabled (private mode / quota). Don't
+        // surface a false "saved" — if we couldn't persist AND there's
+        // no remote onSave, treat that as a save failure.
+        if (typeof onSave !== "function") {
+          throw new Error("Local storage is disabled — couldn’t save reflection.");
+        }
+      }
+      if (typeof onSave === "function") await onSave(reflection);
+      setSaved(true);
+    } catch (e) {
+      setSaveError(e?.message || "Couldn’t save reflection — try again.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -187,13 +224,32 @@ export default function FocusReflectionPanel({ session, onDismiss, onSave, bare 
           />
 
           <div className="flex items-center gap-2 pt-1">
-            <button type="button" className="btn btn-primary" onClick={handleSave}>
-              Save reflection
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleSave}
+              disabled={saving}
+            >
+              {saving ? "Saving…" : "Save reflection"}
             </button>
-            <button type="button" className="btn btn-ghost" onClick={onDismiss}>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={onDismiss}
+              disabled={saving}
+            >
               Skip
             </button>
           </div>
+          {saveError ? (
+            <div
+              className="text-[11px] text-rose-700"
+              role="status"
+              data-testid="focus-reflection-error"
+            >
+              {saveError}
+            </div>
+          ) : null}
         </>
       )}
 

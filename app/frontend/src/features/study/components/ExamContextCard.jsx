@@ -47,7 +47,10 @@ export default function ExamContextCard({ examContext }) {
         ) : null}
         {ec.days_remaining !== null && ec.days_remaining !== undefined ? (
           <span className="text-sm text-clay-700">
-            · {ec.days_remaining} days remaining
+            ·{" "}
+            {ec.days_remaining >= 0
+              ? `${ec.days_remaining} day${ec.days_remaining === 1 ? "" : "s"} remaining`
+              : `${Math.abs(ec.days_remaining)} day${Math.abs(ec.days_remaining) === 1 ? "" : "s"} ago`}
           </span>
         ) : null}
       </div>

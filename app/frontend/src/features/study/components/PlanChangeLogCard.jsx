@@ -5,6 +5,32 @@ import { Card, Eyebrow, Pill, StatusDot } from "../../../shared/ui/studyos";
 
 // Plan change log fed by /api/study/plan/changelog (study_adaptation_events).
 // Each row is server-derived — the UI never re-derives event copy.
+
+// Relative-time formatter. Two callers in different timezones reading the
+// same shared screen used to see different locale-formatted strings with no
+// timezone label, breaking the "auditable" promise of the panel. Relative
+// values ("12 min ago") sidestep that entirely; we keep the ISO timestamp
+// in `title` so a hover / screen reader still surfaces the precise instant.
+function formatRelative(iso) {
+  if (!iso) return { text: "", iso: "" };
+  const then = new Date(iso);
+  if (Number.isNaN(then.valueOf())) return { text: "", iso: "" };
+  const diffMs = Date.now() - then.getTime();
+  const sec = Math.round(diffMs / 1000);
+  const future = sec < 0;
+  const abs = Math.abs(sec);
+  let text;
+  if (abs < 60) text = `${abs}s`;
+  else if (abs < 3600) text = `${Math.round(abs / 60)} min`;
+  else if (abs < 86400) text = `${Math.round(abs / 3600)} h`;
+  else if (abs < 2592000) text = `${Math.round(abs / 86400)} d`;
+  else text = then.toLocaleDateString();
+  return {
+    text: future ? `in ${text}` : `${text} ago`,
+    iso: then.toISOString(),
+  };
+}
+
 export default function PlanChangeLogCard() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -55,7 +81,7 @@ export default function PlanChangeLogCard() {
           <ul className="space-y-2.5">
             {items.map((row) => {
               const summary = row.change_summary || {};
-              const when = row.created_at ? new Date(row.created_at).toLocaleString() : "";
+              const rel = formatRelative(row.created_at);
               return (
                 <li
                   key={row.id}
@@ -70,7 +96,12 @@ export default function PlanChangeLogCard() {
                         </span>
                       ) : null}
                     </div>
-                    <span className="num-mono text-[10.5px] text-clay-700">{when}</span>
+                    <span
+                      className="num-mono text-[10.5px] text-clay-700"
+                      title={rel.iso || undefined}
+                    >
+                      {rel.text}
+                    </span>
                   </div>
                   {(summary.task_count != null || summary.version_number != null) ? (
                     <div className="mt-1.5 text-[12px] text-clay-800">

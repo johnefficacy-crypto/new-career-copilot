@@ -119,11 +119,13 @@ insert into public.pyq_questions (
 )
 on conflict (id) do nothing;
 
+-- pyq_options has no source_basis column (see migration 032). Provenance
+-- rides on the `metadata` jsonb so audits keep the trail.
 insert into public.pyq_options (
-  id, question_id, option_label, option_text, is_correct, source_basis
+  id, question_id, option_label, option_text, is_correct, metadata
 ) values
-  ('<pyq-option-a-uuid>', '<pyq-question-uuid>', 'A', '<Option A>', false, 'manual_import'),
-  ('<pyq-option-b-uuid>', '<pyq-question-uuid>', 'B', '<Option B>', false, 'manual_import')
+  ('<pyq-option-a-uuid>', '<pyq-question-uuid>', 'A', '<Option A>', false, '{"source_basis":"manual_import"}'::jsonb),
+  ('<pyq-option-b-uuid>', '<pyq-question-uuid>', 'B', '<Option B>', false, '{"source_basis":"manual_import"}'::jsonb)
 on conflict (id) do nothing;
 
 insert into public.pyq_question_topic_tags (

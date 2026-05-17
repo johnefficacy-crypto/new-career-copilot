@@ -110,6 +110,16 @@ export function AuthProvider({ children }) {
     [hydrate]
   );
 
+
+  const loginWithGoogle = useCallback(async ({ redirectTo } = {}) => {
+    const resolvedRedirect = redirectTo || `${window.location.origin}/app`;
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: resolvedRedirect },
+    });
+    if (error) throw new Error(error.message || "Unable to sign in with Google");
+    return { ok: true };
+  }, []);
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
     setUser(null);
@@ -154,12 +164,13 @@ export function AuthProvider({ children }) {
       login,
       register,
       logout,
+      loginWithGoogle,
       refreshUser,
       sendPasswordReset,
       updatePassword,
       setUser,
     }),
-    [user, status, login, register, logout, refreshUser, sendPasswordReset, updatePassword]
+    [user, status, login, register, logout, loginWithGoogle, refreshUser, sendPasswordReset, updatePassword]
   );
 
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;

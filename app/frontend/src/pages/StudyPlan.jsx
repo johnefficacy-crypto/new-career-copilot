@@ -5,6 +5,7 @@ import { Card, Drawer, Eyebrow, PageHeader, Pill, SectionHeader, StatusDot } fro
 import PlanChangeLogCard from "../features/study/components/PlanChangeLogCard";
 import PlanByTopic from "../features/study/components/PlanByTopic";
 import ExamCycleTimeline from "../features/study/components/ExamCycleTimeline";
+import useApiAction from "../lib/hooks/useApiAction";
 
 const STATUS_TONE = {
   completed: "sage",
@@ -14,8 +15,12 @@ const STATUS_TONE = {
   planned: "outline",
 };
 
-function DayCell({ d }) {
-  const pct = Math.max(0, Math.min(100, Math.round((d.hrs / 7) * 100)));
+// `target` is the daily-hour ceiling used to scale the per-day bar. Defaults
+// to 7 when no plan target is known, but the label calls out the reference
+// so users in 4h/day or 10h/day plans don't read 75% as their adherence.
+function DayCell({ d, target = 7 }) {
+  const denom = target > 0 ? target : 7;
+  const pct = Math.max(0, Math.min(100, Math.round((d.hrs / denom) * 100)));
   return (
     <div
       className={`rounded-xl border p-3 relative ${
@@ -35,7 +40,9 @@ function DayCell({ d }) {
         <div className="h-[5px] bg-[#EFE2C9] rounded-full overflow-hidden">
           <div className="h-full bg-sage-500" style={{ width: `${pct}%` }} />
         </div>
-        <div className="text-[10.5px] text-clay-700 mt-1 num-mono">{pct}% of 7h</div>
+        <div className="text-[10.5px] text-clay-700 mt-1 num-mono">
+          {pct}% of {denom}h
+        </div>
       </div>
     </div>
   );
@@ -51,6 +58,17 @@ export default function StudyPlan() {
   const [draftOpen, setDraftOpen] = useState(false);
   const [applying, setApplying] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const { run: runTaskAction } = useApiAction();
+  const { run: runApply } = useApiAction();
+
+  async function refetchPlan() {
+    try {
+      const d = await api.get("/api/study/plan");
+      setPlan({ plan: d?.plan || null, tasks: Array.isArray(d?.tasks) ? d.tasks : [] });
+    } catch (e) {
+      if (process.env.NODE_ENV !== "production") console.error(e);
+    }
+  }
 
   useEffect(() => {
     api
@@ -85,48 +103,97 @@ export default function StudyPlan() {
 
   async function applyDraft() {
     setApplying(true);
-    try {
-      await api.post("/api/study/plan/apply", {});
+    const result = await runApply({
+      action: () => api.post("/api/study/plan/apply", {}),
+      successMessage: "Plan applied.",
+      errorMessage: "Couldn't apply plan — try again.",
+    });
+    if (result.ok) {
       setDraftOpen(false);
       setDraft(null);
       setReloadKey((k) => k + 1);
-    } catch (e) {
-      if (process.env.NODE_ENV !== "production") console.error(e);
-    } finally {
-      setApplying(false);
     }
+    setApplying(false);
   }
 
   async function toggle(t) {
-    const nextStatus = t.status === "completed" ? "planned" : "completed";
-    setPlan((p) => ({
+    const wasStatus = t.status || (t.done ? "completed" : "planned");
+    const nextStatus = wasStatus === "completed" ? "planned" : "completed";
+    const patchTo = (status) => (p) => ({
       ...p,
       tasks: p.tasks.map((x) =>
-        x.id === t.id ? { ...x, done: nextStatus === "completed", status: nextStatus } : x,
+        x.id === t.id ? { ...x, done: status === "completed", status } : x,
       ),
-    }));
-    await api.put(`/api/study/tasks/${t.id}`, { status: nextStatus });
+    });
+    await runTaskAction({
+      optimistic: () => setPlan(patchTo(nextStatus)),
+      action: () => api.put(`/api/study/tasks/${t.id}`, { status: nextStatus }),
+      rollback: () => setPlan(patchTo(wasStatus)),
+      errorMessage: "Couldn't save task — try again.",
+    });
   }
+
   async function updateStatus(t, status) {
-    await api.put(`/api/study/tasks/${t.id}`, { status });
-    await api
-      .get("/api/study/plan")
-      .then((d) => setPlan({ plan: d?.plan || null, tasks: Array.isArray(d?.tasks) ? d.tasks : [] }));
+    const wasStatus = t.status || (t.done ? "completed" : "planned");
+    const patchTo = (s) => (p) => ({
+      ...p,
+      tasks: p.tasks.map((x) =>
+        x.id === t.id ? { ...x, done: s === "completed", status: s } : x,
+      ),
+    });
+    const result = await runTaskAction({
+      optimistic: () => setPlan(patchTo(status)),
+      action: () => api.put(`/api/study/tasks/${t.id}`, { status }),
+      rollback: () => setPlan(patchTo(wasStatus)),
+      errorMessage: "Couldn't update task — try again.",
+    });
+    if (result.ok) refetchPlan();
   }
+
   async function carryForward() {
-    await api.post("/api/study/tasks/carry-forward", {});
-    await api
-      .get("/api/study/plan")
-      .then((d) => setPlan({ plan: d?.plan || null, tasks: Array.isArray(d?.tasks) ? d.tasks : [] }));
+    const result = await runTaskAction({
+      action: () => api.post("/api/study/tasks/carry-forward", {}),
+      successMessage: "Backlog carried forward.",
+      errorMessage: "Couldn't carry forward backlog — try again.",
+    });
+    if (result.ok) refetchPlan();
   }
 
   const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
-  const todayKey = new Date().toLocaleDateString("en-US", { weekday: "short" });
+  // Compare on `YYYY-MM-DD` derived from each side's local timezone, not on
+  // weekday-short. Parsing the backend's `YYYY-MM-DD` string with `new Date`
+  // treats it as UTC midnight; asking for the local weekday near midnight
+  // in IST/PST etc. shifted "Today" to the wrong tile.
+  const todayLocalIso = (() => {
+    const d = new Date();
+    const tz = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - tz).toISOString().slice(0, 10);
+  })();
   const week = (focus.week || []).map((d) => {
-    const label = new Date(d.date).toLocaleDateString("en-US", { weekday: "short" });
-    return { label, hrs: Number(((d.minutes || 0) / 60).toFixed(1)), isToday: label === todayKey };
+    const isoDate = typeof d.date === "string" ? d.date.slice(0, 10) : "";
+    // For the label, parse the date-only string as local (append T00:00:00
+    // to anchor it) — otherwise UTC midnight is one day earlier in negative
+    // offsets.
+    const labelDate = isoDate ? new Date(`${isoDate}T00:00:00`) : new Date(d.date);
+    const label = labelDate.toLocaleDateString("en-US", { weekday: "short" });
+    return {
+      label,
+      hrs: Number(((d.minutes || 0) / 60).toFixed(1)),
+      isToday: isoDate === todayLocalIso,
+    };
   });
   const hasWeek = week.some((x) => x.hrs > 0);
+  // Resolve a daily-hour target from whichever signal the backend provides.
+  // Falls back to the weekly planned hours / 7, then to 7h as the visual
+  // baseline. Per-day bars are scaled against this so a user on a 4h/day
+  // plan no longer reads "75% of 7h" as their adherence.
+  const dailyTargetHours = (() => {
+    const explicit = Number(plan.plan?.daily_target_hours);
+    if (Number.isFinite(explicit) && explicit > 0) return explicit;
+    const weekly = Number(review?.hours_planned);
+    if (Number.isFinite(weekly) && weekly > 0) return Math.round((weekly / 7) * 10) / 10;
+    return 7;
+  })();
   const hasReview =
     review &&
     ((review.hours_studied || 0) > 0 ||
@@ -187,7 +254,7 @@ export default function StudyPlan() {
         <div className="px-7 py-5">
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
             {(week.length ? week : [{ label: "—", hrs: 0 }]).map((w, i) => (
-              <DayCell key={`${w.label}-${i}`} d={w} />
+              <DayCell key={`${w.label}-${i}`} d={w} target={dailyTargetHours} />
             ))}
           </div>
           {!hasWeek && (
@@ -242,21 +309,39 @@ export default function StudyPlan() {
                       <div className="mt-2 flex flex-wrap gap-1.5 items-center">
                         <button
                           type="button"
-                          className="text-[11px] px-2.5 py-1 rounded-full border border-[#E7DECB] text-clay-700 font-semibold"
+                          aria-pressed={status === "in_progress"}
+                          disabled={status === "in_progress"}
+                          className={`text-[11px] px-2.5 py-1 rounded-full border font-semibold transition ${
+                            status === "in_progress"
+                              ? "border-[#2E2218] bg-[#2E2218] text-[#F3EADB] cursor-default"
+                              : "border-[#E7DECB] text-clay-700 hover:bg-clay-50"
+                          }`}
                           onClick={() => updateStatus(t, "in_progress")}
                         >
                           In progress
                         </button>
                         <button
                           type="button"
-                          className="text-[11px] px-2.5 py-1 rounded-full border border-[#E7DECB] text-clay-700 font-semibold"
+                          aria-pressed={status === "skipped"}
+                          disabled={status === "skipped"}
+                          className={`text-[11px] px-2.5 py-1 rounded-full border font-semibold transition ${
+                            status === "skipped"
+                              ? "border-[#2E2218] bg-[#2E2218] text-[#F3EADB] cursor-default"
+                              : "border-[#E7DECB] text-clay-700 hover:bg-clay-50"
+                          }`}
                           onClick={() => updateStatus(t, "skipped")}
                         >
                           Skip
                         </button>
                         <button
                           type="button"
-                          className="text-[11px] px-2.5 py-1 rounded-full border border-[#E7DECB] text-clay-700 font-semibold"
+                          aria-pressed={status === "missed"}
+                          disabled={status === "missed"}
+                          className={`text-[11px] px-2.5 py-1 rounded-full border font-semibold transition ${
+                            status === "missed"
+                              ? "border-[#2E2218] bg-[#2E2218] text-[#F3EADB] cursor-default"
+                              : "border-[#E7DECB] text-clay-700 hover:bg-clay-50"
+                          }`}
                           onClick={() => updateStatus(t, "missed")}
                         >
                           Mark missed
@@ -282,7 +367,7 @@ export default function StudyPlan() {
           <SectionHeader
             eyebrow="Truth panel · week"
             dark
-            title={hasReview ? `Studied ${review.hours_studied || 0}h this week.` : "No weekly review data yet"}
+            title={hasReview ? `Studied ${review.hours_studied != null ? review.hours_studied : "—"}h this week.` : "No weekly review data yet"}
           />
           <ul className="space-y-3 text-sm">
             {[

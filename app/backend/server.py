@@ -26,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app.api.accountability import router as accountability_router
 from app.api.admin_exam_intelligence import router as admin_exam_intel_router
 from app.api.admin_overview import router as admin_overview_router
 from app.api.ai import router as ai_router
@@ -38,6 +39,7 @@ from app.api.admin_copyright import (
     admin_router as admin_copyright_router,
 )
 from app.api.admin_kpis import router as admin_kpis_router
+from app.api.blogs import router as blogs_router, admin_router as admin_blogs_router
 from app.api.admin_moderation import (
     router as moderation_router,
     admin_router as admin_moderation_router,
@@ -198,6 +200,10 @@ api.include_router(persona_questions_router)  # PR2 progressive tiny questions
 api.include_router(study_os_router)  # PR3 Study OS Mission Control — before canonical so /study/mission-control wins
 api.include_router(study_compare_router)  # Study OS comparison + social + verification
 api.include_router(onboarding_unified_router)  # unified guided onboarding — before placeholders
+# Real Supabase-backed accountability + admin ops — must precede community_runtime
+# and placeholders so route order wins for /accountability/mentors/* and /admin/*.
+api.include_router(accountability_router)
+api.include_router(admin_ops_router)
 api.include_router(community_runtime_router)  # durable community/social routes — must precede canonical seed fallbacks
 api.include_router(canonical_router)  # canonical Supabase routes — must precede placeholders
 api.include_router(community_people_router)  # community-people: groups, partner, mentors, resources
@@ -214,6 +220,8 @@ api.include_router(reports_router)
 api.include_router(moderation_router)  # /moderation/report, /moderation/my-reports
 api.include_router(admin_moderation_router)  # /admin/moderation/...
 api.include_router(admin_kpis_router)  # /admin/kpis/...
+api.include_router(blogs_router)  # /blogs public list/detail
+api.include_router(admin_blogs_router)  # /admin/blogs CRUD
 api.include_router(copyright_public_router)  # /copyright/submit (public DMCA intake)
 api.include_router(admin_copyright_router)  # /admin/copyright/...
 api.include_router(placeholders_router)
