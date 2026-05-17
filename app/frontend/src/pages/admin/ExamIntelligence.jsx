@@ -14,11 +14,11 @@ import { Drawer, PageHeader, StatusDot } from "../../shared/ui/studyos";
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "exams", label: "Exams" },
-  { id: "review", label: "Review queue" },
-  { id: "coverage", label: "Topic Coverage" },
-  { id: "competition", label: "Competition Metrics" },
-  { id: "policy", label: "Policy Updates" },
-  { id: "impact", label: "Plan Impact" },
+  { id: "review", label: "Pending review" },
+  { id: "coverage", label: "Topic coverage" },
+  { id: "competition", label: "Competition" },
+  { id: "policy", label: "Policy updates" },
+  { id: "impact", label: "Plan impact" },
 ];
 
 const COVERAGE_STATUSES = ["all", "draft", "pending_review", "reviewed", "locked", "rejected"];

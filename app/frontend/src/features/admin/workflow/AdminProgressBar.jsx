@@ -6,14 +6,14 @@ const STEPS = [
   { id: "live_scrape", label: "Live scrape" },
   { id: "queue_review", label: "Queue review" },
   { id: "field_fixes", label: "Field fixes" },
-  { id: "official_source_resolved", label: "Official source resolved" },
+  { id: "official_source_resolved", label: "Official proof attached" },
   { id: "conflicts_resolved", label: "Conflicts resolved" },
-  { id: "promoted_draft", label: "Promoted draft" },
+  { id: "promoted_draft", label: "Draft created" },
   { id: "draft_blockers_fixed", label: "Draft blockers fixed" },
   { id: "validated", label: "Validated" },
   { id: "verified", label: "Verified" },
   { id: "published", label: "Published" },
-  { id: "eligibility_monitored", label: "Eligibility monitored" },
+  { id: "eligibility_monitored", label: "Post-publish health" },
 ];
 
 // state: { source, latestRun, queueItem, recruitment, validateResult, eligibilityOps }
@@ -81,7 +81,7 @@ export function computeProgress(state = {}) {
 
   if (queueItem) {
     if (queueItem.official_source_resolved === false) {
-      out.official_source_resolved = { status: "blocked", reason: "Resolve official source before promotion." };
+      out.official_source_resolved = { status: "blocked", reason: "Attach official proof before promotion." };
     } else if (queueItem.official_source_resolved === true) {
       out.official_source_resolved = { status: "complete" };
     } else {

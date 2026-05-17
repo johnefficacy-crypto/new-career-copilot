@@ -310,7 +310,7 @@ function QueueFixSection({ item, conflicts = [], sources = [], onFieldAction, on
                 {blockedFromPromote
                   ? [
                       blockers.length ? `Verify ${blockers.length} required field${blockers.length === 1 ? "" : "s"}` : "",
-                      officialUnresolved ? "Resolve official source" : "",
+                      officialUnresolved ? "Attach official proof" : "",
                       openConflicts.length ? `Resolve ${openConflicts.length} consensus conflict${openConflicts.length === 1 ? "" : "s"}` : "",
                     ].filter(Boolean).join(" · ")
                   : "All gates open. Promotion will create a recruitment draft."}
@@ -440,7 +440,7 @@ function RecruitmentFixSection({ recruitment, validateResult, sources = [], onSo
           onClick={async () => { setReviewing(true); try { await onValidate?.(recruitment); } finally { setReviewing(false); } }}
           data-testid="fix-panel-validate"
         >
-          {reviewing ? "Validating…" : "Validate publish readiness"}
+          {reviewing ? "Validating…" : "Validate publish readiness — server-side check"}
         </button>
         <button
           type="button"

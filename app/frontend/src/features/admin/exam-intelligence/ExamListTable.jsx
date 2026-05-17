@@ -58,7 +58,7 @@ export default function ExamListTable({ items, onSelect }) {
                   className="text-[11px] px-3 py-1 rounded-full bg-[#2E2218] text-[#F3EADB] font-semibold"
                   data-testid={`exam-intel-review-${e.slug}`}
                 >
-                  Review queue →
+                  Pending review →
                 </button>
               </td>
             </tr>

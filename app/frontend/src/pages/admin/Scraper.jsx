@@ -374,7 +374,7 @@ export default function AdminScraper() {
 
   return (
     <div className="space-y-6" data-testid="admin-scraper">
-      <AdminWorkflowStepper currentStep={["Scrape", "Queue Review"]} />
+      <AdminWorkflowStepper currentStep={["Scrape", "Candidate review"]} />
       <NextActionCallout message={workflowMessage} href="/admin/recruitments" actionLabel="Open Recruitments" tone="info" />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>

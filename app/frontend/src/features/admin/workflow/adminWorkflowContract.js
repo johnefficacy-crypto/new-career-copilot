@@ -1,7 +1,7 @@
 export const ADMIN_WORKFLOW_STEPS = [
   "Sources",
   "Scrape",
-  "Queue Review",
+  "Candidate review",
   "Recruitment Draft",
   "Validate",
   "Publish",
@@ -11,7 +11,7 @@ export const ADMIN_WORKFLOW_STEPS = [
 export const ADMIN_ROUTES_BY_STEP = {
   Sources: "/admin/sources",
   Scrape: "/admin/scraper",
-  "Queue Review": "/admin/scraper",
+  "Candidate review": "/admin/scraper",
   "Recruitment Draft": "/admin/recruitments",
   Validate: "/admin/recruitments",
   Publish: "/admin/recruitments",

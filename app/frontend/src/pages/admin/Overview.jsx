@@ -84,7 +84,7 @@ export default function AdminOverview() {
         </div>
         <div className="grid3">
           {[
-            { to: "/admin/operations", label: "Operations Console", sub: "scrape → review → publish" },
+            { to: "/admin/operations", label: "Operations", sub: "scrape → review → publish" },
             { to: "/admin/recruitments", label: "Recruitment review", sub: "drafts & publish gate" },
             { to: "/admin/eligibility-queue", label: "Promotion queue", sub: "candidates awaiting promote" },
             { to: "/admin/sources", label: "Source registry", sub: "trusted & discovery-only" },

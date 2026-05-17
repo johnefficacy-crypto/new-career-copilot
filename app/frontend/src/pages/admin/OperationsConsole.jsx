@@ -335,7 +335,7 @@ export default function OperationsConsole() {
     return (
       <div className="card">
         <div className="card-body">
-          <div className="err-row">Failed to load Operations Console · {loadError.message}</div>
+          <div className="err-row">Failed to load Operations · {loadError.message}</div>
           <div style={{ marginTop: 10 }}>
             <button className="btn small" onClick={loadAll}>Retry</button>
           </div>

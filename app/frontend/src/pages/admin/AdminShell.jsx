@@ -10,13 +10,13 @@ import {
 import { useAuth } from "../../lib/authContext";
 
 const OPERATIONS_NAV = [
-  { to: "/admin/operations", label: "Operations Console", icon: LayoutGrid, end: true, testId: "admin-nav-operations" },
+  { to: "/admin/operations", label: "Operations", icon: LayoutGrid, end: true, testId: "admin-nav-operations" },
   { to: "/admin/sources", label: "Source Registry", icon: Database, testId: "admin-nav-source-registry" },
-  { to: "/admin/scraper", label: "Scrape Runs", icon: Radar, testId: "admin-nav-scraper-monitor" },
+  { to: "/admin/scraper", label: "Scrape Monitor", icon: Radar, testId: "admin-nav-scraper-monitor" },
   { to: "/admin/recruitments", label: "Recruitments", icon: FileSearch, testId: "admin-nav-recruitments" },
   { to: "/admin/blogs", label: "Blog Funnel CMS", icon: NotebookPen, testId: "admin-nav-blogs" },
   { to: "/admin/eligibility-queue", label: "Promotion Queue", icon: ListChecks, testId: "admin-nav-promotion-queue" },
-  { to: "/admin/eligibility-ops", label: "Eligibility Ops", icon: GaugeCircle, testId: "admin-nav-eligibility-ops" },
+  { to: "/admin/eligibility-ops", label: "Eligibility Health", icon: GaugeCircle, testId: "admin-nav-eligibility-ops" },
   { to: "/admin/notifications", label: "Notifications", icon: Bell, testId: "admin-nav-notifications" },
 ];
 
@@ -27,8 +27,8 @@ const GOVERNANCE_NAV = [
   { to: "/admin/copyright", label: "Copyright & Takedown", icon: CopyrightIcon, testId: "admin-nav-copyright" },
   { to: "/admin/organizations", label: "Organizations", icon: Users2, testId: "admin-nav-organizations" },
   { to: "/admin/audit", label: "Audit Trail", icon: ScrollText, testId: "admin-nav-audit-log" },
-  { to: "/admin/rbac", label: "RBAC & Users", icon: ShieldCheck, testId: "admin-nav-rbac-&-users" },
-  { to: "/admin/ai-policy", label: "AI Policy", icon: Bot, testId: "admin-nav-ai-policy" },
+  { to: "/admin/rbac", label: "Access Control", icon: ShieldCheck, testId: "admin-nav-rbac-&-users" },
+  { to: "/admin/ai-policy", label: "AI Governance", icon: Bot, testId: "admin-nav-ai-policy" },
   { to: "/admin/persona", label: "Persona", icon: Sparkles, testId: "admin-nav-persona" },
   { to: "/admin/exam-intelligence", label: "Exam Intelligence", icon: GraduationCap, testId: "admin-nav-exam-intelligence" },
 ];
