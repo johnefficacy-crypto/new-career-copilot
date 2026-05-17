@@ -146,9 +146,16 @@ function FieldRow({ field, label, value, status, details, entityScope, onFieldAc
         !rejectingOpen ? (
           <div className="row" style={{ marginTop: 8 }}>
             <button type="button" className="btn small" onClick={() => submit("verify")}>Verify</button>
-            <button type="button" className="btn small" onClick={() => { setRejectingOpen(true); setLocalError(""); }}>Reject</button>
             <CorrectionInput type={type} value={correction} onChange={setCorrection} ariaLabel={`Corrected value for ${heading}`} />
             <button type="button" className="btn small" disabled={correction === "" || correction == null} onClick={() => submit("correct")}>Correct</button>
+            <button
+              type="button"
+              className="btn ghost small"
+              onClick={() => { setRejectingOpen(true); setLocalError(""); }}
+              aria-label={`Reject ${heading}`}
+            >
+              Reject
+            </button>
           </div>
         ) : (
           <div className="stack" style={{ marginTop: 8 }}>
@@ -272,7 +279,7 @@ export default function FieldReviewGroup({ extracted, evidence, evidenceDetails,
   return (
     <div className="stack">
       <ReviewSection
-        title="Field evidence · required before promotion"
+        title="Required evidence"
         description="Backend promotion blocks until these high-risk fields are verified or corrected."
         fields={required}
         extracted={extracted}
@@ -281,7 +288,7 @@ export default function FieldReviewGroup({ extracted, evidence, evidenceDetails,
         onFieldAction={onFieldAction}
       />
       <ReviewSection
-        title="Recommended review"
+        title="Quality review"
         description="Review for quality. Not blockers unless the backend reports one."
         fields={recommended}
         extracted={extracted}
