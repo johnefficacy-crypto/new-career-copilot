@@ -32,6 +32,7 @@ import AdminStudyOsMockTrust from "../pages/admin/studyos/MockTrust";
 import AdminStudyOsReports from "../pages/admin/studyos/Reports";
 import AdminStudyOsSocial from "../pages/admin/studyos/Social";
 import AdminExamIntelCms from "../pages/admin/studyos/ExamIntelCms";
+import AdminContentAccessRequests from "../pages/admin/studyos/ContentAccessRequests";
 
 export const adminRouteElements = (
   <Route element={<ProtectedRoute role={ADMIN_ROLES} requireBackend><AdminShell /></ProtectedRoute>}>
@@ -65,5 +66,6 @@ export const adminRouteElements = (
     <Route path="/admin/study-os/reports" element={<AdminStudyOsReports />} />
     <Route path="/admin/study-os/social" element={<AdminStudyOsSocial />} />
     <Route path="/admin/study-os/exam-intel-cms" element={<AdminExamIntelCms />} />
+    <Route path="/admin/study-os/content-access" element={<AdminContentAccessRequests />} />
   </Route>
 );

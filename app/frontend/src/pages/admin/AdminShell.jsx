@@ -48,6 +48,7 @@ const STUDY_OS_NAV = [
   { to: "/admin/study-os/reports", label: "Report Jobs", icon: NotebookPen, testId: "admin-nav-studyos-reports" },
   { to: "/admin/study-os/social", label: "Social Admin", icon: Network, testId: "admin-nav-studyos-social" },
   { to: "/admin/study-os/exam-intel-cms", label: "Exam Intel CMS", icon: BookText, testId: "admin-nav-studyos-exam-intel-cms" },
+  { to: "/admin/study-os/content-access", label: "Content Access (4-eyes)", icon: ShieldCheck, testId: "admin-nav-studyos-content-access" },
 ];
 
 const SECTIONS = [

@@ -1752,3 +1752,345 @@ def test_cms_writes_reject_short_reason():
         "/api/admin/exam-intelligence-cms/policy-updates",
     ]:
         assert client.post(path, json=body).status_code == 422, path
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  Follow-up — 4-eyes content access tests
+# ════════════════════════════════════════════════════════════════════════
+
+
+def test_content_access_request_creates_pending_row():
+    sb = _seed_minimal_user()
+    _seed_content(sb)
+    sb.db["content_access_requests"] = []
+    app = _app(sb)
+    r = TestClient(app).post(
+        "/api/admin/study-os/content-access/requests",
+        json={
+            "user_id": "user-1",
+            "artifact_kind": "note",
+            "artifact_id": "open-note-1",
+            "reason": "user reported missing content",
+        },
+    )
+    assert r.status_code == 200, r.text
+    req = r.json()["request"]
+    assert req["status"] == "pending"
+    assert req["artifact_kind"] == "note"
+    assert len(sb.db["content_access_requests"]) == 1
+
+
+def test_content_access_request_404_for_unknown_artifact():
+    sb = _seed_minimal_user()
+    _seed_content(sb)
+    app = _app(sb)
+    r = TestClient(app).post(
+        "/api/admin/study-os/content-access/requests",
+        json={"user_id": "user-1", "artifact_kind": "note", "artifact_id": "nope", "reason": "ghost artifact"},
+    )
+    assert r.status_code == 404
+
+
+def test_content_access_request_409_for_wrong_owner():
+    sb = _seed_minimal_user()
+    _seed_content(sb)
+    sb.db["personal_notes"][0]["user_id"] = "user-other"
+    app = _app(sb)
+    r = TestClient(app).post(
+        "/api/admin/study-os/content-access/requests",
+        json={"user_id": "user-1", "artifact_kind": "note", "artifact_id": "open-note-1", "reason": "wrong owner"},
+    )
+    assert r.status_code == 409
+
+
+def test_content_access_approve_requires_different_operator():
+    sb = _seed_minimal_user()
+    _seed_content(sb)
+    sb.db["content_access_requests"] = [
+        {
+            "id": "req-1",
+            "requested_by": "admin-1",
+            "requested_by_email": "admin@example.com",
+            "user_id": "user-1",
+            "artifact_kind": "note",
+            "artifact_id": "open-note-1",
+            "request_reason": "x" * 10,
+            "status": "pending",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+    ]
+    app = _app(sb)
+    # Same operator (admin-1 in default _app) tries to approve their own request.
+    r = TestClient(app).post(
+        "/api/admin/study-os/content-access/requests/req-1/approve",
+        json={"reason": "self-approval attempt"},
+    )
+    assert r.status_code == 409
+    assert "4-eyes" in (r.json().get("detail") or "")
+
+
+def test_content_access_approve_succeeds_for_second_operator():
+    sb = _seed_minimal_user()
+    _seed_content(sb)
+    sb.db["content_access_requests"] = [
+        {
+            "id": "req-1",
+            "requested_by": "admin-other",
+            "requested_by_email": "other@example.com",
+            "user_id": "user-1",
+            "artifact_kind": "note",
+            "artifact_id": "open-note-1",
+            "request_reason": "x" * 10,
+            "status": "pending",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+    ]
+    app = _app(sb)  # default admin-1
+    r = TestClient(app).post(
+        "/api/admin/study-os/content-access/requests/req-1/approve",
+        json={"reason": "approved after review"},
+    )
+    assert r.status_code == 200
+    row = sb.db["content_access_requests"][0]
+    assert row["status"] == "approved"
+    assert row["approved_by"] == "admin-1"
+
+
+def test_content_access_open_returns_content_and_flips_to_consumed():
+    sb = _seed_minimal_user()
+    _seed_content(sb)
+    sb.db["content_access_requests"] = [
+        {
+            "id": "req-1",
+            "requested_by": "admin-1",
+            "requested_by_email": "admin@example.com",
+            "user_id": "user-1",
+            "artifact_kind": "note",
+            "artifact_id": "open-note-1",
+            "request_reason": "x" * 10,
+            "approved_by_email": "boss@example.com",
+            "status": "approved",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+    ]
+    sb.db["support_content_access"] = []
+    app = _app(sb)  # admin-1 is the requester
+    r = TestClient(app).post("/api/admin/study-os/content-access/requests/req-1/open")
+    assert r.status_code == 200, r.text
+    p = r.json()
+    assert p["artifact"]["body"] == "actual note body here"
+    # Status flipped + access log written
+    assert sb.db["content_access_requests"][0]["status"] == "consumed"
+    assert len(sb.db["support_content_access"]) == 1
+    # Re-open is refused
+    r2 = TestClient(app).post("/api/admin/study-os/content-access/requests/req-1/open")
+    assert r2.status_code == 409
+
+
+def test_content_access_open_403_for_non_requester():
+    sb = _seed_minimal_user()
+    _seed_content(sb)
+    sb.db["content_access_requests"] = [
+        {
+            "id": "req-1",
+            "requested_by": "someone-else",
+            "user_id": "user-1",
+            "artifact_kind": "note",
+            "artifact_id": "open-note-1",
+            "request_reason": "x" * 10,
+            "status": "approved",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+    ]
+    app = _app(sb)
+    r = TestClient(app).post("/api/admin/study-os/content-access/requests/req-1/open")
+    assert r.status_code == 403
+
+
+def test_content_access_open_expired_token_rejected():
+    sb = _seed_minimal_user()
+    _seed_content(sb)
+    sb.db["content_access_requests"] = [
+        {
+            "id": "req-1",
+            "requested_by": "admin-1",
+            "user_id": "user-1",
+            "artifact_kind": "note",
+            "artifact_id": "open-note-1",
+            "request_reason": "x" * 10,
+            "status": "approved",
+            "expires_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+    ]
+    app = _app(sb)
+    r = TestClient(app).post("/api/admin/study-os/content-access/requests/req-1/open")
+    assert r.status_code == 409
+    assert sb.db["content_access_requests"][0]["status"] == "expired"
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  Follow-up — Mock breakdown recompute tests
+# ════════════════════════════════════════════════════════════════════════
+
+
+def test_mocks_recompute_breakdowns_aggregates_topics_to_subjects(monkeypatch):
+    sb = _seed_minimal_user()
+    sb.db["mock_tests"] = [{"id": "mock-1", "user_id": "user-1"}]
+    sb.db["mock_topic_breakdowns"] = [
+        {"mock_test_id": "mock-1", "topic_id": "t1", "subject_id": "s1",
+         "total_questions": 10, "correct_answers": 7, "wrong_answers": 3, "marks": 7.0},
+        {"mock_test_id": "mock-1", "topic_id": "t2", "subject_id": "s1",
+         "total_questions": 5, "correct_answers": 3, "wrong_answers": 2, "marks": 3.0},
+    ]
+    sb.db["mock_subject_breakdowns"] = []
+    sb.db["mock_breakdown_recompute_runs"] = []
+    app = _app(sb)
+    r = TestClient(app).post(
+        "/api/admin/study-os/mocks/mock-1/recompute-breakdowns",
+        json={"reason": "topic data came in via review flow"},
+    )
+    assert r.status_code == 200, r.text
+    result = r.json()["result"]
+    assert result["outcome"] == "ok"
+    # Subject s1 aggregated correctly: 15 total, 10 correct, 5 wrong.
+    rows = sb.db["mock_subject_breakdowns"]
+    s1 = next(r for r in rows if r["subject_id"] == "s1")
+    assert s1["total_questions"] == 15
+    assert s1["correct_answers"] == 10
+    assert s1["accuracy"] == 66.67  # 10/15*100, rounded to 2dp
+    # Run row logged
+    runs = sb.db["mock_breakdown_recompute_runs"]
+    assert len(runs) == 1
+    assert runs[0]["outcome"] == "ok"
+    assert runs[0]["trigger"] == "admin"
+
+
+def test_mocks_recompute_breakdowns_no_topic_data():
+    sb = _seed_minimal_user()
+    sb.db["mock_tests"] = [{"id": "mock-1", "user_id": "user-1"}]
+    sb.db["mock_topic_breakdowns"] = []
+    sb.db["mock_subject_breakdowns"] = []
+    sb.db["mock_breakdown_recompute_runs"] = []
+    app = _app(sb)
+    r = TestClient(app).post(
+        "/api/admin/study-os/mocks/mock-1/recompute-breakdowns",
+        json={"reason": "checking with no source data"},
+    )
+    assert r.status_code == 200
+    assert r.json()["result"]["outcome"] == "no_change"
+
+
+def test_mocks_recompute_breakdowns_404_for_unknown_mock():
+    sb = _seed_minimal_user()
+    sb.db["mock_tests"] = []
+    app = _app(sb)
+    r = TestClient(app).post(
+        "/api/admin/study-os/mocks/ghost/recompute-breakdowns",
+        json={"reason": "no mock exists"},
+    )
+    assert r.status_code == 404
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  Follow-up — Bulk import tests
+# ════════════════════════════════════════════════════════════════════════
+
+
+def test_cms_bulk_import_inserts_valid_rows_and_reports_per_row_errors():
+    sb = ExtSBStub()
+    _seed_cms(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).post(
+        "/api/admin/exam-intelligence-cms/bulk-import",
+        json={
+            "reason": "seeding 3 families",
+            "entity": "exam-families",
+            "rows": [
+                {"slug": "fam-a", "name": "Family A"},
+                {"slug": "fam-b", "name": "Family B"},
+                {"name": "Missing slug"},  # invalid — missing required 'slug'
+            ],
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is False
+    assert body["total"] == 3
+    assert body["ok_count"] == 2
+    assert body["error_count"] == 1
+    assert body["results"][2]["ok"] is False
+    assert "slug" in (body["results"][2]["error"] or "")
+    # Two new rows landed in the table.
+    slugs = {f["slug"] for f in sb.db["exam_families"]}
+    assert "fam-a" in slugs and "fam-b" in slugs
+
+
+def test_cms_bulk_import_unknown_entity_returns_422():
+    sb = ExtSBStub()
+    _seed_cms(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).post(
+        "/api/admin/exam-intelligence-cms/bulk-import",
+        json={"reason": "bogus entity name", "entity": "nonexistent", "rows": [{}]},
+    )
+    assert r.status_code == 422
+
+
+def test_cms_bulk_import_forces_pending_status_per_entity():
+    sb = ExtSBStub()
+    _seed_cms(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).post(
+        "/api/admin/exam-intelligence-cms/bulk-import",
+        json={
+            "reason": "bulk uploading PYQ papers",
+            "entity": "pyq-papers",
+            "rows": [
+                {"exam_id": "exam-1", "year": 2024, "trust_status": "verified"},  # operator tries to bypass
+                {"exam_id": "exam-1", "year": 2023, "source_type": "official"},
+            ],
+        },
+    )
+    assert r.status_code == 200, r.text
+    rows = sb.db["pyq_papers"]
+    assert len(rows) == 2
+    # Both rows forced to pending despite operator's attempt to set verified.
+    assert all(p["trust_status"] == "pending" for p in rows)
+
+
+def test_cms_bulk_import_validates_fk_against_unknown_exam():
+    sb = ExtSBStub()
+    _seed_cms(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).post(
+        "/api/admin/exam-intelligence-cms/bulk-import",
+        json={
+            "reason": "fk check",
+            "entity": "exam-cycles",
+            "rows": [
+                {"exam_id": "ghost-exam", "year": 2026, "cycle_name": "Mains"},
+                {"exam_id": "exam-1", "year": 2026, "cycle_name": "Mains 2"},
+            ],
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok_count"] == 1
+    assert body["error_count"] == 1
+    assert "exam_id" in (body["results"][0]["error"] or "")
+
+
+def test_cms_bulk_import_rejects_short_reason():
+    sb = ExtSBStub()
+    _seed_cms(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).post(
+        "/api/admin/exam-intelligence-cms/bulk-import",
+        json={"reason": "x", "entity": "exam-families", "rows": [{"slug": "z", "name": "Z"}]},
+    )
+    assert r.status_code == 422

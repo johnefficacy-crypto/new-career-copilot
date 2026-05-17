@@ -853,3 +853,205 @@ def create_policy_update(
         new_value={"reason": body.reason, "row": new},
     )
     return {"ok": True, "audit_id": audit_id, "row": new}
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  Bulk import — CSV/JSON paste-in for any CMS entity
+# ════════════════════════════════════════════════════════════════════════
+#
+# One generic ``POST /bulk-import`` endpoint that accepts a list of rows
+# plus an entity identifier. Each row goes through the same validation
+# the single-row create endpoint applies — same allowed-field whitelist,
+# same FK validation, same forced status. Per-row outcome is returned so
+# the operator can fix the failed rows and re-submit only those.
+#
+# Capped at 500 rows per call so a single request can't fan out forever.
+
+
+class BulkImportBody(BaseModel):
+    """Body for ``POST /bulk-import``.
+
+    ``entity`` is one of the CMS slugs already used by the per-entity
+    endpoints (``exam-families``, ``exams``, ``exam-cycles``, etc.).
+    ``rows`` is the list of payloads — each payload matches the
+    single-row ``payload`` shape.
+    """
+
+    reason: str = Field(..., min_length=8, max_length=500)
+    entity: str = Field(..., min_length=4, max_length=50)
+    rows: list[dict[str, Any]] = Field(..., min_length=1, max_length=500)
+
+
+# Per-entity import config. (allowed_fields, required_fields,
+# enum_validations, forced_fields, fk_checks, audit_action)
+_IMPORT_CONFIG: dict[str, dict[str, Any]] = {
+    "exam-families": {
+        "table": "exam_families",
+        "allowed": _FAMILY_FIELDS,
+        "required": ["slug", "name"],
+        "forced": {},
+        "fks": {},
+        "enums": {},
+        "audit": "exam_intel.cms.family.bulk_create",
+    },
+    "exams": {
+        "table": "exams",
+        "allowed": _EXAM_FIELDS,
+        "required": ["slug", "name"],
+        "forced": {},
+        "fks": {"exam_family_id": "exam_families"},
+        "enums": {"exam_type": _EXAM_TYPES},
+        "audit": "exam_intel.cms.exam.bulk_create",
+    },
+    "exam-cycles": {
+        "table": "exam_cycles",
+        "allowed": _CYCLE_FIELDS,
+        "required": ["exam_id", "year", "cycle_name"],
+        "forced": {},
+        "fks": {"exam_id": "exams"},
+        "enums": {"status": _CYCLE_STATUSES},
+        "audit": "exam_intel.cms.cycle.bulk_create",
+    },
+    "exam-phases": {
+        "table": "exam_phases",
+        "allowed": _PHASE_FIELDS,
+        "required": ["exam_id", "phase_name", "phase_slug"],
+        "forced": {},
+        "fks": {"exam_id": "exams"},
+        "enums": {"status": _PHASE_STATUSES},
+        "audit": "exam_intel.cms.phase.bulk_create",
+    },
+    "syllabus-documents": {
+        "table": "syllabus_documents",
+        "allowed": _DOC_FIELDS,
+        "required": ["exam_id", "document_type", "title"],
+        "forced": {"trust_status": "pending"},  # CMS feeds the review queue
+        "fks": {"exam_id": "exams"},
+        "enums": {"document_type": _DOC_TYPES},
+        "audit": "exam_intel.cms.syllabus_document.bulk_create",
+    },
+    "pyq-papers": {
+        "table": "pyq_papers",
+        "allowed": _PAPER_FIELDS,
+        "required": ["exam_id", "year"],
+        "forced": {"trust_status": "pending"},
+        "fks": {"exam_id": "exams"},
+        "enums": {"source_type": _PAPER_SOURCE_TYPES},
+        "audit": "exam_intel.cms.pyq_paper.bulk_create",
+    },
+    "exam-topic-coverage": {
+        "table": "exam_topic_coverage",
+        "allowed": _COVERAGE_FIELDS,
+        "required": ["exam_id", "topic_id"],
+        "forced": {"reviewer_status": "pending_review"},
+        "fks": {"exam_id": "exams"},
+        "enums": {},
+        "audit": "exam_intel.cms.coverage.bulk_create",
+    },
+    "policy-updates": {
+        "table": "exam_policy_updates",
+        "allowed": _POLICY_FIELDS,
+        "required": ["exam_id", "update_type", "title"],
+        "forced": {"reviewer_status": "pending"},
+        "fks": {"exam_id": "exams"},
+        "enums": {"update_type": _POLICY_UPDATE_TYPES},
+        "audit": "exam_intel.cms.policy_update.bulk_create",
+    },
+}
+
+
+def _validate_bulk_row(cfg: dict[str, Any], row: dict[str, Any], supabase, fk_cache: dict) -> tuple[dict | None, str | None]:
+    """Validate one row against the entity config. Returns (cleaned_row, error_str).
+
+    fk_cache is a per-call memo so 500 rows referencing 10 unique exam_ids
+    cost 10 lookups, not 500.
+    """
+    if not isinstance(row, dict):
+        return None, "row must be an object"
+    cleaned = {k: v for k, v in row.items() if k in cfg["allowed"]}
+    for req in cfg["required"]:
+        if cleaned.get(req) in (None, ""):
+            return None, f"missing required field {req!r}"
+    for col, choices in cfg["enums"].items():
+        v = cleaned.get(col)
+        if v and v not in choices:
+            return None, f"{col} must be one of {choices}"
+    # Policy-update non-official affects_* check.
+    if cfg["table"] == "exam_policy_updates" and (cleaned.get("source_type") or "official") != "official":
+        for affect in ("affects_plan", "affects_deadline", "affects_eligibility",
+                       "affects_documents", "affects_syllabus", "affects_vacancy"):
+            if cleaned.get(affect):
+                return None, f"non-official policy update cannot set {affect}=true"
+    for col, fk_table in cfg["fks"].items():
+        v = cleaned.get(col)
+        if not v:
+            continue
+        cache_key = (fk_table, v)
+        if cache_key in fk_cache:
+            ok = fk_cache[cache_key]
+        else:
+            ok = bool(_safe_select(supabase, fk_table, id=v))
+            fk_cache[cache_key] = ok
+        if not ok:
+            return None, f"{col}={v!r} does not resolve in {fk_table}"
+    for col, val in cfg["forced"].items():
+        cleaned[col] = val
+    return cleaned, None
+
+
+@router.post("/bulk-import")
+def bulk_import(
+    body: BulkImportBody,
+    admin: dict = Depends(require_permission(PERM_CMS)),
+    __: None = Depends(_flag_enabled),
+) -> dict[str, Any]:
+    """Insert many CMS rows in one call.
+
+    Per-row result: ``{index, ok, error?, row?}``. Successful rows are
+    inserted individually so one bad row in the middle doesn't block
+    earlier or later rows. For maximum atomicity per row we don't try
+    to bulk-insert all clean rows in one go — that would surface a
+    Postgres-level error with no row attribution.
+    """
+    cfg = _IMPORT_CONFIG.get(body.entity)
+    if not cfg:
+        raise HTTPException(status_code=422, detail=f"Unknown entity {body.entity!r}; known: {sorted(_IMPORT_CONFIG)}")
+    supabase = get_supabase_admin()
+    fk_cache: dict = {}
+    results: list[dict[str, Any]] = []
+    ok_count = 0
+    error_count = 0
+    for idx, raw in enumerate(body.rows):
+        cleaned, err = _validate_bulk_row(cfg, raw, supabase, fk_cache)
+        if err:
+            results.append({"index": idx, "ok": False, "error": err})
+            error_count += 1
+            continue
+        try:
+            inserted = supabase.table(cfg["table"]).insert(cleaned).execute().data or []
+        except Exception as exc:  # noqa: BLE001
+            results.append({"index": idx, "ok": False, "error": f"db: {str(exc)[:200]}"})
+            error_count += 1
+            continue
+        row = inserted[0] if inserted else cleaned
+        results.append({"index": idx, "ok": True, "row": row})
+        ok_count += 1
+    audit_id = _audit(
+        supabase, admin, cfg["audit"],
+        entity_type=cfg["table"], entity_id=None,
+        new_value={
+            "reason": body.reason,
+            "total": len(body.rows),
+            "ok": ok_count,
+            "errors": error_count,
+        },
+    )
+    return {
+        "ok": error_count == 0,
+        "audit_id": audit_id,
+        "entity": body.entity,
+        "total": len(body.rows),
+        "ok_count": ok_count,
+        "error_count": error_count,
+        "results": results,
+    }

@@ -1329,24 +1329,12 @@ async def categories():
     }
 
 
-@router_community.get("/spaces")
-async def spaces():
-    """Telegram-style spaces + channels.
-
-    Returns the structured community map that the frontend
-    `features/community/CommunityScreen` consumes. Until forum_spaces /
-    forum_channels canonical tables land we serve a deterministic
-    reference snapshot — the same shape lives in
-    `frontend/src/features/community/data.js`, so the UI degrades
-    gracefully when this endpoint is missing or DB rows are empty.
-    """
-    return {
-        "spaces": _COMMUNITY_SPACES_SNAPSHOT,
-        "users": _COMMUNITY_USERS_SNAPSHOT,
-        "threads": _COMMUNITY_THREADS_SNAPSHOT,
-        "flairs": _COMMUNITY_FLAIRS_SNAPSHOT,
-        "channel_rules": _COMMUNITY_CHANNEL_RULES_SNAPSHOT,
-    }
+# NOTE: GET /community/spaces previously lived here as a reference-snapshot
+# fallback. The real DB-backed handler in ``app/api/community_runtime.py``
+# wins at runtime via router precedence; this duplicate has been removed
+# in the Phase 5 follow-up cleanup. The snapshot data still lives in
+# ``frontend/src/features/community/data.js`` so the UI degrades
+# gracefully if the runtime endpoint is unavailable.
 
 
 def _shape_thread(row: dict[str, Any], with_body: bool = False) -> dict[str, Any]:

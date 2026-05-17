@@ -94,6 +94,9 @@ router = APIRouter(prefix="/admin/study-os", tags=["admin-study-os"])
 # Permission keys — super_admin bypasses both via require_permission.
 PERM_SUPPORT = "study_os.support"
 PERM_OPS = "study_os.ops"
+# 4-eyes: viewer can REQUEST content opens; only PERM_OPS can APPROVE.
+# Both roles can read non-content metadata.
+PERM_VIEWER = "study_os.viewer"
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────
@@ -2496,3 +2499,375 @@ def social_mentor_feedback_restore(
         new_value={"reason": body.reason, "previous_hidden_reason": rows[0].get("hidden_reason")},
     )
     return {"ok": True, "audit_id": audit_id, "feedback_id": feedback_id, "is_hidden": False}
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  Follow-up: 4-eyes open-content for ``study_os.viewer`` role
+# ════════════════════════════════════════════════════════════════════════
+#
+# The original Phase 2 open-content endpoints accept a single operator
+# with ``study_os.ops`` and immediately return content. Privacy policy
+# at any role below that requires a second operator to approve before
+# content is released. We implement that as a request/approve/redeem
+# flow backed by ``content_access_requests``:
+#
+#   1. ``study_os.viewer`` POSTs /content-access/requests with a reason.
+#   2. ``study_os.ops`` POSTs /content-access/requests/{id}/approve OR
+#      /deny. The DB trigger refuses approval by the same operator.
+#   3. The original requester POSTs /content-access/requests/{id}/open
+#      to redeem the approved token. Content is returned exactly once;
+#      the row flips to ``consumed``.
+#
+# Expired pending or approved rows are denied at redeem time. The
+# 24-hour expiry is set by the migration so a stale approval can't be
+# redeemed weeks later.
+
+
+_VALID_ARTIFACT_KINDS = ("note", "flashcard", "mistake")
+_ARTIFACT_TABLE_MAP = {
+    "note": ("personal_notes", ["body", "source_url"]),
+    "flashcard": ("flashcards", ["front", "back", "hint"]),
+    "mistake": ("mistake_entries", ["question_text", "correct_answer", "my_answer", "reason"]),
+}
+
+
+class ContentAccessRequestBody(BaseModel):
+    """Body for ``POST /content-access/requests``.
+
+    The viewer specifies the target user, artifact, and the reason they
+    need content access. The reason is captured at request time so the
+    approver can decide based on the stated justification.
+    """
+
+    user_id: str = Field(..., min_length=4, max_length=200)
+    artifact_kind: str = Field(..., min_length=4, max_length=20)
+    artifact_id: str = Field(..., min_length=4, max_length=200)
+    reason: str = Field(..., min_length=8, max_length=500)
+
+
+@router.post("/content-access/requests")
+def content_access_request_create(
+    body: ContentAccessRequestBody,
+    requester: dict = Depends(require_permission(PERM_VIEWER)),
+    __: None = Depends(_flag_enabled),
+) -> dict[str, Any]:
+    """Create a pending content-access request. Caller must hold
+    ``study_os.viewer``; an operator with ``study_os.ops`` will approve."""
+    if body.artifact_kind not in _VALID_ARTIFACT_KINDS:
+        raise HTTPException(status_code=422, detail=f"artifact_kind must be one of {_VALID_ARTIFACT_KINDS}")
+    supabase = get_supabase_admin()
+    # Validate the artifact exists and belongs to the named user.
+    table, _ = _ARTIFACT_TABLE_MAP[body.artifact_kind]
+    rows = (
+        _safe(
+            lambda: supabase.table(table).select("id, user_id").eq("id", body.artifact_id).limit(1).execute().data,
+            default=[],
+        )
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"{body.artifact_kind} not found")
+    if rows[0].get("user_id") != body.user_id:
+        raise HTTPException(status_code=409, detail=f"{body.artifact_kind} does not belong to this user")
+    inserted = (
+        _safe(
+            lambda: supabase.table("content_access_requests").insert({
+                "requested_by": requester.get("id"),
+                "requested_by_email": requester.get("email"),
+                "user_id": body.user_id,
+                "artifact_kind": body.artifact_kind,
+                "artifact_id": body.artifact_id,
+                "request_reason": body.reason,
+                "status": "pending",  # the DB default would set this too; explicit so response shape is stable
+            }).execute().data,
+            default=[],
+        )
+        or []
+    )
+    if not inserted:
+        raise HTTPException(status_code=500, detail="Failed to create access request")
+    row = inserted[0]
+    audit_id = _audit(
+        supabase, requester, "study_os.content_access.request",
+        entity_type="content_access_request", entity_id=row.get("id"),
+        new_value={"reason": body.reason, "user_id": body.user_id, "artifact_kind": body.artifact_kind},
+    )
+    return {"ok": True, "audit_id": audit_id, "request": row}
+
+
+@router.get("/content-access/requests")
+def content_access_request_list(
+    status: str | None = Query(default=None, description="pending|approved|consumed|denied|expired"),
+    user_id: str | None = Query(default=None),
+    requested_by: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    _admin: dict = Depends(require_permission(PERM_VIEWER)),
+    __: None = Depends(_flag_enabled),
+) -> dict[str, Any]:
+    """List content-access requests. Anyone with viewer or higher can
+    read the queue — but only approvers see who else is approving."""
+    supabase = get_supabase_admin()
+    q = (
+        supabase.table("content_access_requests")
+        .select(
+            "id, requested_by, requested_by_email, user_id, artifact_kind, artifact_id, request_reason, status, approved_by, approved_by_email, approve_reason, approved_at, consumed_at, expires_at, created_at",
+            count="exact",
+        )
+        .order("created_at", desc=True)
+    )
+    if status:
+        q = q.eq("status", status)
+    if user_id:
+        q = q.eq("user_id", user_id)
+    if requested_by:
+        q = q.eq("requested_by", requested_by)
+    res = _safe(lambda: q.range(offset, offset + limit - 1).execute(), default=None)
+    items = (res.data if res else []) or []
+    total = getattr(res, "count", None) if res else None
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+class ApproveBody(BaseModel):
+    reason: str = Field(..., min_length=8, max_length=500)
+
+
+@router.post("/content-access/requests/{request_id}/approve")
+def content_access_request_approve(
+    request_id: str,
+    body: ApproveBody,
+    approver: dict = Depends(require_permission(PERM_OPS)),
+    __: None = Depends(_flag_enabled),
+) -> dict[str, Any]:
+    """Approve a pending request. The 4-eyes invariant — approver must
+    differ from requester — is enforced by both this handler and a DB
+    trigger. The trigger is the source of truth; the handler returns a
+    friendlier 409 if the approver is the same operator.
+    """
+    supabase = get_supabase_admin()
+    rows = (
+        _safe(
+            lambda: supabase.table("content_access_requests")
+            .select("id, requested_by, status, expires_at")
+            .eq("id", request_id)
+            .limit(1)
+            .execute()
+            .data,
+            default=[],
+        )
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Request not found")
+    req = rows[0]
+    if (req.get("status") or "").lower() != "pending":
+        raise HTTPException(status_code=409, detail=f"Request is {req.get('status')!r}; only pending requests can be approved")
+    if req.get("requested_by") == approver.get("id"):
+        raise HTTPException(status_code=409, detail="4-eyes: approver must differ from requester")
+    if _is_expired(req.get("expires_at")):
+        # Mark expired so the queue stays clean.
+        _safe(lambda: supabase.table("content_access_requests").update({"status": "expired"}).eq("id", request_id).execute())
+        raise HTTPException(status_code=409, detail="Request expired")
+    supabase.table("content_access_requests").update({
+        "status": "approved",
+        "approved_by": approver.get("id"),
+        "approved_by_email": approver.get("email"),
+        "approve_reason": body.reason,
+        "approved_at": _now_iso(),
+    }).eq("id", request_id).execute()
+    audit_id = _audit(
+        supabase, approver, "study_os.content_access.approve",
+        entity_type="content_access_request", entity_id=request_id,
+        new_value={"reason": body.reason, "requested_by": req.get("requested_by")},
+    )
+    return {"ok": True, "audit_id": audit_id, "request_id": request_id, "status": "approved"}
+
+
+@router.post("/content-access/requests/{request_id}/deny")
+def content_access_request_deny(
+    request_id: str,
+    body: ApproveBody,
+    approver: dict = Depends(require_permission(PERM_OPS)),
+    __: None = Depends(_flag_enabled),
+) -> dict[str, Any]:
+    """Deny a pending request. Same 4-eyes constraint applies."""
+    supabase = get_supabase_admin()
+    rows = (
+        _safe(
+            lambda: supabase.table("content_access_requests")
+            .select("id, requested_by, status")
+            .eq("id", request_id)
+            .limit(1)
+            .execute()
+            .data,
+            default=[],
+        )
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Request not found")
+    req = rows[0]
+    if (req.get("status") or "").lower() != "pending":
+        raise HTTPException(status_code=409, detail=f"Request is {req.get('status')!r}; only pending requests can be denied")
+    if req.get("requested_by") == approver.get("id"):
+        raise HTTPException(status_code=409, detail="4-eyes: denier must differ from requester")
+    supabase.table("content_access_requests").update({
+        "status": "denied",
+        "approved_by": approver.get("id"),
+        "approved_by_email": approver.get("email"),
+        "approve_reason": body.reason,
+        "approved_at": _now_iso(),
+    }).eq("id", request_id).execute()
+    audit_id = _audit(
+        supabase, approver, "study_os.content_access.deny",
+        entity_type="content_access_request", entity_id=request_id,
+        new_value={"reason": body.reason, "requested_by": req.get("requested_by")},
+    )
+    return {"ok": True, "audit_id": audit_id, "request_id": request_id, "status": "denied"}
+
+
+def _is_expired(iso: str | None) -> bool:
+    if not iso:
+        return False
+    try:
+        ts = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) > ts
+    except Exception:  # noqa: BLE001
+        return False
+
+
+@router.post("/content-access/requests/{request_id}/open")
+def content_access_request_open(
+    request_id: str,
+    requester: dict = Depends(require_permission(PERM_VIEWER)),
+    __: None = Depends(_flag_enabled),
+) -> dict[str, Any]:
+    """Redeem an approved request and return the artifact content.
+
+    Only the original requester can redeem. Token is one-shot: status
+    flips to ``consumed`` so a re-open requires a new request.
+    """
+    supabase = get_supabase_admin()
+    rows = (
+        _safe(
+            lambda: supabase.table("content_access_requests")
+            .select("id, requested_by, user_id, artifact_kind, artifact_id, status, expires_at, request_reason, approved_by_email")
+            .eq("id", request_id)
+            .limit(1)
+            .execute()
+            .data,
+            default=[],
+        )
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Request not found")
+    req = rows[0]
+    if req.get("requested_by") != requester.get("id"):
+        raise HTTPException(status_code=403, detail="Only the original requester can redeem")
+    if (req.get("status") or "").lower() != "approved":
+        raise HTTPException(status_code=409, detail=f"Request is {req.get('status')!r}; only approved requests can be opened")
+    if _is_expired(req.get("expires_at")):
+        _safe(lambda: supabase.table("content_access_requests").update({"status": "expired"}).eq("id", request_id).execute())
+        raise HTTPException(status_code=409, detail="Approval expired")
+
+    kind = req["artifact_kind"]
+    table, fields = _ARTIFACT_TABLE_MAP[kind]
+    # Fetch full row including content columns.
+    art_rows = (
+        _safe(
+            lambda: supabase.table(table).select("*").eq("id", req["artifact_id"]).limit(1).execute().data,
+            default=[],
+        )
+        or []
+    )
+    if not art_rows:
+        raise HTTPException(status_code=404, detail=f"{kind} no longer exists")
+    artifact = art_rows[0]
+    if artifact.get("user_id") != req["user_id"]:
+        # Ownership changed since the request was created.
+        raise HTTPException(status_code=409, detail=f"{kind} no longer belongs to the requested user")
+
+    # Mark consumed BEFORE returning so a race can't double-redeem.
+    supabase.table("content_access_requests").update({
+        "status": "consumed",
+        "consumed_at": _now_iso(),
+    }).eq("id", request_id).execute()
+
+    # Mirror to support_content_access for the privacy-review trail.
+    access_id = _log_content_access(
+        supabase, requester, req["user_id"], kind, req["artifact_id"], fields,
+        f"4-eyes redeem: {req.get('request_reason')!r} (approved by {req.get('approved_by_email')})",
+    )
+    audit_id = _audit(
+        supabase, requester, "study_os.content_access.consume",
+        entity_type="content_access_request", entity_id=request_id,
+        new_value={"access_log_id": access_id, "artifact_kind": kind},
+    )
+    return {
+        "ok": True,
+        "audit_id": audit_id,
+        "access_log_id": access_id,
+        "request_id": request_id,
+        "artifact_kind": kind,
+        "artifact": artifact,
+        "fields_returned": fields,
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  Follow-up: Mock subject-breakdown recompute admin endpoint
+# ════════════════════════════════════════════════════════════════════════
+
+
+@router.post("/mocks/{mock_id}/recompute-breakdowns")
+def mocks_recompute_breakdowns(
+    mock_id: str,
+    body: StudyOpsWriteBody,
+    admin: dict = Depends(require_permission(PERM_OPS)),
+    __: None = Depends(_flag_enabled),
+) -> dict[str, Any]:
+    """Recompute ``mock_subject_breakdowns`` for one mock by aggregating
+    ``mock_topic_breakdowns`` data. Records the run in
+    ``mock_breakdown_recompute_runs`` so an audit shows who triggered
+    each rebuild and what changed."""
+    from app.study_os.mocks import recompute_subject_breakdowns
+
+    supabase = get_supabase_admin()
+    mock_rows = (
+        _safe(
+            lambda: supabase.table("mock_tests").select("id, user_id").eq("id", mock_id).limit(1).execute().data,
+            default=[],
+        )
+        or []
+    )
+    if not mock_rows:
+        raise HTTPException(status_code=404, detail="Mock not found")
+
+    result = recompute_subject_breakdowns(supabase, mock_id)
+    outcome = result.get("outcome", "error")
+    run_row = {
+        "mock_test_id": mock_id,
+        "actor_id": admin.get("id"),
+        "actor_email": admin.get("email"),
+        "trigger": "admin",
+        "reason": body.reason,
+        "breakdowns_before": result.get("breakdowns_before"),
+        "breakdowns_after": result.get("breakdowns_after"),
+        "outcome": outcome,
+        "error_message": result.get("error") if outcome == "error" else None,
+    }
+    _safe(lambda: supabase.table("mock_breakdown_recompute_runs").insert(run_row).execute())
+    audit_id = _audit(
+        supabase, admin, "study_os.mocks.recompute_breakdowns",
+        entity_type="mock_test", entity_id=mock_id,
+        new_value={
+            "reason": body.reason,
+            "outcome": outcome,
+            "before": result.get("breakdowns_before"),
+            "after": result.get("breakdowns_after"),
+        },
+    )
+    return {"ok": outcome != "error", "audit_id": audit_id, "mock_id": mock_id, "result": result}

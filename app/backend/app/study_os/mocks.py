@@ -567,3 +567,121 @@ def get_mock_analysis(
         "review_state": mock.get("review_state") or "unreviewed",
         "correction_tasks": corrections,
     }
+
+
+# ─── Subject-breakdown recompute service ─────────────────────────────────
+
+
+def recompute_subject_breakdowns(supabase: Any, mock_id: str) -> dict[str, Any]:
+    """Rebuild ``mock_subject_breakdowns`` for one mock by aggregating
+    per-topic data from ``mock_topic_breakdowns``.
+
+    Use case: a mock was logged with subject totals but per-topic
+    breakdowns came in later via the review flow, or the original
+    subject totals were entered by hand and have drifted from the
+    topic-level truth. Recompute deletes existing subject rows for
+    the mock and re-inserts them from a topics→subject group-by.
+
+    Returns ``{outcome: ok|no_change|error, breakdowns_before, breakdowns_after}``.
+    Never raises — caller decides what to do with ``outcome``.
+    """
+    try:
+        topic_rows = _safe(
+            lambda: supabase.table("mock_topic_breakdowns")
+            .select("topic_id, subject_id, total_questions, correct_answers, wrong_answers, marks, accuracy")
+            .eq("mock_test_id", mock_id)
+            .execute()
+            .data,
+            default=[],
+        ) or []
+
+        before = _safe(
+            lambda: supabase.table("mock_subject_breakdowns")
+            .select("id", count="exact")
+            .eq("mock_test_id", mock_id)
+            .execute(),
+            default=None,
+        )
+        before_count = int(getattr(before, "count", 0) or 0)
+
+        if not topic_rows:
+            return {"outcome": "no_change", "breakdowns_before": before_count, "breakdowns_after": before_count, "reason": "no_topic_data"}
+
+        # Resolve missing subject_ids by joining with topics. Topic rows
+        # written via the review flow already carry subject_id, so this
+        # is just a safety net for rows that were inserted before that.
+        missing_subject = {t.get("topic_id") for t in topic_rows if not t.get("subject_id") and t.get("topic_id")}
+        topic_to_subject: dict[str, str | None] = {}
+        if missing_subject:
+            joined = _safe(
+                lambda: supabase.table("topics")
+                .select("id, subject_id")
+                .in_("id", list(missing_subject))
+                .execute()
+                .data,
+                default=[],
+            ) or []
+            topic_to_subject = {r.get("id"): r.get("subject_id") for r in joined}
+
+        agg: dict[str, dict[str, Any]] = {}
+        for t in topic_rows:
+            sid = t.get("subject_id") or topic_to_subject.get(t.get("topic_id"))
+            if not sid:
+                continue  # orphaned topic — can't roll up
+            slot = agg.setdefault(sid, {
+                "subject_id": sid,
+                "total_questions": 0,
+                "correct_answers": 0,
+                "wrong_answers": 0,
+                "marks": 0.0,
+            })
+            for k in ("total_questions", "correct_answers", "wrong_answers"):
+                v = t.get(k)
+                if isinstance(v, (int, float)):
+                    slot[k] += int(v)
+            m = t.get("marks")
+            if isinstance(m, (int, float)):
+                slot["marks"] += float(m)
+
+        rows = []
+        for sid, slot in agg.items():
+            total = slot["total_questions"] or 0
+            correct = slot["correct_answers"] or 0
+            wrong = slot["wrong_answers"] or 0
+            answered = correct + wrong
+            accuracy = round(correct / answered * 100, 2) if answered > 0 else None
+            rows.append({
+                "mock_test_id": mock_id,
+                "subject_id": sid,
+                "total_questions": total,
+                "correct_answers": correct,
+                "wrong_answers": wrong,
+                "marks": slot["marks"] or None,
+                "accuracy": accuracy,
+            })
+
+        if not rows:
+            return {"outcome": "no_change", "breakdowns_before": before_count, "breakdowns_after": before_count, "reason": "no_resolvable_subjects"}
+
+        # Replace existing rows. Best-effort delete (some tables forbid
+        # bulk delete on a non-PK column; if it fails we still insert
+        # and the caller can clean up).
+        _safe(
+            lambda: supabase.table("mock_subject_breakdowns")
+            .delete()
+            .eq("mock_test_id", mock_id)
+            .execute()
+        )
+        inserted = _safe(
+            lambda: supabase.table("mock_subject_breakdowns").insert(rows).execute(),
+            default=None,
+        )
+        after_data = getattr(inserted, "data", None) or []
+        return {
+            "outcome": "ok",
+            "breakdowns_before": before_count,
+            "breakdowns_after": len(after_data) or len(rows),
+            "rows": after_data or rows,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"outcome": "error", "error": str(exc)[:300], "breakdowns_before": None, "breakdowns_after": None}
