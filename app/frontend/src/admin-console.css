@@ -928,3 +928,33 @@
 /* Drawer used by older pages */
 .oc .linen-bg, .oc .paper-bg { background: var(--paper); }
 
+
+/* PR-B: collapsible sidebar group toggle. .oc-section already exists as a
+   label; this turns it into a button-shaped row when used as a group
+   header. The chevron flips per data-expanded on the parent. */
+.oc-sidebar .oc-section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 12px 12px 4px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ink-mute);
+  font: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-family: var(--fmono);
+  font-size: 10px;
+}
+.oc-sidebar .oc-section-toggle:hover { color: var(--ink-soft); }
+.oc-sidebar .oc-section-toggle:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.oc-sidebar .nav-chevron {
+  width: 12px;
+  height: 12px;
+  opacity: 0.6;
+  transition: transform 120ms ease;
+  flex-shrink: 0;
+}
