@@ -39,10 +39,6 @@ def test_no_duplicate_study_route_registrations():
     under ``/api/study/*`` must appear exactly once — Phase 5 consolidated
     the study_os.py ↔ canonical.py overlap to make this true. Future PRs
     that re-introduce a duplicate fail here.
-
-    Scope: ``/api/study/*`` only. Other overlaps elsewhere in the app
-    (accountability, community) pre-date Phase 5 and are out of scope for
-    this spec; consolidating them belongs in separate workstreams.
     """
     import server  # noqa: PLC0415 — intentional late import
 
@@ -54,6 +50,29 @@ def test_no_duplicate_study_route_registrations():
         "failure mode Phase 5 of admin-study-os-operations.md was designed "
         "to prevent. Each (path, method) below is registered by more than "
         "one router; pick one canonical owner and remove the other.\n  "
+        + "\n  ".join(f"{method:6s} {path}" for (path, method) in dupes)
+    )
+
+
+def test_no_duplicate_route_registrations_anywhere():
+    """App-wide variant of the Phase 5 guard — extended by the Phase 5
+    follow-up cleanup that consolidated the ``/api/accountability/*``,
+    ``/api/admin/*``, and ``/api/community/*`` overlaps too.
+
+    The 40 duplicate (path, method) pairs that existed before that
+    cleanup are all resolved: every route is owned by exactly one
+    router. A future PR that re-introduces ANY duplicate — anywhere
+    in the app — fails here.
+    """
+    import server  # noqa: PLC0415
+
+    pairs = _collect_routes(server.app)
+    counts = Counter(pairs)
+    dupes = sorted([(p, m) for (p, m), n in counts.items() if n > 1])
+    assert not dupes, (
+        "Duplicate route registrations detected. Each (path, method) "
+        "below is registered by more than one router; pick one canonical "
+        "owner and remove the other.\n  "
         + "\n  ".join(f"{method:6s} {path}" for (path, method) in dupes)
     )
 

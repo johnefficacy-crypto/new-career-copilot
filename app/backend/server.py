@@ -60,7 +60,6 @@ from app.api.revision import router as revision_router
 from app.api.exam_intelligence import router as exam_intelligence_router
 from app.api.canonical import router as canonical_router
 from app.api.community_runtime import router as community_runtime_router
-from app.api.community_people import router as community_people_router
 from app.api.eligibility import router as eligibility_router
 from app.api.notifications import router as notifications_router
 from app.api.onboarding_unified import router as onboarding_unified_router
@@ -226,7 +225,10 @@ api.include_router(accountability_router)
 api.include_router(_load_required_router("app.api.admin_ops"))
 api.include_router(community_runtime_router)  # durable community/social routes — must precede canonical seed fallbacks
 api.include_router(canonical_router)  # canonical Supabase routes — must precede placeholders
-api.include_router(community_people_router)  # community-people: groups, partner, mentors, resources
+# NOTE: community_people_router was removed — every route under that prefix
+# duplicated community_runtime_router's. The legacy file's own docstring
+# said it was "being phased out in favour of community_runtime"; the
+# real DB-backed router is the single owner now.
 # Real Supabase-backed AI + admin overview — must precede placeholders so route order wins.
 api.include_router(ai_router)
 api.include_router(admin_overview_router)

@@ -239,101 +239,15 @@ _mentor_bookings: dict[str, list[dict]] = defaultdict(list)
 # AI chat history
 
 
+# NOTE: Phase 5 follow-up — placeholder /accountability/* routes removed.
+# Every path under this prefix was a duplicate of the real router in
+# ``app/api/accountability.py``. The real router wins at runtime via
+# registration order in ``server.py``; the duplicates here were dead
+# code that route precedence was masking. ``app/api/placeholders.py``
+# is the catch-all fallback for surfaces that don't yet have a real
+# implementation — once a real router lands, the placeholder duplicates
+# should be deleted. Done here for the accountability surface.
 router_acc = APIRouter(prefix="/accountability", tags=["accountability"])
-
-
-@router_acc.get("/partners")
-async def list_partners(user: dict = Depends(get_current_user)):
-    from app.db.supabase_client import get_supabase_admin
-    from app.study_os.social_sessions import list_partner_suggestions, list_pairs
-
-    sb = get_supabase_admin()
-    pairs = list_pairs(sb, user["id"])
-    suggestions = list_partner_suggestions(sb, user["id"], limit=10)
-    return {"suggested": suggestions, "pairs": pairs}
-
-
-class PartnerReq(BaseModel):
-    partner_id: str
-    message: str | None = None
-    pairing_goal: str = "discipline"
-    exam_id: str | None = None
-
-
-@router_acc.post("/partners/request")
-async def request_partner(body: PartnerReq, user: dict = Depends(get_current_user)):
-    from app.db.supabase_client import get_supabase_admin
-    from app.study_os.social_sessions import request_partner as _req
-
-    try:
-        row = _req(
-            get_supabase_admin(),
-            user["id"],
-            body.partner_id,
-            body.pairing_goal,
-            body.exam_id,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    return {"ok": True, "status": "pending", "pair": row}
-
-
-@router_acc.get("/groups")
-async def list_groups(user: dict = Depends(get_current_user)):
-    from app.db.supabase_client import get_supabase_admin
-    from app.study_os.social_sessions import list_groups as _list
-
-    return {"items": _list(get_supabase_admin(), user["id"])}
-
-
-class JoinGroup(BaseModel):
-    group_id: str
-
-
-@router_acc.post("/groups/join")
-async def join_group(body: JoinGroup, user: dict = Depends(get_current_user)):
-    from app.db.supabase_client import get_supabase_admin
-    from app.study_os.social_sessions import join_group as _join
-
-    try:
-        return _join(get_supabase_admin(), user["id"], body.group_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except PermissionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-class MentorBook(BaseModel):
-    mentor_id: str
-    slot: str  # ISO datetime
-    duration_minutes: int = 60
-    notes: str | None = None
-
-
-@router_acc.post("/mentors/book")
-async def book_mentor(body: MentorBook, user: dict = Depends(get_current_user)):
-    mentor = next((m for m in MENTORS if m["id"] == body.mentor_id), None)
-    if not mentor:
-        raise HTTPException(status_code=404, detail="Mentor not found")
-    booking = {
-        "id": f"book-{len(_mentor_bookings[user['id']]) + 1}",
-        "mentor_id": body.mentor_id,
-        "mentor_name": mentor["name"],
-        "slot": body.slot,
-        "duration_minutes": body.duration_minutes,
-        "notes": body.notes,
-        "status": "pending_payment",
-        "created_at": _now(),
-    }
-    _mentor_bookings[user["id"]].append(booking)
-    return booking
-
-
-@router_acc.get("/mentors/bookings")
-async def list_bookings(user: dict = Depends(get_current_user)):
-    return {"items": _mentor_bookings[user["id"]]}
 
 
 
@@ -350,18 +264,9 @@ def _require_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
-class CreateAdminBody(BaseModel):
-    email: str
-    name: str
-    role: str = "admin"
-    scope: list[str] = []
-
-
-@router_admin.post("/users/create")
-async def admin_create_user(body: CreateAdminBody, user: dict = Depends(_require_admin)):
-    if user.get("role") != "super_admin":
-        raise HTTPException(status_code=403, detail="Only super_admin can invite admins")
-    return {"ok": True, "invite": {"email": body.email, "role": body.role, "scope": body.scope}}
+# NOTE: POST /admin/users/create previously lived here as a placeholder.
+# The real handler in ``app/api/admin_ops.py`` wins via registration
+# order; the duplicate has been removed.
 
 
 @router_admin.get("/sources-static")
@@ -395,15 +300,11 @@ async def admin_eligibility_queue_static(_admin: dict = Depends(_require_admin))
     }
 
 
-@router_admin.get("/notifications")
-async def admin_notifications(_admin: dict = Depends(_require_admin)):
-    return {
-        "items": [
-            {"id": "nt-1", "channel": "email", "status": "paused", "kill_switch": True},
-            {"id": "nt-2", "channel": "in-app", "status": "active", "kill_switch": False},
-        ],
-        "kill_switch": True,
-    }
+# NOTE: GET /admin/notifications, GET /admin/marketplace, GET /admin/ai-policy
+# placeholders removed — duplicates of the real handlers in
+# ``app/api/notifications.py`` and ``app/api/admin_ops.py``. The
+# ``POST /admin/notifications/toggle`` placeholder stays because the
+# real notifications router doesn't expose that exact path.
 
 
 class NotifToggle(BaseModel):
@@ -414,42 +315,6 @@ class NotifToggle(BaseModel):
 @router_admin.post("/notifications/toggle")
 async def admin_notif_toggle(body: NotifToggle, _admin: dict = Depends(_require_admin)):
     return {"ok": True, "channel": body.channel, "enabled": body.enabled}
-
-
-@router_admin.get("/marketplace")
-async def admin_marketplace(_admin: dict = Depends(_require_admin)):
-    return {
-        "kpis": {"resources": len(RESOURCES), "mentors": len(MENTORS), "providers": len(PROVIDERS)},
-        "flags": [],
-    }
-
-
-@router_admin.get("/ai-policy")
-async def admin_ai_policy(_admin: dict = Depends(_require_admin)):
-    rules = [
-        {
-            "id": "deterministic_eligibility_authority",
-            "rule": "AI must never override deterministic eligibility verdicts.",
-            "enabled": True,
-        },
-        {
-            "id": "source_registry_required",
-            "rule": "AI must cite source registry for any recruitment claim.",
-            "enabled": True,
-        },
-        {
-            "id": "admin_review_for_promotion",
-            "rule": "AI may extract structure from documents; canonical promotion still requires admin review.",
-            "enabled": True,
-        },
-    ]
-    return {
-        "rules": rules,
-        "guardrails": [r["rule"] for r in rules],
-        "model": "phase-2:claude-sonnet",
-        "swap_target": "phase-2:provider-wired",
-        "active": False,
-    }
 
 
 # Aggregate router for easy include

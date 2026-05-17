@@ -837,29 +837,13 @@ async def book_mentor_session(session_id: str, payload: MentorBooking, user: dic
     }
 
 
-@router.post("/accountability/mentors/book")
-async def book_mentor_direct(payload: MentorDirectBooking, user: dict = Depends(get_current_user)):
-    if not _is_uuid(payload.mentor_id):
-        raise HTTPException(status_code=400, detail="Invalid mentor_id")
-    sb = get_supabase_admin()
-    mentor = _first(sb.table("profiles").select("id, is_instructor").eq("id", payload.mentor_id))
-    if not mentor or not mentor.get("is_instructor"):
-        raise HTTPException(status_code=404, detail="Mentor not found")
-    row = _rows(
-        sb.table("mentor_bookings").insert(
-            {
-                "user_id": user["id"],
-                "mentor_id": payload.mentor_id,
-                "slot": payload.slot,
-                "agenda": payload.agenda,
-                "status": "requested",
-            }
-        )
-    )
-    booking = row[0] if row else {}
-    _event(sb, user["id"], "mentor_session.requested", {"mentor_id": payload.mentor_id, "booking_id": booking.get("id")})
-    _notify(sb, payload.mentor_id, "mentor_booking_requested", {"user_id": user["id"], "booking_id": booking.get("id")})
-    return booking
+# NOTE: POST /accountability/mentors/book previously lived here as a
+# direct uuid-only booker. The richer handler in ``accountability.py``
+# (which accepts both uuid and slug, computes price, tracks payment
+# status, and is what wins via registration order) is the single
+# owner now. Event + notification emission that this handler did
+# should be ported into ``accountability.book_mentor`` if needed —
+# tracked as a follow-up.
 
 
 @router.post("/community/mentor-sessions/{session_id}/cancel")

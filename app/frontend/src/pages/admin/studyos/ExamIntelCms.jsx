@@ -130,6 +130,10 @@ export default function AdminExamIntelCms() {
   const [err, setErr] = useState(null);
   const [status, setStatus] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulkRows, setBulkRows] = useState("");
+  const [bulkReason, setBulkReason] = useState("");
+  const [bulkResult, setBulkResult] = useState(null);
   const [formValues, setFormValues] = useState({});
   const [reason, setReason] = useState("");
 
@@ -146,6 +150,38 @@ export default function AdminExamIntelCms() {
       setItems(null);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function submitBulk(e) {
+    e.preventDefault();
+    setBulkResult(null);
+    if (bulkReason.trim().length < 8) {
+      setStatus({ ok: false, message: "Bulk reason must be ≥8 chars." });
+      return;
+    }
+    let rows;
+    try {
+      rows = JSON.parse(bulkRows);
+      if (!Array.isArray(rows)) throw new Error("Top-level JSON must be an array");
+    } catch (e) {
+      setStatus({ ok: false, message: `Could not parse rows JSON: ${e.message}` });
+      return;
+    }
+    try {
+      const r = await api.post("/api/admin/exam-intelligence-cms/bulk-import", {
+        reason: bulkReason.trim(),
+        entity,
+        rows,
+      });
+      setBulkResult(r);
+      setStatus({
+        ok: r.ok,
+        message: `Bulk import: ${r.ok_count}/${r.total} ok, ${r.error_count} errors. audit_id=${r.audit_id}`,
+      });
+      load();
+    } catch (ex) {
+      setStatus({ ok: false, message: getApiErrorMessage(ex) });
     }
   }
 
@@ -225,6 +261,14 @@ export default function AdminExamIntelCms() {
         >
           <Plus className="h-3 w-3" /> {showCreate ? "Cancel" : "New row"}
         </button>
+        <button
+          type="button"
+          className="btn small"
+          onClick={() => setShowBulk((s) => !s)}
+          data-testid="cms-toggle-bulk"
+        >
+          <Plus className="h-3 w-3" /> {showBulk ? "Cancel bulk" : "Bulk import"}
+        </button>
       </div>
 
       {status ? (
@@ -234,6 +278,43 @@ export default function AdminExamIntelCms() {
       ) : null}
 
       {err ? <div className="text-sm text-red-700" role="alert">{err}</div> : null}
+
+      {showBulk ? (
+        <form onSubmit={submitBulk} className="rounded border border-border/60 bg-card p-4 space-y-2" data-testid="cms-bulk-form">
+          <h3 className="text-sm font-semibold">Bulk import {ENTITY_CONFIG[entity].label}</h3>
+          <p className="text-xs text-muted-foreground">
+            Paste a JSON array of row objects (max 500). Each row goes through the same validation as the
+            single-row create — required fields, FK resolution, enum constraints, and forced statuses.
+            Per-row results are returned so you can fix and retry only the failed rows.
+          </p>
+          <label className="block">
+            <span className="block text-xs text-muted-foreground mb-1">Rows JSON (array)</span>
+            <textarea
+              value={bulkRows}
+              onChange={(e) => setBulkRows(e.target.value)}
+              rows={8}
+              placeholder='[{"slug":"a","name":"A"},{"slug":"b","name":"B"}]'
+              className="w-full px-2 py-1.5 text-xs font-mono border border-border/60 rounded bg-background"
+              data-testid="cms-bulk-rows"
+            />
+          </label>
+          <label className="block">
+            <span className="block text-xs text-muted-foreground mb-1">Reason (≥8 chars)</span>
+            <textarea value={bulkReason} onChange={(e) => setBulkReason(e.target.value)} rows={2} className="w-full px-2 py-1.5 text-sm border border-border/60 rounded bg-background" data-testid="cms-bulk-reason" />
+          </label>
+          <button type="submit" className="btn small" data-testid="cms-bulk-submit">Import</button>
+          {bulkResult ? (
+            <details className="text-xs mt-2">
+              <summary className="cursor-pointer text-muted-foreground">
+                {bulkResult.ok_count}/{bulkResult.total} succeeded — click to see per-row results
+              </summary>
+              <pre className="mt-2 bg-muted p-2 rounded max-h-60 overflow-auto">
+                {JSON.stringify(bulkResult.results, null, 2)}
+              </pre>
+            </details>
+          ) : null}
+        </form>
+      ) : null}
 
       {showCreate ? (
         <form onSubmit={submitCreate} className="rounded border border-border/60 bg-card p-4 space-y-2" data-testid="cms-create-form">

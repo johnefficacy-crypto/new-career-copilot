@@ -139,13 +139,20 @@ def list_users(
     return {"items": items, "count": len(items)}
 
 
-@router.get("/audit")
-def audit(
+@router.get("/audit-feed")
+def audit_feed(
     actor_id: str | None = None,
     action: str | None = None,
     limit: int = Query(default=100, ge=1, le=500),
     user: dict = Depends(_require_admin),
 ) -> dict:
+    """Global audit feed for the admin overview dashboard.
+
+    Renamed from ``GET /admin/audit`` in the Phase 5 follow-up cleanup —
+    that path is owned by ``admin_eligibility.list_audit_entries`` which
+    enforces an entity_type whitelist and is meant for entity-scoped
+    drawers. This one is the unconstrained feed for the overview UI.
+    """
     sb = get_supabase_admin()
     query = sb.table("admin_audit_logs").select("*")
     if actor_id and _is_uuid(actor_id):
@@ -156,16 +163,19 @@ def audit(
     return {"items": rows}
 
 
-@router.get("/community/flags")
-def community_flags(
+@router.get("/community/forum-flags")
+def community_forum_flags(
     status: str = "open",
     limit: int = Query(default=50, ge=1, le=200),
     user: dict = Depends(_require_admin),
 ) -> dict:
-    """Forum-scoped slice of moderation_items, kept here for legacy admin UI.
+    """Forum-scoped slice of moderation_items.
 
-    Frontend's full moderation queue lives at /admin/moderation; this is
-    the narrow forum-only view some existing admin widgets ask for.
+    Renamed from ``/admin/community/flags`` in the Phase 5 follow-up
+    cleanup — that path is owned by ``community_runtime`` which
+    aggregates forum + community + resource reports. This narrower
+    forum-only slice from ``moderation_items`` stays for the admin
+    widgets that ask for just that view.
     """
     sb = get_supabase_admin()
     rows = (
