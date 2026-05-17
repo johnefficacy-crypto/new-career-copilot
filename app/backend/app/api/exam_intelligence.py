@@ -18,6 +18,7 @@ from app.db.supabase_client import get_supabase_admin
 from app.exam_intelligence.lookup import list_active_exams
 from app.exam_intelligence.option_insights import option_insights
 from app.exam_intelligence.status import exam_intelligence_summary
+from app.exam_intelligence.trap_drill import build_trap_drill
 
 logger = logging.getLogger("career_copilot.api.exam_intelligence")
 
@@ -108,5 +109,51 @@ def get_option_insights(
             "has_data": False,
             "recurring_distractors": [],
             "elimination_tips": [],
+            "error": str(exc)[:200],
+        }
+
+
+@router.get("/exams/{slug}/trap-drill")
+def get_trap_drill(
+    slug: str,
+    topic_id: str | None = Query(None),
+    size: int = Query(5, ge=1, le=15),
+    _user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Build a short MCQ drill skewed toward verified questions with
+    known trap patterns. Returns ``questions=[]`` and pool-size counts
+    when the exam has no verified questions yet, so the UI can render
+    a neutral empty state.
+    """
+    sb = get_supabase_admin()
+    exam_row = None
+    try:
+        rows = (
+            sb.table("exams").select("id, slug").eq("slug", slug).limit(1).execute().data
+            or []
+        )
+        exam_row = rows[0] if rows else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("trap_drill exam lookup failed for %s: %s", slug, exc)
+    if not exam_row or not exam_row.get("id"):
+        return {
+            "exam_id": None,
+            "topic_id": topic_id,
+            "verified_only": True,
+            "questions": [],
+            "total_pool_size": 0,
+            "trap_annotated_pool_size": 0,
+        }
+    try:
+        return build_trap_drill(sb, exam_row["id"], topic_id=topic_id, size=size)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("trap_drill build failed for %s", slug)
+        return {
+            "exam_id": exam_row["id"],
+            "topic_id": topic_id,
+            "verified_only": True,
+            "questions": [],
+            "total_pool_size": 0,
+            "trap_annotated_pool_size": 0,
             "error": str(exc)[:200],
         }
