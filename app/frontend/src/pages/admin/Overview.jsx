@@ -1,6 +1,57 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
+
+// Priority work feeds the new command-center list. Each entry must point
+// to a count we already get from /api/admin/overview (no new fetches and
+// no new endpoints, per task constraint). Items with a missing or zero
+// count fall back to a no-count entry; entries with count === 0 are
+// filtered out so the list shows only actual work.
+function buildPriorityItems(kpisObj) {
+  const get = (key) => {
+    const v = kpisObj?.[key];
+    return typeof v === "number" ? v : null;
+  };
+  const items = [
+    {
+      key: "moderation_p0_open",
+      label: "P0 moderation flags",
+      count: get("moderation_p0_open"),
+      hrefToQueue: "/admin/moderation",
+      severity: "blocked",
+    },
+    {
+      key: "copyright_open",
+      label: "Open copyright takedowns",
+      count: get("copyright_open"),
+      hrefToQueue: "/admin/copyright",
+      severity: "blocked",
+    },
+    {
+      key: "open_flags",
+      label: "Open moderation flags",
+      count: get("open_flags"),
+      hrefToQueue: "/admin/moderation",
+      severity: "pending",
+    },
+  ];
+  const severityRank = { blocked: 0, pending: 1, info: 2 };
+  return items
+    .filter((it) => typeof it.count === "number" && it.count > 0)
+    .sort((a, b) => {
+      const sa = severityRank[a.severity] ?? 9;
+      const sb = severityRank[b.severity] ?? 9;
+      if (sa !== sb) return sa - sb;
+      return b.count - a.count;
+    })
+    .slice(0, 5);
+}
+
+function severityBadge(severity) {
+  if (severity === "blocked") return { cls: "badge blocker", text: "blocked" };
+  if (severity === "pending") return { cls: "badge pending", text: "pending" };
+  return { cls: "badge info", text: "info" };
+}
 
 export default function AdminOverview() {
   const [data, setData] = useState({ kpis: [], recent_audit: [] });
@@ -12,11 +63,54 @@ export default function AdminOverview() {
       .catch((e) => setErr(e));
   }, []);
 
-  const kpis = Array.isArray(data.kpis) ? data.kpis : Object.values(data.kpis || {});
+  const kpisRaw = data.kpis;
+  const kpisObj = useMemo(
+    () => (kpisRaw && !Array.isArray(kpisRaw) ? kpisRaw : {}),
+    [kpisRaw],
+  );
+  const kpis = Array.isArray(kpisRaw) ? kpisRaw : Object.values(kpisRaw || {});
   const audit = data.recent_audit || [];
+  const priorityItems = useMemo(() => buildPriorityItems(kpisObj), [kpisObj]);
 
   return (
     <div className="stack" data-testid="admin-overview">
+      <section className="scrn" data-testid="overview-priority-work" style={{ padding: 0, border: "none" }}>
+        <div className="scrn-head">
+          <div>
+            <div className="lbl">Governance · priority work</div>
+            <h2 className="oc-title disp" style={{ fontSize: 22, marginTop: 4 }}>What needs attention</h2>
+            <div className="anno" style={{ marginTop: 4 }}>Ranked items first; KPI snapshot follows below.</div>
+          </div>
+          <span className="scrn-tag">command center</span>
+        </div>
+        <div className="card">
+          {priorityItems.length === 0 ? (
+            <div className="card-body">
+              <div className="empty" data-testid="priority-work-empty">
+                <div className="empty-title">No priority work right now.</div>
+                Trust desk is clear. Keep the routine review cadence going.
+              </div>
+            </div>
+          ) : (
+            <ul className="stack" style={{ padding: 0, margin: 0, listStyle: "none" }}>
+              {priorityItems.map((it) => {
+                const sev = severityBadge(it.severity);
+                return (
+                  <li key={it.key} className="card-body" data-testid={`priority-work-${it.key}`} style={{ display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
+                    <div className="row" style={{ gap: 8, minWidth: 0 }}>
+                      <span className={sev.cls}>{sev.text}</span>
+                      <span className="row-ttl">{it.label}</span>
+                      <span className="badge neutral">{it.count}</span>
+                    </div>
+                    <Link className="btn small" to={it.hrefToQueue}>Open queue →</Link>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </section>
+
       <section className="scrn" style={{ padding: 0, border: "none" }}>
         <div className="scrn-head">
           <div>
