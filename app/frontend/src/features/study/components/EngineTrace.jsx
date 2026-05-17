@@ -46,7 +46,16 @@ export default function EngineTrace({ steps, planSummary }) {
         </div>
 
         <div className="relative">
-          <svg viewBox="0 0 720 220" className="w-full h-[220px] block" aria-hidden="true">
+          <svg
+            viewBox="0 0 720 220"
+            className="w-full h-[220px] block"
+            role="img"
+            aria-labelledby="engine-trace-title engine-trace-desc"
+          >
+            <title id="engine-trace-title">Engine trace diagram</title>
+            <desc id="engine-trace-desc">
+              {`Four-layer reasoning flow that composes today's plan: user intelligence (your signals), exam intelligence (syllabus and PYQ weight), update intelligence (notifications and changes) and the Study OS engine that adapts the daily plan. Current plan summary: ${planSummary || "compiled daily"}.`}
+            </desc>
             <defs>
               <marker
                 id="engine-arrow"

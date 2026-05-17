@@ -12,6 +12,15 @@ const PRESSURE_STATUS = {
   unknown: "not_connected",
 };
 
+// Explicit labels so the badge no longer renders "unknown pressure" — which
+// reads ambiguously (is pressure unknown, or "unknown" the pressure level?).
+const PRESSURE_LABEL = {
+  high: "High competition",
+  medium: "Medium competition",
+  low: "Low competition",
+  unknown: "Pressure not measured",
+};
+
 function fmtInt(v) {
   if (v === null || v === undefined) return null;
   const n = Number(v);
@@ -73,7 +82,7 @@ export default function CompetitionContextCard({ competitionContext }) {
         </div>
         <StatusBadge
           status={PRESSURE_STATUS[level] || "not_connected"}
-          label={`${level} pressure`}
+          label={PRESSURE_LABEL[level] || PRESSURE_LABEL.unknown}
         />
       </div>
 
