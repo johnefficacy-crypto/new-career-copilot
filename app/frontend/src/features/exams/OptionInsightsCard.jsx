@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Lightbulb, ShieldCheck } from "lucide-react";
 
 import { api } from "../../lib/api";
@@ -8,11 +8,54 @@ import { api } from "../../lib/api";
  * option-analytics rollups (admin recompute populates them). Empty
  * states render neutrally rather than hiding so operators get a
  * visible signal that the rollups need a refresh.
+ *
+ * ``topics`` (optional) is the topic_coverage list from the parent's
+ * exam-intelligence summary fetch. When supplied, the card renders a
+ * native ``<select>`` topic filter in its header; the selected topic
+ * id is wired into the option-insights API call.
  */
-export default function OptionInsightsCard({ examSlug, topicId }) {
+export default function OptionInsightsCard({
+  examSlug,
+  topicId,
+  topics,
+  onTopicChange,
+}) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [internalTopicId, setInternalTopicId] = useState("");
+
+  const handleInternalTopicChange = (e) => {
+    const v = e.target.value;
+    setInternalTopicId(v);
+    if (onTopicChange) onTopicChange(v || null);
+  };
+
+  // Controlled-via-prop wins over the in-card picker so callers can
+  // still force a specific topic if they want to.
+  const activeTopicId = topicId ?? (internalTopicId || null);
+
+  const topicOptions = useMemo(() => {
+    if (!Array.isArray(topics)) return [];
+    const seen = new Set();
+    const out = [];
+    for (const t of topics) {
+      const id = t?.topic_id;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push({ id, name: t.topic_name || id });
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name));
+    return out;
+  }, [topics]);
+
+  // Reset the in-card picker if the parent unmounts the topics list or
+  // the chosen id no longer appears in the new exam's coverage.
+  useEffect(() => {
+    if (internalTopicId && !topicOptions.find((t) => t.id === internalTopicId)) {
+      setInternalTopicId("");
+    }
+  }, [topicOptions, internalTopicId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -22,7 +65,7 @@ export default function OptionInsightsCard({ examSlug, topicId }) {
     }
     setLoading(true);
     const params = new URLSearchParams();
-    if (topicId) params.set("topic_id", topicId);
+    if (activeTopicId) params.set("topic_id", activeTopicId);
     const qs = params.toString() ? `?${params.toString()}` : "";
     api
       .get(`/api/exam-intelligence/exams/${examSlug}/option-insights${qs}`)
@@ -40,7 +83,7 @@ export default function OptionInsightsCard({ examSlug, topicId }) {
     return () => {
       cancelled = true;
     };
-  }, [examSlug, topicId]);
+  }, [examSlug, activeTopicId]);
 
   if (!examSlug) return null;
 
@@ -83,8 +126,8 @@ export default function OptionInsightsCard({ examSlug, topicId }) {
       data-testid="option-insights-card"
       aria-labelledby="option-insights-heading"
     >
-      <header className="flex items-start justify-between gap-3">
-        <div>
+      <header className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
           <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
             Trap awareness · verified PYQs
           </div>
@@ -95,13 +138,35 @@ export default function OptionInsightsCard({ examSlug, topicId }) {
             Distractors examiners reuse
           </h3>
         </div>
-        <span
-          className="pill pill-sage inline-flex items-center gap-1 text-[11px]"
-          title="Built only from verified past papers"
-        >
-          <ShieldCheck className="h-3 w-3" aria-hidden="true" />
-          Verified-only
-        </span>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {topicId == null && topicOptions.length > 0 && (
+            <label className="inline-flex items-center gap-2 text-[11px] text-muted-foreground">
+              <span className="sr-only">Filter by topic</span>
+              <span aria-hidden="true">Topic:</span>
+              <select
+                value={internalTopicId}
+                onChange={handleInternalTopicChange}
+                aria-label="Filter trap-awareness tips by topic"
+                data-testid="option-insights-topic-filter"
+                className="rounded-md border border-clay-200 bg-white px-2 py-1 text-xs text-clay-800 focus:outline-none focus:ring-2 focus:ring-sage-300"
+              >
+                <option value="">All topics</option>
+                {topicOptions.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <span
+            className="pill pill-sage inline-flex items-center gap-1 text-[11px]"
+            title="Built only from verified past papers"
+          >
+            <ShieldCheck className="h-3 w-3" aria-hidden="true" />
+            Verified-only
+          </span>
+        </div>
       </header>
 
       {!hasData ? (

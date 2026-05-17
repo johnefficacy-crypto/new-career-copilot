@@ -33,6 +33,9 @@ import AdminStudyOsReports from "../pages/admin/studyos/Reports";
 import AdminStudyOsSocial from "../pages/admin/studyos/Social";
 import AdminExamIntelCms from "../pages/admin/studyos/ExamIntelCms";
 import AdminContentAccessRequests from "../pages/admin/studyos/ContentAccessRequests";
+import AdminGroupsConsole from "../pages/admin/community/GroupsConsole";
+import AdminPartnersConsole from "../pages/admin/community/PartnersConsole";
+import AdminResourcesReviewQueue from "../pages/admin/community/ResourcesReviewQueue";
 
 export const adminRouteElements = (
   <Route element={<ProtectedRoute role={ADMIN_ROLES} requireBackend><AdminShell /></ProtectedRoute>}>
@@ -52,6 +55,9 @@ export const adminRouteElements = (
     <Route path="/admin/rbac" element={<AdminRBAC />} />
     <Route path="/admin/mentors" element={<AdminMentorsPg />} />
     <Route path="/admin/community" element={<AdminCommunity />} />
+    <Route path="/admin/community/groups" element={<AdminGroupsConsole />} />
+    <Route path="/admin/community/partners" element={<AdminPartnersConsole />} />
+    <Route path="/admin/community/resources" element={<AdminResourcesReviewQueue />} />
     <Route path="/admin/ai-policy" element={<AdminAIPolicy />} />
     <Route path="/admin/persona" element={<AdminPersona />} />
     <Route path="/admin/exam-intelligence" element={<AdminExamIntelligence />} />
