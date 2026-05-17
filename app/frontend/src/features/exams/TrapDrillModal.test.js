@@ -3,14 +3,23 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 
 jest.mock("../../lib/api", () => {
   const get = jest.fn();
-  return { __esModule: true, api: { get } };
+  const post = jest.fn(() => Promise.resolve({}));
+  return { __esModule: true, api: { get, post } };
 });
 
 import { api } from "../../lib/api";
 import TrapDrillModal from "./TrapDrillModal";
 
+beforeEach(() => {
+  // Re-install the default impl every test — some tests expect the
+  // promise to resolve, and ``mockClear`` between tests preserves
+  // calls but not impl in some Jest 27 setups.
+  api.post.mockImplementation(() => Promise.resolve({}));
+});
+
 afterEach(() => {
   api.get.mockReset();
+  api.post.mockReset();
 });
 
 function _drillPayload({ withInsights = true } = {}) {
@@ -18,6 +27,7 @@ function _drillPayload({ withInsights = true } = {}) {
     verified_only: true,
     total_pool_size: 3,
     trap_annotated_pool_size: 2,
+    drill_seed: 4242,
     questions: [
       {
         id: "q1",
@@ -146,4 +156,71 @@ test("backdrop click closes the modal but inner click does not", async () => {
   expect(onClose).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByTestId("trap-drill-question"));
   expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test("forwards initialSeed in the drill request", async () => {
+  api.get.mockResolvedValueOnce(_drillPayload());
+  render(
+    <TrapDrillModal
+      open
+      onClose={() => {}}
+      examSlug="upsc-cse"
+      initialSeed={777}
+    />
+  );
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith(
+      "/api/exam-intelligence/exams/upsc-cse/trap-drill?size=5&seed=777"
+    )
+  );
+});
+
+test("emits onSeedChange after the server echoes back the effective seed", async () => {
+  const onSeedChange = jest.fn();
+  api.get.mockResolvedValueOnce(_drillPayload());
+  render(
+    <TrapDrillModal
+      open
+      onClose={() => {}}
+      examSlug="upsc-cse"
+      onSeedChange={onSeedChange}
+    />
+  );
+  await waitFor(() => screen.getByTestId("trap-drill-question"));
+  expect(onSeedChange).toHaveBeenCalledWith(4242);
+});
+
+test("posts attempts when the drill reaches done", async () => {
+  api.get.mockResolvedValueOnce(_drillPayload());
+  render(<TrapDrillModal open onClose={() => {}} examSlug="upsc-cse" size={2} />);
+  await waitFor(() => screen.getByTestId("trap-drill-question"));
+  fireEvent.click(screen.getByTestId("drill-option-B"));
+  fireEvent.click(screen.getByTestId("trap-drill-next"));
+  fireEvent.click(screen.getByTestId("drill-option-A"));
+  fireEvent.click(screen.getByTestId("trap-drill-next"));
+  await waitFor(() => screen.getByTestId("trap-drill-summary"));
+  expect(api.post).toHaveBeenCalledTimes(1);
+  expect(api.post).toHaveBeenCalledWith(
+    "/api/exam-intelligence/exams/upsc-cse/trap-drill/attempts",
+    expect.objectContaining({
+      drill_seed: 4242,
+      attempts: [
+        expect.objectContaining({ question_id: "q1", is_correct: false }),
+        expect.objectContaining({ question_id: "q2", is_correct: true }),
+      ],
+    })
+  );
+});
+
+test("does not post attempts when no questions were answered", async () => {
+  api.get.mockResolvedValueOnce({
+    verified_only: true,
+    questions: [],
+    total_pool_size: 0,
+    trap_annotated_pool_size: 0,
+    drill_seed: 1,
+  });
+  render(<TrapDrillModal open onClose={() => {}} examSlug="upsc-cse" />);
+  await waitFor(() => screen.getByTestId("trap-drill-empty"));
+  expect(api.post).not.toHaveBeenCalled();
 });

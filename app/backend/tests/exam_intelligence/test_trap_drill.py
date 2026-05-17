@@ -179,3 +179,163 @@ def test_endpoint_rejects_oversized_request():
     client = TestClient(_build_app(sb))
     r = client.get("/api/exam-intelligence/exams/upsc-cse/trap-drill?size=50")
     assert r.status_code == 422
+
+
+# ─── Adaptive ranking ──────────────────────────────────────────────────────
+
+
+def _seed_with_attempts(missed_qid: str | None = None) -> dict[str, Any]:
+    db = _seed()
+    db.setdefault("user_trap_drill_attempts", [])
+    if missed_qid:
+        db["user_trap_drill_attempts"].append(
+            {
+                "id": "att-1",
+                "user_id": "u-1",
+                "exam_id": "e1",
+                "question_id": missed_qid,
+                "option_id": None,
+                "is_correct": False,
+                "drill_seed": "1234",
+                "attempted_at": "2026-05-10T12:00:00+00:00",
+            }
+        )
+    return db
+
+
+def test_build_trap_drill_pushes_missed_qids_to_top_when_user_supplied():
+    sb = SBStub(_seed_with_attempts(missed_qid="q2"))
+    res = build_trap_drill(sb, "e1", size=1, seed=1, user_id="u-1")
+    # q2 was missed before → should come first even though q1 is the
+    # first by random shuffle in non-personalised mode.
+    assert res["questions"][0]["id"] == "q2"
+    assert res["adaptive"] is True
+    assert res["adaptive_summary"]["missed_before"] == 1
+
+
+def test_build_trap_drill_anonymous_call_is_not_adaptive():
+    sb = SBStub(_seed_with_attempts(missed_qid="q2"))
+    res = build_trap_drill(sb, "e1", size=5, seed=42)
+    assert res["adaptive"] is False
+    assert res["personalised_for_user"] is False
+    # Without a user_id, no history is consulted.
+    assert "adaptive_summary" not in res or res["adaptive_summary"]["missed_before"] == 0
+
+
+def test_build_trap_drill_echoes_seed_back():
+    sb = SBStub(_seed())
+    explicit = build_trap_drill(sb, "e1", size=2, seed=12345)
+    assert explicit["drill_seed"] == 12345
+
+    # No explicit seed → builder still emits one so the client can pin
+    # the deep-link.
+    auto = build_trap_drill(sb, "e1", size=2)
+    assert isinstance(auto["drill_seed"], int) and auto["drill_seed"] > 0
+
+
+def test_build_trap_drill_is_reproducible_for_same_seed():
+    sb = SBStub(_seed())
+    a = build_trap_drill(sb, "e1", size=3, seed=7777)
+    b = build_trap_drill(sb, "e1", size=3, seed=7777)
+    assert [q["id"] for q in a["questions"]] == [q["id"] for q in b["questions"]]
+
+
+# ─── Attempt logging ───────────────────────────────────────────────────────
+
+
+def test_post_attempts_writes_one_row_per_valid_entry():
+    sb = SBStub({**_seed(), "user_trap_drill_attempts": []})
+    client = TestClient(_build_app(sb))
+    r = client.post(
+        "/api/exam-intelligence/exams/upsc-cse/trap-drill/attempts",
+        json={
+            "drill_seed": 4242,
+            "attempts": [
+                {"question_id": "q1", "option_id": "opt-q1-A", "is_correct": True},
+                {"question_id": "q2", "option_id": "opt-q2-A", "is_correct": False},
+            ],
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["inserted"] == 2
+    assert body["skipped"] == 0
+    rows = sb.db["user_trap_drill_attempts"]
+    assert len(rows) == 2
+    # drill_seed is normalised to string.
+    assert all(r["drill_seed"] == "4242" for r in rows)
+
+
+def test_post_attempts_skips_malformed_entries():
+    sb = SBStub({**_seed(), "user_trap_drill_attempts": []})
+    client = TestClient(_build_app(sb))
+    # First entry is missing is_correct; second is well-formed.
+    r = client.post(
+        "/api/exam-intelligence/exams/upsc-cse/trap-drill/attempts",
+        json={
+            "attempts": [
+                {"question_id": "q1"},
+                {"question_id": "q2", "is_correct": True},
+            ],
+        },
+    )
+    # FastAPI/pydantic validation drops the first as 422 — that's the
+    # intended contract: client-side bug surfaces immediately rather
+    # than silently writing half a batch.
+    assert r.status_code == 422
+
+
+def test_post_attempts_empty_batch_is_noop():
+    sb = SBStub({**_seed(), "user_trap_drill_attempts": []})
+    client = TestClient(_build_app(sb))
+    r = client.post(
+        "/api/exam-intelligence/exams/upsc-cse/trap-drill/attempts",
+        json={"attempts": []},
+    )
+    assert r.status_code == 200
+    assert r.json()["inserted"] == 0
+    assert sb.db["user_trap_drill_attempts"] == []
+
+
+def test_post_attempts_unknown_slug_is_404():
+    sb = SBStub({**_seed(), "user_trap_drill_attempts": []})
+    client = TestClient(_build_app(sb))
+    r = client.post(
+        "/api/exam-intelligence/exams/does-not-exist/trap-drill/attempts",
+        json={"attempts": [{"question_id": "q1", "is_correct": True}]},
+    )
+    assert r.status_code == 404
+
+
+# ─── Streak ────────────────────────────────────────────────────────────────
+
+
+def test_get_streak_empty_when_no_attempts():
+    sb = SBStub({**_seed(), "user_trap_drill_attempts": []})
+    client = TestClient(_build_app(sb))
+    r = client.get("/api/exam-intelligence/exams/upsc-cse/trap-drill/streak")
+    body = r.json()
+    assert body["current_streak_days"] == 0
+    assert body["longest_streak_days"] == 0
+    assert body["total_attempts"] == 0
+
+
+def test_get_streak_counts_distinct_attempt_days():
+    from datetime import datetime, timezone
+
+    today = datetime.now(timezone.utc).date()
+    db = {**_seed(), "user_trap_drill_attempts": [
+        {"id": "a1", "user_id": "u-1", "exam_id": "e1", "question_id": "q1",
+         "is_correct": True, "attempted_at": f"{today.isoformat()}T10:00:00+00:00"},
+        {"id": "a2", "user_id": "u-1", "exam_id": "e1", "question_id": "q2",
+         "is_correct": False, "attempted_at": f"{today.isoformat()}T11:00:00+00:00"},
+    ]}
+    sb = SBStub(db)
+    client = TestClient(_build_app(sb))
+    body = client.get(
+        "/api/exam-intelligence/exams/upsc-cse/trap-drill/streak"
+    ).json()
+    # Both attempts are on the same day → streak of 1, two total attempts.
+    assert body["current_streak_days"] == 1
+    assert body["total_attempts"] == 2
+    assert body["drills_this_week"] == 1
