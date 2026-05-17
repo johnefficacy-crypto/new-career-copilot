@@ -36,7 +36,8 @@ router = APIRouter(prefix="/study", tags=["study"])
 def _require_canonical_exam_flag() -> bool:
     raw = os.getenv("STUDY_OS_REQUIRE_CANONICAL_EXAM")
     if raw is None:
-        return True  # ON by default in dev/runtime here
+        env = (os.getenv("ENV") or os.getenv("APP_ENV") or os.getenv("PYTHON_ENV") or "").lower()
+        return env in {"dev", "development", "local", "test"}
     return str(raw).lower() in {"1", "true", "yes", "on"}
 
 
