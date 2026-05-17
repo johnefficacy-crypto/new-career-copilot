@@ -80,6 +80,15 @@ export default function StudyCompare() {
   const [trust, setTrust] = useState(null);
   const [settings, setSettings] = useState(null);
   const [err, setErr] = useState("");
+  // Per-secondary-fetch error tracking. The original `allSettled` swallowed
+  // each failure into a silent empty-state — users couldn't distinguish
+  // "no cohort yet" from "the cohort endpoint broke."
+  const [secondaryErrors, setSecondaryErrors] = useState({
+    cohort: null,
+    titles: null,
+    leaderboard: null,
+    trust: null,
+  });
   const { run: runSettingAction } = useApiAction();
 
   const loadAll = useCallback(async () => {
@@ -96,17 +105,24 @@ export default function StudyCompare() {
       if (process.env.NODE_ENV !== "production") console.error(e);
       return;
     }
-    // Non-fatal extras — surface stubs if these fail.
+    // Non-fatal extras — track per-endpoint failure so the UI can show
+    // "Couldn’t load X — retry" instead of an indistinguishable empty.
     Promise.allSettled([
       api.get("/api/study/compare/cohort"),
       api.get("/api/study/compare/titles"),
       api.get("/api/study/leaderboard"),
       api.get("/api/study/social/trust-breakdown"),
     ]).then(([cohortR, titlesR, lbR, trustR]) => {
-      setCohort(cohortR.status === "fulfilled" ? cohortR.value : null);
-      setTitles(titlesR.status === "fulfilled" ? titlesR.value : null);
-      setLeaderboard(lbR.status === "fulfilled" ? lbR.value : null);
-      setTrust(trustR.status === "fulfilled" ? trustR.value : null);
+      const errs = { cohort: null, titles: null, leaderboard: null, trust: null };
+      if (cohortR.status === "fulfilled") setCohort(cohortR.value);
+      else errs.cohort = cohortR.reason?.message || "Couldn’t load cohort.";
+      if (titlesR.status === "fulfilled") setTitles(titlesR.value);
+      else errs.titles = titlesR.reason?.message || "Couldn’t load titles.";
+      if (lbR.status === "fulfilled") setLeaderboard(lbR.value);
+      else errs.leaderboard = lbR.reason?.message || "Couldn’t load leaderboard.";
+      if (trustR.status === "fulfilled") setTrust(trustR.value);
+      else errs.trust = trustR.reason?.message || "Couldn’t load trust breakdown.";
+      setSecondaryErrors(errs);
     });
   }, []);
 
@@ -223,6 +239,15 @@ export default function StudyCompare() {
             )
           }
         />
+        {secondaryErrors.cohort ? (
+          <div
+            className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800"
+            role="status"
+            data-testid="compare-cohort-error"
+          >
+            {secondaryErrors.cohort}
+          </div>
+        ) : null}
         {cohort?.metrics && Object.keys(cohort.metrics).length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {Object.entries(cohort.metrics).map(([k, v]) => (
@@ -271,6 +296,15 @@ export default function StudyCompare() {
             )
           }
         />
+        {secondaryErrors.leaderboard ? (
+          <div
+            className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800"
+            role="status"
+            data-testid="compare-leaderboard-error"
+          >
+            {secondaryErrors.leaderboard}
+          </div>
+        ) : null}
         {leaderboard?.entries?.length ? (
           <div className="space-y-2">
             {leaderboard.entries.slice(0, 10).map((e, i) => (
@@ -284,7 +318,21 @@ export default function StudyCompare() {
                     {e.rank ?? "—"}
                   </span>
                   <span className="text-[13px] text-clay-800">
-                    {e.subject_type === "user" ? "Aspirant" : e.subject_type === "group" ? "Group" : "Pair"}
+                    {(() => {
+                      // Privacy contract: backend may anonymise to a rank
+                      // placeholder when the entity has opted out. Prefer
+                      // an explicit display_name; otherwise fall back to a
+                      // ranked label so rows don't all read "Aspirant" /
+                      // "Group" / "Pair" identically.
+                      if (e.display_name) return e.display_name;
+                      const kind =
+                        e.subject_type === "group"
+                          ? "Group"
+                          : e.subject_type === "pair"
+                            ? "Pair"
+                            : "Aspirant";
+                      return e.rank ? `${kind} #${e.rank}` : kind;
+                    })()}
                   </span>
                 </div>
                 <span className="num-mono text-[12px] text-clay-700">

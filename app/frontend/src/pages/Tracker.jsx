@@ -67,6 +67,24 @@ export default function Tracker() {
     });
   }
 
+  // Splice the saved patch into the local items array instead of refetching
+  // the whole list. A user with 30 applications editing four fields used to
+  // trigger four full PUT→GET round trips; now each commit updates just the
+  // affected row. The PUT response (when shaped like an application row) is
+  // preferred over the optimistic patch so server-derived fields stay
+  // canonical.
+  function patchLocalRow(recId, patch, serverRow) {
+    setItems((prev) =>
+      prev.map((row) => {
+        if (row.recruitment_id !== recId && row.id !== recId) return row;
+        if (serverRow && typeof serverRow === "object" && serverRow.recruitment_id) {
+          return { ...row, ...serverRow };
+        }
+        return { ...row, ...patch };
+      }),
+    );
+  }
+
   async function commit(recId, field, transform = (v) => v) {
     const draftRow = drafts[recId];
     if (!draftRow || !(field in draftRow)) return;
@@ -80,11 +98,7 @@ export default function Tracker() {
     });
     if (result.ok) {
       clearDraftField(recId, field);
-      try {
-        await load();
-      } catch (e) {
-        if (process.env.NODE_ENV !== "production") console.error(e);
-      }
+      patchLocalRow(recId, { [field]: value }, result.data);
     }
     setSaving(null);
   }
@@ -97,11 +111,7 @@ export default function Tracker() {
       errorMessage: "Couldn't save change — try again.",
     });
     if (result.ok) {
-      try {
-        await load();
-      } catch (e) {
-        if (process.env.NODE_ENV !== "production") console.error(e);
-      }
+      patchLocalRow(recId, patch, result.data);
     }
     setSaving(null);
   }

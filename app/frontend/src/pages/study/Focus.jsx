@@ -287,13 +287,15 @@ export default function Focus() {
                   Pause
                 </button>
               ) : null}
-              <button
-                onClick={() => finish(false)}
-                data-testid="focus-end"
-                className="px-5 py-2.5 rounded-full border border-[#E7DECB] text-clay-700 font-semibold text-[13px]"
-              >
-                End session
-              </button>
+              {sessionId ? (
+                <button
+                  onClick={() => finish(false)}
+                  data-testid="focus-end"
+                  className="px-5 py-2.5 rounded-full border border-[#E7DECB] text-clay-700 font-semibold text-[13px]"
+                >
+                  End session
+                </button>
+              ) : null}
             </div>
             <div className="mt-3 text-[11px] text-clay-700">
               Subject and topic feed the session log:
