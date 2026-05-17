@@ -108,7 +108,7 @@ function Hero() {
               Check eligibility
             </Link>
             <Link
-              to="/app/onboarding/chat?mode=discovery&intent=create_study_plan"
+              to="/app/onboarding/chat?mode=discovery&intent=prepare_exam"
               data-testid="hero-cta-create-study-plan"
               className="btn btn-primary"
             >
@@ -122,7 +122,7 @@ function Hero() {
               Track deadlines/documents
             </Link>
             <Link
-              to="/app/onboarding/chat?mode=discovery&intent=join_group"
+              to="/app/onboarding/chat?mode=discovery&intent=join_study_group"
               data-testid="hero-cta-join-group"
               className="btn btn-ghost"
             >
@@ -913,6 +913,12 @@ function EligibilityEngine() {
 
           {/* Right: fact tiles + trust pillar */}
           <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="pill pill-outline text-[9.5px] uppercase tracking-[0.18em]">Example</span>
+              <span className="text-[11px] text-[#6C5038]">
+                Illustrative profile facets &amp; rule coverage — not your live numbers.
+              </span>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <FactTile k="profile facets" v="9" sub="age · category · education · domicile · GATE · …" />
               <FactTile k="rules per match" v="6" sub="every recruitment, every change" />

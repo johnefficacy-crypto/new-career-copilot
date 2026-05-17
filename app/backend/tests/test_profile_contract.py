@@ -264,6 +264,33 @@ def test_profile_completion_uses_normalized_location_and_reservations(monkeypatc
     assert out["ews_profile"]["completion_pct"] == 100
 
 
+def test_profile_completion_fields_are_user_editable(monkeypatch):
+    """Every field required by completion must be exposable in the profile form.
+
+    `career_goal` previously sat in the study_profile checklist with no UI
+    surface (and no onboarding question writing to it), guaranteeing every
+    user a permanent partial study_profile score. Until a UI path exists,
+    keep it out of the completion contract.
+    """
+    sb = _SB()
+    monkeypatch.setattr(canonical, "get_supabase_admin", lambda: sb)
+
+    out = asyncio.run(canonical.profile_completion(user=_user()))
+
+    all_required = {
+        field
+        for section, payload in out.items()
+        if isinstance(payload, dict) and "missing_fields" in payload
+        for field in payload.get("missing_fields", [])
+    } | {
+        field
+        for section, payload in out.items()
+        if isinstance(payload, dict)
+        for field in payload.get("fields", [])
+    }
+    assert "career_goal" not in all_required
+
+
 def test_profile_completion_detects_missing_education(monkeypatch):
     sb = _SB()
     monkeypatch.setattr(canonical, "get_supabase_admin", lambda: sb)
