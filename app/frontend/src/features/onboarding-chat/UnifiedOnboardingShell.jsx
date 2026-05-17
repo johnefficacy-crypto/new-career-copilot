@@ -6,6 +6,7 @@ import { useUnifiedOnboardingSession } from "./useUnifiedOnboardingSession";
 import OnboardingQuestionCard from "./OnboardingQuestionCard";
 import ReadinessMeter from "./ReadinessMeter";
 import { trackOnboardingEvent } from "./analytics";
+import EligibleExamsCard from "../exam-eligibility/EligibleExamsCard";
 
 // The single shell both entry modes render into:
 //   * cold/discovery — homepage, intent unknown, opens with the intent picker
@@ -265,11 +266,14 @@ export default function UnifiedOnboardingShell({
       <FallbackNotice data={data} />
 
       {data?.complete ? (
-        <CompletionScreen
-          data={data}
-          isAuthed={isAuthed}
-          onComplete={session.complete}
-        />
+        <>
+          <CompletionScreen
+            data={data}
+            isAuthed={isAuthed}
+            onComplete={session.complete}
+          />
+          {isAuthed && <EligibleExamsCard variant="panel" />}
+        </>
       ) : data?.question ? (
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
