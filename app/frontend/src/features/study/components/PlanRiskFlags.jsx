@@ -27,9 +27,15 @@ export default function PlanRiskFlags({ flags }) {
     <div className="space-y-2" data-testid="plan-risk-flags">
       <Eyebrow>Plan risk flags</Eyebrow>
       <ul className="space-y-2">
-        {rows.map((f) => (
+        {rows.map((f, i) => (
+          // Defensive composite key — the backend's `code` is intended to be
+          // unique per flag, but if two flags share the same code (e.g. two
+          // `subject_behind` rows for different subjects) React would
+          // silently drop the duplicate. Suffix with index + first slice of
+          // the subject / reason to keep keys unique without depending on
+          // backend uniqueness guarantees.
           <li
-            key={f.code}
+            key={`${f.code || "flag"}-${(f.subject || f.reason || "").slice(0, 32)}-${i}`}
             className="rounded-xl border border-[#E7DECB] bg-[#FBF8F2] p-3"
             data-testid={`plan-risk-${f.code}`}
           >
