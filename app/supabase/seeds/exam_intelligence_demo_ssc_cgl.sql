@@ -197,6 +197,53 @@ insert into public.pyq_questions
    28, 'If COLD is coded as DPME, then WARM is coded as?', 'mcq', 'easy', 40, 'verified')
 on conflict (id) do nothing;
 
+-- Option-level demo data so admin Exam Intelligence has rows for option
+-- review (migration 100). Where the question text alone determines the
+-- answer (percentage change, work, successive discounts, letter coding)
+-- the correct option carries is_correct=true. The two truncated demo
+-- questions (Q2, Q3) intentionally have all options is_correct=false
+-- with metadata.demo=true so analytics don't treat a guess as canonical.
+insert into public.pyq_options
+  (id, question_id, option_label, option_text, normalized_value, is_correct, reviewer_status, metadata) values
+  -- Q1: 20% up then 20% down → net -4% (0.96)
+  ('a0000000-0000-0000-0000-00000000ee11', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1', 'A', '4% increase',           'pct_up_4',     false, 'verified', '{"demo":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee12', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1', 'B', '4% decrease',           'pct_down_4',    true, 'verified', '{"demo":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee13', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1', 'C', 'No change',             'pct_zero',     false, 'verified', '{"demo":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee14', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1', 'D', '20% decrease',          'pct_down_20',  false, 'verified', '{"demo":true}'::jsonb),
+  -- Q2: truncated stem → no canonical correct option in demo
+  ('a0000000-0000-0000-0000-00000000ee21', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee2', 'A', 'Rs 600',                'amount_600',   false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee22', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee2', 'B', 'Rs 800',                'amount_800',   false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee23', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee2', 'C', 'Rs 1200',               'amount_1200',  false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee24', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee2', 'D', 'Rs 2000',               'amount_2000',  false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  -- Q3: truncated stem → no canonical correct option in demo
+  ('a0000000-0000-0000-0000-00000000ee31', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee3', 'A', '36 degrees',            'angle_36',     false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee32', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee3', 'B', '72 degrees',            'angle_72',     false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee33', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee3', 'C', '90 degrees',            'angle_90',     false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee34', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee3', 'D', '108 degrees',           'angle_108',    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  -- Q4: 1/12 + 1/18 = 5/36 → 36/5 = 7.2 days
+  ('a0000000-0000-0000-0000-00000000ee41', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee4', 'A', '6 days',                'days_6',       false, 'verified', '{"demo":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee42', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee4', 'B', '7.2 days',              'days_7_2',      true, 'verified', '{"demo":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee43', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee4', 'C', '8 days',                'days_8',       false, 'verified', '{"demo":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee44', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee4', 'D', '9 days',                'days_9',       false, 'verified', '{"demo":true}'::jsonb),
+  -- Q5: 1 - 0.9*0.8 = 0.28 → 28%
+  ('a0000000-0000-0000-0000-00000000ee51', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee5', 'A', '25%',                   'pct_25',       false, 'verified', '{"demo":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee52', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee5', 'B', '28%',                   'pct_28',        true, 'verified', '{"demo":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee53', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee5', 'C', '30%',                   'pct_30',       false, 'verified', '{"demo":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee54', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee5', 'D', '32%',                   'pct_32',       false, 'verified', '{"demo":true}'::jsonb),
+  -- Q6: COLD→DPME is +1 letter shift; WARM → XBSN
+  ('a0000000-0000-0000-0000-00000000ee61', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee6', 'A', 'XBSN',                  'code_xbsn',     true, 'verified', '{"demo":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee62', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee6', 'B', 'XBSM',                  'code_xbsm',    false, 'verified', '{"demo":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee63', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee6', 'C', 'YASN',                  'code_yasn',    false, 'verified', '{"demo":true}'::jsonb),
+  ('a0000000-0000-0000-0000-00000000ee64', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee6', 'D', 'XCSO',                  'code_xcso',    false, 'verified', '{"demo":true}'::jsonb)
+on conflict (id) do nothing;
+
+-- Wire the correct option back to pyq_questions so the planner can read
+-- the answer key on the verified rows. Q2/Q3 stay null (unverified).
+update public.pyq_questions set correct_option_id = 'a0000000-0000-0000-0000-00000000ee12' where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1';
+update public.pyq_questions set correct_option_id = 'a0000000-0000-0000-0000-00000000ee42' where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee4';
+update public.pyq_questions set correct_option_id = 'a0000000-0000-0000-0000-00000000ee52' where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee5';
+update public.pyq_questions set correct_option_id = 'a0000000-0000-0000-0000-00000000ee61' where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee6';
+
 -- Verified question -> topic tags (both question and tag must be verified
 -- for the verified-only PYQ readers to count them).
 insert into public.pyq_question_topic_tags

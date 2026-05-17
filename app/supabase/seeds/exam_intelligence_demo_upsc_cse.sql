@@ -154,6 +154,82 @@ insert into public.pyq_questions
    'With reference to the Coral reefs, consider the following statements.', 'mcq', 'medium', 75, 'verified')
 on conflict (id) do nothing;
 
+-- Option-level demo data so the admin option-review surface (migration
+-- 100) has rows. UPSC stems here are paraphrased openers; we ship the
+-- standard structural 4-option set ("1 only / 2 only / Both / Neither")
+-- with no correct option asserted (is_correct=false on all rows) since
+-- the original statement bank isn't reproduced. The Preamble question
+-- (`a0000009-0000-0000-0000-000000000211`) is the one exception — its
+-- canonical answer is unambiguous and is marked correct.
+insert into public.pyq_options
+  (id, question_id, option_label, option_text, is_correct, reviewer_status, metadata) values
+  -- 2024 paper
+  ('b0000000-0000-0000-0000-000000024101', 'a0000009-0000-0000-0000-000000000241', 'A', '1 only',                          false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000024102', 'a0000009-0000-0000-0000-000000000241', 'B', '2 only',                          false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000024103', 'a0000009-0000-0000-0000-000000000241', 'C', 'Both 1 and 2',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000024104', 'a0000009-0000-0000-0000-000000000241', 'D', 'Neither 1 nor 2',                 false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000024201', 'a0000009-0000-0000-0000-000000000242', 'A', '1 and 2 only',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000024202', 'a0000009-0000-0000-0000-000000000242', 'B', '2 and 3 only',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000024203', 'a0000009-0000-0000-0000-000000000242', 'C', '1 and 3 only',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000024204', 'a0000009-0000-0000-0000-000000000242', 'D', '1, 2 and 3',                      false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000024301', 'a0000009-0000-0000-0000-000000000243', 'A', 'Subansiri and Lohit',             false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000024302', 'a0000009-0000-0000-0000-000000000243', 'B', 'Teesta and Manas',                false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000024303', 'a0000009-0000-0000-0000-000000000243', 'C', 'All of the above',                false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000024304', 'a0000009-0000-0000-0000-000000000243', 'D', 'None of the above',               false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000024401', 'a0000009-0000-0000-0000-000000000244', 'A', '1 only',                          false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000024402', 'a0000009-0000-0000-0000-000000000244', 'B', '2 only',                          false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000024403', 'a0000009-0000-0000-0000-000000000244', 'C', 'Both 1 and 2',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000024404', 'a0000009-0000-0000-0000-000000000244', 'D', 'Neither 1 nor 2',                 false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  -- 2023 paper
+  ('b0000000-0000-0000-0000-000000023101', 'a0000009-0000-0000-0000-000000000231', 'A', '1 only',                          false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000023102', 'a0000009-0000-0000-0000-000000000231', 'B', '2 only',                          false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000023103', 'a0000009-0000-0000-0000-000000000231', 'C', 'Both 1 and 2',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000023104', 'a0000009-0000-0000-0000-000000000231', 'D', 'Neither 1 nor 2',                 false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000023201', 'a0000009-0000-0000-0000-000000000232', 'A', '1 and 2 only',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000023202', 'a0000009-0000-0000-0000-000000000232', 'B', '2 and 3 only',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000023203', 'a0000009-0000-0000-0000-000000000232', 'C', '1 and 3 only',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000023204', 'a0000009-0000-0000-0000-000000000232', 'D', '1, 2 and 3',                      false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000023301', 'a0000009-0000-0000-0000-000000000233', 'A', 'A low-pressure belt over land',   false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000023302', 'a0000009-0000-0000-0000-000000000233', 'B', 'A high-pressure belt over land',  false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000023303', 'a0000009-0000-0000-0000-000000000233', 'C', 'A low-pressure belt over ocean',  false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000023304', 'a0000009-0000-0000-0000-000000000233', 'D', 'A high-pressure belt over ocean', false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000023401', 'a0000009-0000-0000-0000-000000000234', 'A', '1 only',                          false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000023402', 'a0000009-0000-0000-0000-000000000234', 'B', '2 only',                          false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000023403', 'a0000009-0000-0000-0000-000000000234', 'C', 'Both 1 and 2',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000023404', 'a0000009-0000-0000-0000-000000000234', 'D', 'Neither 1 nor 2',                 false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  -- 2022 paper
+  ('b0000000-0000-0000-0000-000000022101', 'a0000009-0000-0000-0000-000000000221', 'A', '1 only',                          false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000022102', 'a0000009-0000-0000-0000-000000000221', 'B', '2 only',                          false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000022103', 'a0000009-0000-0000-0000-000000000221', 'C', 'Both 1 and 2',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000022104', 'a0000009-0000-0000-0000-000000000221', 'D', 'Neither 1 nor 2',                 false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000022201', 'a0000009-0000-0000-0000-000000000222', 'A', '1 and 2 only',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000022202', 'a0000009-0000-0000-0000-000000000222', 'B', '2 and 3 only',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000022203', 'a0000009-0000-0000-0000-000000000222', 'C', '1 and 3 only',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000022204', 'a0000009-0000-0000-0000-000000000222', 'D', '1, 2 and 3',                      false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000022301', 'a0000009-0000-0000-0000-000000000223', 'A', '1 only',                          false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000022302', 'a0000009-0000-0000-0000-000000000223', 'B', '2 only',                          false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000022303', 'a0000009-0000-0000-0000-000000000223', 'C', 'Both 1 and 2',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000022304', 'a0000009-0000-0000-0000-000000000223', 'D', 'Neither 1 nor 2',                 false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  -- 2021 paper — Preamble question has a definite, well-known answer.
+  ('b0000000-0000-0000-0000-000000021101', 'a0000009-0000-0000-0000-000000000211', 'A', 'Sovereign Democratic Republic',                                false, 'verified', '{"demo":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000021102', 'a0000009-0000-0000-0000-000000000211', 'B', 'Sovereign Socialist Secular Democratic Republic',               true, 'verified', '{"demo":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000021103', 'a0000009-0000-0000-0000-000000000211', 'C', 'Sovereign Secular Democratic Republic',                        false, 'verified', '{"demo":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000021104', 'a0000009-0000-0000-0000-000000000211', 'D', 'Sovereign Socialist Democratic Republic',                      false, 'verified', '{"demo":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000021201', 'a0000009-0000-0000-0000-000000000212', 'A', '1 only',                          false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000021202', 'a0000009-0000-0000-0000-000000000212', 'B', '2 only',                          false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000021203', 'a0000009-0000-0000-0000-000000000212', 'C', 'Both 1 and 2',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000021204', 'a0000009-0000-0000-0000-000000000212', 'D', 'Neither 1 nor 2',                 false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000021301', 'a0000009-0000-0000-0000-000000000213', 'A', '1 and 2 only',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000021302', 'a0000009-0000-0000-0000-000000000213', 'B', '2 and 3 only',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000021303', 'a0000009-0000-0000-0000-000000000213', 'C', '1 and 3 only',                    false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb),
+  ('b0000000-0000-0000-0000-000000021304', 'a0000009-0000-0000-0000-000000000213', 'D', '1, 2 and 3',                      false, 'pending',  '{"demo":true,"answer_key_unverified":true}'::jsonb)
+on conflict (id) do nothing;
+
+-- Wire the Preamble answer key back to pyq_questions.
+update public.pyq_questions
+  set correct_option_id = 'b0000000-0000-0000-0000-000000021102'
+where id = 'a0000009-0000-0000-0000-000000000211';
+
 -- Verified primary topic tags so the difficulty heatmap can roll up by subject.
 insert into public.pyq_question_topic_tags
   (id, question_id, topic_id, tag_weight, tag_role, tagging_source, confidence_score, reviewer_status, reviewed_at) values
