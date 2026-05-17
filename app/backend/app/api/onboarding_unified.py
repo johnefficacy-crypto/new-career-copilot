@@ -290,6 +290,7 @@ async def answer(
             question=current["question"],
             normalized_value=normalized,
             registry=registry,
+            session_id=session.get("id"),
         )
 
     # Authenticated answers also land in their canonical per-source log so
