@@ -354,3 +354,82 @@ def test_validate_queue_id_rejects_invalid():
 def test_review_body_limits_notes():
     with pytest.raises(Exception):
         admin_scrape.ReviewBody(notes="x" * 2001)
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Post-scoped field evidence isolation (regression for G12)
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def test_post_scoped_field_evidence_does_not_cross_contaminate(monkeypatch):
+    """Verifying ``posts.0.min_age`` must not mark ``posts.1.min_age`` verified.
+
+    The frontend writes a dotted path as the field_name; the backend stores
+    that path verbatim so the unique-index ``uq_evidence_entity_scoped`` keeps
+    each (queue, post, field) row separate. This test pins the contract: two
+    sibling posts can have independent reviewer_status without one writing
+    over the other.
+    """
+
+    class FieldSB(SB):
+        def __init__(self):
+            super().__init__()
+            # Add a second post so posts.1.min_age has a target.
+            self.state["queue"][0]["extracted_data"]["posts"] = [
+                {"post_name": "Clerk", "min_age": 18},
+                {"post_name": "Officer", "min_age": 22},
+            ]
+            self.state["evidence_rows"] = []
+
+        def table(self, t):
+            if t == "extracted_field_evidence":
+                outer = self
+
+                class FQ:
+                    def __init__(self):
+                        self._field_name = None
+                        self._payload = None
+                    def select(self, *a, **k): return self
+                    def order(self, *a, **k): return self
+                    def limit(self, *a, **k): return self
+                    def eq(self, k, v):
+                        if k == "field_name":
+                            self._field_name = v
+                        return self
+                    def insert(self, p):
+                        self._payload = p; return self
+                    def update(self, p):
+                        self._payload = p; return self
+                    def execute(self):
+                        if self._payload is not None:
+                            outer.state["evidence_rows"].append(dict(self._payload))
+                            return R([self._payload])
+                        rows = outer.state["evidence_rows"]
+                        if self._field_name is not None:
+                            rows = [r for r in rows if r.get("field_name") == self._field_name]
+                        return R(list(rows))
+                return FQ()
+            if t == "notification_documents":
+                class NDQ:
+                    def select(self, *a, **k): return self
+                    def insert(self, p): self._p = p; return self
+                    def eq(self, *a, **k): return self
+                    def limit(self, *a, **k): return self
+                    def execute(self): return R([{"id": "doc-fallback"}])
+                return NDQ()
+            return super().table(t)
+
+    sb = FieldSB()
+    monkeypatch.setattr(admin_scrape, "get_supabase_admin", lambda: sb)
+
+    admin_scrape.verify_field(
+        "q1", "posts.0.min_age",
+        admin_scrape.ReviewBody(notes="post 0 ok"),
+        {"id": "a", "email": "e"},
+    )
+
+    post0_rows = [r for r in sb.state["evidence_rows"] if r.get("field_name") == "posts.0.min_age"]
+    post1_rows = [r for r in sb.state["evidence_rows"] if r.get("field_name") == "posts.1.min_age"]
+    assert len(post0_rows) == 1
+    assert post0_rows[0]["reviewer_status"] == "verified"
+    assert post1_rows == []  # sibling post is untouched

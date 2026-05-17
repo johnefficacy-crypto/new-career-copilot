@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timezone
 from urllib.parse import urlparse
 import requests
@@ -7,8 +8,15 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.auth import require_permission
 from app.db.supabase_client import get_supabase_admin
+from app.eligibility.recompute_queue import enqueue_eligibility_recompute
 
+logger = logging.getLogger("career_copilot.api.admin_trust")
 router = APIRouter(tags=["admin-trust"])
+
+# Cap so a single publish click never enqueues more than this many rows; the
+# manual fan-out endpoint (admin_eligibility.recompute-eligibility) uses the
+# same limit and exposes ``cap_hit`` for the rare case where it matters.
+PUBLISH_RECOMPUTE_FANOUT_CAP = 10_000
 
 ALLOWED_SOURCE_TYPES = {
     "aggregator",
@@ -290,7 +298,52 @@ def publish_recruitment(recruitment_id: str, admin: dict = Depends(require_permi
         raise HTTPException(status_code=409, detail={"message": "Not ready", **ready})
     update = {"publish_status": "published", "published_by": admin.get("id"), "published_at": datetime.now(timezone.utc).isoformat()}
     sb.table("recruitments").update(update).eq("id", recruitment_id).execute(); _audit(sb, admin, "recruitment.publish", "recruitment", recruitment_id, after_payload=update)
-    return {"ok": True}
+    fanout = _fanout_recompute_on_publish(sb, recruitment_id, admin)
+    return {"ok": True, "recompute": fanout}
+
+
+def _fanout_recompute_on_publish(sb, recruitment_id: str, admin: dict) -> dict:
+    """Enqueue an eligibility recompute for every onboarded user the moment a
+    recruitment is published.
+
+    Publish is the only moment we know the canonical record is live, so
+    deferring fan-out to a manual button creates a window where users see a
+    published recruitment but no eligibility result. Best-effort: per-user
+    failures are logged and counted but never propagate, so the publish
+    response stays a 200. The recruitment drawer's RecomputeStatusPanel
+    surfaces the resulting queue depth.
+    """
+    enqueued = 0
+    errors = 0
+    try:
+        profiles = (
+            sb.table("profiles").select("id").eq("onboarding_completed", True)
+            .limit(PUBLISH_RECOMPUTE_FANOUT_CAP).execute().data or []
+        )
+    except Exception:
+        logger.exception("publish fanout profile fetch failed recruitment_id=%s", recruitment_id)
+        return {"enqueued": 0, "errors": 0, "cap_hit": False, "candidate_user_count": 0}
+    for prof in profiles:
+        uid = prof.get("id")
+        if not uid:
+            continue
+        try:
+            enqueue_eligibility_recompute(
+                sb, user_id=uid, reason="recruitment.publish",
+                recruitment_id=recruitment_id,
+                metadata={"triggered_by": "publish", "actor_id": admin.get("id")},
+            )
+            enqueued += 1
+        except Exception:  # noqa: BLE001
+            errors += 1
+    _audit(sb, admin, "eligibility.recompute.publish_fan_out", "recruitment", recruitment_id,
+           after_payload={"enqueued": enqueued, "errors": errors, "candidate_user_count": len(profiles)})
+    return {
+        "enqueued": enqueued,
+        "errors": errors,
+        "candidate_user_count": len(profiles),
+        "cap_hit": len(profiles) >= PUBLISH_RECOMPUTE_FANOUT_CAP,
+    }
 
 for action in ("archive", "withdraw"):
     def _make(a):
@@ -738,7 +791,10 @@ def eligibility_ops(_admin: dict = Depends(require_permission("scraper.manage"))
             return 0
 
     pending = _count("eligibility_recompute_queue", {"status": "pending"})
+    queued = _count("eligibility_recompute_queue", {"status": "queued"})
+    processing = _count("eligibility_recompute_queue", {"status": "processing"})
     failed = _count("eligibility_recompute_queue", {"status": "failed"})
+    processed = _count("eligibility_recompute_queue", {"status": "processed"})
 
     stale = 0
     try:
@@ -761,7 +817,7 @@ def eligibility_ops(_admin: dict = Depends(require_permission("scraper.manage"))
             if r.get("id")
         ]
         if pub_ids:
-            queued = (
+            published_awaiting = (
                 sb.table("eligibility_recompute_queue")
                 .select("recruitment_id", count="exact")
                 .in_("recruitment_id", pub_ids)
@@ -770,15 +826,47 @@ def eligibility_ops(_admin: dict = Depends(require_permission("scraper.manage"))
                 .count
                 or 0
             )
-            published_awaiting = queued
     except Exception:
         published_awaiting = 0
+
+    # Failed-row payload powers the EligibilityOps page's retry list. Without
+    # it the page knew the failure count but could not let admins act on it.
+    failed_rows: list[dict] = []
+    try:
+        failed_rows = (
+            sb.table("eligibility_recompute_queue")
+            .select("id, user_id, recruitment_id, reason, status, queued_at, attempt_count, error_message, last_error")
+            .eq("status", "failed")
+            .order("queued_at", desc=True)
+            .limit(50)
+            .execute()
+            .data
+            or []
+        )
+        for row in failed_rows:
+            if row.get("attempt_count") is not None and "attempts" not in row:
+                row["attempts"] = row.get("attempt_count")
+    except Exception:
+        failed_rows = []
+
+    onboarded_users = 0
+    try:
+        onboarded_users = (
+            sb.table("profiles").select("id", count="exact").eq("onboarding_completed", True).execute().count or 0
+        )
+    except Exception:
+        onboarded_users = 0
 
     return {
         "pending_recomputes": pending,
         "failed_recomputes": failed,
+        "queued": queued,
+        "processing": processing,
+        "processed": processed,
         "stale_results": stale,
         "published_awaiting": published_awaiting,
+        "failed_rows": failed_rows,
+        "onboarded_users": onboarded_users,
     }
 
 

@@ -67,17 +67,20 @@ function buildPayload(form) {
   // ``source_url`` column so older readers keep working. Stopping the
   // double-write here removes the schema-drift smell that asked
   // reviewers to wonder which field was authoritative.
+  // is_verified / is_official_source are intentionally omitted: trust is
+  // decided by POST /api/admin/sources/{id}/verify, which runs the backend
+  // trust evaluator. Sending them from this form would let the admin tick a
+  // checkbox to bypass the URL/domain checks, which is the exact mistake
+  // the verify action exists to prevent.
   return {
     source_name: form.source_name.trim(),
     official_url: form.official_url.trim(),
     source_type: form.source_type,
     is_active: !!form.is_active,
-    is_verified: !!form.is_verified,
     tier: form.tier === "" ? null : Number(form.tier),
     category: form.category || (isAggregator ? "aggregator" : null),
     notes: form.notes,
     discovery_only: isAggregator,
-    is_official_source: !isAggregator && !!form.is_verified,
     can_publish_directly: false,
     requires_official_confirmation: isAggregator,
     scrape_config: {

@@ -308,8 +308,16 @@ export default function AdminScraper() {
   }
 
   const act = async (id, action) => {
+    let notes = "admin review";
+    if (action === "reject") {
+      const reason = window.prompt("Reject this candidate? Enter a reason (required):", "");
+      if (reason == null) return; // user cancelled
+      const trimmed = reason.trim();
+      if (!trimmed) { setMsg("Reject cancelled — reason is required."); toast.error("Reject cancelled — reason is required."); return; }
+      notes = trimmed;
+    }
     try {
-      const r = await api.post(`/api/admin/scrape/items/${id}/${action}`, { notes: "admin review" });
+      const r = await api.post(`/api/admin/scrape/items/${id}/${action}`, { notes });
       if (action === "promote") {
         setMsg(`Recruitment draft created. Next: open Recruitments and validate publish readiness. ${JSON.stringify(r)}`);
         toast.success("Recruitment draft created. Next: open Recruitments and validate publish readiness.");
@@ -383,7 +391,7 @@ export default function AdminScraper() {
       <div className="flex flex-wrap items-center gap-2">
         {[
           ["pending", "Pending"],
-          ["approved", "Approved"],
+          ["approved", "Promoted"],
           ["duplicate", "Duplicates"],
           ["merged", "Merged"],
           ["rejected", "Rejected"],
