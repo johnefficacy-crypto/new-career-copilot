@@ -769,18 +769,67 @@ function LogMockModal({ form, setForm, onClose, onSubmit, formError, examSlugs }
   const attemptedNum = Number(form.attempted);
   const slugOptions =
     Array.isArray(examSlugs) && examSlugs.length ? examSlugs : EXAM_SLUG_FALLBACK;
+  const dialogRef = React.useRef(null);
+  const firstFieldRef = React.useRef(null);
+
+  // Escape-to-close, autofocus on first field, and a basic focus trap that
+  // keeps Tab cycling within the dialog. Closes the "keyboard users are
+  // trapped inside" gap the audit flagged.
+  React.useEffect(() => {
+    firstFieldRef.current?.focus();
+    function onKey(e) {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const root = dialogRef.current;
+      if (!root) return;
+      const focusables = root.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4"
+      onClick={onClose}
+      role="presentation"
+    >
       <form
+        ref={dialogRef}
         onSubmit={onSubmit}
         className="w-full max-w-lg soft-card rounded-2xl p-6 space-y-4"
         data-testid="mock-form"
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="log-mock-heading"
       >
-        <h2 className="font-heading text-xl">Log mock</h2>
+        <h2 id="log-mock-heading" className="font-heading text-xl">Log mock</h2>
         <div className="grid md:grid-cols-2 gap-3">
           <F label="Name">
-            <input required className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <input
+              ref={firstFieldRef}
+              required
+              className="input"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+            />
           </F>
           <F label="Exam">
             <select

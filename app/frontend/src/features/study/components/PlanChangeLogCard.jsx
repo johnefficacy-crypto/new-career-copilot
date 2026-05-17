@@ -6,6 +6,37 @@ import { Card, Eyebrow, Pill, StatusDot } from "../../../shared/ui/studyos";
 // Plan change log fed by /api/study/plan/changelog (study_adaptation_events).
 // Each row is server-derived — the UI never re-derives event copy.
 
+// Backend emits snake_case enums for these columns; the UI used to render
+// them verbatim ("plan_regenerated", "weekly_correction_applied") which
+// reads as developer debug. Map to human labels but keep the raw value as
+// a fallback so a future enum still renders without code changes.
+const EVENT_LABEL = {
+  plan_regenerated: "Plan regenerated",
+  plan_applied: "Plan applied",
+  task_carry_forward: "Task carried forward",
+  task_completed: "Task completed",
+  task_status_changed: "Task status updated",
+  weekly_correction_applied: "Weekly correction applied",
+  correction_drafted: "Correction tasks drafted",
+  correction_applied: "Correction added to plan",
+  preferences_updated: "Plan settings updated",
+};
+
+const TRIGGER_LABEL = {
+  user: "User action",
+  user_action: "User action",
+  scheduled: "Scheduled",
+  weekly_review: "Weekly review",
+  auto_regenerate: "Auto-regenerate",
+  admin: "Admin",
+  engine: "Engine",
+};
+
+function humanize(value, dictionary) {
+  if (!value) return "";
+  return dictionary[value] || String(value).replaceAll("_", " ");
+}
+
 // Relative-time formatter. Two callers in different timezones reading the
 // same shared screen used to see different locale-formatted strings with no
 // timezone label, breaking the "auditable" promise of the panel. Relative
@@ -89,10 +120,15 @@ export default function PlanChangeLogCard() {
                 >
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div className="flex items-center gap-2">
-                      <Pill tone="ink">{row.event_type}</Pill>
+                      <Pill tone="ink" title={row.event_type}>
+                        {humanize(row.event_type, EVENT_LABEL)}
+                      </Pill>
                       {row.trigger_source ? (
-                        <span className="num-mono text-[10.5px] text-clay-700">
-                          {row.trigger_source}
+                        <span
+                          className="text-[10.5px] text-clay-700"
+                          title={row.trigger_source}
+                        >
+                          {humanize(row.trigger_source, TRIGGER_LABEL)}
                         </span>
                       ) : null}
                     </div>

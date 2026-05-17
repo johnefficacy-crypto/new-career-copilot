@@ -25,8 +25,10 @@ export default function SubjectCard({ s, color, onSelect, target = 65 }) {
       type={active ? "button" : undefined}
       onClick={active ? () => onSelect(s) : undefined}
       className={
-        "text-left rounded-xl border border-[#E7DECB] bg-white/60 p-3.5 transition " +
-        (active ? "hover:border-[#A68057] cursor-pointer" : "")
+        "text-left rounded-xl border border-[#E7DECB] bg-white/60 p-3.5 transition outline-none " +
+        (active
+          ? "hover:border-[#A68057] cursor-pointer focus-visible:ring-2 focus-visible:ring-clay-900 focus-visible:ring-offset-1"
+          : "")
       }
       data-testid={`subject-card-${s.subject_id || s.subject}`}
     >
