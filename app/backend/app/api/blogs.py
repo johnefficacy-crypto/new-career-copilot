@@ -23,8 +23,8 @@ class BlogPostUpsert(BaseModel):
     seo_description: str | None = None
     canonical_url: str | None = None
     robots_index: bool = True
-    related_recruitment_id: int | None = None
-    related_organization_id: int | None = None
+    related_recruitment_id: str | None = None
+    related_organization_id: str | None = None
     primary_intent: str | None = None
     primary_cta_label: str | None = None
     primary_cta_url: str | None = None

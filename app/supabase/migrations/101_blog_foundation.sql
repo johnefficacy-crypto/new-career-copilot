@@ -29,8 +29,8 @@ create table if not exists public.blog_posts (
   seo_description text,
   canonical_url text,
   robots_index boolean not null default true,
-  related_recruitment_id bigint references public.recruitments(id) on delete set null,
-  related_organization_id bigint references public.organizations(id) on delete set null,
+  related_recruitment_id uuid references public.recruitments(id) on delete set null,
+  related_organization_id uuid references public.organizations(id) on delete set null,
   primary_intent text,
   primary_cta_label text,
   primary_cta_url text,
@@ -61,8 +61,8 @@ create table if not exists public.blog_ctas (
 
 create table if not exists public.blog_recruitment_links (
   blog_post_id bigint not null references public.blog_posts(id) on delete cascade,
-  recruitment_id bigint references public.recruitments(id) on delete cascade,
-  organization_id bigint references public.organizations(id) on delete set null,
+  recruitment_id uuid not null references public.recruitments(id) on delete cascade,
+  organization_id uuid references public.organizations(id) on delete set null,
   exam_id bigint,
   post_id bigint,
   created_at timestamptz not null default now(),
