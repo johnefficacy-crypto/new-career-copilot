@@ -20,6 +20,10 @@ This wiki should be replaced by the real generated Graphify wiki when `graphify 
 - [Marketplace Delivery Split — PR1](./marketplace-delivery-split-pr1.md) —
   `delivery_model` on `courses`, new `affiliate_partners` registry, admin
   review view, API allowlist enforcement. Migration `112`.
+- [Document Text Extraction — PR2](./document-text-extraction-pr2.md) —
+  `document_pages` table, sync `POST /library/items/{id}/process-text`,
+  auto-enqueue on PDF complete-upload, transactional page swap via
+  `replace_document_pages()` RPC. Migration `113`.
 
 ## Main Knowledge Areas
 
