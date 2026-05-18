@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@marsidev/react-turnstile": "^1.5.2"
+  }
+}
