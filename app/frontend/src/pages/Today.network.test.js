@@ -90,6 +90,8 @@ const FORBIDDEN = new Set([
   "/api/study/focus/summary",
   "/api/study/weekly-review",
   "/api/recommendations/me",
+  "/api/persona/questions/next",
+  "/api/exams/eligibility-summary",
 ]);
 
 test("Today first mount fetches only the four allowed endpoints", async () => {

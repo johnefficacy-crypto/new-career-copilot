@@ -239,13 +239,19 @@ function EmptyStateView({ variant, eligibleEmpty, conditionalEmpty, hasRules }) 
   );
 }
 
-export default function EligibleExamsCard({ variant = "card" }) {
-  const [data, setData] = useState(null);
+export default function EligibleExamsCard({ variant = "card", initialData } = {}) {
+  const hasInitial = initialData !== undefined && initialData !== null;
+  const [data, setData] = useState(hasInitial ? initialData : null);
   const [error, setError] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [expandedId, setExpandedId] = useState(null);
 
   useEffect(() => {
+    // When the parent (Today.jsx) hydrates from mission-control, skip
+    // the redundant /api/exams/eligibility-summary fetch entirely. The
+    // user-explicit Retry button still triggers a fetch by clearing
+    // initialData and bumping reloadKey.
+    if (hasInitial && reloadKey === 0) return undefined;
     let cancelled = false;
     setError(false);
     setData(null);
@@ -268,6 +274,7 @@ export default function EligibleExamsCard({ variant = "card" }) {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadKey]);
 
   if (error) {
