@@ -38,6 +38,14 @@ def _serialize_user(user: Any, claims: dict | None = None) -> dict:
     permissions = app_metadata.get("permissions") or []
     if isinstance(permissions, str):
         permissions = [permissions]
+    # Supabase anonymous sign-ins set `is_anonymous=true` in the JWT claims
+    # and on `app_metadata`. Either source is authoritative — we coerce to
+    # bool so downstream code can rely on a stable shape.
+    is_anonymous = bool(
+        claims.get("is_anonymous")
+        or app_metadata.get("is_anonymous")
+        or getattr(user, "is_anonymous", False)
+    )
     return {
         "id": getattr(user, "id", None) or claims.get("sub"),
         "email": getattr(user, "email", None) or claims.get("email"),
@@ -48,21 +56,10 @@ def _serialize_user(user: Any, claims: dict | None = None) -> dict:
         "plan": metadata.get("plan", "free"),
         "goal_exams": metadata.get("goal_exams", []),
         "permissions": permissions,
+        "is_anonymous": is_anonymous,
         "created_at": getattr(user, "created_at", None),
         "claims": claims,
     }
-
-
-def require_permission(permission: str):
-    def _dep(user: dict = Depends(get_current_user)) -> dict:
-        perms = set(user.get("permissions") or [])
-        if permission not in perms and user.get("role") not in {"super_admin"}:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Missing permission: {permission}",
-            )
-        return user
-    return _dep
 
 
 def get_current_user(
@@ -120,6 +117,41 @@ def get_current_user(
     request.state.current_user = serialised
     request.state.current_user_token = token
     return serialised
+
+
+def require_permission(permission: str):
+    def _dep(user: dict = Depends(get_current_user)) -> dict:
+        if user.get("is_anonymous"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Anonymous users cannot access this resource",
+            )
+        perms = set(user.get("permissions") or [])
+        if permission not in perms and user.get("role") not in {"super_admin"}:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Missing permission: {permission}",
+            )
+        return user
+    return _dep
+
+
+def get_current_user_required_permanent(
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Like :func:`get_current_user` but rejects anonymous Supabase users.
+
+    Use on endpoints that demand a permanent identity (payments, document
+    upload, anything that mutates persistent state on behalf of a user we
+    expect to come back). Anonymous callers get a 403 so the frontend can
+    prompt them to link a real identity.
+    """
+    if user.get("is_anonymous"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Anonymous users cannot access this resource",
+        )
+    return user
 
 
 def get_optional_user(

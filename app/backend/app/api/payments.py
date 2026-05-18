@@ -36,7 +36,11 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.core.auth import get_current_user, require_permission
+from app.core.auth import (
+    get_current_user,
+    get_current_user_required_permanent,
+    require_permission,
+)
 from app.core.config import get_settings
 from app.db.supabase_client import get_supabase_admin
 from app.payments import razorpay_client
@@ -350,7 +354,7 @@ def my_payments(user: dict = Depends(get_current_user)):
 
 
 @router.post("/payments/order")
-def create_order(body: OrderIn, user: dict = Depends(get_current_user)):
+def create_order(body: OrderIn, user: dict = Depends(get_current_user_required_permanent)):
     _ensure_profile(user)
     sb = get_supabase_admin()
     plan = _find_plan(sb, body.plan_id, active_only=True)
@@ -419,7 +423,7 @@ def create_order(body: OrderIn, user: dict = Depends(get_current_user)):
 
 
 @router.post("/payments/verify")
-def verify_payment(body: VerifyIn, user: dict = Depends(get_current_user)):
+def verify_payment(body: VerifyIn, user: dict = Depends(get_current_user_required_permanent)):
     if not _verify_checkout_signature(
         body.razorpay_order_id, body.razorpay_payment_id, body.razorpay_signature
     ):
