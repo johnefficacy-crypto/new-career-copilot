@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.db.supabase_client import get_supabase_admin
@@ -66,9 +66,16 @@ def require_permission(permission: str):
 
 
 def get_current_user(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
 ) -> dict:
-    """Validate the Supabase access token and return the resolved user."""
+    """Validate the Supabase access token and return the resolved user.
+
+    The resolved user is memoised on ``request.state`` keyed by token so
+    a single HTTP request that fans out to multiple protected
+    dependencies only hits ``auth/v1/user`` once. Lifetime = this
+    request only; nothing is cached across requests.
+    """
     if credentials is None or not credentials.credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -76,6 +83,11 @@ def get_current_user(
         )
 
     token = credentials.credentials
+
+    cached = getattr(request.state, "current_user", None)
+    cached_token = getattr(request.state, "current_user_token", None)
+    if cached is not None and cached_token == token:
+        return cached
 
     try:
         admin = get_supabase_admin()
@@ -104,15 +116,19 @@ def get_current_user(
     except Exception:
         claims = {}
 
-    return _serialize_user(user, claims)
+    serialised = _serialize_user(user, claims)
+    request.state.current_user = serialised
+    request.state.current_user_token = token
+    return serialised
 
 
 def get_optional_user(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
 ) -> dict | None:
     if credentials is None or not credentials.credentials:
         return None
     try:
-        return get_current_user(credentials)
+        return get_current_user(request, credentials)
     except HTTPException:
         return None

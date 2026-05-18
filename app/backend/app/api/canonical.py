@@ -14,6 +14,7 @@ already consumes, so no frontend page rewrites are required.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import date, datetime, timezone
@@ -1252,20 +1253,30 @@ def _rank_recruitment(
 @router_recommendations.get("/me")
 async def my_recommendations(user: dict = Depends(get_current_user)):
     supabase = get_supabase_admin()
-    rec_data = await list_recruitments(user=user)
+    # All five top-level reads are independent — fire them concurrently.
+    # The two async helpers (`list_recruitments`, `get_profile`,
+    # `weekly_review`) compose multiple supabase reads each, and the two
+    # sync helpers are pushed onto worker threads so they overlap with
+    # the async helpers' own I/O. Result shape unchanged.
+    rec_data, profile, eligibility, app_rows, review = await asyncio.gather(
+        list_recruitments(user=user),
+        get_profile(user),
+        asyncio.to_thread(_eligibility_summary, supabase, user["id"]),
+        asyncio.to_thread(
+            lambda: _safe(
+                lambda: supabase.table("user_recruitment_applications")
+                .select("recruitment_id,status,submitted_at,clicked_apply_at")
+                .eq("user_id", user["id"])
+                .execute()
+                .data,
+                default=[],
+            )
+            or []
+        ),
+        weekly_review(user),
+    )
     rec_items = rec_data.get("items", [])
-    profile = await get_profile(user)
-    eligibility = _eligibility_summary(supabase, user["id"])
-    app_rows = _safe(
-        lambda: supabase.table("user_recruitment_applications")
-        .select("recruitment_id,status,submitted_at,clicked_apply_at")
-        .eq("user_id", user["id"])
-        .execute()
-        .data,
-        default=[],
-    ) or []
     app_by_rec = {a["recruitment_id"]: a for a in app_rows}
-    review = await weekly_review(user)
     backlog_high = (review.get("backlog_count", 0) or 0) > 3 or (review.get("missed_tasks", 0) or 0) > 3
 
     ranked = [
