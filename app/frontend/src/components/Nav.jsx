@@ -2,6 +2,7 @@ import React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Menu, X, Sparkles, ArrowUpRight } from "lucide-react";
+import StartFreeButton from "./StartFreeButton";
 
 export default function Nav() {
   const [open, setOpen] = React.useState(false);
@@ -69,14 +70,11 @@ export default function Nav() {
             >
               Dashboard <ArrowUpRight className="h-3.5 w-3.5" />
             </Link>
-            <Link
-              to="/app"
-              data-testid="nav-cta-start"
-              className="btn-shine inline-flex items-center gap-1.5 bg-foreground text-background rounded-full px-4 py-2 text-sm font-semibold hover:opacity-90 transition"
-            >
-              Start free
-              <span className="opacity-70">→</span>
-            </Link>
+            <StartFreeButton
+              testId="nav-cta-start"
+              className="btn-shine inline-flex items-center gap-1.5 bg-foreground text-background rounded-full px-4 py-2 text-sm font-semibold hover:opacity-90 transition disabled:opacity-60"
+              trailing={<span className="opacity-70">→</span>}
+            />
           </div>
 
           <button
@@ -107,13 +105,12 @@ export default function Nav() {
                   {l.label}
                 </a>
               ))}
-              <Link
-                to="/app"
-                onClick={() => setOpen(false)}
-                className="mt-2 bg-foreground text-background text-center py-2.5 rounded-full font-semibold"
-              >
-                Start free
-              </Link>
+              <div className="mt-2" onClick={() => setOpen(false)}>
+                <StartFreeButton
+                  testId="nav-cta-start-mobile"
+                  className="w-full bg-foreground text-background text-center py-2.5 rounded-full font-semibold disabled:opacity-60"
+                />
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
