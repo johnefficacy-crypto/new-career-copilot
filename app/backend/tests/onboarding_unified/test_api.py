@@ -183,6 +183,40 @@ def test_complete_enqueues_recompute_only_for_authenticated_eligibility(ctx):
     assert done.json()["recompute_enqueued"] is True
 
 
+def test_complete_is_side_effect_idempotent(ctx, monkeypatch):
+    """Two consecutive POSTs → one eligibility enqueue, identical response."""
+    client, sb, app = ctx
+    app.dependency_overrides[get_optional_user] = lambda: {"id": "u-auth"}
+
+    calls: list[tuple[str, str]] = []
+
+    def _fake_enqueue(supabase, user_id):
+        calls.append(user_id)
+        return True
+
+    monkeypatch.setattr(api_mod, "_enqueue_eligibility_recompute", _fake_enqueue)
+
+    r = client.get(
+        "/api/onboarding-unified/resolve",
+        params={"intent": "check_eligibility"},
+    )
+    session_id = r.json()["session_id"]
+
+    first = client.post(
+        "/api/onboarding-unified/complete",
+        json={"session_id": session_id},
+    )
+    second = client.post(
+        "/api/onboarding-unified/complete",
+        json={"session_id": session_id},
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json() == second.json()
+    # Exactly one eligibility recompute enqueue across the two POSTs.
+    assert len(calls) == 1
+
+
 def test_stitch_anonymous_requires_auth_and_claims_session(ctx):
     client, sb, app = ctx
     # Build an anonymous session first.

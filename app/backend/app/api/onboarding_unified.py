@@ -411,30 +411,34 @@ async def complete(
 ) -> dict[str, Any]:
     """Close the session and return the recommended next action.
 
-    Deterministic eligibility recompute is enqueued (async, best-effort)
-    only when the intent is eligibility AND the caller is authenticated —
-    never before an authenticated completion, never in a blocking path.
+    Side-effect-idempotent: if the session is already ``completed``, the
+    same JSON payload is returned and the eligibility recompute is NOT
+    enqueued a second time. Deterministic eligibility recompute is
+    enqueued (async, best-effort) only when the intent is eligibility AND
+    the caller is authenticated — never before an authenticated
+    completion, never in a blocking path.
     """
     supabase = get_supabase_admin()
     session = _load_owned_session(
         supabase, body.session_id, user, body.anonymous_id
     )
 
-    mark_session_completed(supabase, session["id"])
     intent = session.get("intent")
     next_action = _NEXT_ACTION_BY_INTENT.get(intent, "open_dashboard")
-
     user_id = _user_id(user)
-    recompute_enqueued = False
-    if intent == "check_eligibility" and user_id:
-        recompute_enqueued = _enqueue_eligibility_recompute(supabase, user_id)
+    eligibility_eligible = intent == "check_eligibility" and bool(user_id)
+
+    if session.get("status") != "completed":
+        mark_session_completed(supabase, session["id"])
+        if eligibility_eligible:
+            _enqueue_eligibility_recompute(supabase, user_id)
 
     return {
         "completed": True,
         "session_id": session["id"],
         "intent": intent,
         "next_action": next_action,
-        "recompute_enqueued": recompute_enqueued,
+        "recompute_enqueued": eligibility_eligible,
         "authenticated": bool(user_id),
     }
 
