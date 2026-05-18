@@ -392,3 +392,72 @@ def test_mission_control_caches_repeat_reads_within_one_call():
         assert reads.get(table, 0) <= 1, (
             f"{table} read {reads.get(table)}× (expected ≤1); counts={reads}"
         )
+
+
+# ── Item 1: async sub-loader fan-out runs reads concurrently ───────────────
+
+
+def test_async_mission_control_returns_same_shape_as_sync():
+    import asyncio
+
+    from app.study_os.mission_control import build_mission_control_async
+
+    seed = _seed_full_world()
+    sync_out = build_mission_control(SBStub(seed), "u-1")
+    async_out = asyncio.run(build_mission_control_async(SBStub(_seed_full_world()), "u-1"))
+
+    # Same keys at the top level (modulo `meta.generated_at`, which is
+    # a wall-clock timestamp).
+    assert set(sync_out.keys()) == set(async_out.keys())
+    assert async_out["plan"] == sync_out["plan"]
+    assert async_out["metrics"] == sync_out["metrics"]
+    assert async_out["exam_intelligence"]["exam_id"] == sync_out["exam_intelligence"]["exam_id"]
+
+
+def test_async_mission_control_runs_independent_loaders_concurrently():
+    # Stage 1 has five independent reads. If they're serialised, the
+    # total elapsed time of mission-control will be ≥ 5×T where T is
+    # per-sub-loader sleep. If they run via asyncio.gather + to_thread,
+    # total ≈ T (plus a couple of stage 2/3 hops).
+    import asyncio
+    import time
+
+    from app.study_os.mission_control import (
+        _RequestReadCache,
+        build_mission_control_async,
+    )
+
+    delay = 0.10
+
+    class _SlowSB:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, attr):
+            return getattr(self._inner, attr)
+
+        def table(self, name):
+            q = self._inner.table(name)
+            real_execute = q.execute
+
+            def _slow_execute():
+                time.sleep(delay)
+                return real_execute()
+
+            q.execute = _slow_execute  # type: ignore[assignment]
+            return q
+
+    slow = _SlowSB(SBStub(_seed_full_world()))
+    started = time.monotonic()
+    asyncio.run(build_mission_control_async(slow, "u-1"))
+    elapsed = time.monotonic() - started
+
+    # Strictly serial mission-control fires ~24 reads × 0.10s ≈ 2.4s.
+    # Stage-1 fan-out should overlap the heaviest sub-loaders so the
+    # observed latency is clearly under that baseline. We assert
+    # improvement here, not a hard perf-budget number.
+    serial_baseline_seconds = 24 * delay
+    assert elapsed < serial_baseline_seconds * 0.75, (
+        f"expected concurrent execution; elapsed={elapsed:.2f}s "
+        f"(serial baseline ~{serial_baseline_seconds:.2f}s)"
+    )

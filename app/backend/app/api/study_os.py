@@ -18,6 +18,7 @@ from app.core.auth import get_current_user
 from app.db.supabase_client import get_supabase_admin
 from app.study_os.mission_control import (
     build_mission_control,
+    build_mission_control_async,
     build_task_reasoning_response,
 )
 from app.study_os.plan_preferences import get_plan_preferences, upsert_plan_preferences
@@ -399,7 +400,9 @@ async def mission_control(user: dict = Depends(get_current_user)) -> dict[str, A
     user_id = user.get("id")
     supabase = get_supabase_admin()
     try:
-        return build_mission_control(supabase, user_id)
+        # Async path: independent sub-loaders run via asyncio.gather +
+        # to_thread so the sync supabase client's blocking calls overlap.
+        return await build_mission_control_async(supabase, user_id)
     except Exception as exc:  # noqa: BLE001
         # Mission control composes many optional sources. Any unhandled
         # error must not break the Today page — return a minimal shape

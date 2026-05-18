@@ -11,7 +11,9 @@ we degrade to safe defaults instead of failing the endpoint.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -91,23 +93,39 @@ class _CachedQuery:
             return self._real.execute()
         key = tuple(self._chain)
         cache = self._owner._cache
-        if key in cache:
-            return cache[key]
-        self._owner._reads[self._table_name] = (
-            self._owner._reads.get(self._table_name, 0) + 1
-        )
+        # Fast path: a sibling sub-loader already populated the entry.
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+        # Run the (blocking) supabase round-trip *outside* the lock so
+        # concurrent reads of *different* keys still parallelise.
         result = self._real.execute()
-        cache[key] = result
+        with self._owner._lock:
+            cached = cache.get(key)
+            if cached is not None:
+                # Another thread won the race — discard this duplicate.
+                return cached
+            cache[key] = result
+            self._owner._reads[self._table_name] = (
+                self._owner._reads.get(self._table_name, 0) + 1
+            )
         return result
 
 
 class _RequestReadCache:
-    """Wrap a supabase client so reads dedupe within one request."""
+    """Wrap a supabase client so reads dedupe within one request.
+
+    Thread-safe: ``build_mission_control_async`` dispatches sub-loaders
+    via ``asyncio.to_thread`` so two of them may hit the same logical
+    table at the same time. The lock protects the (check-then-insert)
+    section; the blocking I/O happens without holding it.
+    """
 
     def __init__(self, real: Any) -> None:
         self._real = real
         self._cache: dict[tuple, Any] = {}
         self._reads: dict[str, int] = {}
+        self._lock = threading.Lock()
 
     def __getattr__(self, attr: str) -> Any:
         # `supabase.auth`, `supabase.rpc`, etc. pass through unchanged.
@@ -1045,31 +1063,61 @@ def _engine_trace(
 
 
 # ─── Public entrypoint ─────────────────────────────────────────────────────
-def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
-    """Build the full mission-control response for ``user_id``.
+def _select_next_question_safe(supabase: Any, user_id: str) -> dict[str, Any] | None:
+    """Wrap ``select_next_question`` so failures don't break a gather."""
+    try:
+        sel = select_next_question(supabase, user_id)
+        return sel.get("question") if isinstance(sel, dict) else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("mission_control progressive_question failed: %s", exc)
+        return None
 
-    Defensive throughout — never raises. Optional sections degrade to
-    empty/sentinel values when their source is unavailable.
+
+async def build_mission_control_async(supabase: Any, user_id: str) -> dict[str, Any]:
+    """Async version of :func:`build_mission_control`.
+
+    Runs independent sub-loaders concurrently via ``asyncio.gather`` +
+    ``asyncio.to_thread`` so the sync Supabase client's blocking calls
+    overlap instead of serialising. Same response shape as the sync
+    variant. The per-request read cache stays in front of the client so
+    duplicate chains across sub-loaders still dedupe.
     """
-    # Wrap the client so every read chain dedupes within this single
-    # request. Logical tables previously read twice (study_plans, exams,
-    # exam_topic_coverage, topics, aspirant_persona_snapshots) drop to one
-    # read each. Writes pass through; lifetime is this call only.
     supabase = _RequestReadCache(supabase) if not isinstance(supabase, _RequestReadCache) else supabase
-    snapshot = _load_persona_snapshot(supabase, user_id)
+
+    # Stage 1: five fully independent reads. They touch different tables
+    # (aspirant_persona_snapshots, study_plans, study_sessions, profiles
+    # / exams / exam_topic_coverage via exam_intel, persona_questions).
+    snapshot, plan, focus, exam_intel, progressive_question = await asyncio.gather(
+        asyncio.to_thread(_load_persona_snapshot, supabase, user_id),
+        asyncio.to_thread(_load_active_plan, supabase, user_id),
+        asyncio.to_thread(_focus_summary, supabase, user_id),
+        asyncio.to_thread(_load_exam_intelligence, supabase, user_id),
+        asyncio.to_thread(_select_next_question_safe, supabase, user_id),
+    )
+
     dimensions = snapshot.get("dimensions") or {}
     study_policy = dict(snapshot.get("study_policy") or {})
-
-    plan = _load_active_plan(supabase, user_id)
-    plan_id = plan.get("id") if plan else _safe(
-        lambda: _active_plan_id(supabase, user_id), default=None
-    )
-    today_tasks_raw = _load_today_tasks(supabase, plan_id) if plan_id else []
-
-    focus = _focus_summary(supabase, user_id)
+    plan_id = plan.get("id") if plan else None
     weekly_hours_goal = _weekly_hours_goal(snapshot)
-    review = _weekly_review(supabase, user_id, plan_id)
-    exam_intel = _load_exam_intelligence(supabase, user_id)
+
+    # Stage 2: reads that depend on stage-1 outputs (plan_id, exam_intel).
+    # Each touches a different table; the cache still folds the
+    # exam_topic_coverage / topics overlap between exam_intel (stage 1)
+    # and exam_context (stage 2).
+    async def _no_tasks():
+        return []
+
+    today_tasks_raw, review, exam_context, policy_update_ctx = await asyncio.gather(
+        asyncio.to_thread(_load_today_tasks, supabase, plan_id) if plan_id else _no_tasks(),
+        asyncio.to_thread(_weekly_review, supabase, user_id, plan_id),
+        asyncio.to_thread(_load_exam_context, supabase, exam_intel),
+        asyncio.to_thread(_load_policy_update_context, supabase, exam_intel),
+    )
+
+    # Stage 3: competition depends on exam_context (days_remaining).
+    competition_ctx = await asyncio.to_thread(
+        _load_competition_context, supabase, exam_intel, exam_context
+    )
 
     today_tasks: list[dict[str, Any]] = []
     has_active_plan = bool(plan_id)
@@ -1081,14 +1129,6 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
             has_active_plan=has_active_plan,
         )
         today_tasks.append({**task, "reasoning": reasoning})
-
-    progressive_question: dict[str, Any] | None = None
-    try:
-        sel = select_next_question(supabase, user_id)
-        progressive_question = sel.get("question") if isinstance(sel, dict) else None
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("mission_control progressive_question failed: %s", exc)
-        progressive_question = None
 
     metrics = _metrics(today_tasks, focus, review, weekly_hours_goal)
     truth_panel = _truth_panel(today_tasks, review, metrics)
@@ -1103,14 +1143,6 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
     scores = _scores_block(snapshot)
     engine_trace = _engine_trace(snapshot, plan, exam_intel)
 
-    # Contract blocks: join persona + verified exam intelligence +
-    # competition + policy updates + progress into an explainable,
-    # aspirant-safe shape.
-    exam_context = _load_exam_context(supabase, exam_intel)
-    competition_ctx = _load_competition_context(supabase, exam_intel, exam_context)
-    policy_update_ctx = _load_policy_update_context(supabase, exam_intel)
-    # `update_context` is kept as a backward-compatible alias of the clearer
-    # `policy_update_context` object — both point at the same shape.
     update_context = policy_update_ctx
     safe_user_explanation = _safe_user_explanation(
         snapshot, metrics, review, study_policy
@@ -1132,8 +1164,6 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
         preview_flags.append("no_active_study_plan")
 
     if isinstance(supabase, _RequestReadCache):
-        # One line per request so operators can spot a regression where
-        # any of the deduplicated tables creeps back to 2+ reads.
         logger.debug(
             "mission_control.read_counts user_id=%s counts=%s",
             user_id,
@@ -1171,6 +1201,19 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
             "degraded": False,
         },
     }
+
+
+def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
+    """Synchronous wrapper around :func:`build_mission_control_async`.
+
+    Kept for tests and any non-async caller. The async variant is what
+    the route handler should await so the parallel sub-loader fan-out
+    actually overlaps blocking Supabase calls.
+    """
+    # `asyncio.run` works whenever no event loop is currently running on
+    # this thread — true for pytest sync tests. Inside a running loop,
+    # callers should `await build_mission_control_async` directly.
+    return asyncio.run(build_mission_control_async(supabase, user_id))
 
 
 # ─── Task reasoning endpoint ──────────────────────────────────────────────
