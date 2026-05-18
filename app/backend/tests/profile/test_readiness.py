@@ -33,6 +33,7 @@ def test_fresh_user_has_everything_locked_with_explicit_missing_fields():
 
 
 def test_seeded_profile_unlocks_relevant_features_only():
+    # weekly_hours_goal now derives from aspirant_preferences.study_hours_per_day.
     db = {
         "profiles": [
             {
@@ -40,12 +41,16 @@ def test_seeded_profile_unlocks_relevant_features_only():
                 "full_name": "A",
                 "phone": "9",
                 "date_of_birth": "2000-01-01",
-                "weekly_hours_goal": 12,
                 "target_exam": "ssc",
             }
         ],
         "aspirant_preferences": [
-            {"user_id": "u-1", "target_exams": ["ssc"], "study_mode": "solo"}
+            {
+                "user_id": "u-1",
+                "target_exams": ["ssc"],
+                "study_mode": "solo",
+                "study_hours_per_day": 2.0,
+            }
         ],
         "aspirant_location": [{"user_id": "u-1", "state": "Karnataka"}],
         "aspirant_reservations": [{"user_id": "u-1", "category": "general"}],
@@ -65,6 +70,33 @@ def test_seeded_profile_unlocks_relevant_features_only():
         "signature_doc",
         "category_certificate",
     ]
+
+
+def test_personalized_strategy_locked_when_prefs_lacks_study_hours():
+    # Same shape as above minus study_hours_per_day → personalized_strategy
+    # must report weekly_hours_goal as missing (no synthesised 0).
+    db = {
+        "profiles": [
+            {
+                "id": "u-1",
+                "full_name": "A",
+                "phone": "9",
+                "date_of_birth": "2000-01-01",
+                "target_exam": "ssc",
+            }
+        ],
+        "aspirant_preferences": [
+            {"user_id": "u-1", "target_exams": ["ssc"], "study_mode": "solo"}
+        ],
+        "aspirant_location": [{"user_id": "u-1", "state": "Karnataka"}],
+        "aspirant_reservations": [{"user_id": "u-1", "category": "general"}],
+        "aspirant_documents": [],
+    }
+    app = _build_app(db)
+    r = TestClient(app).get("/api/profile/readiness")
+    features = {f["key"]: f for f in r.json()["features"]}
+    assert features["personalized_strategy"]["unlocked"] is False
+    assert "weekly_hours_goal" in features["personalized_strategy"]["missing_fields"]
 
 
 def test_empty_string_and_empty_list_count_as_missing_not_present():
