@@ -123,9 +123,38 @@ def test_list_exams_includes_per_exam_counts():
     by_slug = {e["slug"]: e for e in body["items"]}
     assert by_slug["ssc-cgl"]["syllabus_verified"] == 1
     assert by_slug["ssc-cgl"]["syllabus_pending"] == 1
-    assert by_slug["ssc-cgl"]["coverage_active"] == 2
     assert by_slug["ibps-po"]["syllabus_verified"] == 0
     assert by_slug["ibps-po"]["syllabus_pending"] == 1
+
+
+def test_list_exams_does_not_query_exam_topic_coverage_is_active():
+    # exam_topic_coverage has no `is_active` column (migration 030).
+    # Selecting it produced postgres 42703 in prod logs. Make sure the
+    # response is built strictly off reviewer_status / is_high_yield.
+    sb = SBStub(_seed())
+    selects_by_table: dict[str, list[str]] = {}
+    original_table = sb.table
+
+    def tracking_table(name):
+        q = original_table(name)
+        original_select = q.select
+
+        def tracking_select(*args, **kwargs):
+            selects_by_table.setdefault(name, []).append(",".join(str(a) for a in args))
+            return original_select(*args, **kwargs)
+
+        q.select = tracking_select
+        return q
+
+    sb.table = tracking_table  # type: ignore[assignment]
+    client = TestClient(_build_app(sb))
+    r = client.get("/api/admin/exam-intelligence/exams")
+    assert r.status_code == 200
+    coverage_selects = selects_by_table.get("exam_topic_coverage", [])
+    assert coverage_selects, "list_exams should query exam_topic_coverage"
+    assert not any("is_active" in s for s in coverage_selects), (
+        f"exam_topic_coverage queried with is_active: {coverage_selects}"
+    )
 
 
 def test_list_exams_includes_readiness_fields():

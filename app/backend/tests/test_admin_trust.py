@@ -161,6 +161,105 @@ def test_publish_enqueues_recompute_for_every_onboarded_user(monkeypatch):
     assert any(a.get("action") == "eligibility.recompute.publish_fan_out" for a in sb.audits)
 
 
+# ───────────────────────────────────────────────────────────────────────────
+# eligibility_ops stale_results: derived from rules_version mismatch
+# ───────────────────────────────────────────────────────────────────────────
+
+
+class _StaleSB:
+    """Counts rows in eligibility_results matching .eq filters and returns
+    .count from execute() — mirrors how the real client exposes count='exact'.
+    Other tables (recruitments, eligibility_recompute_queue, profiles) return
+    empty so eligibility_ops can run end-to-end."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    class _Q:
+        def __init__(self, rows):
+            self._rows = rows
+            self._filters: list[tuple[str, str, object]] = []
+
+        def select(self, *_a, **_k):
+            return self
+
+        def eq(self, k, v):
+            self._filters.append((k, "eq", v))
+            return self
+
+        def in_(self, k, vals):
+            self._filters.append((k, "in", set(vals)))
+            return self
+
+        def order(self, *_a, **_k):
+            return self
+
+        def limit(self, *_a, **_k):
+            return self
+
+        def execute(self):
+            rows = self._rows
+            for k, op, v in self._filters:
+                if op == "eq":
+                    rows = [r for r in rows if r.get(k) == v]
+                elif op == "in":
+                    rows = [r for r in rows if r.get(k) in v]
+            return R(data=rows, count=len(rows))
+
+    def table(self, name):
+        if name == "eligibility_results":
+            return self._Q(self.rows)
+        return self._Q([])
+
+
+def test_eligibility_ops_stale_counts_rules_version_mismatch(monkeypatch):
+    # One row on the current engine version, one on an older bump, one with
+    # NULL rules_version (pre-migration-039). Expect stale = 2 — count > 0.
+    from app.eligibility.engine import RULES_VERSION
+    sb = _StaleSB([
+        {"id": "e1", "rules_version": RULES_VERSION},
+        {"id": "e2", "rules_version": "2025.01"},
+        {"id": "e3", "rules_version": None},
+    ])
+    monkeypatch.setattr(admin_trust, "get_supabase_admin", lambda: sb)
+    out = admin_trust.eligibility_ops()
+    assert out["stale_results"] == 2
+    assert "stale_results_error" not in out
+
+
+def test_eligibility_ops_stale_zero_when_all_current(monkeypatch):
+    from app.eligibility.engine import RULES_VERSION
+    sb = _StaleSB([
+        {"id": "e1", "rules_version": RULES_VERSION},
+        {"id": "e2", "rules_version": RULES_VERSION},
+    ])
+    monkeypatch.setattr(admin_trust, "get_supabase_admin", lambda: sb)
+    out = admin_trust.eligibility_ops()
+    assert out["stale_results"] == 0
+
+
+def test_eligibility_ops_surfaces_stale_query_failure(monkeypatch):
+    # When the count query blows up, we must surface — not silently return 0.
+    class _Boom:
+        def table(self, name):
+            class _Q:
+                def select(self, *a, **k): return self
+                def eq(self, *a, **k): return self
+                def in_(self, *a, **k): return self
+                def order(self, *a, **k): return self
+                def limit(self, *a, **k): return self
+                def execute(self_inner):
+                    if name == "eligibility_results":
+                        raise RuntimeError("PGRST200 schema cache missing")
+                    return R(data=[], count=0)
+            return _Q()
+    monkeypatch.setattr(admin_trust, "get_supabase_admin", lambda: _Boom())
+    out = admin_trust.eligibility_ops()
+    assert out["stale_results"] == 0
+    assert "stale_results_error" in out
+    assert "PGRST200" in out["stale_results_error"]
+
+
 def test_publish_with_no_onboarded_users_is_still_ok(monkeypatch):
     """Empty fan-out must succeed (no users to enqueue) and the publish should
     still mark the recruitment published."""

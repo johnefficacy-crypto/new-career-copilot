@@ -552,7 +552,11 @@ def test_load_active_posts_uses_embedded_select_success_path():
     posts = runner._load_active_posts_with_criteria(sb)
 
     assert len(posts) == 1
-    assert sb.queried_tables == ["posts"]
+    # certification_criteria is loaded flat (no PostgREST embed); the
+    # primary success path still does the wide posts embed and then one
+    # follow-up flat read for certification_criteria.
+    assert sb.queried_tables[0] == "posts"
+    assert "certification_criteria" in sb.queried_tables
 
 
 def test_fallback_attaches_age_and_education_rows_to_posts():
@@ -698,6 +702,78 @@ def test_runner_defaults_requires_domicile_false_when_column_absent(monkeypatch)
     monkeypatch.setattr(runner, "check_eligibility_batch", _batch)
     runner.run_eligibility_for_user("u1", sb)
     assert captured["requires_domicile"] is False
+
+
+class _CertEmbedSB(FallbackSB):
+    """FallbackSB with seeded certification_criteria + certifications tables
+    and a fail-on-embed Q so any PGRST embed of certifications inside a
+    certification_criteria select raises PGRST200 — the exact production
+    failure being fixed."""
+
+    def __init__(self):
+        super().__init__()
+        # certification_criteria columns (002_core_runtime_schema.sql:41):
+        # post_id uuid, certification_name text, required boolean default true.
+        self.db["certification_criteria"] = [
+            {"post_id": "p1", "certification_name": "PMP", "required": True},
+            {"post_id": "p1", "certification_name": "AWS Cloud Practitioner", "required": False},
+        ]
+        # certifications columns (002_core_runtime_schema.sql:16): id, name,
+        # issuing_body, is_active. No issuer/aliases columns.
+        self.db["certifications"] = [
+            {"id": "ck1", "name": "PMP", "issuing_body": "PMI", "is_active": True},
+            {"id": "ck2", "name": "AWS Cloud Practitioner", "issuing_body": "AWS", "is_active": True},
+        ]
+
+    def table(self, n):
+        self.queried_tables.append(n)
+        return _CertQ(n, self.db)
+
+
+class _CertQ(FallbackQ):
+    def execute(self):
+        if self.name == "certification_criteria" and "certifications" in self._select:
+            # PostgREST embed missing: certifications is not declared as an
+            # FK target on certification_criteria in this schema.
+            raise RuntimeError(
+                "PGRST200 Could not find a relationship between "
+                "certification_criteria and certifications in the schema cache"
+            )
+        return super().execute()
+
+
+def test_load_active_posts_returns_certification_criteria_rows_flat():
+    # Item 4 contract: loader must surface certification_criteria rows
+    # without embedding `certifications(...)` (no FK exists; PGRST200 in
+    # prod). Two seeded criteria rows for p1 → both must come through.
+    sb = _CertEmbedSB()
+    posts = runner._load_active_posts_with_criteria(sb)
+    cc = posts[0]["certification_criteria"]
+    names = sorted((row.get("certifications") or {}).get("name") or row.get("certification_name") for row in cc)
+    assert names == ["AWS Cloud Practitioner", "PMP"]
+
+
+def test_load_active_posts_certification_required_flag_is_preserved():
+    sb = _CertEmbedSB()
+    posts = runner._load_active_posts_with_criteria(sb)
+    by_name = {}
+    for row in posts[0]["certification_criteria"]:
+        nm = (row.get("certifications") or {}).get("name") or row.get("certification_name")
+        by_name[nm] = row
+    # Migration column is `required`; loader must surface it.
+    assert by_name["PMP"].get("required") is True
+    assert by_name["AWS Cloud Practitioner"].get("required") is False
+
+
+def test_load_active_posts_joins_issuer_from_certifications_table():
+    sb = _CertEmbedSB()
+    posts = runner._load_active_posts_with_criteria(sb)
+    by_name = {
+        (row.get("certifications") or {}).get("name"): (row.get("certifications") or {})
+        for row in posts[0]["certification_criteria"]
+    }
+    assert by_name["PMP"]["issuer"] == "PMI"
+    assert by_name["AWS Cloud Practitioner"]["issuer"] == "AWS"
 
 
 def test_verified_and_published_open_or_upcoming_recruitments_included(monkeypatch):

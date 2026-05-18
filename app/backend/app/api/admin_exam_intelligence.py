@@ -244,19 +244,9 @@ def list_exams(
         ),
         default=[],
     ) or []
-    coverage = _safe(
-        lambda: (
-            sb.table("exam_topic_coverage")
-            .select("exam_id, is_active")
-            .in_("exam_id", exam_ids)
-            .limit(20000)
-            .execute()
-            .data
-        ),
-        default=[],
-    ) or []
-    # Coverage lifecycle read, kept separate from the legacy `is_active` read
-    # above so the new readiness fields stay populated regardless.
+    # Coverage lifecycle read. `exam_topic_coverage` (migration 030) carries
+    # no `is_active` column — readiness is derived solely from
+    # `reviewer_status` and `is_high_yield`.
     coverage_status_rows = _safe(
         lambda: (
             sb.table("exam_topic_coverage")
@@ -274,19 +264,12 @@ def list_exams(
         for r in syllabus:
             slot = d.setdefault(
                 r.get("exam_id") or "",
-                {"syllabus_verified": 0, "syllabus_pending": 0, "coverage_active": 0},
+                {"syllabus_verified": 0, "syllabus_pending": 0},
             )
             if r.get("reviewer_status") == "verified":
                 slot["syllabus_verified"] += 1
             elif r.get("reviewer_status") in {"pending", "needs_correction"}:
                 slot["syllabus_pending"] += 1
-        for r in coverage:
-            slot = d.setdefault(
-                r.get("exam_id") or "",
-                {"syllabus_verified": 0, "syllabus_pending": 0, "coverage_active": 0},
-            )
-            if r.get("is_active"):
-                slot["coverage_active"] += 1
         return d
 
     # Per-exam coverage lifecycle aggregation.
@@ -322,7 +305,6 @@ def list_exams(
                 **e,
                 "syllabus_verified": syllabus_verified,
                 "syllabus_pending": syllabus_pending,
-                "coverage_active": c.get("coverage_active", 0),
                 "coverage_total": cov.get("coverage_total", 0),
                 "verified_topic_count": verified_topics,
                 "high_yield_topic_count": cov.get("high_yield_topic_count", 0),
