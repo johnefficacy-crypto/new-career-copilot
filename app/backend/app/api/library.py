@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from app.core.auth import get_current_user
 from app.core.config import get_settings
 from app.db.supabase_client import get_supabase_admin
+from app.library import text_extract as _text_extract
 
 logger = logging.getLogger("career_copilot.api.library")
 
@@ -358,20 +359,16 @@ def complete_upload(
         raise HTTPException(status_code=500, detail="Failed to record document asset")
     row = inserted[0]
 
-    # PR2: auto-enqueue text extraction for PDFs in the personal library.
-    # Failures here must not fail the upload — log and move on.
+    # PR2: auto-enqueue text extraction for PDFs in note_pdf/other kinds.
+    # Enqueue failures must NOT regress upload success — log and move on.
     if (
-        body.mime_type == "application/pdf"
-        and body.document_kind in {"note_pdf", "other"}
+        row.get("mime_type") == "application/pdf"
+        and row.get("document_kind") in ("note_pdf", "other")
     ):
         try:
-            from app.library.text_extract import enqueue_text_extract_job
-
-            enqueue_text_extract_job(sb, row["id"])
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "text_extract enqueue failed for document %s: %s", row.get("id"), exc
-            )
+            _text_extract.enqueue_text_extract_job(sb, row["id"])
+        except Exception:  # noqa: BLE001
+            logger.exception("text-extract enqueue failed for doc=%s", row.get("id"))
 
     return _shape(row)
 
@@ -498,6 +495,112 @@ def list_processing_jobs(
         or []
     )
     return {"jobs": rows, "count": len(rows)}
+
+
+@router.post("/items/{item_id}/process-text")
+def process_text(item_id: str, user: dict = Depends(get_current_user)) -> dict:
+    """Synchronously run the text-extraction job for a PDF document.
+
+    No worker — the request blocks until the job finishes (or times out
+    at `EXTRACT_TIMEOUT_SECONDS`). Owner-only; non-owners receive 404
+    (do not leak existence). Archived → 409. Non-PDF → 400. Atomic-claim
+    conflicts (another in-flight job for the same doc) → 409.
+    """
+    if not _is_uuid(item_id):
+        raise HTTPException(status_code=400, detail="Invalid id")
+    sb = get_supabase_admin()
+    rows = (
+        sb.table("document_assets")
+        .select("id,mime_type,status,owner_user_id")
+        .eq("id", item_id)
+        .eq("owner_user_id", user["id"])
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Document not found")
+    doc = rows[0]
+    if doc.get("status") == "archived":
+        raise HTTPException(status_code=409, detail="Document is archived")
+    if doc.get("mime_type") != "application/pdf":
+        raise HTTPException(
+            status_code=400,
+            detail=f"text extraction only supports application/pdf (got {doc.get('mime_type')!r})",
+        )
+    try:
+        result = _text_extract.run_text_extract_for_document(
+            sb, item_id, user_id=user["id"],
+        )
+    except _text_extract.ExtractConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except _text_extract._ExtractError as exc:  # noqa: SLF001
+        raise HTTPException(
+            status_code=400, detail={"code": exc.code, "message": exc.message},
+        ) from exc
+
+    job = result["job"] or {}
+    document = result["document"] or {}
+    return {
+        "job": {
+            "id": job.get("id"),
+            "status": job.get("status"),
+            "job_type": job.get("job_type"),
+            "attempt_count": job.get("attempt_count"),
+            "metrics": job.get("metrics") or {},
+        },
+        "document": {
+            "id": document.get("id"),
+            "status": document.get("status"),
+        },
+    }
+
+
+@router.get("/items/{item_id}/pages")
+def list_pages(
+    item_id: str,
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Return extracted page rows for a document the caller owns.
+
+    The response embeds full `text_content` per page; for large PDFs this
+    can be heavy. A future PR (PR3) will add `include_text=false` so
+    clients can paginate metadata-only. ``limit`` is capped at 200.
+    """
+    if not _is_uuid(item_id):
+        raise HTTPException(status_code=400, detail="Invalid id")
+    sb = get_supabase_admin()
+    owned = (
+        sb.table("document_assets")
+        .select("id")
+        .eq("id", item_id)
+        .eq("owner_user_id", user["id"])
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not owned:
+        raise HTTPException(status_code=404, detail="Document not found")
+    page_rows = (
+        sb.table("document_pages")
+        .select("id,page_number,text_content,char_count,extraction_status,metadata")
+        .eq("document_id", item_id)
+        .order("page_number", desc=False)
+        .range(offset, offset + limit - 1)
+        .execute()
+        .data
+        or []
+    )
+    return {
+        "pages": page_rows,
+        "count": len(page_rows),
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.delete("/items/{item_id}")
