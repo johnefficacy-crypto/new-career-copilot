@@ -131,10 +131,13 @@ export function AuthProvider({ children }) {
   // a later linkIdentity call, so any rows we wrote against this id
   // (profiles.persona_seed, etc.) follow the user into their permanent
   // account automatically. No-op when a session already exists.
-  const signInAnonymously = useCallback(async () => {
+  const signInAnonymously = useCallback(async ({ captchaToken } = {}) => {
     const { data: existing } = await supabase.auth.getSession();
     if (existing?.session) return { ok: true, existing: true };
-    const { data, error } = await supabase.auth.signInAnonymously();
+    const options = captchaToken ? { captchaToken } : undefined;
+    const { data, error } = await supabase.auth.signInAnonymously(
+      options ? { options } : undefined
+    );
     if (error) throw new Error(error.message || "Unable to start anonymous session");
     if (data?.session) await hydrate(data.session);
     return { ok: true, existing: false };
