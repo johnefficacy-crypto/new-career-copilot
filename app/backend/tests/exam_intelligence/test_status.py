@@ -142,6 +142,28 @@ def test_status_safe_when_tables_missing():
     assert out["available"] is False
 
 
+def test_safe_logs_undefined_column_at_error_level(caplog):
+    """A 42703 (undefined_column) must surface as ERROR with structured fields."""
+    class _Pg42703(Exception):
+        code = "42703"
+
+    class _BrokenColumn:
+        def table(self, name):
+            raise _Pg42703("column reviewer_status does not exist")
+
+    with caplog.at_level("WARNING", logger="career_copilot.exam_intelligence.coverage"):
+        rows = locked_topic_coverage_summary(_BrokenColumn(), "exam-1")
+    assert rows == []
+    matching = [r for r in caplog.records if r.name == "career_copilot.exam_intelligence.coverage"]
+    assert matching, "expected at least one log record"
+    rec = matching[0]
+    assert rec.levelname == "ERROR"
+    assert getattr(rec, "error_code", None) == "42703"
+    assert getattr(rec, "table", None) == "exam_topic_coverage"
+    assert getattr(rec, "operation", None)
+    assert "reviewer_status" in getattr(rec, "error_message", "")
+
+
 # ─── summary ───────────────────────────────────────────────────────────────
 def test_summary_includes_verified_topic_coverage_with_pyq_counts():
     sb = SBStub(_seed_verified())

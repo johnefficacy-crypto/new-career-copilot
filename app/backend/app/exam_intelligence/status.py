@@ -10,8 +10,8 @@ from app.exam_intelligence.competition import (
     vacancy_series,
 )
 from app.exam_intelligence.coverage import (
+    locked_topic_coverage_summary,
     verified_pyq_topic_counts,
-    verified_topic_coverage,
 )
 from app.exam_intelligence.lookup import resolve_exam_by_id, resolve_exam_by_slug
 from app.exam_intelligence.pyq_papers import difficulty_heatmap, verified_pyq_papers
@@ -80,7 +80,7 @@ def exam_intelligence_status(
         }
 
     exam_id = exam.get("id")
-    coverage = verified_topic_coverage(supabase, exam_id) or []
+    coverage = locked_topic_coverage_summary(supabase, exam_id) or []
     pyq_counts = verified_pyq_topic_counts(supabase, exam_id) or {}
     syllabus_verified = _verified_syllabus_count(supabase, exam_id)
     verified_pyq_tags = sum(pyq_counts.values())
@@ -118,7 +118,7 @@ def exam_intelligence_summary(
         }
 
     exam_id = exam.get("id")
-    coverage = verified_topic_coverage(supabase, exam_id) or []
+    coverage = locked_topic_coverage_summary(supabase, exam_id) or []
     pyq_counts = verified_pyq_topic_counts(supabase, exam_id) or {}
     syllabus_verified = _verified_syllabus_count(supabase, exam_id)
     competition = competition_series(supabase, exam_id)
