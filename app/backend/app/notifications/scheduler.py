@@ -22,6 +22,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.db.supabase_client import get_supabase_admin
 from app.notifications.dispatcher import dispatch_pending_alerts, kill_switch_enabled
 from app.notifications.recompute_worker import drain_recompute_queue
+from app.profile.anonymous_cleanup import cleanup_anonymous_users
 from app.scraping.alerts import send_deadline_alerts
 
 logger = logging.getLogger("career_copilot.notifications.scheduler")
@@ -53,6 +54,8 @@ def _is_noop_result(name: str, result: Any) -> bool:
         return (result.get("checked") or 0) == 0 and (result.get("completed") or 0) == 0
     if name == "notif:deadline_sweep":
         return bool(result.get("killed")) or (result.get("sent") or 0) == 0
+    if name == "anon:cleanup":
+        return (result.get("deleted") or 0) == 0
     return False
 
 
@@ -99,12 +102,17 @@ def _job_plan_regen() -> dict[str, Any]:
     return regenerate_stale_plans(get_supabase_admin())
 
 
+def _job_cleanup_anonymous_users() -> dict[str, Any]:
+    return cleanup_anonymous_users(get_supabase_admin())
+
+
 # Public registry — also used by the manual-trigger admin endpoint.
 JOBS: dict[str, callable] = {  # type: ignore[type-arg]
     "notif:dispatch": _job_dispatch,
     "notif:deadline_sweep": _job_deadline_sweep,
     "elig:recompute": _job_recompute,
     "study:plan_regen": _job_plan_regen,
+    "anon:cleanup": _job_cleanup_anonymous_users,
 }
 
 
@@ -149,6 +157,15 @@ def start_scheduler() -> BackgroundScheduler | None:
         _wrap("study:plan_regen", _job_plan_regen),
         CronTrigger(hour=3, minute=0, timezone="UTC"),
         id="study:plan_regen",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # Daily 04:00 UTC — sweep anonymous Supabase users older than 30d.
+    sched.add_job(
+        _wrap("anon:cleanup", _job_cleanup_anonymous_users),
+        CronTrigger(hour=4, minute=0, timezone="UTC"),
+        id="anon:cleanup",
         replace_existing=True,
         max_instances=1,
         coalesce=True,

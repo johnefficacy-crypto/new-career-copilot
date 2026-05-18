@@ -71,6 +71,8 @@ from app.api.marketplace import router as marketplace_router
 from app.api.admin_marketplace import router as admin_marketplace_router
 from app.api.notifications import router as notifications_router
 from app.api.onboarding_unified import router as onboarding_unified_router
+from app.profile.onboarding import router as profile_onboarding_router
+from app.profile.readiness import router as profile_readiness_router
 from app.api.payments import router as payments_router
 from app.api.persona import router as persona_router
 from app.api.persona_questions import router as persona_questions_router
@@ -234,7 +236,9 @@ api.include_router(admin_study_os_router)  # admin Study OS ops (flagged via ADM
 api.include_router(admin_exam_intel_cms_router)  # admin Exam Intelligence CMS — Phase 4 (same flag)
 api.include_router(admin_community_governance_router)  # admin Community / Mentors / Resources governance (§4.1–§4.4)
 api.include_router(study_compare_router)  # Study OS comparison + social + verification
-api.include_router(onboarding_unified_router)  # unified guided onboarding — before placeholders
+api.include_router(onboarding_unified_router)  # legacy unified guided onboarding (deprecated; Item 8 will drop)
+api.include_router(profile_onboarding_router)  # POST /api/profile/onboarding-answer (Supabase anonymous auth v2)
+api.include_router(profile_readiness_router)  # GET  /api/profile/readiness (per-feature unlock cards)
 # Real Supabase-backed accountability + admin ops — must precede community_runtime
 # and placeholders so route order wins for /accountability/mentors/* and /admin/*.
 api.include_router(accountability_router)

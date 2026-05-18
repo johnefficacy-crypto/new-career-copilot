@@ -26,6 +26,11 @@ function mergeUser(supabaseUser, backendUser) {
   const meta = supabaseUser?.user_metadata || {};
   const appMeta = supabaseUser?.app_metadata || {};
   const role = coerceRole(backendUser?.role || appMeta.role || meta.role);
+  // Supabase sets is_anonymous on the user object after signInAnonymously.
+  // The backend also forwards it on /auth/me. Either side is authoritative.
+  const isAnonymous = Boolean(
+    backendUser?.is_anonymous ?? supabaseUser?.is_anonymous ?? appMeta.is_anonymous
+  );
   return {
     id: supabaseUser?.id || backendUser?.id || null,
     email: supabaseUser?.email || backendUser?.email || null,
@@ -36,6 +41,7 @@ function mergeUser(supabaseUser, backendUser) {
     onboarded: backendUser?.onboarded ?? Boolean(meta.onboarded),
     plan: backendUser?.plan || meta.plan || "free",
     goal_exams: safeGoalExams(backendUser?.goal_exams || meta.goal_exams),
+    is_anonymous: isAnonymous,
     created_at: backendUser?.created_at || supabaseUser?.created_at || null,
   };
 }
@@ -120,6 +126,40 @@ export function AuthProvider({ children }) {
     if (error) throw new Error(error.message || "Unable to sign in with Google");
     return { ok: true };
   }, []);
+
+  // Sign in as an anonymous Supabase user. Same user_id will survive
+  // a later linkIdentity call, so any rows we wrote against this id
+  // (profiles.persona_seed, etc.) follow the user into their permanent
+  // account automatically. No-op when a session already exists.
+  const signInAnonymously = useCallback(async () => {
+    const { data: existing } = await supabase.auth.getSession();
+    if (existing?.session) return { ok: true, existing: true };
+    const { data, error } = await supabase.auth.signInAnonymously();
+    if (error) throw new Error(error.message || "Unable to start anonymous session");
+    if (data?.session) await hydrate(data.session);
+    return { ok: true, existing: false };
+  }, [hydrate]);
+
+  // Promote the anonymous session into a Google-linked one. Supabase
+  // updates `is_anonymous=false` on success. If the email is already
+  // attached to another account we bubble that up so the caller can
+  // route the user to a normal login flow instead.
+  const linkGoogleIdentity = useCallback(async ({ redirectTo } = {}) => {
+    const resolvedRedirect = redirectTo || `${window.location.origin}/app`;
+    const { data, error } = await supabase.auth.linkIdentity({
+      provider: "google",
+      options: { redirectTo: resolvedRedirect },
+    });
+    if (error) {
+      const message = error.message || "Unable to link Google";
+      const conflict =
+        /already|exists|linked/i.test(message) ||
+        error.status === 409 ||
+        error.code === "identity_already_exists";
+      return { ok: false, conflict, error: message };
+    }
+    return { ok: true, data };
+  }, []);
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
     setUser(null);
@@ -165,12 +205,26 @@ export function AuthProvider({ children }) {
       register,
       logout,
       loginWithGoogle,
+      signInAnonymously,
+      linkGoogleIdentity,
       refreshUser,
       sendPasswordReset,
       updatePassword,
       setUser,
     }),
-    [user, status, login, register, logout, loginWithGoogle, refreshUser, sendPasswordReset, updatePassword]
+    [
+      user,
+      status,
+      login,
+      register,
+      logout,
+      loginWithGoogle,
+      signInAnonymously,
+      linkGoogleIdentity,
+      refreshUser,
+      sendPasswordReset,
+      updatePassword,
+    ]
   );
 
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;

@@ -23,3 +23,21 @@ def _reset_per_exam_intelligence_cache():
     invalidate_per_exam_intelligence()
     yield
     invalidate_per_exam_intelligence()
+
+
+@pytest.fixture(autouse=True)
+def _reset_persona_bank_cache():
+    """The question-bank TTL cache (cachetools, 5min) lives at module scope.
+
+    Stub Supabase instances differ per test, so a cached row list from
+    test A would be served to test B even though B seeded a different
+    bank. Clear before and after each test.
+    """
+    try:
+        from app.persona_questions.bank import invalidate_bank_cache
+    except ImportError:
+        yield
+        return
+    invalidate_bank_cache()
+    yield
+    invalidate_bank_cache()

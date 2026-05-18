@@ -17,6 +17,7 @@ import ExamContextCard from "../features/study/components/ExamContextCard";
 import CompetitionContextCard from "../features/study/components/CompetitionContextCard";
 import PlanPreferencesCard from "../features/study/components/PlanPreferencesCard";
 import TodaysActions, { buildTodayActions } from "../features/dashboard/components/TodaysActions";
+import ReadinessCards from "../features/dashboard/components/ReadinessCards";
 import useDashboardData from "../features/dashboard/hooks/useDashboardData";
 import { rankRecruitments } from "../lib/recruitmentRanking";
 import { useAuth } from "../lib/authContext";
@@ -261,6 +262,9 @@ export default function Today() {
         profileCompletion={dash.profileCompletion}
         take={3}
       />
+
+      {/* Profile readiness — per-feature unlock cards. */}
+      <ReadinessCards />
 
       {/* 3. Exam eligibility — baseline rules per exam against the saved profile */}
       <EligibleExamsCard variant="card" initialData={mc.eligibility_summary || null} />

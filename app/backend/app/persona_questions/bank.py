@@ -3,11 +3,18 @@
 `persona_question_bank` is the source of truth for question metadata.
 Helpers here read from it defensively — a missing or empty table never
 crashes the API, it just yields "no question right now".
+
+``list_active_questions`` is cached in-process for five minutes — the
+onboarding-answer endpoint fires it on every call, and the bank is
+admin-edited rarely. Admin writers must call
+:func:`invalidate_bank_cache` after they mutate the table.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any, Callable
+
+from cachetools import TTLCache
 
 logger = logging.getLogger("career_copilot.persona_questions.bank")
 
@@ -16,6 +23,9 @@ _QUESTION_COLUMNS = (
     "options, target_dimension, target_profile_group, profile_table, "
     "profile_column, priority, trigger_rules, applies_when, is_active"
 )
+
+_BANK_CACHE: TTLCache = TTLCache(maxsize=1, ttl=300)
+_BANK_CACHE_KEY = "active_questions"
 
 
 def _safe(call: Callable[[], Any], default: Any = None) -> Any:
@@ -26,7 +36,19 @@ def _safe(call: Callable[[], Any], default: Any = None) -> Any:
         return default
 
 
+def invalidate_bank_cache() -> None:
+    """Drop the in-process question-bank cache.
+
+    Call this from admin write paths after a bank row is created, edited
+    or deactivated so the next read picks up the change.
+    """
+    _BANK_CACHE.clear()
+
+
 def list_active_questions(supabase: Any) -> list[dict[str, Any]]:
+    cached = _BANK_CACHE.get(_BANK_CACHE_KEY)
+    if cached is not None:
+        return list(cached)
     rows = _safe(
         lambda: (
             supabase.table("persona_question_bank")
@@ -39,6 +61,8 @@ def list_active_questions(supabase: Any) -> list[dict[str, Any]]:
         ),
         default=[],
     ) or []
+    rows = list(rows)
+    _BANK_CACHE[_BANK_CACHE_KEY] = rows
     return list(rows)
 
 
