@@ -108,7 +108,7 @@ export default function TopicRow({ topic, defaultOpen = false }) {
               {t.revision_due ? <Pill tone="sage">Revision due</Pill> : null}
               {t.error_pattern_count ? <Pill tone="rose">Errors logged</Pill> : null}
               <span className="num-mono text-[10.5px] text-clay-700">
-                priority {Math.round((Number(t.exam_priority_score) || 0) * 100)}%
+                priority {Math.round(Number(t.exam_priority_score) || 0)}%
               </span>
               <span className="num-mono text-[10.5px] text-clay-700">
                 · pyq {t.verified_pyq_count ?? 0}
@@ -254,7 +254,11 @@ const EVIDENCE_LABEL = {
 function fmtEvidenceValue(key, value) {
   if (value == null || value === "") return "—";
   if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (key === "exam_priority_score" || key === "confidence_score") {
+  if (key === "exam_priority_score") {
+    const n = Number(value);
+    if (Number.isFinite(n)) return `${Math.round(n)}%`;
+  }
+  if (key === "confidence_score") {
     const n = Number(value);
     if (Number.isFinite(n)) return `${Math.round(n * 100)}%`;
   }

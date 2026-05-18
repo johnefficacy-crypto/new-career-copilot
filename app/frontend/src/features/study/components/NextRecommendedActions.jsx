@@ -27,12 +27,8 @@ export default function NextRecommendedActions({ topics }) {
       const cur = buckets.get(sid);
       // Normalise both signals to [0, 1] before weighting so neither side
       // dominates by scale alone. exam_priority_score is the backend's
-      // 0..1 coverage_priority; mastery_score is the 0..100 percent. The
-      // prior formula mixed 0..10 against 0..-100, collapsing the rank to
-      // "lowest mastery wins" regardless of exam weight, AND treated
-      // missing mastery as 100 (perfect), which silently penalised topics
-      // with no telemetry.
-      const priority = Math.max(0, Math.min(1, Number(t.exam_priority_score) || 0));
+      // 0..100 coverage_priority; mastery_score is the 0..100 percent.
+      const priority = Math.max(0, Math.min(1, (Number(t.exam_priority_score) || 0) / 100));
       const masteryRaw = t.mastery_score;
       const hasMastery = masteryRaw !== null && masteryRaw !== undefined;
       // Neutral midpoint when mastery is unknown — neither a free pass nor
