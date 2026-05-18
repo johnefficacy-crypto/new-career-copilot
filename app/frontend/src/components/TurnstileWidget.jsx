@@ -72,7 +72,11 @@ const TurnstileWidget = forwardRef(function TurnstileWidget(
           execution: "execute",
           appearance: "interaction-only",
           callback: onSuccess,
-          "error-callback": onError,
+          //"error-callback": onError,
+          "error-callback": (code) => {
+  console.error("[Turnstile error]", code);
+  if (typeof onError === "function") onError(code);
+},
           "expired-callback": onExpire,
         };
         if (size && VALID_SIZES.has(size)) {

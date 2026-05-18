@@ -44,16 +44,25 @@ export default function StartFreeButton({
     setHasToken(false);
   }, []);
 
-  const handleError = useCallback(() => {
-    tokenRef.current = null;
-    setHasToken(false);
-    setError("Verification failed");
-    if (pendingRef.current) {
-      pendingRef.current.reject(new Error("Verification failed"));
-      pendingRef.current = null;
-    }
-  }, []);
-
+  // const handleError = useCallback(() => {
+  //   tokenRef.current = null;
+  //   setHasToken(false);
+  //   setError("Verification failed");
+  //   if (pendingRef.current) {
+  //     pendingRef.current.reject(new Error("Verification failed"));
+  //     pendingRef.current = null;
+  //   }
+  // }, []);
+const handleError = useCallback((code) => {
+  console.error("[Turnstile failed]", code);
+  tokenRef.current = null;
+  setHasToken(false);
+  setError(`Verification failed${code ? ` (${code})` : ""}`);
+  if (pendingRef.current) {
+    pendingRef.current.reject(new Error(`Verification failed${code ? `: ${code}` : ""}`));
+    pendingRef.current = null;
+  }
+}, []);
   const resetCaptcha = useCallback(() => {
     tokenRef.current = null;
     setHasToken(false);
