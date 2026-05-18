@@ -4,15 +4,22 @@ import { api } from "../../lib/api";
 // PR2: progressive tiny-question hook. Loads one question at a time and
 // keeps the card resilient — any API failure just hides the card so the
 // rest of the app keeps working.
-export function usePersonaQuestion() {
+//
+// When `initialQuestion` is provided (e.g. mission-control returned a
+// `progressive_question` block), the hook skips the initial fetch and
+// hydrates from that value — the `/api/persona/questions/next` call is
+// redundant on the Today page.
+export function usePersonaQuestion({ initialQuestion = undefined } = {}) {
+  const hasInitial = initialQuestion !== undefined;
   const [state, setState] = useState({
-    loading: true,
-    question: null,
-    reason: "",
+    loading: !hasInitial,
+    question: hasInitial ? initialQuestion || null : null,
+    reason: hasInitial ? "" : "",
     error: null,
     saving: false,
   });
   const mounted = useRef(true);
+  const skipInitialFetch = useRef(hasInitial);
 
   useEffect(() => {
     mounted.current = true;
@@ -42,6 +49,13 @@ export function usePersonaQuestion() {
   }, [setIfMounted]);
 
   useEffect(() => {
+    if (skipInitialFetch.current) {
+      // Hydrated from initialQuestion — caller-provided. Skip exactly
+      // one initial fetch; further `load()` calls (e.g. after a skip)
+      // still hit the API so the chain advances.
+      skipInitialFetch.current = false;
+      return;
+    }
     load();
   }, [load]);
 

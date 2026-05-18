@@ -353,7 +353,7 @@ export default function Today() {
           </div>
         </StudyCard>
         <div className="mt-4">
-          <PersonaQuestionCard />
+          <PersonaQuestionCard initialQuestion={mc.progressive_question || null} />
         </div>
       </Drawer>
 

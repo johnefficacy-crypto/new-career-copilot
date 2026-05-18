@@ -5,8 +5,10 @@ import PersonaQuestionOptionList from "./PersonaQuestionOptionList";
 
 // PR2: one tiny question at a time. Renders nothing if the API has no
 // question or fails — must never block the rest of the page.
-export default function PersonaQuestionCard() {
-  const { loading, question, saving, submitAnswer, skip } = usePersonaQuestion();
+export default function PersonaQuestionCard({ initialQuestion } = {}) {
+  const { loading, question, saving, submitAnswer, skip } = usePersonaQuestion(
+    initialQuestion !== undefined ? { initialQuestion } : undefined,
+  );
   const [pendingValue, setPendingValue] = useState(null);
   const [textValue, setTextValue] = useState("");
 
