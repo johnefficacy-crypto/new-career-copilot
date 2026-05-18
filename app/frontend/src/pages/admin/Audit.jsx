@@ -82,7 +82,10 @@ export default function AdminAudit() {
   const load = async () => {
     setLoading(true); setErr("");
     try {
-      const d = await api.get("/api/admin/audit");
+      // Backend requires `entity_type` (admin_eligibility.py:list_audit_entries
+      // is entity-scoped by contract; calling without it returns 422).
+      // TODO: when this page grows a filter UI, source entity_type from it.
+      const d = await api.get("/api/admin/audit?entity_type=recruitment");
       setItems(d.items || []);
     } catch (e) {
       setErr(e.message || "Failed");
