@@ -173,6 +173,29 @@ def test_anonymous_and_permanent_share_the_same_path():
     assert r.json()["profile"]["is_anonymous"] is True
 
 
+def test_onboarding_next_returns_first_question_for_fresh_user():
+    app, _, _ = _build_app()
+    client = TestClient(app)
+    r = client.get("/api/profile/onboarding-next")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["onboarding_completed"] is False
+    assert body["next_question"]["question_key"] == "intent"
+
+
+def test_onboarding_next_returns_completed_when_no_questions_remain():
+    app, sb, _ = _build_app()
+    # Mark all bank entries as touched.
+    p = _profile(sb)
+    p["persona_seed"] = {"intent": "x", "weekly_hours_goal": 5, "study_mode": "solo"}
+    client = TestClient(app)
+    r = client.get("/api/profile/onboarding-next")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["onboarding_completed"] is True
+    assert body["next_question"] is None
+
+
 def test_skip_all_marks_completed_with_deferred_step():
     app, sb, _ = _build_app()
     client = TestClient(app)

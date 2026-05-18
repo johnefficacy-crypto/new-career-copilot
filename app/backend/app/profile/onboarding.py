@@ -260,6 +260,65 @@ def _set_step(
         logger.warning("profiles onboarding-step update failed: %s", exc)
 
 
+@router.get("/onboarding-next")
+async def onboarding_next(
+    user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Return the current onboarding state without writing anything.
+
+    Frontend uses this on mount to decide whether to skip straight to
+    the dashboard (``onboarding_completed=true``) or render the next
+    question. The shape mirrors ``/onboarding-answer`` so the same
+    renderer handles both responses.
+    """
+    supabase = get_supabase_admin()
+    profile = _load_profile(supabase, user["id"])
+    if profile.get("onboarding_completed"):
+        return {
+            "next_question": None,
+            "onboarding_completed": True,
+            "profile": {
+                "id": user["id"],
+                "is_anonymous": bool(user.get("is_anonymous")),
+                "onboarding_step": profile.get("onboarding_step"),
+                "onboarding_completed": True,
+            },
+        }
+    bank = list_active_questions(supabase)
+    seed = profile.get("persona_seed") or {}
+    nxt = _next_question(bank, seed)
+    if nxt is None:
+        # Nothing left to ask — flip the row so subsequent /next calls
+        # don't have to recompute.
+        _set_step(
+            supabase,
+            user["id"],
+            onboarding_step=None,
+            onboarding_completed=True,
+        )
+        return {
+            "next_question": None,
+            "onboarding_completed": True,
+            "profile": {
+                "id": user["id"],
+                "is_anonymous": bool(user.get("is_anonymous")),
+                "onboarding_step": None,
+                "onboarding_completed": True,
+            },
+        }
+    next_key = nxt.get("question_key")
+    return {
+        "next_question": _shape_question(nxt),
+        "onboarding_completed": False,
+        "profile": {
+            "id": user["id"],
+            "is_anonymous": bool(user.get("is_anonymous")),
+            "onboarding_step": next_key,
+            "onboarding_completed": False,
+        },
+    }
+
+
 @router.post("/onboarding-answer")
 async def onboarding_answer(
     body: OnboardingAnswerBody,
