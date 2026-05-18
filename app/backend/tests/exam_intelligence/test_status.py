@@ -1,7 +1,10 @@
 """Tests for exam_intelligence status + summary helpers (PR5)."""
 from __future__ import annotations
 
-from app.exam_intelligence.coverage import locked_topic_coverage
+from app.exam_intelligence.coverage import (
+    locked_topic_coverage,
+    locked_topic_coverage_summary,
+)
 from app.exam_intelligence.status import (
     exam_intelligence_status,
     exam_intelligence_summary,
@@ -55,12 +58,24 @@ def _seed_verified():
     return {
         "exams": [_EXAM],
         "exam_topic_coverage": [
-            {"exam_id": "exam-1", "topic_id": "t1", "priority": 1, "is_active": True},
-            {"exam_id": "exam-1", "topic_id": "t2", "priority": 2, "is_active": True},
+            {"exam_id": "exam-1", "topic_id": "t1",
+             "exam_priority_score": 84, "is_high_yield": True,
+             "confidence_score": 0.78, "reviewer_status": "locked"},
+            {"exam_id": "exam-1", "topic_id": "t2",
+             "exam_priority_score": 60, "is_high_yield": False,
+             "confidence_score": 0.55, "reviewer_status": "locked"},
+            {"exam_id": "exam-1", "topic_id": "t3",
+             "exam_priority_score": 95, "is_high_yield": True,
+             "confidence_score": 0.9, "reviewer_status": "reviewed"},
+            {"exam_id": "exam-1", "topic_id": "t4",
+             "exam_priority_score": 50, "is_high_yield": False,
+             "confidence_score": 0.4, "reviewer_status": "draft"},
         ],
         "topics": [
             {"id": "t1", "slug": "percentages", "name": "Percentages", "level": "topic", "is_active": True, "subject_id": "subj-quant"},
             {"id": "t2", "slug": "ratios", "name": "Ratios", "level": "topic", "is_active": True, "subject_id": "subj-quant"},
+            {"id": "t3", "slug": "algebra", "name": "Algebra", "level": "topic", "is_active": True, "subject_id": "subj-quant"},
+            {"id": "t4", "slug": "geometry", "name": "Geometry", "level": "topic", "is_active": True, "subject_id": "subj-quant"},
         ],
         "subjects": [
             {"id": "subj-quant", "slug": "quant", "name": "Quant", "is_active": True},
