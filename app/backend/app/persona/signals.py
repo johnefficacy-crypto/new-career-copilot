@@ -35,7 +35,6 @@ _PROFILE_COMPLETENESS_FIELDS = (
     "category",
     "nationality",
     "target_exam",
-    "target_exam_year",
     "weekly_hours_goal",
     "career_stage",
 )
@@ -93,8 +92,8 @@ def collect_user_signals(supabase: Any, user_id: str) -> dict[str, Any]:
             supabase.table("profiles")
             .select(
                 "id, full_name, phone, gender, date_of_birth, domicile_state, "
-                "category, nationality, target_exam, target_exam_year, "
-                "weekly_hours_goal, career_stage, career_goal, onboarding_completed"
+                "category, nationality, target_exam, weekly_hours_goal, "
+                "career_stage, career_goal, onboarding_completed"
             )
             .eq("id", user_id)
             .limit(1)
@@ -133,12 +132,10 @@ def collect_user_signals(supabase: Any, user_id: str) -> dict[str, Any]:
         except (TypeError, ValueError):
             weekly_hours_goal = None
 
+    # `target_exam_year` was a planned profile column that never landed
+    # in the schema — the older code path tried to read it and produced
+    # a 42703 every signal collection. We no longer surface it.
     target_exam_year: int | None = None
-    if profile.get("target_exam_year") is not None:
-        try:
-            target_exam_year = int(profile.get("target_exam_year"))
-        except (TypeError, ValueError):
-            target_exam_year = None
 
     study_mode = prefs.get("study_mode") or profile.get("study_mode") or None
 
@@ -171,12 +168,14 @@ def collect_user_signals(supabase: Any, user_id: str) -> dict[str, Any]:
     else:
         completion_rate = None
 
-    # Focus minutes — last 7 days from study_sessions.
+    # Focus minutes — last 7 days from study_sessions. The canonical
+    # columns are `duration_mins` and `started_at`; the legacy
+    # `duration_minutes` / `starts_at` fallback was masking schema drift.
     since_7d = _iso_days_ago(7)
     focus_rows = _safe(
         lambda: (
             supabase.table("study_sessions")
-            .select("duration_mins, duration_minutes, session_type, started_at, starts_at")
+            .select("duration_mins, session_type, started_at")
             .eq("user_id", user_id)
             .gte("started_at", since_7d)
             .limit(500)
@@ -185,25 +184,10 @@ def collect_user_signals(supabase: Any, user_id: str) -> dict[str, Any]:
         ),
         default=[],
     ) or []
-    if not focus_rows:
-        # Fallback: legacy column name `starts_at` for pre-017 deployments.
-        focus_rows = _safe(
-            lambda: (
-                supabase.table("study_sessions")
-                .select("duration_minutes, starts_at")
-                .eq("user_id", user_id)
-                .gte("starts_at", since_7d)
-                .limit(500)
-                .execute()
-                .data
-            ),
-            default=[],
-        ) or []
     focus_minutes_7d = 0
     for row in focus_rows:
-        mins = row.get("duration_mins") or row.get("duration_minutes") or 0
         try:
-            focus_minutes_7d += int(mins or 0)
+            focus_minutes_7d += int(row.get("duration_mins") or 0)
         except (TypeError, ValueError):
             continue
 
