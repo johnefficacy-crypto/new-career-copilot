@@ -615,6 +615,33 @@ def create_pyq_paper(
     return {"ok": True, "audit_id": audit_id, "row": new}
 
 
+@router.patch("/pyq-papers/{paper_id}")
+def update_pyq_paper(
+    paper_id: str,
+    body: WriteEnvelope,
+    admin: dict = Depends(require_permission(PERM_CMS)),
+    __: None = Depends(_flag_enabled),
+) -> dict[str, Any]:
+    """Curate an existing PYQ paper. Enum-validated; lifecycle stays
+    where it is (trust_status moves through the review queue, not here)."""
+    supabase = get_supabase_admin()
+    existing = _safe_select(supabase, "pyq_papers", id=paper_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="pyq_paper not found")
+    patch = {k: v for k, v in body.payload.items() if k in _PAPER_FIELDS}
+    if not patch:
+        raise HTTPException(status_code=422, detail="No allowed fields in payload")
+    if patch.get("source_type") and patch["source_type"] not in _PAPER_SOURCE_TYPES:
+        raise HTTPException(status_code=422, detail=f"source_type must be one of {_PAPER_SOURCE_TYPES}")
+    updated = supabase.table("pyq_papers").update(patch).eq("id", paper_id).execute().data or []
+    audit_id = _audit(
+        supabase, admin, "exam_intel.cms.pyq_paper.update",
+        entity_type="pyq_paper", entity_id=paper_id,
+        new_value={"reason": body.reason, "patch": patch, "previous": existing},
+    )
+    return {"ok": True, "audit_id": audit_id, "row": updated[0] if updated else existing | patch}
+
+
 # ════════════════════════════════════════════════════════════════════════
 #  PYQ questions — created at reviewer_status='pending'; options upsert
 #  in the same call so the question + options land atomically (best
@@ -710,6 +737,39 @@ def create_pyq_question(
     return {"ok": True, "audit_id": audit_id, "question": new_q, "options": inserted_options}
 
 
+@router.patch("/pyq-questions/{question_id}")
+def update_pyq_question(
+    question_id: str,
+    body: WriteEnvelope,
+    admin: dict = Depends(require_permission(PERM_CMS)),
+    __: None = Depends(_flag_enabled),
+) -> dict[str, Any]:
+    """Curate an existing PYQ question. Lifecycle (``reviewer_status``)
+    stays where it is — promotion through the review queue uses the
+    review-side router."""
+    supabase = get_supabase_admin()
+    existing = _safe_select(supabase, "pyq_questions", id=question_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="pyq_question not found")
+    patch = {k: v for k, v in body.payload.items() if k in _QUESTION_FIELDS}
+    if not patch:
+        raise HTTPException(status_code=422, detail="No allowed fields in payload")
+    if patch.get("question_type") and patch["question_type"] not in _QUESTION_TYPES:
+        raise HTTPException(status_code=422, detail=f"question_type must be one of {_QUESTION_TYPES}")
+    # Re-hash the question text if it changed and the caller didn't supply a hash.
+    if patch.get("question_text") and not patch.get("normalized_question_hash"):
+        q_hash = question_hash(patch["question_text"])
+        if q_hash:
+            patch["normalized_question_hash"] = q_hash
+    updated = supabase.table("pyq_questions").update(patch).eq("id", question_id).execute().data or []
+    audit_id = _audit(
+        supabase, admin, "exam_intel.cms.pyq_question.update",
+        entity_type="pyq_question", entity_id=question_id,
+        new_value={"reason": body.reason, "patch": patch, "previous": existing},
+    )
+    return {"ok": True, "audit_id": audit_id, "row": updated[0] if updated else existing | patch}
+
+
 # ════════════════════════════════════════════════════════════════════════
 #  PYQ options (standalone insert — for editing existing questions)
 # ════════════════════════════════════════════════════════════════════════
@@ -741,6 +801,38 @@ def create_pyq_option(
         new_value={"reason": body.reason, "row": new},
     )
     return {"ok": True, "audit_id": audit_id, "row": new}
+
+
+@router.patch("/pyq-options/{option_id}")
+def update_pyq_option(
+    option_id: str,
+    body: WriteEnvelope,
+    admin: dict = Depends(require_permission(PERM_CMS)),
+    __: None = Depends(_flag_enabled),
+) -> dict[str, Any]:
+    """Curate an existing PYQ option (text fix, mark-correct toggle).
+
+    The parent question's ``reviewer_status`` is intentionally not touched
+    here — that lifecycle move belongs in the review-side router.
+    """
+    supabase = get_supabase_admin()
+    existing = _safe_select(supabase, "pyq_options", id=option_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="pyq_option not found")
+    patch = {k: v for k, v in body.payload.items() if k in _OPTION_FIELDS}
+    if not patch:
+        raise HTTPException(status_code=422, detail="No allowed fields in payload")
+    if patch.get("option_text") and not patch.get("normalized_option_hash"):
+        o_hash = option_hash(patch["option_text"])
+        if o_hash:
+            patch["normalized_option_hash"] = o_hash
+    updated = supabase.table("pyq_options").update(patch).eq("id", option_id).execute().data or []
+    audit_id = _audit(
+        supabase, admin, "exam_intel.cms.pyq_option.update",
+        entity_type="pyq_option", entity_id=option_id,
+        new_value={"reason": body.reason, "patch": patch, "previous": existing},
+    )
+    return {"ok": True, "audit_id": audit_id, "row": updated[0] if updated else existing | patch}
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -868,6 +960,154 @@ def create_policy_update(
     return {"ok": True, "audit_id": audit_id, "row": new}
 
 
+@router.patch("/policy-updates/{policy_id}")
+def update_policy_update(
+    policy_id: str,
+    body: WriteEnvelope,
+    admin: dict = Depends(require_permission(PERM_CMS)),
+    __: None = Depends(_flag_enabled),
+) -> dict[str, Any]:
+    """Curate an existing exam_policy_updates row.
+
+    Enforces the same non-official guardrail as create: a non-official
+    source cannot have any ``affects_*`` flag set to true. ``reviewer_status``
+    stays where it is (lifecycle moves through the review router).
+    """
+    supabase = get_supabase_admin()
+    existing = _safe_select(supabase, "exam_policy_updates", id=policy_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="exam_policy_update not found")
+    patch = {k: v for k, v in body.payload.items() if k in _POLICY_FIELDS}
+    if not patch:
+        raise HTTPException(status_code=422, detail="No allowed fields in payload")
+    if patch.get("update_type") and patch["update_type"] not in _POLICY_UPDATE_TYPES:
+        raise HTTPException(status_code=422, detail=f"update_type must be one of {_POLICY_UPDATE_TYPES}")
+    merged_source_type = patch.get("source_type") or existing.get("source_type") or "official"
+    if merged_source_type != "official":
+        for affect in ("affects_plan", "affects_deadline", "affects_eligibility",
+                       "affects_documents", "affects_syllabus", "affects_vacancy"):
+            merged = patch[affect] if affect in patch else existing.get(affect)
+            if merged:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Non-official policy updates cannot set {affect}=true",
+                )
+    updated = supabase.table("exam_policy_updates").update(patch).eq("id", policy_id).execute().data or []
+    audit_id = _audit(
+        supabase, admin, "exam_intel.cms.policy_update.update",
+        entity_type="exam_policy_update", entity_id=policy_id,
+        new_value={"reason": body.reason, "patch": patch, "previous": existing},
+    )
+    return {"ok": True, "audit_id": audit_id, "row": updated[0] if updated else existing | patch}
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  Exam competition metrics — vacancy, applicant count, cutoff trend,
+#  difficulty trend. Created at reviewer_status='draft'; moves through
+#  review lifecycle via the review-side router. CMS-side create + curate.
+# ════════════════════════════════════════════════════════════════════════
+
+
+_COMPETITION_FIELDS = {
+    "exam_id", "exam_cycle_id", "exam_phase_id",
+    "vacancy_total", "vacancy_by_category",
+    "applicant_count", "selection_ratio",
+    "cutoff_trend", "difficulty_trend", "competition_pressure_score",
+    "source_basis", "confidence_score", "evidence_count",
+    "reviewer_notes", "metadata",
+}
+_COMPETITION_SOURCE_BASIS = (
+    "manual", "official", "reviewed_analysis", "derived", "model_generated"
+)
+
+
+def _validate_competition_payload(row: dict[str, Any]) -> None:
+    if row.get("source_basis") and row["source_basis"] not in _COMPETITION_SOURCE_BASIS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"source_basis must be one of {_COMPETITION_SOURCE_BASIS}",
+        )
+    if row.get("selection_ratio") is not None:
+        try:
+            n = float(row["selection_ratio"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="selection_ratio must be numeric")
+        if not (0 <= n <= 1):
+            raise HTTPException(status_code=422, detail="selection_ratio must be in [0, 1]")
+    if row.get("confidence_score") is not None:
+        try:
+            n = float(row["confidence_score"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="confidence_score must be numeric")
+        if not (0 <= n <= 1):
+            raise HTTPException(status_code=422, detail="confidence_score must be in [0, 1]")
+    if row.get("competition_pressure_score") is not None:
+        try:
+            n = float(row["competition_pressure_score"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="competition_pressure_score must be numeric")
+        if not (0 <= n <= 100):
+            raise HTTPException(status_code=422, detail="competition_pressure_score must be in [0, 100]")
+
+
+@router.post("/exam-competition-metrics")
+def create_competition_metric(
+    body: WriteEnvelope,
+    admin: dict = Depends(require_permission(PERM_CMS)),
+    __: None = Depends(_flag_enabled),
+) -> dict[str, Any]:
+    """Create a competition-intelligence row.
+
+    Lands at ``reviewer_status='draft'``. Reviewers move it through
+    pending_review → reviewed → locked via the review-side router; only
+    ``locked`` rows are planner-ready and only ``locked``/``reviewed``
+    rows are surfaced to aspirants.
+    """
+    supabase = get_supabase_admin()
+    row = {k: v for k, v in body.payload.items() if k in _COMPETITION_FIELDS}
+    if not row.get("exam_id"):
+        raise HTTPException(status_code=422, detail="exam_id is required")
+    if not _safe_select(supabase, "exams", id=row["exam_id"]):
+        raise HTTPException(status_code=422, detail="exam_id does not resolve")
+    _validate_competition_payload(row)
+    row["reviewer_status"] = "draft"
+    inserted = supabase.table("exam_competition_metrics").insert(row).execute().data or []
+    new = inserted[0] if inserted else row
+    audit_id = _audit(
+        supabase, admin, "exam_intel.cms.competition_metric.create",
+        entity_type="exam_competition_metric", entity_id=new.get("id"),
+        new_value={"reason": body.reason, "row": new},
+    )
+    return {"ok": True, "audit_id": audit_id, "row": new}
+
+
+@router.patch("/exam-competition-metrics/{metric_id}")
+def update_competition_metric(
+    metric_id: str,
+    body: WriteEnvelope,
+    admin: dict = Depends(require_permission(PERM_CMS)),
+    __: None = Depends(_flag_enabled),
+) -> dict[str, Any]:
+    """Curate an existing competition-metric row. ``reviewer_status`` is
+    not movable here; the review-side router owns that lifecycle."""
+    supabase = get_supabase_admin()
+    existing = _safe_select(supabase, "exam_competition_metrics", id=metric_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="exam_competition_metric not found")
+    patch = {k: v for k, v in body.payload.items() if k in _COMPETITION_FIELDS}
+    if not patch:
+        raise HTTPException(status_code=422, detail="No allowed fields in payload")
+    _validate_competition_payload(patch)
+    patch["updated_at"] = _now_iso()
+    updated = supabase.table("exam_competition_metrics").update(patch).eq("id", metric_id).execute().data or []
+    audit_id = _audit(
+        supabase, admin, "exam_intel.cms.competition_metric.update",
+        entity_type="exam_competition_metric", entity_id=metric_id,
+        new_value={"reason": body.reason, "patch": patch, "previous": existing},
+    )
+    return {"ok": True, "audit_id": audit_id, "row": updated[0] if updated else existing | patch}
+
+
 # ════════════════════════════════════════════════════════════════════════
 #  Bulk import — CSV/JSON paste-in for any CMS entity
 # ════════════════════════════════════════════════════════════════════════
@@ -969,6 +1209,15 @@ _IMPORT_CONFIG: dict[str, dict[str, Any]] = {
         "fks": {"exam_id": "exams"},
         "enums": {"update_type": _POLICY_UPDATE_TYPES},
         "audit": "exam_intel.cms.policy_update.bulk_create",
+    },
+    "exam-competition-metrics": {
+        "table": "exam_competition_metrics",
+        "allowed": _COMPETITION_FIELDS,
+        "required": ["exam_id"],
+        "forced": {"reviewer_status": "draft"},
+        "fks": {"exam_id": "exams"},
+        "enums": {"source_basis": _COMPETITION_SOURCE_BASIS},
+        "audit": "exam_intel.cms.competition_metric.bulk_create",
     },
 }
 
