@@ -10,6 +10,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -36,6 +37,81 @@ def _now_iso() -> str:
 def _slug(value: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", (value or "").lower()).strip("-")
     return s[:80] or "course"
+
+
+DELIVERY_MODELS = (
+    "affiliate_external",
+    "platform_course",
+    "platform_download",
+    "platform_test",
+    "platform_bundle",
+)
+
+
+def _host(url: str) -> str:
+    return (urlparse(url).hostname or "").lower().removeprefix("www.")
+
+
+def _normalise_domain(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    return _host(raw)
+
+
+def _fetch_partner(sb, partner_id: str) -> dict | None:
+    rows = (
+        sb.table("affiliate_partners")
+        .select("id, name, status, allowed_domains")
+        .eq("id", partner_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return rows[0] if rows else None
+
+
+def _validate_delivery(sb, *, delivery_model: str, is_affiliate: bool | None,
+                       affiliate_disclosure: str | None, affiliate_partner_id: str | None,
+                       external_product_url: str | None) -> None:
+    if delivery_model not in DELIVERY_MODELS:
+        raise HTTPException(status_code=400, detail=f"Invalid delivery_model: {delivery_model}")
+
+    if delivery_model == "affiliate_external":
+        if not is_affiliate:
+            raise HTTPException(status_code=400, detail="affiliate_external requires is_affiliate=true")
+        if not (affiliate_disclosure or "").strip():
+            raise HTTPException(status_code=400, detail="affiliate_external requires affiliate_disclosure")
+        if not affiliate_partner_id:
+            raise HTTPException(status_code=400, detail="affiliate_external requires affiliate_partner_id")
+        if not external_product_url:
+            raise HTTPException(status_code=400, detail="affiliate_external requires external_product_url")
+        partner = _fetch_partner(sb, affiliate_partner_id)
+        if not partner:
+            raise HTTPException(status_code=400, detail="Unknown affiliate_partner_id")
+        if partner.get("status") != "active":
+            raise HTTPException(status_code=400, detail="Affiliate partner is not active")
+        allowed = {_normalise_domain(d) for d in (partner.get("allowed_domains") or []) if _normalise_domain(d)}
+        host = _host(external_product_url)
+        if not host or host not in allowed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"external_product_url host '{host}' not in partner allowed_domains",
+            )
+    else:
+        if external_product_url:
+            raise HTTPException(
+                status_code=400,
+                detail=f"external_product_url must be null when delivery_model={delivery_model}",
+            )
+        if affiliate_partner_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"affiliate_partner_id must be null when delivery_model={delivery_model}",
+            )
 
 
 def _audit(sb, *, actor: dict, action: str, entity_type: str, entity_id: str | None, new_value: Any = None, old_value: Any = None, notes: str = "admin_marketplace") -> None:
@@ -76,6 +152,9 @@ class CourseIn(BaseModel):
     affiliate_disclosure: str | None = None
     instructor_id: str | None = None
     commission_pct: int = Field(default=20, ge=0, le=100)
+    delivery_model: str = "platform_course"
+    affiliate_partner_id: str | None = None
+    external_product_url: str | None = None
 
 
 class CoursePatch(BaseModel):
@@ -95,6 +174,9 @@ class CoursePatch(BaseModel):
     affiliate_disclosure: str | None = None
     instructor_id: str | None = None
     commission_pct: int | None = Field(default=None, ge=0, le=100)
+    delivery_model: str | None = None
+    affiliate_partner_id: str | None = None
+    external_product_url: str | None = None
 
 
 @router.get("/courses")
@@ -119,6 +201,14 @@ def create_course(payload: CourseIn, admin: dict = Depends(_require_admin)):
     if payload.is_affiliate and not (payload.affiliate_disclosure and payload.affiliate_disclosure.strip()):
         raise HTTPException(status_code=400, detail="Affiliate disclosure required when is_affiliate=true")
     sb = get_supabase_admin()
+    _validate_delivery(
+        sb,
+        delivery_model=payload.delivery_model,
+        is_affiliate=payload.is_affiliate,
+        affiliate_disclosure=payload.affiliate_disclosure,
+        affiliate_partner_id=payload.affiliate_partner_id,
+        external_product_url=payload.external_product_url,
+    )
     record = payload.model_dump(exclude_none=True)
     record["status"] = "draft"
     if not record.get("slug"):
@@ -141,6 +231,31 @@ def update_course(course_id: str, patch: CoursePatch, admin: dict = Depends(_req
         existing = sb.table("courses").select("affiliate_disclosure").eq("id", course_id).limit(1).execute().data or []
         if not existing or not (existing[0].get("affiliate_disclosure") or "").strip():
             raise HTTPException(status_code=400, detail="Affiliate disclosure required when is_affiliate=true")
+
+    # Validate delivery-model consistency. Pull current row so partial patches
+    # are checked against the eventual merged state, not just the patch keys.
+    if any(k in update for k in ("delivery_model", "affiliate_partner_id", "external_product_url",
+                                  "is_affiliate", "affiliate_disclosure")):
+        current_rows = (
+            sb.table("courses")
+            .select("delivery_model, is_affiliate, affiliate_disclosure, "
+                    "affiliate_partner_id, external_product_url")
+            .eq("id", course_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        current = current_rows[0] if current_rows else {}
+        merged = {**current, **update}
+        _validate_delivery(
+            sb,
+            delivery_model=merged.get("delivery_model") or "platform_course",
+            is_affiliate=merged.get("is_affiliate"),
+            affiliate_disclosure=merged.get("affiliate_disclosure"),
+            affiliate_partner_id=merged.get("affiliate_partner_id"),
+            external_product_url=merged.get("external_product_url"),
+        )
     update["updated_at"] = _now_iso()
     rows = sb.table("courses").update(update).eq("id", course_id).execute().data or []
     if not rows:

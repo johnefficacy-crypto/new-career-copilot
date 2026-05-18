@@ -15,6 +15,12 @@ Current committed graph artifacts:
 
 This wiki should be replaced by the real generated Graphify wiki when `graphify update .` produces `graphify-out/wiki/`.
 
+## Notes / Change Log
+
+- [Marketplace Delivery Split — PR1](./marketplace-delivery-split-pr1.md) —
+  `delivery_model` on `courses`, new `affiliate_partners` registry, admin
+  review view, API allowlist enforcement. Migration `112`.
+
 ## Main Knowledge Areas
 
 ### Frontend Runtime
