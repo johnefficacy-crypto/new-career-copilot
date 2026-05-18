@@ -82,7 +82,12 @@ from app.core.config import get_settings
 from app.db.postgres import close_pool, get_pool
 
 logger = logging.getLogger("career_copilot")
-logging.basicConfig(level=logging.INFO)
+# Explicit format so scheduler/dispatcher records don't end up
+# concatenated or with truncated URLs in captured logs.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 
 @asynccontextmanager

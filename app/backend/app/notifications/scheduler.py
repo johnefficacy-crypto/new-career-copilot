@@ -30,13 +30,42 @@ _scheduler: BackgroundScheduler | None = None
 _last_run: dict[str, dict[str, Any]] = {}
 
 
+def _is_noop_result(name: str, result: Any) -> bool:
+    """True when a scheduled-job result reflects "nothing happened".
+
+    Idle ticks happen every couple of minutes and produced ~30 INFO
+    lines per 5-minute window. We still record the result on
+    ``_last_run`` (so operators can pull it from the admin endpoint),
+    but route the heartbeat to DEBUG.
+    """
+    if not isinstance(result, dict):
+        return False
+    if name == "notif:dispatch":
+        # Either kill-switched, or a normal tick that found nothing to send.
+        if result.get("killed"):
+            return True
+        return (
+            (result.get("checked") or 0) == 0
+            and (result.get("in_app") or 0) == 0
+            and (result.get("emailed") or 0) == 0
+        )
+    if name == "elig:recompute":
+        return (result.get("checked") or 0) == 0 and (result.get("completed") or 0) == 0
+    if name == "notif:deadline_sweep":
+        return bool(result.get("killed")) or (result.get("sent") or 0) == 0
+    return False
+
+
 def _wrap(name: str, func) -> Any:
     def runner() -> None:
         started = datetime.now(timezone.utc).isoformat()
         try:
             result = func()
             _last_run[name] = {"at": started, "ok": True, "result": result}
-            logger.info("[%s] %s", name, result)
+            if _is_noop_result(name, result):
+                logger.debug("[%s] %s", name, result)
+            else:
+                logger.info("[%s] %s", name, result)
         except Exception as exc:  # noqa: BLE001
             _last_run[name] = {"at": started, "ok": False, "error": str(exc)}
             logger.exception("[%s] failed", name)
