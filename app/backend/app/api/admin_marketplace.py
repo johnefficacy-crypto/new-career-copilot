@@ -521,3 +521,495 @@ def kpis(_admin: dict = Depends(_require_admin)):
         "gmv_inr": gmv,
         "refund_rate": round(refunded_orders_count / paid_count, 4) if paid_count else 0,
     }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  PR2 — Marketplace hosted assets (migration 114)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Admin-only review shell on top of the delivery split. Storage is metadata-
+# only here: we never read buckets or validate against real storage. File
+# rows just carry (bucket, path, hash, mime) for later PRs that wire signed
+# URLs and tokenised buyer delivery.
+#
+# State machine reachable via PR2:
+#   draft  ──submit-review──▶ pending_review ──approve──▶ approved ──publish──▶ published
+#     ▲                            │                         │
+#     └─submit-review── rejected ◀─┴────────reject──────────┘
+# (approved→rejected also allowed via reject). suspended / dmca_removed
+# are reserved values with no PR2 API path.
+
+import re as _re_assets  # local alias so we don't shadow module-level `re`
+
+_ASSET_PAGE_MAX = 200
+_SHA256_RE = _re_assets.compile(r"^[a-f0-9]{64}$")
+
+_HOSTABLE_DELIVERY_MODELS = {
+    "platform_course",
+    "platform_download",
+    "platform_test",
+    "platform_bundle",
+}
+
+_ASSET_TYPE_DELIVERY_MATRIX: dict[str, set[str]] = {
+    "notes_pdf":    {"platform_download", "platform_course", "platform_bundle"},
+    "test_session": {"platform_test", "platform_bundle"},
+    "video":        {"platform_course", "platform_download", "platform_bundle"},
+    "zip":          {"platform_download", "platform_bundle"},
+    "bundle":       {"platform_bundle"},
+    "other":        {"platform_course", "platform_download", "platform_test", "platform_bundle"},
+}
+
+_VALID_ASSET_TYPES = set(_ASSET_TYPE_DELIVERY_MATRIX.keys())
+
+_PATCHABLE_ASSET_FIELDS = {
+    "title", "description", "asset_type", "protection_policy",
+    "copyright_risk_status", "metadata",
+}
+
+_FILE_ROLE_VALUES = {"source", "preview", "watermark", "attachment"}
+
+
+def _err(status_code: int, code: str, message: str | None = None) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": code, **({"message": message} if message else {})},
+    )
+
+
+def _fetch_course(sb, course_id: str) -> dict | None:
+    rows = (
+        sb.table("courses")
+        .select("id, delivery_model, status")
+        .eq("id", course_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return rows[0] if rows else None
+
+
+def _fetch_asset(sb, asset_id: str) -> dict | None:
+    rows = (
+        sb.table("marketplace_assets")
+        .select("*")
+        .eq("id", asset_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return rows[0] if rows else None
+
+
+def _count_files(sb, asset_id: str) -> int:
+    rows = (
+        sb.table("marketplace_asset_files")
+        .select("id")
+        .eq("asset_id", asset_id)
+        .execute()
+        .data
+        or []
+    )
+    return len(rows)
+
+
+def _primary_source_file(sb, asset_id: str) -> dict | None:
+    rows = (
+        sb.table("marketplace_asset_files")
+        .select("*")
+        .eq("asset_id", asset_id)
+        .eq("file_role", "source")
+        .order("created_at", desc=False)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return rows[0] if rows else None
+
+
+# ─── Pydantic ────────────────────────────────────────────────────────────────
+
+
+class AssetCreateIn(BaseModel):
+    asset_type: str = Field(..., min_length=1, max_length=40)
+    title: str | None = Field(default=None, max_length=200)
+    description: str | None = Field(default=None, max_length=4000)
+    protection_policy: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class AssetPatch(BaseModel):
+    # `status` is intentionally absent — patching state is forbidden.
+    # Callers that try get a 400 with code=status_not_patchable_use_transition_endpoint.
+    title: str | None = Field(default=None, max_length=200)
+    description: str | None = Field(default=None, max_length=4000)
+    asset_type: str | None = Field(default=None, max_length=40)
+    protection_policy: dict[str, Any] | None = None
+    copyright_risk_status: str | None = Field(default=None, max_length=40)
+    metadata: dict[str, Any] | None = None
+
+
+class ApprovalDecisionIn(BaseModel):
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class FileCreateIn(BaseModel):
+    storage_bucket: str = Field(..., min_length=1, max_length=120)
+    storage_path: str = Field(..., min_length=1, max_length=512)
+    original_filename: str | None = Field(default=None, max_length=255)
+    mime_type: str = Field(..., min_length=1, max_length=120)
+    file_size_bytes: int | None = Field(default=None, ge=0)
+    # Length is intentionally not pinned in Pydantic so malformed input
+    # surfaces as a typed 400 `invalid_hash_format` from our regex check
+    # rather than a 422 from FastAPI's validator.
+    content_hash: str = Field(..., min_length=1, max_length=256)
+    file_role: str = Field(default="source")
+    metadata: dict[str, Any] | None = None
+
+
+# ─── Validations ─────────────────────────────────────────────────────────────
+
+
+def _validate_asset_create(course: dict, payload: AssetCreateIn) -> None:
+    if payload.asset_type not in _VALID_ASSET_TYPES:
+        raise _err(422, "invalid_asset_type",
+                   f"asset_type must be one of {sorted(_VALID_ASSET_TYPES)}")
+
+    delivery_model = course.get("delivery_model") or "platform_course"
+    if delivery_model not in _HOSTABLE_DELIVERY_MODELS:
+        raise _err(422, "delivery_model_not_hostable",
+                   f"delivery_model={delivery_model!r} cannot host assets")
+
+    allowed = _ASSET_TYPE_DELIVERY_MATRIX[payload.asset_type]
+    if delivery_model not in allowed:
+        raise _err(422, "asset_type_delivery_mismatch",
+                   f"asset_type={payload.asset_type!r} not allowed for "
+                   f"delivery_model={delivery_model!r}")
+
+
+def _validate_asset_patch(patch: AssetPatch) -> None:
+    if patch.asset_type is not None and patch.asset_type not in _VALID_ASSET_TYPES:
+        raise _err(422, "invalid_asset_type",
+                   f"asset_type must be one of {sorted(_VALID_ASSET_TYPES)}")
+
+
+# ─── Asset CRUD ──────────────────────────────────────────────────────────────
+
+
+@router.get("/courses/{course_id}/assets")
+def list_course_assets(
+    course_id: str,
+    limit: int = Query(default=50, ge=1, le=_ASSET_PAGE_MAX),
+    offset: int = Query(default=0, ge=0),
+    _admin: dict = Depends(_require_admin),
+):
+    sb = get_supabase_admin()
+    rows = (
+        sb.table("marketplace_assets")
+        .select("*")
+        .eq("course_id", course_id)
+        .order("created_at", desc=True)
+        .limit(offset + limit)
+        .execute()
+        .data
+        or []
+    )
+    page = rows[offset : offset + limit]
+    items = []
+    for r in page:
+        items.append({
+            **r,
+            "file_count": _count_files(sb, r["id"]),
+            "primary_file": _primary_source_file(sb, r["id"]),
+        })
+    return {"items": items, "count": len(items), "limit": limit, "offset": offset}
+
+
+@router.post("/courses/{course_id}/assets", status_code=201)
+def create_course_asset(
+    course_id: str, payload: AssetCreateIn, admin: dict = Depends(_require_admin),
+):
+    sb = get_supabase_admin()
+    course = _fetch_course(sb, course_id)
+    if not course:
+        raise _err(404, "course_not_found")
+    _validate_asset_create(course, payload)
+
+    record: dict[str, Any] = {
+        "course_id": course_id,
+        "asset_type": payload.asset_type,
+        "status": "draft",
+    }
+    if payload.title is not None:
+        record["title"] = payload.title
+    if payload.description is not None:
+        record["description"] = payload.description
+    if payload.protection_policy is not None:
+        record["protection_policy"] = payload.protection_policy
+    if payload.metadata is not None:
+        record["metadata"] = payload.metadata
+
+    rows = sb.table("marketplace_assets").insert(record).execute().data or []
+    if not rows:
+        raise _err(500, "asset_insert_failed")
+    asset = rows[0]
+    _audit(sb, actor=admin, action="marketplace.asset.create",
+           entity_type="marketplace_asset", entity_id=asset["id"], new_value=record)
+    return asset
+
+
+@router.put("/assets/{asset_id}")
+def update_asset(asset_id: str, patch_body: dict[str, Any], admin: dict = Depends(_require_admin)):
+    if "status" in patch_body:
+        raise _err(400, "status_not_patchable_use_transition_endpoint",
+                   "status changes go through submit-review / approve / reject / publish")
+
+    patch = AssetPatch.model_validate(patch_body)
+    _validate_asset_patch(patch)
+
+    sb = get_supabase_admin()
+    existing = _fetch_asset(sb, asset_id)
+    if not existing:
+        raise _err(404, "asset_not_found")
+
+    update = patch.model_dump(exclude_none=True)
+    if not update:
+        raise _err(400, "no_fields_to_update")
+    update["updated_at"] = _now_iso()
+    rows = (
+        sb.table("marketplace_assets")
+        .update(update)
+        .eq("id", asset_id)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise _err(500, "asset_update_failed")
+    _audit(sb, actor=admin, action="marketplace.asset.update",
+           entity_type="marketplace_asset", entity_id=asset_id, new_value=update)
+    return rows[0]
+
+
+# ─── State transitions ───────────────────────────────────────────────────────
+
+
+def _transition(sb, *, asset: dict, allowed_from: set[str], new_status: str,
+                extra: dict[str, Any] | None = None) -> dict:
+    current = asset.get("status")
+    if current not in allowed_from:
+        raise _err(
+            409, "invalid_state_transition",
+            f"cannot transition from {current!r} to {new_status!r}",
+        )
+    patch = {"status": new_status, "updated_at": _now_iso()}
+    if extra:
+        patch.update(extra)
+    rows = (
+        sb.table("marketplace_assets")
+        .update(patch)
+        .eq("id", asset["id"])
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise _err(500, "asset_transition_failed")
+    return rows[0]
+
+
+@router.post("/assets/{asset_id}/submit-review")
+def submit_asset_for_review(asset_id: str, admin: dict = Depends(_require_admin)):
+    sb = get_supabase_admin()
+    asset = _fetch_asset(sb, asset_id)
+    if not asset:
+        raise _err(404, "asset_not_found")
+    updated = _transition(sb, asset=asset,
+                          allowed_from={"draft", "rejected"},
+                          new_status="pending_review")
+    _audit(sb, actor=admin, action="marketplace.asset.submit_review",
+           entity_type="marketplace_asset", entity_id=asset_id,
+           new_value={"status": "pending_review"})
+    return updated
+
+
+@router.post("/assets/{asset_id}/approve")
+def approve_asset(asset_id: str, body: ApprovalDecisionIn | None = None,
+                  admin: dict = Depends(_require_admin)):
+    sb = get_supabase_admin()
+    asset = _fetch_asset(sb, asset_id)
+    if not asset:
+        raise _err(404, "asset_not_found")
+    extra: dict[str, Any] = {
+        "approved_by": admin.get("id"),
+        "approved_at": _now_iso(),
+        "approval_reason": (body.reason if body else None),
+    }
+    # On approval, lift an `unchecked` copyright_risk_status to `clear`.
+    # Leave `clear`, `flagged`, `rejected`, `known_infringing` untouched.
+    if (asset.get("copyright_risk_status") or "unchecked") == "unchecked":
+        extra["copyright_risk_status"] = "clear"
+    updated = _transition(sb, asset=asset,
+                          allowed_from={"pending_review"},
+                          new_status="approved", extra=extra)
+    _audit(sb, actor=admin, action="marketplace.asset.approve",
+           entity_type="marketplace_asset", entity_id=asset_id,
+           new_value={"status": "approved", "reason": extra["approval_reason"]})
+    return updated
+
+
+@router.post("/assets/{asset_id}/reject")
+def reject_asset(asset_id: str, body: ApprovalDecisionIn | None = None,
+                 admin: dict = Depends(_require_admin)):
+    sb = get_supabase_admin()
+    asset = _fetch_asset(sb, asset_id)
+    if not asset:
+        raise _err(404, "asset_not_found")
+    extra = {
+        "rejected_by": admin.get("id"),
+        "rejected_at": _now_iso(),
+        "rejection_reason": (body.reason if body else None),
+    }
+    updated = _transition(sb, asset=asset,
+                          allowed_from={"pending_review", "approved"},
+                          new_status="rejected", extra=extra)
+    _audit(sb, actor=admin, action="marketplace.asset.reject",
+           entity_type="marketplace_asset", entity_id=asset_id,
+           new_value={"status": "rejected", "reason": extra["rejection_reason"]})
+    return updated
+
+
+@router.post("/assets/{asset_id}/publish")
+def publish_asset(asset_id: str, admin: dict = Depends(_require_admin)):
+    sb = get_supabase_admin()
+    asset = _fetch_asset(sb, asset_id)
+    if not asset:
+        raise _err(404, "asset_not_found")
+    if asset.get("status") != "approved":
+        raise _err(409, "invalid_state_transition",
+                   f"cannot publish from status={asset.get('status')!r}")
+
+    risk = asset.get("copyright_risk_status")
+    if risk in {"flagged", "rejected", "known_infringing"}:
+        raise _err(409, "copyright_block",
+                   f"copyright_risk_status={risk!r} blocks publish")
+
+    # `test_session` is exempt from the source-file requirement (delivery
+    # happens via the test runner, not an uploaded artifact). `bundle`
+    # is NOT exempt — a bundle without a manifest file is not publishable.
+    if asset.get("asset_type") != "test_session":
+        files = (
+            sb.table("marketplace_asset_files")
+            .select("file_role")
+            .eq("asset_id", asset_id)
+            .in_("file_role", ["source", "preview"])
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if not files:
+            raise _err(409, "no_source_file",
+                       "asset requires at least one source/preview file before publish")
+
+    updated = _transition(sb, asset=asset,
+                          allowed_from={"approved"},
+                          new_status="published")
+    _audit(sb, actor=admin, action="marketplace.asset.publish",
+           entity_type="marketplace_asset", entity_id=asset_id,
+           new_value={"status": "published"})
+    return updated
+
+
+# ─── Files ───────────────────────────────────────────────────────────────────
+
+
+@router.get("/assets/{asset_id}/files")
+def list_asset_files(
+    asset_id: str,
+    limit: int = Query(default=50, ge=1, le=_ASSET_PAGE_MAX),
+    offset: int = Query(default=0, ge=0),
+    _admin: dict = Depends(_require_admin),
+):
+    sb = get_supabase_admin()
+    if not _fetch_asset(sb, asset_id):
+        raise _err(404, "asset_not_found")
+    rows = (
+        sb.table("marketplace_asset_files")
+        .select("*")
+        .eq("asset_id", asset_id)
+        .order("created_at", desc=False)
+        .limit(offset + limit)
+        .execute()
+        .data
+        or []
+    )
+    page = rows[offset : offset + limit]
+    return {"items": page, "count": len(page), "limit": limit, "offset": offset}
+
+
+@router.post("/assets/{asset_id}/files", status_code=201)
+def add_asset_file(asset_id: str, payload: FileCreateIn, admin: dict = Depends(_require_admin)):
+    sb = get_supabase_admin()
+    asset = _fetch_asset(sb, asset_id)
+    if not asset:
+        raise _err(404, "asset_not_found")
+
+    if payload.file_role not in _FILE_ROLE_VALUES:
+        raise _err(422, "invalid_file_role",
+                   f"file_role must be one of {sorted(_FILE_ROLE_VALUES)}")
+
+    content_hash = (payload.content_hash or "").lower()
+    if not _SHA256_RE.match(content_hash):
+        raise _err(400, "invalid_hash_format",
+                   "content_hash must be lowercase sha256 hex (64 chars)")
+
+    blocked = (
+        sb.table("marketplace_infringing_hashes")
+        .select("id")
+        .eq("content_hash", content_hash)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if blocked:
+        raise _err(409, "infringing_hash_blocked",
+                   "content_hash matches an entry in marketplace_infringing_hashes")
+
+    conflict = (
+        sb.table("marketplace_asset_files")
+        .select("id")
+        .eq("storage_bucket", payload.storage_bucket)
+        .eq("storage_path", payload.storage_path)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if conflict:
+        raise _err(409, "storage_path_conflict",
+                   "(storage_bucket, storage_path) is already taken")
+
+    record = {
+        "asset_id": asset_id,
+        "file_role": payload.file_role,
+        "storage_bucket": payload.storage_bucket,
+        "storage_path": payload.storage_path,
+        "original_filename": payload.original_filename,
+        "mime_type": payload.mime_type,
+        "file_size_bytes": payload.file_size_bytes,
+        "content_hash": content_hash,
+        "metadata": payload.metadata or {},
+    }
+    rows = sb.table("marketplace_asset_files").insert(record).execute().data or []
+    if not rows:
+        raise _err(500, "file_insert_failed")
+    _audit(sb, actor=admin, action="marketplace.asset.file.create",
+           entity_type="marketplace_asset_file", entity_id=rows[0]["id"],
+           new_value=record)
+    return rows[0]
+

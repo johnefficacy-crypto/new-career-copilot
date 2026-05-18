@@ -20,6 +20,12 @@ This wiki should be replaced by the real generated Graphify wiki when `graphify 
 - [Marketplace Delivery Split — PR1](./marketplace-delivery-split-pr1.md) —
   `delivery_model` on `courses`, new `affiliate_partners` registry, admin
   review view, API allowlist enforcement. Migration `112`.
+- [Marketplace Hosted Assets — PR2](./marketplace-assets-pr2.md) —
+  `marketplace_assets` + `marketplace_asset_files` +
+  `marketplace_infringing_hashes`, admin review state machine
+  (`draft → pending_review → approved → published`, with `reject`
+  fallbacks), copyright/infringing-hash gate on file insert. Storage is
+  metadata-only. Migration `114`.
 - [Document Text Extraction — PR2](./document-text-extraction-pr2.md) —
   `document_pages` table, sync `POST /library/items/{id}/process-text`,
   auto-enqueue on PDF complete-upload, transactional page swap via
