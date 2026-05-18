@@ -48,6 +48,7 @@ const EMPTY_MC = {
   next_best_action: null,
   truth_panel: { summary: "", warnings: [], corrections: [] },
   progressive_question: null,
+  eligibility_summary: null,
   engine_trace: [],
   meta: {},
 };
@@ -262,7 +263,7 @@ export default function Today() {
       />
 
       {/* 3. Exam eligibility — baseline rules per exam against the saved profile */}
-      <EligibleExamsCard variant="card" />
+      <EligibleExamsCard variant="card" initialData={mc.eligibility_summary || null} />
 
       {/* 3. Progress summary (metrics row) */}
       <section

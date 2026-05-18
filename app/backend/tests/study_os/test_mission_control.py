@@ -6,21 +6,17 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import pytest
-
 from app.study_os.mission_control import (
     build_mission_control,
     invalidate_per_exam_intelligence,
 )
-from tests.persona_questions._stub import SBStub
+from tests.persona_questions._stub import SBStub  # noqa: F401  (re-exported for tests)
 
 
-@pytest.fixture(autouse=True)
-def _clear_per_exam_intel_cache():
-    """Item 5 process-level TTL cache must not leak across tests."""
-    invalidate_per_exam_intelligence()
-    yield
-    invalidate_per_exam_intelligence()
+# Item 5's per-exam intelligence cache is reset in tests/conftest.py for
+# every test (autouse). `invalidate_per_exam_intelligence` is re-exported
+# here only because tests may want to clear mid-test for ordering checks.
+_ = invalidate_per_exam_intelligence  # explicitly mark as intentional
 
 
 def _today():
@@ -399,12 +395,19 @@ def test_mission_control_caches_repeat_reads_within_one_call():
         "study_plans",
         "exam_topic_coverage",
         "topics",
-        "exams",
         "aspirant_persona_snapshots",
     ):
         assert reads.get(table, 0) <= 1, (
             f"{table} read {reads.get(table)}× (expected ≤1); counts={reads}"
         )
+    # `exams` is legitimately read with two distinct chains:
+    #   - filter by id/slug (target lookup from exam_intelligence_status)
+    #   - filter by is_active=true (eligibility_summary's active-exams
+    #     list — completely different read pattern, not a duplicate).
+    # Cap at 2 to catch any new accidental duplicate.
+    assert reads.get("exams", 0) <= 2, (
+        f"exams read {reads.get('exams')}× (expected ≤2); counts={reads}"
+    )
 
 
 # ── Item 1: async sub-loader fan-out runs reads concurrently ───────────────
@@ -506,10 +509,11 @@ def test_mission_control_does_not_duplicate_study_plans_or_sessions():
     for name, _ in calls:
         by_table[name] = by_table.get(name, 0) + 1
     # Allow ≤1 read per logical table for the deduped tables; others can
-    # legitimately appear N times (e.g. study_tasks has 5 distinct slices).
+    # legitimately appear N times (e.g. study_tasks has 5 distinct slices,
+    # `exams` has 2 distinct chains — target lookup + active-exams list).
     assert by_table.get("study_plans", 0) <= 1, f"study_plans={by_table.get('study_plans')}; calls={calls}"
     assert by_table.get("study_sessions", 0) <= 1, f"study_sessions={by_table.get('study_sessions')}; calls={calls}"
-    assert by_table.get("exams", 0) <= 1, f"exams={by_table.get('exams')}; calls={calls}"
+    assert by_table.get("exams", 0) <= 2, f"exams={by_table.get('exams')}; calls={calls}"
 
 
 # ── Item 5: per-exam intelligence TTL cache ───────────────────────────────
@@ -520,8 +524,11 @@ def test_per_exam_intelligence_cache_serves_second_call_with_zero_reads():
     # must hit ZERO of the tables that feed exam_intelligence_status,
     # locked_topic_coverage_summary, exam_families, exam_cycles,
     # competition_context, or policy_update_context.
+    # `exams` is intentionally excluded — the eligibility_summary's
+    # active-exams list is a different access pattern (filter by
+    # is_active=true, not per target id/slug). The cached helper covers
+    # only the per-target lookups (status, coverage, etc.).
     PER_EXAM_TABLES = {
-        "exams",
         "exam_topic_coverage",
         "topics",
         "subjects",

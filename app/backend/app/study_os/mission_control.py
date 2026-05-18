@@ -17,6 +17,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
+from app.exam_eligibility.evaluator import summarize_user_eligibility
 from app.exam_intelligence.coverage import locked_topic_coverage_summary
 from app.exam_intelligence.status import exam_intelligence_status
 from app.study_os.competition_context import competition_context
@@ -1206,6 +1207,26 @@ def _select_next_question_safe(supabase: Any, user_id: str) -> dict[str, Any] | 
         return None
 
 
+def _load_eligibility_summary(supabase: Any, user_id: str) -> dict[str, Any]:
+    """Item 6: assemble the four-bucket eligibility summary for Today.
+
+    Mirrors ``GET /api/exams/eligibility-summary`` so EligibleExamsCard
+    can hydrate from mission-control without firing a separate fetch.
+    Falls back to an empty-but-safe shape on failure — never raises.
+    """
+    try:
+        return summarize_user_eligibility(supabase, user_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("mission_control eligibility_summary failed: %s", exc)
+        return {
+            "eligible": [],
+            "conditional": [],
+            "not_eligible": [],
+            "unknown": [],
+            "rule_count": 0,
+        }
+
+
 async def build_mission_control_async(supabase: Any, user_id: str) -> dict[str, Any]:
     """Async version of :func:`build_mission_control`.
 
@@ -1217,15 +1238,24 @@ async def build_mission_control_async(supabase: Any, user_id: str) -> dict[str, 
     """
     supabase = _RequestReadCache(supabase) if not isinstance(supabase, _RequestReadCache) else supabase
 
-    # Stage 1: five fully independent reads. They touch different tables
+    # Stage 1: six fully independent reads. They touch different tables
     # (aspirant_persona_snapshots, study_plans, study_sessions, profiles
-    # / exams / exam_topic_coverage via exam_intel, persona_questions).
-    snapshot, plan, recent_sessions, exam_intel, progressive_question = await asyncio.gather(
+    # / exams / exam_topic_coverage via exam_intel, persona_questions,
+    # exam_eligibility_rules + exams via eligibility_summary).
+    (
+        snapshot,
+        plan,
+        recent_sessions,
+        exam_intel,
+        progressive_question,
+        eligibility_summary,
+    ) = await asyncio.gather(
         asyncio.to_thread(_load_persona_snapshot, supabase, user_id),
         asyncio.to_thread(_load_active_plan, supabase, user_id),
         asyncio.to_thread(_fetch_recent_study_sessions, supabase, user_id),
         asyncio.to_thread(_load_exam_intelligence, supabase, user_id),
         asyncio.to_thread(_select_next_question_safe, supabase, user_id),
+        asyncio.to_thread(_load_eligibility_summary, supabase, user_id),
     )
 
     dimensions = snapshot.get("dimensions") or {}
@@ -1337,6 +1367,9 @@ async def build_mission_control_async(supabase: Any, user_id: str) -> dict[str, 
         "progressive_question": progressive_question,
         "engine_trace": engine_trace,
         "exam_intelligence": exam_intel,
+        # Item 6: same shape as GET /api/exams/eligibility-summary so the
+        # EligibleExamsCard on Today can hydrate without a second fetch.
+        "eligibility_summary": eligibility_summary,
         "meta": {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source": MISSION_CONTROL_SOURCE,

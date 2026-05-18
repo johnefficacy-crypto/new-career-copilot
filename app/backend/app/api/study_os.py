@@ -501,6 +501,13 @@ async def mission_control(user: dict = Depends(get_current_user)) -> dict[str, A
                 "warnings": [],
             },
             "progressive_question": None,
+            "eligibility_summary": {
+                "eligible": [],
+                "conditional": [],
+                "not_eligible": [],
+                "unknown": [],
+                "rule_count": 0,
+            },
             "engine_trace": [
                 {"label": "User signals", "status": "missing", "details": "Persona snapshot not available"},
                 {"label": "Study policy", "status": "missing", "details": "No study policy derived yet"},
