@@ -6,14 +6,63 @@ the access token by calling Supabase's auth admin endpoint.
 """
 from __future__ import annotations
 
+import hashlib
+import threading
 from typing import Annotated, Any
 
+from cachetools import TTLCache
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.db.supabase_client import get_supabase_admin
 
 security = HTTPBearer(auto_error=False)
+
+
+# ── Cross-request token cache ──────────────────────────────────────────
+# Dashboard boot fans out 5+ protected requests within a second. Without
+# a cross-request cache each one issues its own auth/v1/user round-trip
+# to Supabase (the existing request.state memo only dedupes inside a
+# single FastAPI request). 45s TTL is short enough to respect Supabase
+# revocations within the user's perception window while still cutting
+# the dashboard bootstrap auth fan-out by ~90%.
+_TOKEN_CACHE_TTL_SECONDS = 45
+_TOKEN_CACHE_MAXSIZE = 10000
+_token_cache: TTLCache = TTLCache(
+    maxsize=_TOKEN_CACHE_MAXSIZE, ttl=_TOKEN_CACHE_TTL_SECONDS
+)
+_token_cache_lock = threading.Lock()
+
+
+def _token_cache_key(token: str) -> str:
+    # Hash so we never hold raw tokens in memory longer than necessary
+    # and so cache dumps in tracebacks/logs do not leak credentials.
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def invalidate_token(token: str) -> None:
+    """Drop ``token`` from the cross-request auth cache.
+
+    Wire this into any logout route. The frontend currently calls
+    Supabase ``signOut()`` directly so there is no backend logout
+    handler to wire into yet; this helper is exposed for future use
+    and for tests.
+    """
+    if not token:
+        return
+    key = _token_cache_key(token)
+    with _token_cache_lock:
+        _token_cache.pop(key, None)
+
+
+def _cache_get(token: str) -> dict | None:
+    with _token_cache_lock:
+        return _token_cache.get(_token_cache_key(token))
+
+
+def _cache_set(token: str, user: dict) -> None:
+    with _token_cache_lock:
+        _token_cache[_token_cache_key(token)] = user
 
 
 def _serialize_user(user: Any, claims: dict | None = None) -> dict:
@@ -81,10 +130,20 @@ def get_current_user(
 
     token = credentials.credentials
 
+    # 1. Free request-scoped memo (single FastAPI request fanout).
     cached = getattr(request.state, "current_user", None)
     cached_token = getattr(request.state, "current_user_token", None)
     if cached is not None and cached_token == token:
         return cached
+
+    # 2. Cross-request TTL cache. Saves the Supabase round-trip when a
+    # dashboard boot fires multiple parallel HTTP requests with the
+    # same bearer token. Invalid tokens are NEVER cached.
+    cross_request_cached = _cache_get(token)
+    if cross_request_cached is not None:
+        request.state.current_user = cross_request_cached
+        request.state.current_user_token = token
+        return cross_request_cached
 
     try:
         admin = get_supabase_admin()
@@ -116,6 +175,7 @@ def get_current_user(
     serialised = _serialize_user(user, claims)
     request.state.current_user = serialised
     request.state.current_user_token = token
+    _cache_set(token, serialised)
     return serialised
 
 
