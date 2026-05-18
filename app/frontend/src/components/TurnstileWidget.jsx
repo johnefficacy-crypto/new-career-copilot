@@ -44,8 +44,10 @@ function loadTurnstileScript() {
   return scriptPromise;
 }
 
+const VALID_SIZES = new Set(["normal", "compact", "flexible"]);
+
 const TurnstileWidget = forwardRef(function TurnstileWidget(
-  { siteKey, onSuccess, onError, onExpire, size = "invisible" },
+  { siteKey, onSuccess, onError, onExpire, size },
   ref,
 ) {
   const containerRef = useRef(null);
@@ -60,13 +62,24 @@ const TurnstileWidget = forwardRef(function TurnstileWidget(
       .then((turnstile) => {
         if (cancelled || !containerRef.current || widgetIdRef.current) return;
 
-        widgetIdRef.current = turnstile.render(containerRef.current, {
+        // Cloudflare removed `size: "invisible"`. To get the prior
+        // "invisible until needed, triggered by .execute()" behaviour we
+        // combine `execution: "execute"` (challenge only runs on demand)
+        // with `appearance: "interaction-only"` (widget chrome hidden
+        // unless an interactive challenge is required).
+        const renderOptions = {
           sitekey: siteKey,
-          size,
+          execution: "execute",
+          appearance: "interaction-only",
           callback: onSuccess,
           "error-callback": onError,
           "expired-callback": onExpire,
-        });
+        };
+        if (size && VALID_SIZES.has(size)) {
+          renderOptions.size = size;
+        }
+
+        widgetIdRef.current = turnstile.render(containerRef.current, renderOptions);
       })
       .catch((err) => {
         if (cancelled) return;

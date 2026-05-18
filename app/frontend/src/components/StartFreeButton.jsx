@@ -146,7 +146,6 @@ export default function StartFreeButton({
           onSuccess={handleSuccess}
           onError={handleError}
           onExpire={handleExpire}
-          size="invisible"
         />
       ) : null}
       {error ? (
