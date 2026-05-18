@@ -457,6 +457,20 @@ def run_text_extract_job(sb, job_id: str, *, user_id: str) -> dict[str, Any]:
             "metrics": metrics,
         })
         _update_doc(sb, document_id, "processed")
+        # PR3: if pypdf produced mostly-empty pages, hand the item off to
+        # the OCR control surface. Best-effort: a failure here must never
+        # rewrite the text-extract outcome above. The OCR module's
+        # `auto_enqueue_from_text_extract` swallows ocr-side errors and
+        # returns ``None``; we still wrap in a try/except for paranoia.
+        if likely_needs_ocr and user_id is not None:
+            try:
+                from app.library.ocr import auto_enqueue_from_text_extract
+
+                auto_enqueue_from_text_extract(sb, item_id=document_id, user_id=user_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "ocr auto-enqueue raised after text-extract success: %s", exc
+                )
 
     final_job = (
         sb.table("document_processing_jobs")
