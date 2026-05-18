@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.auth import require_permission
 from app.db.supabase_client import get_supabase_admin
+from app.eligibility.engine import RULES_VERSION
 from app.eligibility.recompute_queue import enqueue_eligibility_recompute
 
 logger = logging.getLogger("career_copilot.api.admin_trust")
@@ -796,17 +797,37 @@ def eligibility_ops(_admin: dict = Depends(require_permission("scraper.manage"))
     failed = _count("eligibility_recompute_queue", {"status": "failed"})
     processed = _count("eligibility_recompute_queue", {"status": "processed"})
 
+    # Stale rows = `rules_version` (migration 039) differs from the engine
+    # constant RULES_VERSION, or is NULL (pre-039 rows). Computed as
+    # (total − current) because PostgREST `.or_(rules_version.is.null,...)`
+    # is awkward to wire through supabase-py's count path.
     stale = 0
+    stale_error: str | None = None
     try:
-        stale_rows = (
+        total_resp = (
             sb.table("eligibility_results")
             .select("id", count="exact")
-            .eq("is_stale", True)
+            .limit(1)
             .execute()
         )
-        stale = stale_rows.count or 0
-    except Exception:
-        stale = 0
+        current_resp = (
+            sb.table("eligibility_results")
+            .select("id", count="exact")
+            .eq("rules_version", RULES_VERSION)
+            .limit(1)
+            .execute()
+        )
+        total = total_resp.count or 0
+        current = current_resp.count or 0
+        stale = max(total - current, 0)
+    except Exception as exc:  # noqa: BLE001
+        # Surface, don't swallow. Anti-pattern called out in the fix order.
+        logger.error(
+            "admin.eligibility_ops.stale_count_failed table=%s error=%s",
+            "eligibility_results",
+            exc,
+        )
+        stale_error = str(exc)
 
     published_awaiting = 0
     try:
@@ -857,7 +878,7 @@ def eligibility_ops(_admin: dict = Depends(require_permission("scraper.manage"))
     except Exception:
         onboarded_users = 0
 
-    return {
+    result: dict = {
         "pending_recomputes": pending,
         "failed_recomputes": failed,
         "queued": queued,
@@ -868,6 +889,9 @@ def eligibility_ops(_admin: dict = Depends(require_permission("scraper.manage"))
         "failed_rows": failed_rows,
         "onboarded_users": onboarded_users,
     }
+    if stale_error is not None:
+        result["stale_results_error"] = stale_error
+    return result
 
 
 @router.put("/admin/organizations/{organization_id}")
