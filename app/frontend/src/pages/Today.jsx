@@ -79,9 +79,6 @@ export default function Today() {
   const [mc, setMc] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  // Fallback shape if mission-control fails entirely — keeps the legacy
-  // /api/study/plan path working so the page never goes blank.
-  const [fallbackPlan, setFallbackPlan] = useState(null);
   // Bumped when the plan is regenerated (e.g. from the preferences card) so
   // mission control is refetched.
   const [reloadKey, setReloadKey] = useState(0);
@@ -119,27 +116,18 @@ export default function Today() {
     async function load() {
       setLoading(true);
       try {
+        // Mission-control's route handler already returns a degraded
+        // payload on internal failure, so we don't need to fall back
+        // to /api/study/plan here. Plan summary + tasks come straight
+        // from mission-control's response.
         const data = await api.get("/api/study/mission-control");
         if (!cancelled) {
           setMc(mergeMissionControl(EMPTY_MC, data));
           setError("");
         }
       } catch (e) {
-        if (process.env.NODE_ENV !== "production") console.warn("mission-control failed, falling back", e);
-        try {
-          const legacy = await api.get("/api/study/plan");
-          if (!cancelled) {
-            setFallbackPlan({
-              date: legacy?.date || "",
-              plan: legacy?.plan || null,
-              tasks: Array.isArray(legacy?.tasks) ? legacy.tasks : [],
-            });
-            setError("Showing a simplified plan view — mission control is unavailable right now.");
-          }
-        } catch (e2) {
-          if (!cancelled) setError("Could not load today's plan.");
-          if (process.env.NODE_ENV !== "production") console.error(e2);
-        }
+        if (!cancelled) setError("Could not load today's plan.");
+        if (process.env.NODE_ENV !== "production") console.error(e);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -167,9 +155,6 @@ export default function Today() {
             ? { ...prev, today_tasks: patchTasks(prev.today_tasks, nextDone, nextStatus) }
             : prev,
         );
-        setFallbackPlan((prev) =>
-          prev ? { ...prev, tasks: patchTasks(prev.tasks, nextDone, nextStatus) } : prev,
-        );
       },
       action: () => api.post("/api/study/plan/toggle", { task_id: t.id }),
       rollback: () => {
@@ -178,9 +163,6 @@ export default function Today() {
             ? { ...prev, today_tasks: patchTasks(prev.today_tasks, wasDone, wasStatus) }
             : prev,
         );
-        setFallbackPlan((prev) =>
-          prev ? { ...prev, tasks: patchTasks(prev.tasks, wasDone, wasStatus) } : prev,
-        );
       },
       errorMessage: "Couldn't save task — try again.",
     });
@@ -188,72 +170,6 @@ export default function Today() {
 
   if (loading) {
     return <MissionControlSkeleton />;
-  }
-
-  // ── Fallback path (mission-control unavailable) ────────────────────────
-  if (!mc && fallbackPlan) {
-    const tasks = fallbackPlan.tasks || [];
-    const done = tasks.filter((t) => t.done).length;
-    return (
-      <div className="space-y-6" data-testid="today-page">
-        {/* Prominent degraded banner: the simplified fallback hides
-            Mission-Control panels (engine trace, intelligence layers,
-            update intelligence, exam/competition context, preferences),
-            so the user needs a clear signal that the dashboard is in a
-            reduced state — not a quietly-redesigned page. */}
-        <div
-          className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 flex items-start justify-between gap-3"
-          role="status"
-          data-testid="today-degraded-banner"
-        >
-          <div>
-            <div className="text-[11px] uppercase tracking-[0.18em] text-amber-800 font-semibold">
-              Today is in a simplified view
-            </div>
-            <div className="text-sm text-amber-900 mt-0.5">
-              {error || "Showing a simplified plan view — some panels are unavailable."}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setReloadKey((k) => k + 1)}
-            className="text-[12px] font-semibold text-amber-900 underline underline-offset-2 hover:text-amber-950 shrink-0"
-            data-testid="today-degraded-retry"
-          >
-            Retry
-          </button>
-        </div>
-        <header>
-          <Eyebrow>Today{fallbackPlan.date ? ` · ${fallbackPlan.date}` : ""}</Eyebrow>
-          <h1 className="font-heading text-[40px] leading-[1.05] mt-2">Today's plan</h1>
-          <p className="text-clay-700 mt-2">
-            {done} of {tasks.length} tasks complete
-          </p>
-        </header>
-        <StudyCard>
-          <Eyebrow>Active plan</Eyebrow>
-          <h2 className="font-heading text-[22px] mt-1">{fallbackPlan.plan?.theme || "Your study plan"}</h2>
-          {fallbackPlan.plan?.target ? (
-            <p className="text-[13px] text-clay-700 mt-1.5">{fallbackPlan.plan.target}</p>
-          ) : null}
-        </StudyCard>
-        <StudyCard padded={false}>
-          <div className="px-7 pt-6 pb-3">
-            <Eyebrow>Today's tasks</Eyebrow>
-          </div>
-          <div className="hairline mx-7" />
-          <div className="px-7 pb-6 pt-2">
-            <ul>
-              {tasks.map((t) => (
-                <StudyTaskCard key={t.id} task={t} onToggle={toggleTask} />
-              ))}
-            </ul>
-          </div>
-        </StudyCard>
-        <EligibleExamsCard variant="card" />
-        <PersonaQuestionCard />
-      </div>
-    );
   }
 
   // ── Today (full) path ──────────────────────────────────────────────────
