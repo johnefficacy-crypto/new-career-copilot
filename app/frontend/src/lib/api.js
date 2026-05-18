@@ -101,11 +101,37 @@ function resolveHeaders(options = {}) {
   return headers;
 }
 
+// In-flight GET cache: collapses overlapping GETs to the same path
+// (e.g. React StrictMode's double-mount) onto a single promise. Cleared
+// the moment the request settles so the next call refetches.
+const _inflightGets = new Map();
+
 export async function apiFetch(path, options = {}) {
   if (!BACKEND_URL) {
     throw new Error("Missing REACT_APP_BACKEND_URL. Set it in frontend .env before running the app.");
   }
 
+  const method = (options.method || "GET").toUpperCase();
+  const dedupable = method === "GET" && !options.signal;
+  if (dedupable && _inflightGets.has(path)) {
+    return _inflightGets.get(path);
+  }
+
+  const promise = _apiFetchOnce(path, options);
+  if (dedupable) {
+    _inflightGets.set(path, promise);
+    // Settle handler that swallows the rejection on this *side* branch
+    // so we don't leak an unhandledRejection — the awaiter still sees
+    // the original rejection on `promise`.
+    promise.then(
+      () => { if (_inflightGets.get(path) === promise) _inflightGets.delete(path); },
+      () => { if (_inflightGets.get(path) === promise) _inflightGets.delete(path); },
+    );
+  }
+  return promise;
+}
+
+async function _apiFetchOnce(path, options = {}) {
   const token = await getAccessToken();
   const controller = new AbortController();
   const timeoutMs = Number.isFinite(API_TIMEOUT_MS) && API_TIMEOUT_MS > 0 ? API_TIMEOUT_MS : 15000;
