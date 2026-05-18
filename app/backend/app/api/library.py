@@ -560,18 +560,30 @@ def process_text(item_id: str, user: dict = Depends(get_current_user)) -> dict:
 @router.get("/items/{item_id}/pages")
 def list_pages(
     item_id: str,
-    limit: int = Query(default=100, ge=1, le=200),
+    include_text: bool = Query(default=True),
+    limit: int | None = Query(default=None, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     user: dict = Depends(get_current_user),
 ) -> dict:
     """Return extracted page rows for a document the caller owns.
 
-    The response embeds full `text_content` per page; for large PDFs this
-    can be heavy. A future PR (PR3) will add `include_text=false` so
-    clients can paginate metadata-only. ``limit`` is capped at 200.
+    Query params (PR3):
+
+    * ``include_text`` (default ``True``) — when ``False``, the ``text_content``
+      key is *omitted* from each page object (not nulled). Keeps the
+      payload light for "did this page have content?" style UIs.
+    * ``limit`` (optional) — cap pages returned. When omitted, behavior
+      matches the pre-PR3 default of 100 pages. Hard cap is
+      ``LIBRARY_PAGES_MAX_LIMIT`` (500); Pydantic rejects out-of-range
+      values with 422 to keep the validation contract consistent with
+      the rest of the FastAPI surface (and with PR2's existing test for
+      this endpoint, which asserts 422 on `limit=9999`).
+    * ``offset`` (default ``0``) — pagination offset, ≥ 0.
     """
     if not _is_uuid(item_id):
         raise HTTPException(status_code=400, detail="Invalid id")
+
+    effective_limit = limit if limit is not None else 100
     sb = get_supabase_admin()
     owned = (
         sb.table("document_assets")
@@ -590,15 +602,23 @@ def list_pages(
         .select("id,page_number,text_content,char_count,extraction_status,metadata")
         .eq("document_id", item_id)
         .order("page_number", desc=False)
-        .range(offset, offset + limit - 1)
+        .range(offset, offset + effective_limit - 1)
         .execute()
         .data
         or []
     )
+    if not include_text:
+        # Omit, do NOT null. A missing key reads as "client opted out of
+        # text", whereas an explicit null implies "we have a page with no
+        # text" — which we already encode via ``extraction_status='empty'``.
+        page_rows = [
+            {k: v for k, v in row.items() if k != "text_content"}
+            for row in page_rows
+        ]
     return {
         "pages": page_rows,
         "count": len(page_rows),
-        "limit": limit,
+        "limit": effective_limit,
         "offset": offset,
     }
 
@@ -619,3 +639,147 @@ def archive_item(item_id: str, user: dict = Depends(get_current_user)) -> dict:
     if not updated:
         raise HTTPException(status_code=404, detail="Document not found")
     return {"ok": True, "id": item_id, "status": "archived"}
+
+
+# ─── OCR job control surface (PR3) ────────────────────────────────────────
+#
+# PR3 only wires schema + state machine; with `LIBRARY_OCR_ENGINE='none'`
+# (default) every newly enqueued job finalizes synchronously to `skipped`.
+# PR4 will replace `_ocr` with a real engine pluggable.
+
+
+class OcrEnqueueRequest(BaseModel):
+    trigger_reason: str = Field(default="manual_request", max_length=40)
+
+
+def _owner_check_item(sb, item_id: str, user_id: str) -> bool:
+    rows = (
+        sb.table("document_assets")
+        .select("id")
+        .eq("id", item_id)
+        .eq("owner_user_id", user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return bool(rows)
+
+
+@router.post("/items/{item_id}/ocr")
+def enqueue_ocr(
+    item_id: str,
+    body: OcrEnqueueRequest,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Manually request an OCR job for an owned item.
+
+    Body: ``{"trigger_reason": "manual_request" | "retry"}``.
+
+    Returns 404 if the item is not owned by the caller. Returns 409 when
+    an active job already exists for the item; the response body in that
+    case still contains the existing job under ``job`` so clients can
+    show its status without a follow-up GET.
+    """
+    if not _is_uuid(item_id):
+        raise HTTPException(status_code=400, detail="Invalid id")
+    if body.trigger_reason not in {"manual_request", "retry"}:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_trigger_reason",
+                "message": (
+                    "trigger_reason must be 'manual_request' or 'retry' on this endpoint"
+                ),
+            },
+        )
+
+    sb = get_supabase_admin()
+    if not _owner_check_item(sb, item_id, user["id"]):
+        # 404 (not 403) to avoid leaking item existence to non-owners,
+        # matching the rest of the library API's access pattern.
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    from app.library.ocr import (
+        OcrJobConflict,
+        OcrJobError,
+        enqueue_ocr_job,
+    )
+
+    try:
+        job, _ = enqueue_ocr_job(
+            sb,
+            item_id=item_id,
+            user_id=user["id"],
+            trigger_reason=body.trigger_reason,
+        )
+    except OcrJobConflict as exc:
+        return {
+            "job": exc.existing,
+            "enqueued": False,
+            "code": exc.code,
+            "message": exc.message,
+        }
+    except OcrJobError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+
+    return {"job": job, "enqueued": True}
+
+
+@router.get("/items/{item_id}/ocr")
+def get_latest_ocr(
+    item_id: str,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Latest OCR job for an owned item. 404 when no job has been
+    created — matches the convention used by `/items/{id}/jobs` callers."""
+    if not _is_uuid(item_id):
+        raise HTTPException(status_code=400, detail="Invalid id")
+
+    sb = get_supabase_admin()
+    if not _owner_check_item(sb, item_id, user["id"]):
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    from app.library.ocr import OcrJobError, get_latest_job_for_item
+
+    try:
+        job = get_latest_job_for_item(sb, item_id, user_id=user["id"])
+    except OcrJobError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+    if job is None:
+        raise HTTPException(status_code=404, detail="No OCR job for this item")
+    return {"job": job}
+
+
+@router.get("/ocr/jobs/{job_id}")
+def get_ocr_job(
+    job_id: str,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Owner-scoped single-job read. RLS would also enforce this, but
+    the API filters explicitly so the response is consistent regardless
+    of which Supabase client wrote the row (service role bypasses RLS)."""
+    if not _is_uuid(job_id):
+        raise HTTPException(status_code=400, detail="Invalid id")
+
+    sb = get_supabase_admin()
+
+    from app.library.ocr import OcrJobError, get_job_by_id
+
+    try:
+        job = get_job_by_id(sb, job_id, user_id=user["id"])
+    except OcrJobError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+    if job is None:
+        raise HTTPException(status_code=404, detail="OCR job not found")
+    return {"job": job}
+

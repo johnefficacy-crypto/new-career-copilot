@@ -32,6 +32,13 @@ This wiki should be replaced by the real generated Graphify wiki when `graphify 
     Added `tests/test_library_routes.py` (route count + OpenAPI
     sanity) to pin the regression. No behaviour change, no migration
     change, no extraction-service change.
+- [Library PR3 — OCR Wiring + `/pages` light listing](./library-pr3-ocr-wiring.md) —
+  new `library_ocr_jobs` table (migration `114`), three new endpoints
+  (`POST /items/{id}/ocr`, `GET /items/{id}/ocr`, `GET /ocr/jobs/{id}`),
+  auto-enqueue on `likely_needs_ocr=true` after text extract, and
+  additive `include_text=false` query param on `GET /items/{id}/pages`.
+  Engine default `none` finalizes jobs to `skipped` synchronously; real
+  engine lands in PR4.
 
 ## Main Knowledge Areas
 

@@ -39,6 +39,10 @@ def test_no_duplicate_library_routes():
     app = _build_app()
     assert _count(app, "/api/library/items/{item_id}/process-text", "POST") == 1
     assert _count(app, "/api/library/items/{item_id}/pages", "GET") == 1
+    # PR3: three new OCR routes — also pinned at exactly-one each.
+    assert _count(app, "/api/library/items/{item_id}/ocr", "POST") == 1
+    assert _count(app, "/api/library/items/{item_id}/ocr", "GET") == 1
+    assert _count(app, "/api/library/ocr/jobs/{job_id}", "GET") == 1
 
 
 def test_openapi_no_duplicate_library_paths():
@@ -46,3 +50,7 @@ def test_openapi_no_duplicate_library_paths():
     spec = app.openapi()
     assert "post" in spec["paths"]["/api/library/items/{item_id}/process-text"]
     assert "get" in spec["paths"]["/api/library/items/{item_id}/pages"]
+    # PR3 OCR routes appear in the OpenAPI document under their correct verbs.
+    assert "post" in spec["paths"]["/api/library/items/{item_id}/ocr"]
+    assert "get" in spec["paths"]["/api/library/items/{item_id}/ocr"]
+    assert "get" in spec["paths"]["/api/library/ocr/jobs/{job_id}"]

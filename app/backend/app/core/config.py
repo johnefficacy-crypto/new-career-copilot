@@ -34,6 +34,12 @@ class Settings:
     LIBRARY_MAX_UPLOAD_MB: int = int(os.getenv("LIBRARY_MAX_UPLOAD_MB", "25"))
     LIBRARY_DOWNLOAD_URL_TTL_SECONDS: int = int(os.getenv("LIBRARY_DOWNLOAD_URL_TTL_SECONDS", "300"))
     LIBRARY_UPLOAD_URL_TTL_SECONDS: int = int(os.getenv("LIBRARY_UPLOAD_URL_TTL_SECONDS", "300"))
+    # PR3: OCR engine selection. `none` (default) means jobs are recorded
+    # but auto-finalize to `skipped`. Any other value leaves jobs in
+    # `pending` for PR4's engine worker to claim.
+    LIBRARY_OCR_ENGINE: str = os.getenv("LIBRARY_OCR_ENGINE", "none")
+    # PR3: ceiling for the `/pages` light listing's `limit` query param.
+    LIBRARY_PAGES_MAX_LIMIT: int = int(os.getenv("LIBRARY_PAGES_MAX_LIMIT", "500"))
 
     BACKEND_CORS_ORIGINS: list[str] = [
         "http://localhost:5173",
