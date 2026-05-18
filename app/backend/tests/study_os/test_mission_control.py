@@ -343,3 +343,52 @@ def test_truth_panel_summary_reflects_today_completion():
     out = build_mission_control(sb, "u-1")
     summary = out["truth_panel"]["summary"]
     assert "1 of 2" in summary
+
+
+# ── Per-request read cache: each logical table read once per call ─────────
+
+
+def _seed_full_world():
+    return {
+        "aspirant_persona_snapshots": [_snapshot_row()],
+        "profiles": [{"id": "u-1", "target_exam": "ssc-cgl"}],
+        "exams": [{"id": "exam-1", "slug": "ssc-cgl", "name": "SSC CGL",
+                   "exam_type": "recruitment", "is_active": True,
+                   "exam_family_id": "fam-1"}],
+        "exam_families": [{"id": "fam-1", "name": "SSC"}],
+        "exam_topic_coverage": [
+            {"id": "c1", "exam_id": "exam-1", "topic_id": "t1",
+             "exam_priority_score": 80, "is_high_yield": True,
+             "confidence_score": 0.8, "reviewer_status": "locked"},
+        ],
+        "topics": [{"id": "t1", "name": "Percentage", "slug": "percentage",
+                    "is_active": True, "subject_id": "s1", "level": "core"}],
+        "subjects": [{"id": "s1", "name": "Quant", "slug": "quant",
+                      "subject_group": "core", "is_active": True}],
+        "study_plans": [{"id": "p1", "user_id": "u-1", "status": "active",
+                         "metadata": {"theme": "Adaptive", "target": "Cover"}}],
+    }
+
+
+def test_mission_control_caches_repeat_reads_within_one_call():
+    # Without the cache, the following tables are read twice per call:
+    #   - study_plans      (active-plan + fallback id)
+    #   - exam_topic_coverage / topics (status summary + context locked)
+    #   - exams            (resolve_by_slug + resolve_by_id)
+    #   - aspirant_persona_snapshots (latest + recompute fallback)
+    # The wrapper exposes `reads_per_table()` so we can assert ≤1.
+    from app.study_os.mission_control import _RequestReadCache
+
+    wrapped = _RequestReadCache(SBStub(_seed_full_world()))
+    build_mission_control(wrapped, "u-1")
+    reads = wrapped.reads_per_table()
+    for table in (
+        "study_plans",
+        "exam_topic_coverage",
+        "topics",
+        "exams",
+        "aspirant_persona_snapshots",
+    ):
+        assert reads.get(table, 0) <= 1, (
+            f"{table} read {reads.get(table)}× (expected ≤1); counts={reads}"
+        )

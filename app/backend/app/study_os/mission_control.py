@@ -15,8 +15,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from app.exam_intelligence.coverage import locked_topic_coverage
-from app.exam_intelligence.lookup import resolve_exam_by_id
+from app.exam_intelligence.coverage import locked_topic_coverage_summary
+from app.exam_intelligence.lookup import resolve_exam_by_id, resolve_exam_by_slug
 from app.exam_intelligence.status import exam_intelligence_status
 from app.study_os.competition_context import competition_context
 from app.study_os.update_context import (
@@ -36,6 +36,94 @@ from app.study_os.task_reasoning import (
 logger = logging.getLogger("career_copilot.study_os.mission_control")
 
 MISSION_CONTROL_SOURCE = "mission_control_v1"
+
+
+# ─── Per-request read cache ───────────────────────────────────────────────
+#
+# Mission-control composes ~12 sub-loaders and the same logical table read
+# can fire 2× per request (e.g. `study_plans` via both `_load_active_plan`
+# and `_active_plan_id`; `exam_topic_coverage` + `topics` via both the
+# exam-intelligence status path and the exam-context path). The wrapper
+# below memoises read chains by their full signature within one
+# `build_mission_control` call. Writes (insert/update/upsert/delete) are
+# never cached; non-table attrs (e.g. `supabase.auth`) pass straight
+# through. Lifetime = single call; no cross-request state.
+
+
+def _freeze(value: Any) -> Any:
+    if isinstance(value, dict):
+        return tuple(sorted((k, _freeze(v)) for k, v in value.items()))
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return tuple(_freeze(v) for v in value)
+    return value
+
+
+class _CachedQuery:
+    _WRITE_METHODS = {"insert", "update", "upsert", "delete"}
+
+    def __init__(self, owner: "_RequestReadCache", table_name: str, real: Any) -> None:
+        self._owner = owner
+        self._table_name = table_name
+        self._real = real
+        self._chain: list[tuple] = [("table", table_name)]
+        self._is_write = False
+
+    def __getattr__(self, attr: str) -> Any:
+        real_attr = getattr(self._real, attr)
+        if not callable(real_attr):
+            return real_attr
+
+        def _proxy(*args: Any, **kwargs: Any) -> Any:
+            if attr in self._WRITE_METHODS:
+                self._is_write = True
+            self._chain.append((attr, _freeze(args), _freeze(kwargs)))
+            result = real_attr(*args, **kwargs)
+            # supabase-py returns either self or a new builder; either way
+            # we keep delegating from the same wrapper instance.
+            if result is not self._real:
+                self._real = result
+            return self
+
+        return _proxy
+
+    def execute(self) -> Any:
+        if self._is_write:
+            return self._real.execute()
+        key = tuple(self._chain)
+        cache = self._owner._cache
+        if key in cache:
+            return cache[key]
+        self._owner._reads[self._table_name] = (
+            self._owner._reads.get(self._table_name, 0) + 1
+        )
+        result = self._real.execute()
+        cache[key] = result
+        return result
+
+
+class _RequestReadCache:
+    """Wrap a supabase client so reads dedupe within one request."""
+
+    def __init__(self, real: Any) -> None:
+        self._real = real
+        self._cache: dict[tuple, Any] = {}
+        self._reads: dict[str, int] = {}
+
+    def __getattr__(self, attr: str) -> Any:
+        # `supabase.auth`, `supabase.rpc`, etc. pass through unchanged.
+        return getattr(self._real, attr)
+
+    def table(self, name: str) -> _CachedQuery:
+        return _CachedQuery(self, name, self._real.table(name))
+
+    def reads_per_table(self) -> dict[str, int]:
+        return dict(self._reads)
+
+
+def _looks_like_uuid(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    return len(value) == 36 and value.count("-") == 4
 
 
 def _safe(call: Callable[[], Any], default: Any = None) -> Any:
@@ -172,10 +260,44 @@ def _load_exam_context(supabase: Any, exam_intel: dict[str, Any]) -> dict[str, A
         return empty
 
     exam_id = exam_intel["exam_id"]
-    locked = _safe(lambda: locked_topic_coverage(supabase, exam_id), default=[]) or []
+    # Use the `_summary` shape so this call shares its read signature with
+    # `exam_intelligence_status` (which also goes via `_summary`). Under
+    # the per-request read cache that means exam_topic_coverage + topics
+    # are read once per mission-control call, not twice.
+    summary_rows = (
+        _safe(lambda: locked_topic_coverage_summary(supabase, exam_id), default=[]) or []
+    )
+    # Shape-shift to the legacy `locked_topic_coverage` row keys so the
+    # rest of this function (and any caller of `high_yield_topics`) keeps
+    # reading `topic` / `priority_score` / `status`.
+    def _score(row: dict[str, Any]) -> float:
+        try:
+            return float(row.get("exam_priority_score") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    locked = [
+        {
+            "topic": r.get("topic_name") or r.get("topic_slug"),
+            "topic_id": r.get("topic_id"),
+            "priority_score": r.get("exam_priority_score"),
+            "confidence_score": r.get("confidence_score"),
+            "high_yield": bool(r.get("is_high_yield")),
+            "status": r.get("reviewer_status") or "locked",
+        }
+        for r in sorted(summary_rows, key=_score, reverse=True)
+    ]
 
     family_name = None
-    exam_row = _safe(lambda: resolve_exam_by_id(supabase, exam_id), default=None)
+    # Prefer the slug lookup when we have one: `exam_intelligence_status`
+    # already resolved the exam by slug, so the cache deduplicates this
+    # read. Fall back to by-id when only an id is available (uuid path).
+    exam_slug = (exam_intel or {}).get("exam_slug")
+    exam_row = None
+    if exam_slug and not _looks_like_uuid(exam_slug):
+        exam_row = _safe(lambda: resolve_exam_by_slug(supabase, exam_slug), default=None)
+    if exam_row is None:
+        exam_row = _safe(lambda: resolve_exam_by_id(supabase, exam_id), default=None)
     if exam_row and exam_row.get("exam_family_id"):
         fam_rows = _safe(
             lambda: (
@@ -929,6 +1051,11 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
     Defensive throughout — never raises. Optional sections degrade to
     empty/sentinel values when their source is unavailable.
     """
+    # Wrap the client so every read chain dedupes within this single
+    # request. Logical tables previously read twice (study_plans, exams,
+    # exam_topic_coverage, topics, aspirant_persona_snapshots) drop to one
+    # read each. Writes pass through; lifetime is this call only.
+    supabase = _RequestReadCache(supabase) if not isinstance(supabase, _RequestReadCache) else supabase
     snapshot = _load_persona_snapshot(supabase, user_id)
     dimensions = snapshot.get("dimensions") or {}
     study_policy = dict(snapshot.get("study_policy") or {})
@@ -1003,6 +1130,15 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
         preview_flags.append("exam_intelligence_not_connected")
     if not plan:
         preview_flags.append("no_active_study_plan")
+
+    if isinstance(supabase, _RequestReadCache):
+        # One line per request so operators can spot a regression where
+        # any of the deduplicated tables creeps back to 2+ reads.
+        logger.debug(
+            "mission_control.read_counts user_id=%s counts=%s",
+            user_id,
+            supabase.reads_per_table(),
+        )
 
     return {
         "date": _today_iso(),
@@ -1090,6 +1226,7 @@ def build_task_reasoning_response(
     Returns ``None`` when the task is not found / not owned by the user.
     Never raises — every read is wrapped.
     """
+    supabase = _RequestReadCache(supabase) if not isinstance(supabase, _RequestReadCache) else supabase
     task = _load_task_for_user(supabase, user_id, task_id)
     if task is None:
         return None
