@@ -23,17 +23,18 @@ const mockTurnstileExecute = jest.fn();
 const mockTurnstileReset = jest.fn();
 const mockTurnstileCallbacks = { onSuccess: null, onError: null, onExpire: null };
 
-jest.mock("@marsidev/react-turnstile", () => {
+jest.mock("./TurnstileWidget", () => {
   const ReactInner = require("react");
   return {
     __esModule: true,
-    Turnstile: ReactInner.forwardRef((props, ref) => {
+    default: ReactInner.forwardRef((props, ref) => {
       mockTurnstileCallbacks.onSuccess = props.onSuccess;
       mockTurnstileCallbacks.onError = props.onError;
       mockTurnstileCallbacks.onExpire = props.onExpire;
       ReactInner.useImperativeHandle(ref, () => ({
         execute: mockTurnstileExecute,
         reset: mockTurnstileReset,
+        remove: jest.fn(),
       }));
       return null;
     }),
