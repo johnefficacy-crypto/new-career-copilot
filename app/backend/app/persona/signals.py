@@ -92,7 +92,7 @@ def collect_user_signals(supabase: Any, user_id: str) -> dict[str, Any]:
             supabase.table("profiles")
             .select(
                 "id, full_name, phone, gender, date_of_birth, domicile_state, "
-                "category, nationality, target_exam, weekly_hours_goal, "
+                "category, nationality, target_exam, "
                 "career_stage, career_goal, onboarding_completed"
             )
             .eq("id", user_id)
@@ -120,15 +120,21 @@ def collect_user_signals(supabase: Any, user_id: str) -> dict[str, Any]:
     ) or []
     prefs = prefs[0] if prefs else {}
 
+    # weekly_hours_goal lives on aspirant_preferences.study_hours_per_day;
+    # derive it into the profile dict so completeness scoring and the
+    # downstream signal both see it. Match canonical.py rounding exactly:
+    # int(round(x * 7)). If prefs is missing or the value is non-numeric
+    # we leave the key absent — completeness scoring handles missing keys.
+    if prefs.get("study_hours_per_day") is not None:
+        try:
+            profile["weekly_hours_goal"] = int(round(float(prefs["study_hours_per_day"]) * 7))
+        except (TypeError, ValueError):
+            pass
+
     weekly_hours_goal: float | None = None
     if profile.get("weekly_hours_goal") is not None:
         try:
             weekly_hours_goal = float(profile.get("weekly_hours_goal"))
-        except (TypeError, ValueError):
-            weekly_hours_goal = None
-    elif prefs.get("study_hours_per_day") is not None:
-        try:
-            weekly_hours_goal = round(float(prefs.get("study_hours_per_day")) * 7, 2)
         except (TypeError, ValueError):
             weekly_hours_goal = None
 

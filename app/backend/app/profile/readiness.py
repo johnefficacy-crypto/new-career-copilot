@@ -99,6 +99,8 @@ _FIELD_SOURCES: dict[str, tuple[str, str]] = {
     "domicile_state": ("location", "state"),
     "target_exam": ("preferences", "target_exams"),
     "study_mode": ("preferences", "study_mode"),
+    # weekly_hours_goal lives on aspirant_preferences.study_hours_per_day;
+    # derived into profile dict by readiness loader. see canonical.py.
     "weekly_hours_goal": ("profile", "weekly_hours_goal"),
     # Document fields are tracked on aspirant_documents flags. None of
     # them exist yet, so they read as missing — exactly what we want
@@ -116,7 +118,7 @@ def _load_sources(supabase: Any, user_id: str) -> dict[str, dict[str, Any]]:
             lambda: (
                 supabase.table("profiles")
                 .select(
-                    "id, full_name, phone, date_of_birth, weekly_hours_goal, "
+                    "id, full_name, phone, date_of_birth, "
                     "target_exam, persona_seed, onboarding_completed, "
                     "onboarding_step, is_anonymous"
                 )
@@ -143,6 +145,16 @@ def _load_sources(supabase: Any, user_id: str) -> dict[str, dict[str, Any]]:
         )
         or [{}]
     )[0]
+    # weekly_hours_goal lives on aspirant_preferences.study_hours_per_day;
+    # derive into profile dict so the existing ("profile",
+    # "weekly_hours_goal") source mapping keeps working without a new
+    # source category. Match canonical.py: int(round(x * 7)). Leave the
+    # key absent on missing/bad values so completeness reads as missing.
+    if preferences.get("study_hours_per_day") is not None:
+        try:
+            profile["weekly_hours_goal"] = int(round(float(preferences["study_hours_per_day"]) * 7))
+        except (TypeError, ValueError):
+            pass
     location = (
         _safe(
             lambda: (
