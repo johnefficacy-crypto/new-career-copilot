@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { useAuth } from "../../lib/authContext";
+import { CAPTCHA_REQUIRED_FOR_ANON } from "../../shared/config/env";
 
 // New onboarding driver. Anonymous users authenticate FIRST (Supabase
 // anonymous sign-in returns a real auth.users row with is_anonymous=true);
@@ -47,11 +48,18 @@ export function useProfileOnboarding() {
 
   const bootstrap = useCallback(async () => {
     if (authStatus === "checking") return;
+    if (authStatus === "guest" && CAPTCHA_REQUIRED_FOR_ANON) {
+      // Supabase CAPTCHA is enabled. Anonymous sign-in without a
+      // Turnstile token returns 400. Hand control to the UI so it can
+      // render <StartFreeButton>, which mints the token on click.
+      patch({ status: "needs_auth_start", error: null });
+      return;
+    }
     patch({ status: "loading", error: null });
     try {
       if (authStatus === "guest") {
-        // No session yet — sign in anonymously so subsequent API calls
-        // carry a real Supabase JWT.
+        // Dev path: CAPTCHA disabled — Supabase accepts token-less
+        // anonymous sign-ins.
         await signInAnonymously();
       }
       await fetchNext();

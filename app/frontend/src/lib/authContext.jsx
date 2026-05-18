@@ -140,7 +140,18 @@ export function AuthProvider({ children }) {
     const { data, error } = await supabase.auth.signInAnonymously(
       options ? { options } : undefined
     );
-    if (error) throw new Error(error.message || "Unable to start anonymous session");
+    if (error) {
+      // Surface Supabase's status/code so the UI can distinguish a captcha
+      // misconfiguration (400 with captcha_failed) from rate-limit / network
+      // errors. The captcha-specific copy is added by the UI layer when it
+      // sees this marker text.
+      const parts = [
+        error.message || "Unable to start anonymous session",
+        error.code && `code=${error.code}`,
+        error.status && `status=${error.status}`,
+      ].filter(Boolean);
+      throw new Error(parts.join(" "));
+    }
     let session = data?.session;
     if (!session?.access_token) {
       // Supabase-js sometimes resolves before the session is persisted to
