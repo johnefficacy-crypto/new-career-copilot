@@ -2094,3 +2094,273 @@ def test_cms_bulk_import_rejects_short_reason():
         json={"reason": "x", "entity": "exam-families", "rows": [{"slug": "z", "name": "Z"}]},
     )
     assert r.status_code == 422
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  PR-E — PATCH endpoints + competition-metrics create/patch + bulk
+# ════════════════════════════════════════════════════════════════════════
+
+
+def _seed_cms_with_pyq_and_competition(sb: ExtSBStub) -> None:
+    """Extends ``_seed_cms`` with one pyq paper/question/option + one
+    competition_metric row, for PATCH coverage."""
+    _seed_cms(sb)
+    sb.db.setdefault("exam_competition_metrics", []).append(
+        {
+            "id": "cm-1",
+            "exam_id": "exam-1",
+            "exam_cycle_id": None,
+            "vacancy_total": 1000,
+            "vacancy_by_category": {"general": 400},
+            "cutoff_trend": {"general": 102.5},
+            "difficulty_trend": {},
+            "source_basis": "manual",
+            "reviewer_status": "draft",
+            "confidence_score": 0.5,
+            "evidence_count": 0,
+        }
+    )
+    sb.db["pyq_papers"].append(
+        {
+            "id": "paper-1",
+            "exam_id": "exam-1",
+            "year": 2024,
+            "trust_status": "pending",
+            "source_type": "official",
+        }
+    )
+    sb.db["pyq_questions"].append(
+        {
+            "id": "q-1",
+            "pyq_paper_id": "paper-1",
+            "question_number": 1,
+            "question_text": "Original text",
+            "question_type": "mcq",
+            "reviewer_status": "pending",
+        }
+    )
+    sb.db["pyq_options"].append(
+        {
+            "id": "opt-1",
+            "question_id": "q-1",
+            "option_label": "A",
+            "option_text": "Original option",
+            "is_correct": False,
+        }
+    )
+    sb.db["exam_policy_updates"].append(
+        {
+            "id": "pol-1",
+            "exam_id": "exam-1",
+            "update_type": "date_change",
+            "title": "Application window extended",
+            "source_type": "official",
+            "reviewer_status": "pending",
+            "affects_deadline": True,
+        }
+    )
+
+
+# ── PYQ papers PATCH ──────────────────────────────────────────────────────
+
+
+def test_cms_patch_pyq_paper_updates_allowlisted_fields():
+    sb = ExtSBStub()
+    _seed_cms_with_pyq_and_competition(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).patch(
+        "/api/admin/exam-intelligence-cms/pyq-papers/paper-1",
+        json={"reason": "fixing source attribution", "payload": {"source_type": "coaching"}},
+    )
+    assert r.status_code == 200, r.text
+    assert sb.db["pyq_papers"][0]["source_type"] == "coaching"
+    assert any(a["action"] == "exam_intel.cms.pyq_paper.update" for a in sb.db["admin_audit_logs"])
+
+
+def test_cms_patch_pyq_paper_404_when_missing():
+    sb = ExtSBStub()
+    _seed_cms_with_pyq_and_competition(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).patch(
+        "/api/admin/exam-intelligence-cms/pyq-papers/missing",
+        json={"reason": "anything-here", "payload": {"source_type": "official"}},
+    )
+    assert r.status_code == 404
+
+
+def test_cms_patch_pyq_paper_rejects_invalid_source_type():
+    sb = ExtSBStub()
+    _seed_cms_with_pyq_and_competition(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).patch(
+        "/api/admin/exam-intelligence-cms/pyq-papers/paper-1",
+        json={"reason": "should be rejected", "payload": {"source_type": "not-a-real-source"}},
+    )
+    assert r.status_code == 422
+
+
+# ── PYQ questions PATCH ───────────────────────────────────────────────────
+
+
+def test_cms_patch_pyq_question_rehashes_text_on_edit():
+    sb = ExtSBStub()
+    _seed_cms_with_pyq_and_competition(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).patch(
+        "/api/admin/exam-intelligence-cms/pyq-questions/q-1",
+        json={"reason": "typo fix in stem", "payload": {"question_text": "Fixed text"}},
+    )
+    assert r.status_code == 200
+    row = sb.db["pyq_questions"][0]
+    assert row["question_text"] == "Fixed text"
+    # Hash gets recomputed (presence — not value — verified; hash impl is
+    # tested elsewhere).
+    assert row.get("normalized_question_hash")
+
+
+def test_cms_patch_pyq_question_404_when_missing():
+    sb = ExtSBStub()
+    _seed_cms_with_pyq_and_competition(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).patch(
+        "/api/admin/exam-intelligence-cms/pyq-questions/missing",
+        json={"reason": "anything-here", "payload": {"question_text": "x"}},
+    )
+    assert r.status_code == 404
+
+
+# ── PYQ options PATCH ─────────────────────────────────────────────────────
+
+
+def test_cms_patch_pyq_option_can_flip_is_correct():
+    sb = ExtSBStub()
+    _seed_cms_with_pyq_and_competition(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).patch(
+        "/api/admin/exam-intelligence-cms/pyq-options/opt-1",
+        json={"reason": "marking the correct option", "payload": {"is_correct": True}},
+    )
+    assert r.status_code == 200
+    assert sb.db["pyq_options"][0]["is_correct"] is True
+
+
+# ── Policy updates PATCH ──────────────────────────────────────────────────
+
+
+def test_cms_patch_policy_update_enforces_official_affects_guard():
+    """A non-official policy row cannot keep an ``affects_*`` flag true."""
+    sb = ExtSBStub()
+    _seed_cms_with_pyq_and_competition(sb)
+    app = _cms_app(sb)
+    # Try to downgrade source_type while keeping affects_deadline=True.
+    r = TestClient(app).patch(
+        "/api/admin/exam-intelligence-cms/policy-updates/pol-1",
+        json={
+            "reason": "claim-status downgrade attempt",
+            "payload": {"source_type": "aggregator"},
+        },
+    )
+    assert r.status_code == 422
+    assert "affects_deadline" in r.json()["detail"]
+
+
+def test_cms_patch_policy_update_allows_clean_edit():
+    sb = ExtSBStub()
+    _seed_cms_with_pyq_and_competition(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).patch(
+        "/api/admin/exam-intelligence-cms/policy-updates/pol-1",
+        json={"reason": "title clarification", "payload": {"title": "Window extended by 7d"}},
+    )
+    assert r.status_code == 200
+    assert sb.db["exam_policy_updates"][0]["title"] == "Window extended by 7d"
+
+
+# ── Competition metrics — CREATE + PATCH + bulk import ────────────────────
+
+
+def test_cms_create_competition_metric_happy_path():
+    sb = ExtSBStub()
+    _seed_cms_with_pyq_and_competition(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).post(
+        "/api/admin/exam-intelligence-cms/exam-competition-metrics",
+        json={
+            "reason": "seeding 2024 cycle metrics",
+            "payload": {
+                "exam_id": "exam-1",
+                "vacancy_total": 850,
+                "vacancy_by_category": {"general": 350, "obc": 230},
+                "cutoff_trend": {"general": 110.5, "obc": 104.0},
+                "source_basis": "official",
+                "confidence_score": 0.9,
+            },
+        },
+    )
+    assert r.status_code == 200, r.text
+    row = [r for r in sb.db["exam_competition_metrics"] if r["vacancy_total"] == 850][0]
+    assert row["reviewer_status"] == "draft"
+    assert any(a["action"] == "exam_intel.cms.competition_metric.create" for a in sb.db["admin_audit_logs"])
+
+
+def test_cms_create_competition_metric_rejects_unresolvable_exam():
+    sb = ExtSBStub()
+    _seed_cms_with_pyq_and_competition(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).post(
+        "/api/admin/exam-intelligence-cms/exam-competition-metrics",
+        json={"reason": "should not insert", "payload": {"exam_id": "exam-nope"}},
+    )
+    assert r.status_code == 422
+
+
+def test_cms_create_competition_metric_validates_selection_ratio_range():
+    sb = ExtSBStub()
+    _seed_cms_with_pyq_and_competition(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).post(
+        "/api/admin/exam-intelligence-cms/exam-competition-metrics",
+        json={
+            "reason": "ratio out of bounds",
+            "payload": {"exam_id": "exam-1", "selection_ratio": 1.5},
+        },
+    )
+    assert r.status_code == 422
+    assert "selection_ratio" in r.json()["detail"]
+
+
+def test_cms_patch_competition_metric_updates_cutoff_trend():
+    sb = ExtSBStub()
+    _seed_cms_with_pyq_and_competition(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).patch(
+        "/api/admin/exam-intelligence-cms/exam-competition-metrics/cm-1",
+        json={
+            "reason": "official cutoff correction",
+            "payload": {"cutoff_trend": {"general": 108.0, "obc": 100.0}},
+        },
+    )
+    assert r.status_code == 200
+    assert sb.db["exam_competition_metrics"][0]["cutoff_trend"]["obc"] == 100.0
+
+
+def test_cms_bulk_import_supports_competition_metrics():
+    sb = ExtSBStub()
+    _seed_cms_with_pyq_and_competition(sb)
+    app = _cms_app(sb)
+    r = TestClient(app).post(
+        "/api/admin/exam-intelligence-cms/bulk-import",
+        json={
+            "reason": "bulk-loading 3 cycles of cutoff history",
+            "entity": "exam-competition-metrics",
+            "rows": [
+                {"exam_id": "exam-1", "vacancy_total": 100, "cutoff_trend": {"general": 90}},
+                {"exam_id": "exam-1", "vacancy_total": 110, "cutoff_trend": {"general": 92}},
+                {"exam_id": "exam-nope", "vacancy_total": 120},  # bad FK
+            ],
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok_count"] == 2
+    assert body["error_count"] == 1

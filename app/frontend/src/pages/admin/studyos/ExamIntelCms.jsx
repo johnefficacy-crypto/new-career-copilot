@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { RotateCcw, Plus, FileText } from "lucide-react";
 import { api, getApiErrorMessage } from "../../../lib/api";
+import { parseImportFile } from "../../../lib/bulkImportFile";
 
 const ENTITY_CONFIG = {
   "exam-families": {
@@ -133,6 +134,7 @@ export default function AdminExamIntelCms() {
   const [showBulk, setShowBulk] = useState(false);
   const [bulkRows, setBulkRows] = useState("");
   const [bulkReason, setBulkReason] = useState("");
+  const [fileParseError, setFileParseError] = useState("");
   const [bulkResult, setBulkResult] = useState(null);
   const [formValues, setFormValues] = useState({});
   const [reason, setReason] = useState("");
@@ -150,6 +152,28 @@ export default function AdminExamIntelCms() {
       setItems(null);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleBulkFile(e) {
+    setFileParseError("");
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const { rows, errors } = parseImportFile(file.name, text);
+      if (errors.length && rows.length === 0) {
+        setFileParseError(errors.join("; "));
+        return;
+      }
+      setBulkRows(JSON.stringify(rows, null, 2));
+      if (errors.length) {
+        // Partial parse — surface the per-row errors but still let the
+        // admin review and submit the clean rows.
+        setFileParseError(`Parsed ${rows.length} rows. Skipped: ${errors.join("; ")}`);
+      }
+    } catch (ex) {
+      setFileParseError(`Could not read file: ${ex.message || ex}`);
     }
   }
 
@@ -283,10 +307,27 @@ export default function AdminExamIntelCms() {
         <form onSubmit={submitBulk} className="rounded border border-border/60 bg-card p-4 space-y-2" data-testid="cms-bulk-form">
           <h3 className="text-sm font-semibold">Bulk import {ENTITY_CONFIG[entity].label}</h3>
           <p className="text-xs text-muted-foreground">
-            Paste a JSON array of row objects (max 500). Each row goes through the same validation as the
-            single-row create — required fields, FK resolution, enum constraints, and forced statuses.
-            Per-row results are returned so you can fix and retry only the failed rows.
+            Drop a <strong>.csv</strong> or <strong>.json</strong> file, or paste a JSON array of row
+            objects (max 500). Each row goes through the same validation as the single-row create — required
+            fields, FK resolution, enum constraints, and forced statuses. Per-row results are returned so you
+            can fix and retry only the failed rows. PDF and Markdown are out of scope — those need a separate
+            extraction pipeline.
           </p>
+          <label className="block">
+            <span className="block text-xs text-muted-foreground mb-1">Upload .csv / .json</span>
+            <input
+              type="file"
+              accept=".csv,.json,text/csv,application/json"
+              onChange={handleBulkFile}
+              data-testid="cms-bulk-file"
+              className="block text-xs"
+            />
+            {fileParseError ? (
+              <div className="mt-1 text-xs text-red-700" role="alert" data-testid="cms-bulk-file-error">
+                {fileParseError}
+              </div>
+            ) : null}
+          </label>
           <label className="block">
             <span className="block text-xs text-muted-foreground mb-1">Rows JSON (array)</span>
             <textarea
