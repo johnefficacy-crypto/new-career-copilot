@@ -78,13 +78,8 @@ class ExtractConflict(Exception):
 # ─── Job lifecycle ───────────────────────────────────────────────────────────
 
 
-def enqueue_text_extract_job(sb, document_id: str) -> dict[str, Any]:
-    """Insert a queued text_extract job for the document, or return the
-    existing active job if one is already queued/running.
-
-    Returns ``{"job": <row>, "enqueued": bool}``.
-    """
-    existing = (
+def _select_active_job(sb, document_id: str) -> dict | None:
+    rows = (
         sb.table("document_processing_jobs")
         .select("*")
         .eq("document_id", document_id)
@@ -95,8 +90,23 @@ def enqueue_text_extract_job(sb, document_id: str) -> dict[str, Any]:
         .data
         or []
     )
+    return rows[0] if rows else None
+
+
+def enqueue_text_extract_job(sb, document_id: str) -> dict[str, Any]:
+    """Insert a queued text_extract job for the document, or return the
+    existing active job if one is already queued/running.
+
+    Returns ``{"job": <row>, "enqueued": bool}``.
+
+    Concurrent callers can both see "no active job" and both attempt the
+    insert; the partial unique index in migration 113 then raises a
+    unique-violation on the losing side. We catch that and re-query so
+    the loser sees the winner's row instead of bubbling a 500.
+    """
+    existing = _select_active_job(sb, document_id)
     if existing:
-        return {"job": existing[0], "enqueued": False}
+        return {"job": existing, "enqueued": False}
 
     payload = {
         "document_id": document_id,
@@ -107,7 +117,17 @@ def enqueue_text_extract_job(sb, document_id: str) -> dict[str, Any]:
         "parser_version": PARSER_VERSION,
         "metrics": {},
     }
-    inserted = sb.table("document_processing_jobs").insert(payload).execute().data or []
+    try:
+        inserted = sb.table("document_processing_jobs").insert(payload).execute().data or []
+    except Exception as exc:  # noqa: BLE001
+        # supabase-py surfaces the unique-violation as APIError; rather
+        # than couple to that import, refetch and only re-raise if the
+        # losing-race assumption is wrong.
+        raced = _select_active_job(sb, document_id)
+        if raced is not None:
+            return {"job": raced, "enqueued": False}
+        logger.exception("text-extract enqueue failed for doc=%s", document_id)
+        raise _ExtractError("enqueue_failed", str(exc)) from exc
     if not inserted:
         raise _ExtractError("enqueue_failed", "could not enqueue text_extract job")
     return {"job": inserted[0], "enqueued": True}
@@ -179,16 +199,46 @@ def _count_pdf_pages(raw_bytes: bytes) -> int:
 
 
 def _extract_with_deadline(raw_bytes: bytes, deadline: float) -> tuple[list[str], bool]:
-    """Returns ``(pages_text, timed_out)``. Calls ``parse_pdf_pages`` once
-    (the documented entrypoint) and then enforces the deadline on the
-    *next* per-page write. ``parse_pdf_pages`` itself drops empty pages.
+    """Returns ``(pages_text, timed_out)``.
 
-    The "between pages" timeout check happens in the caller before each
-    page-row build, not inside this function — keeps the parser call a
-    single round-trip."""
-    pages = parse_pdf_pages(raw_bytes) or []
-    timed_out = time.monotonic() > deadline
-    return list(pages), timed_out
+    Real PDFs: iterate ``PdfReader.pages`` directly so the wall-clock
+    deadline is checked **between every page of the parse itself**, not
+    just after parsing finishes. A pathological page that blocks
+    `extract_text()` can still exceed the budget by one page's worth of
+    work; that's the limit of what's possible without threads/signals
+    (which the spec forbids).
+
+    Fallback: if ``PdfReader`` cannot open the bytes (typical for test
+    fixtures that monkeypatch ``parse_pdf_pages``), defer to the
+    patched helper. The single-shot call may exceed the deadline, but
+    we still record ``timed_out`` so the caller can mark the job failed.
+    """
+    timed_out = False
+    pages: list[str] = []
+
+    try:
+        from pypdf import PdfReader  # type: ignore
+        reader = PdfReader(io.BytesIO(raw_bytes))
+        page_iter = reader.pages
+    except Exception:  # noqa: BLE001
+        # Fallback to the documented entrypoint. Tests patch this name.
+        out = parse_pdf_pages(raw_bytes) or []
+        return list(out), time.monotonic() > deadline
+
+    for page in page_iter:
+        if time.monotonic() > deadline:
+            timed_out = True
+            break
+        try:
+            text = page.extract_text() or ""
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("text-extract pdf page extract failed: %s", exc)
+            text = ""
+        pages.append(text)
+    # Final guard: catch the case where the last page itself blew the budget.
+    if not timed_out and time.monotonic() > deadline:
+        timed_out = True
+    return pages, timed_out
 
 
 def _build_page_rows(

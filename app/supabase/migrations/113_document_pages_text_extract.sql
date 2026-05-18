@@ -96,6 +96,7 @@ begin
 end $$;
 
 revoke all on function public.replace_document_pages(uuid, text, text, jsonb) from public, anon, authenticated;
+grant execute on function public.replace_document_pages(uuid, text, text, jsonb) to service_role;
 
 --------------------------------------------------
 -- RLS — document_pages

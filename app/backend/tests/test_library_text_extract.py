@@ -350,6 +350,63 @@ def test_duplicate_enqueue_returns_existing_job(sb):
     assert second["job"]["id"] == first["job"]["id"]
 
 
+def test_enqueue_unique_violation_returns_existing_job(sb, monkeypatch):
+    """Concurrent enqueue may race past the read-check and only one
+    INSERT wins (partial unique index in migration 113). The losing
+    side must see the winner's job, not bubble a 500."""
+    doc_id = "99999999-1111-1111-1111-999999999999"
+    _seed_doc(sb, doc_id=doc_id)
+
+    # Pre-seed the winning row so the simulated loser's insert is the one
+    # that runs first via our patched insert. We replicate the partial-
+    # unique-index behaviour by raising on the second insert.
+    winner = text_extract_svc.enqueue_text_extract_job(sb, doc_id)
+    assert winner["enqueued"] is True
+    winner_job_id = winner["job"]["id"]
+
+    # Now force the read-check to return empty (simulate the racing read
+    # that happened before the winner committed), and force the insert to
+    # raise a unique-violation surrogate.
+    monkeypatch.setattr(text_extract_svc, "_select_active_job",
+                        lambda _sb, _doc, _orig=text_extract_svc._select_active_job:
+                        None if not getattr(_orig, "_called", False) else _orig(_sb, _doc))
+
+    original_table = sb.table
+
+    def _raising_table(name):
+        q = original_table(name)
+        if name == "document_processing_jobs":
+            orig_execute = q.execute
+
+            def _exec():
+                if q._op == "insert":
+                    raise RuntimeError("duplicate key value violates unique constraint")
+                return orig_execute()
+            q.execute = _exec
+        return q
+
+    monkeypatch.setattr(sb, "table", _raising_table)
+
+    # The loser path: _select_active_job returns None (race-window read),
+    # insert raises unique-violation, we re-query and find the winner row.
+    # To make the re-query succeed, restore the real _select_active_job
+    # after the patched stub returns once.
+    call_state = {"n": 0}
+
+    def _stub_select(_sb, _doc):
+        call_state["n"] += 1
+        if call_state["n"] == 1:
+            return None  # simulates the race-window
+        return {"id": winner_job_id, "document_id": doc_id, "job_type": "text_extract",
+                "status": "queued"}
+
+    monkeypatch.setattr(text_extract_svc, "_select_active_job", _stub_select)
+
+    result = text_extract_svc.enqueue_text_extract_job(sb, doc_id)
+    assert result["enqueued"] is False
+    assert result["job"]["id"] == winner_job_id
+
+
 def test_owner_can_process_text(sb, monkeypatch):
     doc_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     _seed_doc(sb, doc_id=doc_id)
