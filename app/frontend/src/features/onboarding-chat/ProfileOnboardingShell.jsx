@@ -4,6 +4,7 @@ import { AlertCircle, ArrowRight, CheckCircle2, Loader2 } from "lucide-react";
 import { useProfileOnboarding } from "./useProfileOnboarding";
 import OnboardingQuestionCard from "./OnboardingQuestionCard";
 import GoogleLinkBanner from "./GoogleLinkBanner";
+import StartFreeButton from "../../components/StartFreeButton";
 import { trackOnboardingEvent } from "./analytics";
 
 // New onboarding shell, driven by the per-profile state stored on the
@@ -109,6 +110,27 @@ export default function ProfileOnboardingShell() {
         <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
         <span className="ml-2 text-sm">Setting up your session…</span>
       </div>
+    );
+  }
+
+  if (status === "needs_auth_start") {
+    return (
+      <section
+        data-testid="onboarding-needs-auth-start"
+        className="soft-card rounded-3xl p-6 text-center"
+      >
+        <p className="text-sm text-clay-800">
+          Secure check required before starting your free session.
+        </p>
+        <div className="mt-4 flex justify-center">
+          <StartFreeButton
+            testId="onboarding-start-free"
+            label="Start onboarding"
+            redirectTo="/app/onboarding/chat?mode=discovery"
+            className="btn btn-primary justify-center inline-flex disabled:opacity-60"
+          />
+        </div>
+      </section>
     );
   }
 

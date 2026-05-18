@@ -103,7 +103,13 @@ export default function StartFreeButton({
       await signInAnonymously({ captchaToken });
       navigate(redirectTo);
     } catch (e) {
-      setError(e?.message || "Sign-in failed");
+      const raw = e?.message || "Sign-in failed";
+      const captchaTag = /captcha|turnstile/i.test(raw);
+      setError(
+        captchaTag
+          ? "Verification failed. Check Turnstile site key in frontend and secret key in Supabase CAPTCHA settings."
+          : raw,
+      );
       if (captchaRequired) resetCaptcha();
       setLoading(false);
     }
