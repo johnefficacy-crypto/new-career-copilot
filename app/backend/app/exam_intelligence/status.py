@@ -59,13 +59,17 @@ def _verified_syllabus_count(supabase: Any, exam_id: str) -> int:
 def exam_intelligence_status(
     supabase: Any, exam_id_or_slug: str | None
 ) -> dict[str, Any]:
-    """Return ``{available, exam_id, exam_slug, exam_name, ...counts}``.
+    """Return ``{available, exam_id, exam_slug, exam_name, exam_family_id, ...counts}``.
 
     ``available`` is true ONLY when at least one of:
       - verified topic coverage row,
       - verified PYQ topic tag,
       - verified syllabus mention,
     exists. No verified data → ``available=False``.
+
+    ``exam_family_id`` is exposed so downstream consumers (mission-
+    control's ``_load_exam_context``) don't have to re-resolve the
+    exam row by slug or id — that read was a duplicate in prod logs.
     """
     exam = _resolve(supabase, exam_id_or_slug)
     if not exam:
@@ -74,6 +78,7 @@ def exam_intelligence_status(
             "exam_id": None,
             "exam_slug": exam_id_or_slug,
             "exam_name": None,
+            "exam_family_id": None,
             "verified_topics": 0,
             "verified_pyq_tags": 0,
             "verified_syllabus_mentions": 0,
@@ -91,6 +96,7 @@ def exam_intelligence_status(
         "exam_id": exam_id,
         "exam_slug": exam.get("slug"),
         "exam_name": exam.get("name"),
+        "exam_family_id": exam.get("exam_family_id"),
         "verified_topics": len(coverage),
         "verified_pyq_tags": verified_pyq_tags,
         "verified_syllabus_mentions": syllabus_verified,

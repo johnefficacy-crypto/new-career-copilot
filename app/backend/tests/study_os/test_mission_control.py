@@ -461,3 +461,39 @@ def test_async_mission_control_runs_independent_loaders_concurrently():
         f"expected concurrent execution; elapsed={elapsed:.2f}s "
         f"(serial baseline ~{serial_baseline_seconds:.2f}s)"
     )
+
+
+# ── Item 2: every (table, primary filter) fires at most once ──────────────
+
+
+def test_mission_control_does_not_duplicate_study_plans_or_sessions():
+    # Previously: `study_plans` fired twice (full select + id-only
+    # fallback) and `study_sessions` fired twice (7-day focus +
+    # this-week review). Both should now be single-shot.
+    sb = SBStub(_seed_full_world())
+    calls: list[tuple[str, str]] = []
+    real_table = sb.table
+
+    def _spy_table(name):
+        q = real_table(name)
+        real_execute = q.execute
+
+        def _capture():
+            filters = tuple(sorted((f[0], f[1]) for f in getattr(q, "filters", []) if f[1] == "eq"))
+            calls.append((name, str(filters)))
+            return real_execute()
+
+        q.execute = _capture  # type: ignore[assignment]
+        return q
+
+    sb.table = _spy_table  # type: ignore[assignment]
+    build_mission_control(sb, "u-1")
+
+    by_table: dict[str, int] = {}
+    for name, _ in calls:
+        by_table[name] = by_table.get(name, 0) + 1
+    # Allow ≤1 read per logical table for the deduped tables; others can
+    # legitimately appear N times (e.g. study_tasks has 5 distinct slices).
+    assert by_table.get("study_plans", 0) <= 1, f"study_plans={by_table.get('study_plans')}; calls={calls}"
+    assert by_table.get("study_sessions", 0) <= 1, f"study_sessions={by_table.get('study_sessions')}; calls={calls}"
+    assert by_table.get("exams", 0) <= 1, f"exams={by_table.get('exams')}; calls={calls}"

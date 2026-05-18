@@ -18,7 +18,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from app.exam_intelligence.coverage import locked_topic_coverage_summary
-from app.exam_intelligence.lookup import resolve_exam_by_id, resolve_exam_by_slug
 from app.exam_intelligence.status import exam_intelligence_status
 from app.study_os.competition_context import competition_context
 from app.study_os.update_context import (
@@ -136,12 +135,6 @@ class _RequestReadCache:
 
     def reads_per_table(self) -> dict[str, int]:
         return dict(self._reads)
-
-
-def _looks_like_uuid(value: Any) -> bool:
-    if not isinstance(value, str):
-        return False
-    return len(value) == 36 and value.count("-") == 4
 
 
 def _safe(call: Callable[[], Any], default: Any = None) -> Any:
@@ -307,21 +300,17 @@ def _load_exam_context(supabase: Any, exam_intel: dict[str, Any]) -> dict[str, A
     ]
 
     family_name = None
-    # Prefer the slug lookup when we have one: `exam_intelligence_status`
-    # already resolved the exam by slug, so the cache deduplicates this
-    # read. Fall back to by-id when only an id is available (uuid path).
-    exam_slug = (exam_intel or {}).get("exam_slug")
-    exam_row = None
-    if exam_slug and not _looks_like_uuid(exam_slug):
-        exam_row = _safe(lambda: resolve_exam_by_slug(supabase, exam_slug), default=None)
-    if exam_row is None:
-        exam_row = _safe(lambda: resolve_exam_by_id(supabase, exam_id), default=None)
-    if exam_row and exam_row.get("exam_family_id"):
+    # Item 2: skip the redundant exam row re-resolution — exam_intel
+    # already includes `exam_family_id` from the same resolve that
+    # exam_intelligence_status performed. Only the family name lookup
+    # remains, and that's a separate exam_families read.
+    exam_family_id = (exam_intel or {}).get("exam_family_id")
+    if exam_family_id:
         fam_rows = _safe(
             lambda: (
                 supabase.table("exam_families")
                 .select("name")
-                .eq("id", exam_row["exam_family_id"])
+                .eq("id", exam_family_id)
                 .limit(1)
                 .execute()
                 .data
@@ -692,20 +681,29 @@ def _load_today_tasks(supabase: Any, plan_id: str) -> list[dict[str, Any]]:
 
 
 # ─── Focus + weekly review summary ────────────────────────────────────────
-def _focus_summary(supabase: Any, user_id: str) -> dict[str, Any]:
+def _fetch_recent_study_sessions(supabase: Any, user_id: str) -> list[dict[str, Any]]:
+    """Read the user's last 7 days of study sessions.
+
+    Single source of truth for both ``_focus_summary`` (7-day rollup)
+    and ``_weekly_review`` (this-week slice): week_start is always at
+    least week_start ≥ 7-days-ago, so the wider window covers both.
+    """
     since_7d = _iso_days_ago(7)
-    sessions = _safe(
+    return _safe(
         lambda: (
             supabase.table("study_sessions")
             .select("duration_mins, started_at, ended_at")
             .eq("user_id", user_id)
             .gte("started_at", since_7d)
-            .limit(200)
+            .limit(500)
             .execute()
             .data
         ),
         default=[],
     ) or []
+
+
+def _focus_summary_from_sessions(sessions: list[dict[str, Any]]) -> dict[str, Any]:
     total_minutes = sum((s.get("duration_mins") or 0) for s in sessions if s.get("ended_at"))
     return {
         "total_minutes_7d": int(total_minutes or 0),
@@ -714,22 +712,39 @@ def _focus_summary(supabase: Any, user_id: str) -> dict[str, Any]:
     }
 
 
+def _focus_summary(supabase: Any, user_id: str) -> dict[str, Any]:
+    """Legacy sync entrypoint — fetch + shape."""
+    return _focus_summary_from_sessions(_fetch_recent_study_sessions(supabase, user_id))
+
+
 def _weekly_review(
-    supabase: Any, user_id: str, plan_id: str | None
+    supabase: Any,
+    user_id: str,
+    plan_id: str | None,
+    *,
+    recent_sessions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     week_start = _week_start_iso()
-    sessions = _safe(
-        lambda: (
-            supabase.table("study_sessions")
-            .select("duration_mins")
-            .eq("user_id", user_id)
-            .gte("started_at", week_start)
-            .limit(500)
-            .execute()
-            .data
-        ),
-        default=[],
-    ) or []
+    if recent_sessions is None:
+        sessions = _safe(
+            lambda: (
+                supabase.table("study_sessions")
+                .select("duration_mins, started_at")
+                .eq("user_id", user_id)
+                .gte("started_at", week_start)
+                .limit(500)
+                .execute()
+                .data
+            ),
+            default=[],
+        ) or []
+    else:
+        # Pre-fetched 7-day session list from `_fetch_recent_study_sessions`
+        # — derive the this-week slice in Python instead of re-querying.
+        sessions = [
+            s for s in recent_sessions
+            if (s.get("started_at") or "") >= week_start
+        ]
     mocks = _safe(
         lambda: (
             supabase.table("mock_tests")
@@ -1087,18 +1102,26 @@ async def build_mission_control_async(supabase: Any, user_id: str) -> dict[str, 
     # Stage 1: five fully independent reads. They touch different tables
     # (aspirant_persona_snapshots, study_plans, study_sessions, profiles
     # / exams / exam_topic_coverage via exam_intel, persona_questions).
-    snapshot, plan, focus, exam_intel, progressive_question = await asyncio.gather(
+    snapshot, plan, recent_sessions, exam_intel, progressive_question = await asyncio.gather(
         asyncio.to_thread(_load_persona_snapshot, supabase, user_id),
         asyncio.to_thread(_load_active_plan, supabase, user_id),
-        asyncio.to_thread(_focus_summary, supabase, user_id),
+        asyncio.to_thread(_fetch_recent_study_sessions, supabase, user_id),
         asyncio.to_thread(_load_exam_intelligence, supabase, user_id),
         asyncio.to_thread(_select_next_question_safe, supabase, user_id),
     )
 
     dimensions = snapshot.get("dimensions") or {}
     study_policy = dict(snapshot.get("study_policy") or {})
+    # Item 2: derive plan_id from `_load_active_plan` only — the old
+    # `_active_plan_id` fallback fired a second study_plans read for the
+    # exact same `(user_id, status=active)` predicate. The full load
+    # already returns the row's id (or None when there is no active plan).
     plan_id = plan.get("id") if plan else None
     weekly_hours_goal = _weekly_hours_goal(snapshot)
+    # Item 2: derive focus from the same session list that feeds the
+    # weekly review — avoids a duplicate study_sessions read whose only
+    # difference was the started_at filter (7-day vs this-week).
+    focus = _focus_summary_from_sessions(recent_sessions)
 
     # Stage 2: reads that depend on stage-1 outputs (plan_id, exam_intel).
     # Each touches a different table; the cache still folds the
@@ -1109,7 +1132,9 @@ async def build_mission_control_async(supabase: Any, user_id: str) -> dict[str, 
 
     today_tasks_raw, review, exam_context, policy_update_ctx = await asyncio.gather(
         asyncio.to_thread(_load_today_tasks, supabase, plan_id) if plan_id else _no_tasks(),
-        asyncio.to_thread(_weekly_review, supabase, user_id, plan_id),
+        asyncio.to_thread(
+            _weekly_review, supabase, user_id, plan_id, recent_sessions=recent_sessions
+        ),
         asyncio.to_thread(_load_exam_context, supabase, exam_intel),
         asyncio.to_thread(_load_policy_update_context, supabase, exam_intel),
     )
