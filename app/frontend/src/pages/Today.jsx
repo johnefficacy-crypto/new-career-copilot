@@ -87,29 +87,27 @@ export default function Today() {
   const [reloadKey, setReloadKey] = useState(0);
   const { run: runToggle } = useApiAction();
 
-  // Home-style "Today's top actions" — reused from the deprecated Dashboard
-  // page. Same useDashboardData hook + ranking, so no new API calls beyond
-  // what Dashboard already issued. Computed up here to keep hook ordering
-  // stable across the loading / fallback / full render paths.
+  // Today's top actions — ranking inputs that come from mission-control
+  // (backlog + 7d hours) and the trimmed dashboard hook (apps,
+  // recruitments). Recommendations are no longer re-fetched: the ranked
+  // list is derived locally from the recruitments + the user's profile.
   const dashApps = useMemo(() => dash.apps || [], [dash.apps]);
   const appByRecruitmentId = useMemo(
     () => Object.fromEntries(dashApps.map((a) => [a.recruitment_id, a])),
     [dashApps],
   );
-  const dashBacklogHigh =
-    (dash.review?.backlog_count || 0) > 3 || (dash.review?.missed_tasks || 0) > 3;
-  const rankedFallbackMatches = useMemo(
+  const mcMetrics = mc?.metrics || {};
+  const dashBacklogHigh = (mcMetrics.backlog_count || 0) > 3;
+  const mcStudyHoursWeek = mcMetrics.hours_studied_7d || 0;
+  const dashTopMatches = useMemo(
     () =>
       rankRecruitments(dash.recruitments?.items || [], auth.user, {
         appByRecruitmentId,
         backlogHigh: dashBacklogHigh,
-        studyHoursWeek: dash.focus?.total_hours_7d || 0,
-      }),
-    [dash.recruitments, auth.user, appByRecruitmentId, dashBacklogHigh, dash.focus],
+        studyHoursWeek: mcStudyHoursWeek,
+      }).slice(0, 6),
+    [dash.recruitments, auth.user, appByRecruitmentId, dashBacklogHigh, mcStudyHoursWeek],
   );
-  const dashTopMatches = (
-    dash.recommendationsAvailable ? dash.recommendations?.items || [] : rankedFallbackMatches
-  ).slice(0, 6);
   const dashInProgressForms = dashApps.filter((a) => a.status === "in_progress").length;
   const dashPendingDocs = dashApps.reduce(
     (n, a) => n + (Array.isArray(a.documents_pending) ? a.documents_pending.length : 0),
