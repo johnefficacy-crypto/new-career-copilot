@@ -6,8 +6,21 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.study_os.mission_control import build_mission_control
+import pytest
+
+from app.study_os.mission_control import (
+    build_mission_control,
+    invalidate_per_exam_intelligence,
+)
 from tests.persona_questions._stub import SBStub
+
+
+@pytest.fixture(autouse=True)
+def _clear_per_exam_intel_cache():
+    """Item 5 process-level TTL cache must not leak across tests."""
+    invalidate_per_exam_intelligence()
+    yield
+    invalidate_per_exam_intelligence()
 
 
 def _today():
@@ -497,3 +510,89 @@ def test_mission_control_does_not_duplicate_study_plans_or_sessions():
     assert by_table.get("study_plans", 0) <= 1, f"study_plans={by_table.get('study_plans')}; calls={calls}"
     assert by_table.get("study_sessions", 0) <= 1, f"study_sessions={by_table.get('study_sessions')}; calls={calls}"
     assert by_table.get("exams", 0) <= 1, f"exams={by_table.get('exams')}; calls={calls}"
+
+
+# ── Item 5: per-exam intelligence TTL cache ───────────────────────────────
+
+
+def test_per_exam_intelligence_cache_serves_second_call_with_zero_reads():
+    # First call builds the cache; second call for the same exam target
+    # must hit ZERO of the tables that feed exam_intelligence_status,
+    # locked_topic_coverage_summary, exam_families, exam_cycles,
+    # competition_context, or policy_update_context.
+    PER_EXAM_TABLES = {
+        "exams",
+        "exam_topic_coverage",
+        "topics",
+        "subjects",
+        "pyq_papers",
+        "pyq_questions",
+        "pyq_question_topic_tags",
+        "syllabus_topic_mentions",
+        "exam_families",
+        "exam_cycles",
+        "exam_competition_metrics",
+        "exam_policy_updates",
+    }
+
+    seed = _seed_full_world()
+
+    def _with_counted_table(sb):
+        counts: dict[str, int] = {}
+        real = sb.table
+
+        def _counted(name):
+            counts[name] = counts.get(name, 0) + 1
+            return real(name)
+
+        sb.table = _counted  # type: ignore[assignment]
+        return counts
+
+    # Warm-up call
+    sb1 = SBStub(seed)
+    counts1 = _with_counted_table(sb1)
+    build_mission_control(sb1, "u-1")
+    warm_table_reads = {t: counts1.get(t, 0) for t in PER_EXAM_TABLES if counts1.get(t)}
+    # Sanity: the first call DID hit at least some of the per-exam tables.
+    assert warm_table_reads, f"warm-up should touch per-exam tables; counts={counts1}"
+
+    # Second call: same exam target → all per-exam tables should be cold.
+    sb2 = SBStub(seed)
+    counts2 = _with_counted_table(sb2)
+    build_mission_control(sb2, "u-1")
+    leaked = {t: counts2.get(t, 0) for t in PER_EXAM_TABLES if counts2.get(t)}
+    assert not leaked, f"per-exam tables leaked through cache on warm call: {leaked}"
+
+
+def test_per_exam_intelligence_cache_is_per_exam_id():
+    # Two different exam targets should NOT share a cache slot.
+    seed = _seed_full_world()
+    seed_b = _seed_full_world()
+    seed_b["profiles"] = [{"id": "u-1", "target_exam": "ibps-po"}]
+    seed_b["exams"] = [
+        {"id": "exam-2", "slug": "ibps-po", "name": "IBPS PO",
+         "exam_type": "recruitment", "is_active": True,
+         "exam_family_id": "fam-2"},
+    ]
+    seed_b["exam_topic_coverage"] = []
+    seed_b["topics"] = []
+    seed_b["subjects"] = []
+    seed_b["exam_families"] = [{"id": "fam-2", "name": "IBPS"}]
+
+    # Populate cache for ssc-cgl
+    build_mission_control(SBStub(seed), "u-1")
+
+    # Second call uses a different exam — must do real reads.
+    sb2 = SBStub(seed_b)
+    counts2: dict[str, int] = {}
+    real = sb2.table
+
+    def _counted(name):
+        counts2[name] = counts2.get(name, 0) + 1
+        return real(name)
+
+    sb2.table = _counted  # type: ignore[assignment]
+    build_mission_control(sb2, "u-1")
+    assert counts2.get("exams", 0) >= 1, (
+        f"different exam_id must miss cache; counts={counts2}"
+    )

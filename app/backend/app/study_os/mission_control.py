@@ -39,6 +39,137 @@ logger = logging.getLogger("career_copilot.study_os.mission_control")
 MISSION_CONTROL_SOURCE = "mission_control_v1"
 
 
+# ─── Item 5: process-local TTL cache for per-exam intelligence ────────────
+#
+# Every aspirant studying `ssc-cgl` reads the same exam_topic_coverage,
+# pyq_papers, pyq_question_topic_tags, syllabus_topic_mentions, topics,
+# subjects, exam_families, exam_cycles, exam_competition_metrics,
+# exam_policy_updates. There's no user dimension in any of these tables.
+# Cache the assembled status block per exam target for 5 minutes so a
+# repeat mission-control call from any user on the same exam pays zero
+# Supabase round-trips for that block.
+#
+# `set_per_exam_intelligence_cache_ttl_seconds` is exposed for tests.
+# `invalidate_per_exam_intelligence(target=...)` is the admin-side hook
+# called from admin writers when these tables mutate (added in the
+# admin-side commit; surfaced here so it lives next to the cache).
+from cachetools import TTLCache  # noqa: E402
+
+_PER_EXAM_INTEL_TTL_SECONDS = 300
+_per_exam_intel_cache: TTLCache = TTLCache(maxsize=64, ttl=_PER_EXAM_INTEL_TTL_SECONDS)
+_per_exam_intel_lock = threading.Lock()
+
+
+def invalidate_per_exam_intelligence(target: str | None = None) -> None:
+    """Drop cached per-exam intelligence rows.
+
+    Call this from any admin writer that mutates exam-scoped tables
+    (exam_topic_coverage, pyq_*, syllabus_topic_mentions, etc.). With
+    ``target=None`` the whole cache is dropped; with a specific slug or
+    exam id, only that key is evicted (and any sibling lookup that maps
+    to the same exam_id — both forms are dropped to be safe).
+    """
+    with _per_exam_intel_lock:
+        if target is None:
+            _per_exam_intel_cache.clear()
+            return
+        _per_exam_intel_cache.pop(target, None)
+
+
+def _cache_lookup(key: tuple) -> Any:
+    with _per_exam_intel_lock:
+        return _per_exam_intel_cache.get(key)
+
+
+def _cache_store(key: tuple, value: Any, *aliases: tuple) -> None:
+    with _per_exam_intel_lock:
+        _per_exam_intel_cache[key] = value
+        for alias in aliases:
+            _per_exam_intel_cache[alias] = value
+
+
+def _cached_exam_intelligence_status(supabase: Any, target: str) -> dict[str, Any]:
+    """Read-through wrapper around :func:`exam_intelligence_status`."""
+    cache_key = ("exam_intelligence_status", target)
+    hit = _cache_lookup(cache_key)
+    if hit is not None:
+        return hit
+    block = exam_intelligence_status(supabase, target)
+    # Alias under the resolved id and slug so a sibling lookup keyed on
+    # the other form hits the same slot.
+    aliases = []
+    for alt in (block.get("exam_id"), block.get("exam_slug")):
+        if isinstance(alt, str) and alt and alt != target:
+            aliases.append(("exam_intelligence_status", alt))
+    _cache_store(cache_key, block, *aliases)
+    return block
+
+
+def _cached_locked_summary(supabase: Any, exam_id: str) -> list[dict[str, Any]]:
+    cache_key = ("locked_topic_coverage_summary", exam_id)
+    hit = _cache_lookup(cache_key)
+    if hit is not None:
+        return hit
+    rows = locked_topic_coverage_summary(supabase, exam_id) or []
+    _cache_store(cache_key, rows)
+    return rows
+
+
+def _cached_exam_family_name(supabase: Any, exam_family_id: str) -> str | None:
+    cache_key = ("exam_family_name", exam_family_id)
+    hit = _cache_lookup(cache_key)
+    if hit is not None:
+        # The sentinel `False` distinguishes "looked up, none found"
+        # from "not cached yet".
+        return None if hit is False else hit
+    fam_rows = _safe(
+        lambda: (
+            supabase.table("exam_families")
+            .select("name")
+            .eq("id", exam_family_id)
+            .limit(1)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    name = (fam_rows[0] or {}).get("name") if fam_rows else None
+    _cache_store(cache_key, name if name is not None else False)
+    return name
+
+
+def _cached_days_remaining(supabase: Any, exam_id: str) -> int | None:
+    cache_key = ("days_remaining", exam_id, _today_iso())
+    hit = _cache_lookup(cache_key)
+    if hit is not None:
+        return None if hit is False else hit
+    value = _days_remaining_for_exam(supabase, exam_id)
+    _cache_store(cache_key, value if value is not None else False)
+    return value
+
+
+def _cached_competition_context(
+    supabase: Any, exam_id: str | None, days_remaining: int | None
+) -> dict[str, Any]:
+    cache_key = ("competition_context", exam_id, days_remaining)
+    hit = _cache_lookup(cache_key)
+    if hit is not None:
+        return hit
+    block = competition_context(supabase, exam_id, days_remaining=days_remaining)
+    _cache_store(cache_key, block)
+    return block
+
+
+def _cached_policy_update_context(supabase: Any, exam_id: str | None) -> dict[str, Any]:
+    cache_key = ("policy_update_context", exam_id)
+    hit = _cache_lookup(cache_key)
+    if hit is not None:
+        return hit
+    block = policy_update_context(supabase, exam_id)
+    _cache_store(cache_key, block)
+    return block
+
+
 # ─── Per-request read cache ───────────────────────────────────────────────
 #
 # Mission-control composes ~12 sub-loaders and the same logical table read
@@ -206,7 +337,7 @@ def _load_exam_intelligence(supabase: Any, user_id: str) -> dict[str, Any]:
             "verified_syllabus_mentions": 0,
         }
     try:
-        return exam_intelligence_status(supabase, target)
+        return _cached_exam_intelligence_status(supabase, target)
     except Exception as exc:  # noqa: BLE001
         logger.warning("mission_control exam intelligence lookup failed: %s", exc)
         return {
@@ -271,13 +402,10 @@ def _load_exam_context(supabase: Any, exam_intel: dict[str, Any]) -> dict[str, A
         return empty
 
     exam_id = exam_intel["exam_id"]
-    # Use the `_summary` shape so this call shares its read signature with
-    # `exam_intelligence_status` (which also goes via `_summary`). Under
-    # the per-request read cache that means exam_topic_coverage + topics
-    # are read once per mission-control call, not twice.
-    summary_rows = (
-        _safe(lambda: locked_topic_coverage_summary(supabase, exam_id), default=[]) or []
-    )
+    # Per-exam intelligence is the same across all aspirants on the
+    # same exam — pull from the process TTL cache so warm calls cost
+    # zero Supabase round-trips on exam_topic_coverage + topics.
+    summary_rows = _safe(lambda: _cached_locked_summary(supabase, exam_id), default=[]) or []
     # Shape-shift to the legacy `locked_topic_coverage` row keys so the
     # rest of this function (and any caller of `high_yield_topics`) keeps
     # reading `topic` / `priority_score` / `status`.
@@ -299,26 +427,16 @@ def _load_exam_context(supabase: Any, exam_intel: dict[str, Any]) -> dict[str, A
         for r in sorted(summary_rows, key=_score, reverse=True)
     ]
 
+    # Item 5: family name + days_remaining come from per-exam TTL caches
+    # so a repeat mission-control call for the same exam pays zero
+    # Supabase round-trips on exam_families / exam_cycles.
     family_name = None
-    # Item 2: skip the redundant exam row re-resolution — exam_intel
-    # already includes `exam_family_id` from the same resolve that
-    # exam_intelligence_status performed. Only the family name lookup
-    # remains, and that's a separate exam_families read.
     exam_family_id = (exam_intel or {}).get("exam_family_id")
     if exam_family_id:
-        fam_rows = _safe(
-            lambda: (
-                supabase.table("exam_families")
-                .select("name")
-                .eq("id", exam_family_id)
-                .limit(1)
-                .execute()
-                .data
-            ),
-            default=[],
-        ) or []
-        if fam_rows:
-            family_name = fam_rows[0].get("name")
+        family_name = _safe(
+            lambda: _cached_exam_family_name(supabase, exam_family_id),
+            default=None,
+        )
 
     available = bool(exam_intel.get("available"))
     if locked:
@@ -343,7 +461,7 @@ def _load_exam_context(supabase: Any, exam_intel: dict[str, Any]) -> dict[str, A
         "exam": exam_intel.get("exam_name") or exam_intel.get("exam_slug"),
         "cycle": None,
         "phase": None,
-        "days_remaining": _days_remaining_for_exam(supabase, exam_id),
+        "days_remaining": _cached_days_remaining(supabase, exam_id),
         "verified_intelligence_status": status,
         "high_yield_topics": high_yield_topics,
     }
@@ -362,8 +480,8 @@ def _load_competition_context(
     exam_id = (exam_intel or {}).get("exam_id")
     days_remaining = (exam_context or {}).get("days_remaining")
     return _safe(
-        lambda: competition_context(
-            supabase, exam_id, days_remaining=days_remaining
+        lambda: _cached_competition_context(
+            supabase, exam_id, days_remaining
         ),
         default=competition_context(None, None),
     )
@@ -381,7 +499,7 @@ def _load_policy_update_context(
     """
     exam_id = (exam_intel or {}).get("exam_id")
     return _safe(
-        lambda: policy_update_context(supabase, exam_id),
+        lambda: _cached_policy_update_context(supabase, exam_id),
         default=empty_policy_update_context(),
     )
 

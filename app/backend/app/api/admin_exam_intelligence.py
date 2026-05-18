@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from app.core.auth import require_permission
 from app.db.supabase_client import get_supabase_admin
 from app.exam_intelligence.option_normalize import option_hash, question_hash
+from app.study_os.mission_control import invalidate_per_exam_intelligence
 from app.study_os.plan_impact import compute_plan_impact, record_plan_impact_decision
 
 logger = logging.getLogger("career_copilot.api.admin_exam_intelligence")
@@ -548,6 +549,9 @@ def review_topic_coverage(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Coverage row not found")
+    # Invalidate the per-exam intelligence cache so the next mission-
+    # control call rebuilds with the updated review status.
+    invalidate_per_exam_intelligence()
     return updated[0]
 
 
@@ -594,6 +598,7 @@ def edit_topic_coverage(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Coverage row not found")
+    invalidate_per_exam_intelligence()
     return updated[0]
 
 
@@ -735,6 +740,7 @@ def review_competition_metric(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Competition metric not found")
+    invalidate_per_exam_intelligence()
     return updated[0]
 
 
@@ -842,6 +848,7 @@ def review_policy_update(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Policy update not found")
+    invalidate_per_exam_intelligence()
     return updated[0]
 
 
