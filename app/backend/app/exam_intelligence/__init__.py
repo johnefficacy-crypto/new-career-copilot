@@ -9,7 +9,7 @@ operator has explicitly verified it.
 Public surface:
     resolve_exam_by_slug(supabase, slug)
     list_active_exams(supabase, limit=100)
-    verified_topic_coverage(supabase, exam_id)
+    locked_topic_coverage_summary(supabase, exam_id)
     verified_pyq_topic_counts(supabase, exam_id)
     exam_intelligence_status(supabase, exam_id_or_slug)
     exam_intelligence_summary(supabase, exam_id_or_slug)
@@ -20,8 +20,9 @@ from app.exam_intelligence.lookup import (  # noqa: F401
     resolve_exam_by_slug,
 )
 from app.exam_intelligence.coverage import (  # noqa: F401
+    locked_topic_coverage,
+    locked_topic_coverage_summary,
     verified_pyq_topic_counts,
-    verified_topic_coverage,
 )
 from app.exam_intelligence.status import (  # noqa: F401
     exam_intelligence_status,

@@ -247,10 +247,14 @@ def resolve_entry(
     ``message``. It does NOT create a session — :mod:`session` does that.
     """
     normalized_intent = normalize_intent(intent)
-    registry = load_field_registry(supabase)
+    # candidate_field_registry is only consumed by the CTA path's
+    # recruitment_question_requirements load. Skip the read on the cold
+    # path so /resolve doesn't pay for a 500-row table fetch it ignores.
+    registry: dict[str, dict[str, Any]] | None = None
 
     # ── CTA path: a recruitment slug is present ──────────────────────────
     if recruitment_slug:
+        registry = load_field_registry(supabase)
         recruitment = resolve_recruitment(supabase, recruitment_slug)
         if not recruitment:
             return {

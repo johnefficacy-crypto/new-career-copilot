@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertCircle, ArrowRight, CheckCircle2, Loader2, Sparkles } from "lucide-react";
@@ -124,14 +124,27 @@ function LoginCta({ from, source }) {
 function CompletionScreen({ data, isAuthed, onComplete }) {
   const [result, setResult] = useState(null);
   const [completing, setCompleting] = useState(true);
+  // Submit-lock: ignore re-fires of onComplete (e.g. callback identity
+  // change in the parent hook). Server-side is idempotent, but this also
+  // avoids a wasted round-trip and any UI flicker.
+  const submitted = useRef(false);
 
   useEffect(() => {
+    if (submitted.current) return;
+    submitted.current = true;
     let active = true;
     (async () => {
-      const out = await onComplete();
-      if (active) {
-        setResult(out);
-        setCompleting(false);
+      try {
+        const out = await onComplete();
+        if (active) {
+          setResult(out);
+          setCompleting(false);
+        }
+      } catch (e) {
+        if (active) {
+          setCompleting(false);
+          submitted.current = false; // allow retry on error
+        }
       }
     })();
     return () => {
