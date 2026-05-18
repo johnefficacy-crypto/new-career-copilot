@@ -24,6 +24,14 @@ This wiki should be replaced by the real generated Graphify wiki when `graphify 
   `document_pages` table, sync `POST /library/items/{id}/process-text`,
   auto-enqueue on PDF complete-upload, transactional page swap via
   `replace_document_pages()` RPC. Migration `113`.
+  - **Hot-fix (post-#328):** removed a duplicate `process-text` /
+    `pages` route block and a dead `TextExtractError` import that the
+    PR2 review-round commit had appended after `archive_item`. Routes
+    are now declared once each in the normal API section and still map
+    `ExtractConflict → 409`, `_ExtractError → 400 {code, message}`.
+    Added `tests/test_library_routes.py` (route count + OpenAPI
+    sanity) to pin the regression. No behaviour change, no migration
+    change, no extraction-service change.
 
 ## Main Knowledge Areas
 
