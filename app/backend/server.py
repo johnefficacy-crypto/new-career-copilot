@@ -57,6 +57,7 @@ from app.api.admin_verification_reports import router as admin_verification_repo
 from app.api.evidence import router as evidence_router
 from app.api.flashcards import router as flashcards_router
 from app.api.mistakes import router as mistakes_router
+from app.api.library import router as library_router
 from app.api.notes import router as notes_router
 from app.api.reports import router as reports_router
 from app.api.revision import router as revision_router
@@ -245,6 +246,7 @@ api.include_router(canonical_router)  # canonical Supabase routes — must prece
 api.include_router(ai_router)
 api.include_router(admin_overview_router)
 # Phase-2 user surfaces: notes, flashcards, mistakes, revision, reports
+api.include_router(library_router)  # PR1 document-asset foundation (user uploads)
 api.include_router(notes_router)
 api.include_router(flashcards_router)
 api.include_router(mistakes_router)
