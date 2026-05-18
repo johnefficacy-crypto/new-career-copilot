@@ -619,3 +619,123 @@ def archive_item(item_id: str, user: dict = Depends(get_current_user)) -> dict:
     if not updated:
         raise HTTPException(status_code=404, detail="Document not found")
     return {"ok": True, "id": item_id, "status": "archived"}
+
+
+# ── PR2: text extraction ──────────────────────────────────────────────────
+
+
+@router.post("/items/{item_id}/process-text")
+def process_text(item_id: str, user: dict = Depends(get_current_user)) -> dict:
+    """Run synchronous text extraction over a PDF the caller owns.
+
+    404 — not owned; 409 — archived or a job is already running; 400 — id
+    invalid or document is not a PDF. PR1-era uploads with no existing job
+    are handled by lazily enqueuing then claiming.
+    """
+    if not _is_uuid(item_id):
+        raise HTTPException(status_code=400, detail="Invalid id")
+
+    sb = get_supabase_admin()
+    rows = (
+        sb.table("document_assets")
+        .select("*")
+        .eq("id", item_id)
+        .eq("owner_user_id", user["id"])
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Document not found")
+    document = rows[0]
+
+    if document.get("status") == "archived":
+        raise HTTPException(status_code=409, detail="Document is archived")
+    if document.get("mime_type") != "application/pdf":
+        raise HTTPException(
+            status_code=400, detail="Text extraction only supports application/pdf"
+        )
+
+    from app.library.text_extract import (
+        TextExtractError,
+        run_text_extract_for_document,
+    )
+
+    try:
+        result = run_text_extract_for_document(sb, item_id, user_id=user["id"])
+    except TextExtractError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    job = result["job"]
+    doc = result["document"]
+    return {
+        "job": {
+            "id": job.get("id"),
+            "status": job.get("status"),
+            "job_type": job.get("job_type"),
+            "attempt_count": job.get("attempt_count"),
+            "metrics": job.get("metrics") or {},
+            "error_code": job.get("error_code"),
+            "error_message": job.get("error_message"),
+        },
+        "document": {
+            "id": doc.get("id"),
+            "status": doc.get("status"),
+            "page_count": doc.get("page_count"),
+        },
+    }
+
+
+@router.get("/items/{item_id}/pages")
+def list_pages(
+    item_id: str,
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Return extracted pages for a document the caller owns.
+
+    Pages are ordered by `page_number asc`. `text_content` is included
+    inline; a future flag (`include_text=false`, PR3) will trim payloads
+    for clients that just want page metadata.
+    """
+    if not _is_uuid(item_id):
+        raise HTTPException(status_code=400, detail="Invalid id")
+    sb = get_supabase_admin()
+    owned = (
+        sb.table("document_assets")
+        .select("id")
+        .eq("id", item_id)
+        .eq("owner_user_id", user["id"])
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not owned:
+        raise HTTPException(status_code=404, detail="Document not found")
+    rows = (
+        sb.table("document_pages")
+        .select("*")
+        .eq("document_id", item_id)
+        .order("page_number", desc=False)
+        .range(offset, offset + limit - 1)
+        .execute()
+        .data
+        or []
+    )
+    shaped = [
+        {
+            "id": r.get("id"),
+            "page_number": r.get("page_number"),
+            "text_content": r.get("text_content") or "",
+            "char_count": r.get("char_count") or 0,
+            "extraction_status": r.get("extraction_status"),
+            "parser_engine": r.get("parser_engine"),
+            "parser_version": r.get("parser_version"),
+            "metadata": r.get("metadata") or {},
+        }
+        for r in rows
+    ]
+    return {"pages": shaped, "count": len(shaped), "limit": limit, "offset": offset}

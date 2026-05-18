@@ -347,8 +347,17 @@ def record_answer(
     answer_value: Any,
     normalized_value: Any,
     skipped: bool = False,
+    defer_session_patch: bool = False,
 ) -> dict[str, Any]:
-    """Append to the answer log and advance the session's asked/count state."""
+    """Append to the answer log and advance the session's asked/count state.
+
+    When ``defer_session_patch`` is True the session row is updated
+    in-memory only — the caller is responsible for issuing a single
+    consolidated UPDATE that folds in the new ``asked_question_keys`` /
+    ``question_count`` (and any other fields, e.g. ``intent``,
+    ``current_question_key``). This collapses 2–3 round-trips per answer
+    into one.
+    """
     session_id = session.get("id")
     payload = {
         "session_id": session_id,
@@ -375,15 +384,16 @@ def record_answer(
     if question_key not in asked:
         asked.append(question_key)
         new_count = int(session.get("question_count") or 0) + 1
-        update_session(
-            supabase,
-            session_id,
-            {
-                "asked_question_keys": asked,
-                "question_count": new_count,
-                "updated_at": _now_iso(),
-            },
-        )
+        if not defer_session_patch:
+            update_session(
+                supabase,
+                session_id,
+                {
+                    "asked_question_keys": asked,
+                    "question_count": new_count,
+                    "updated_at": _now_iso(),
+                },
+            )
         session["asked_question_keys"] = asked
         session["question_count"] = new_count
     return saved
