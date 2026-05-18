@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Turnstile } from "@marsidev/react-turnstile";
+import TurnstileWidget from "./TurnstileWidget";
 import { useAuth } from "../lib/authContext";
 
 // Anonymous sign-in entry point. Renders an (optionally invisible) Cloudflare
@@ -140,13 +140,13 @@ export default function StartFreeButton({
         {!loading && trailing}
       </button>
       {captchaRequired ? (
-        <Turnstile
+        <TurnstileWidget
           ref={turnstileRef}
           siteKey={siteKey}
           onSuccess={handleSuccess}
           onError={handleError}
           onExpire={handleExpire}
-          options={{ size: "invisible" }}
+          size="invisible"
         />
       ) : null}
       {error ? (
