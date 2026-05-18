@@ -111,7 +111,7 @@ export function useProfileOnboarding() {
     user,
     submit,
     skipAll,
-    reload: fetchNext,
+    reload: bootstrap,
     isAnonymous: Boolean(user?.is_anonymous || state.profile?.is_anonymous),
   };
 }

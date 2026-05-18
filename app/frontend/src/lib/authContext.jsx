@@ -133,13 +133,26 @@ export function AuthProvider({ children }) {
   // account automatically. No-op when a session already exists.
   const signInAnonymously = useCallback(async ({ captchaToken } = {}) => {
     const { data: existing } = await supabase.auth.getSession();
-    if (existing?.session) return { ok: true, existing: true };
+    if (existing?.session?.access_token) {
+      return { ok: true, existing: true };
+    }
     const options = captchaToken ? { captchaToken } : undefined;
     const { data, error } = await supabase.auth.signInAnonymously(
       options ? { options } : undefined
     );
     if (error) throw new Error(error.message || "Unable to start anonymous session");
-    if (data?.session) await hydrate(data.session);
+    let session = data?.session;
+    if (!session?.access_token) {
+      // Supabase-js sometimes resolves before the session is persisted to
+      // storage; re-read so callers can rely on an Authorization header
+      // being available immediately after this resolves.
+      const { data: reread } = await supabase.auth.getSession();
+      session = reread?.session;
+    }
+    if (!session?.access_token) {
+      throw new Error("Anonymous session was not created");
+    }
+    await hydrate(session);
     return { ok: true, existing: false };
   }, [hydrate]);
 

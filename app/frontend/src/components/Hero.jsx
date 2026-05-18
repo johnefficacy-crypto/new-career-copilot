@@ -1,7 +1,7 @@
 import React from "react";
-import { Link } from "react-router-dom";
 import { motion, useScroll, useTransform } from "framer-motion";
 import { ArrowRight, CheckCircle2, Clock, Sparkles, ShieldCheck, Zap } from "lucide-react";
+import StartFreeButton from "./StartFreeButton";
 
 // --------- animated prompt typing ----------
 const PROMPT_LINES = [
@@ -222,14 +222,12 @@ export default function Hero() {
               transition={{ duration: 0.8, delay: 0.4 }}
               className="mt-9 flex flex-col sm:flex-row gap-3"
             >
-              <Link
-                to="/app"
-                data-testid="hero-start-button"
-                className="btn-shine group inline-flex items-center justify-center gap-2 bg-foreground text-background rounded-full px-6 py-3.5 text-[15px] font-semibold hover:opacity-90 transition shadow-xl shadow-foreground/10"
-              >
-                Check my eligibility — free
-                <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition" />
-              </Link>
+              <StartFreeButton
+                testId="hero-start-button"
+                label="Check my eligibility — free"
+                className="btn-shine group inline-flex items-center justify-center gap-2 bg-foreground text-background rounded-full px-6 py-3.5 text-[15px] font-semibold hover:opacity-90 transition shadow-xl shadow-foreground/10 disabled:opacity-60"
+                trailing={<ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition" />}
+              />
               <a
                 href="#playground"
                 data-testid="hero-try-demo"
