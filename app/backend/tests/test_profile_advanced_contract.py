@@ -31,7 +31,7 @@ class _Q:
         return _Exec(rows)
 class _SB:
     def __init__(self):
-        self.db={"profiles":[{"id":"u1","full_name":"U","date_of_birth":"2000-01-01","category":"general","domicile_state":"x","phone":"1","nationality":"Indian"}],"aspirant_certifications":[],"aspirant_experience":[],"aspirant_exam_attempts":[],"eligibility_recompute_queue":[]}
+        self.db={"profiles":[{"id":"u1","full_name":"U","date_of_birth":"2000-01-01","category":"general","domicile_state":"x","phone":"1","nationality":"Indian"}],"aspirant_certifications":[],"aspirant_experience":[],"aspirant_exam_attempts":[],"eligibility_recompute_queue":[],"exams":[{"id":"00000000-0000-0000-0000-0000000000e1","slug":"e1","name":"Exam One"}]}
     def table(self,name): return _Q(name,self.db)
     def rpc(self, fn, params):
         # `enqueue_eligibility_recompute` (PR #132) calls supabase.rpc first.
@@ -69,10 +69,16 @@ def test_experience_crud_validation(monkeypatch):
 
 def test_exam_attempt_crud_and_validation(monkeypatch):
     sb=_SB(); monkeypatch.setattr(canonical,"get_supabase_admin",lambda:sb)
+    # Inbound `exam_id` is a slug; backend resolves it to exams.id and
+    # writes the canonical `exam_ref_id` (legacy `exam_id` column is no
+    # longer populated by this path).
     item=asyncio.run(canonical.create_exam_attempt(canonical.ExamAttemptIn(exam_id="e1",attempts_used=1),_u()))["item"]
     aid=item["id"]
+    assert sb.db["aspirant_exam_attempts"][0]["exam_ref_id"]=="00000000-0000-0000-0000-0000000000e1"
     asyncio.run(canonical.update_exam_attempt(aid, canonical.ExamAttemptIn(exam_id="e1",attempts_used=2), _u()))
     assert sb.db["aspirant_exam_attempts"][0]["attempts_used"]==2
+    # Unknown slug → 422, not 500.
+    with pytest.raises(Exception): asyncio.run(canonical.create_exam_attempt(canonical.ExamAttemptIn(exam_id="not-an-exam",attempts_used=1),_u()))
     asyncio.run(canonical.delete_exam_attempt(aid,_u()))
     assert sb.db["aspirant_exam_attempts"]==[]
     assert len(sb.db["eligibility_recompute_queue"]) == 1

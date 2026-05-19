@@ -120,6 +120,25 @@ def _question_by_key(
     return None
 
 
+def _progress_for(
+    bank: list[dict[str, Any]],
+    seed: dict[str, Any],
+    *,
+    complete: bool,
+) -> dict[str, Any]:
+    """Return ``{position, total, complete}`` for the question card.
+
+    ``total`` is the number of active bank questions; ``position`` is how
+    many of them the user has already touched (answered or skipped).
+    Frontend renders this as "N of M" + a percentage bar.
+    """
+    bank_keys = {q.get("question_key") for q in bank if q.get("question_key")}
+    seed_keys = _persona_seed_keys(seed)
+    position = len(bank_keys & seed_keys)
+    total = len(bank_keys)
+    return {"position": position, "total": total, "complete": bool(complete)}
+
+
 def _next_question(
     bank: list[dict[str, Any]],
     seed: dict[str, Any],
@@ -274,9 +293,11 @@ async def onboarding_next(
     supabase = get_supabase_admin()
     profile = _load_profile(supabase, user["id"])
     if profile.get("onboarding_completed"):
+        bank = list_active_questions(supabase)
         return {
             "next_question": None,
             "onboarding_completed": True,
+            "progress": _progress_for(bank, profile.get("persona_seed") or {}, complete=True),
             "profile": {
                 "id": user["id"],
                 "is_anonymous": bool(user.get("is_anonymous")),
@@ -299,6 +320,7 @@ async def onboarding_next(
         return {
             "next_question": None,
             "onboarding_completed": True,
+            "progress": _progress_for(bank, seed, complete=True),
             "profile": {
                 "id": user["id"],
                 "is_anonymous": bool(user.get("is_anonymous")),
@@ -310,6 +332,7 @@ async def onboarding_next(
     return {
         "next_question": _shape_question(nxt),
         "onboarding_completed": False,
+        "progress": _progress_for(bank, seed, complete=False),
         "profile": {
             "id": user["id"],
             "is_anonymous": bool(user.get("is_anonymous")),
@@ -398,6 +421,7 @@ async def onboarding_answer(
         return {
             "next_question": None,
             "onboarding_completed": True,
+            "progress": _progress_for(bank, new_seed, complete=True),
             "profile": {
                 "id": user_id,
                 "is_anonymous": bool(user.get("is_anonymous")),
@@ -416,6 +440,7 @@ async def onboarding_answer(
     return {
         "next_question": _shape_question(nxt),
         "onboarding_completed": False,
+        "progress": _progress_for(bank, new_seed, complete=False),
         "profile": {
             "id": user_id,
             "is_anonymous": bool(user.get("is_anonymous")),

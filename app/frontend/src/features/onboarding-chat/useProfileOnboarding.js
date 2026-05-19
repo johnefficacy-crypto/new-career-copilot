@@ -17,6 +17,7 @@ export function useProfileOnboarding() {
     status: "loading",
     profile: null,
     question: null,
+    progress: null,
     completed: false,
     saving: false,
     error: null,
@@ -40,6 +41,7 @@ export function useProfileOnboarding() {
       status: "ready",
       profile: resp?.profile || null,
       question: resp?.next_question || null,
+      progress: resp?.progress || null,
       completed: Boolean(resp?.onboarding_completed),
       error: null,
     });
@@ -85,6 +87,7 @@ export function useProfileOnboarding() {
         patch({
           saving: false,
           question: resp?.next_question || null,
+          progress: resp?.progress || null,
           completed: Boolean(resp?.onboarding_completed),
           profile: resp?.profile || null,
         });

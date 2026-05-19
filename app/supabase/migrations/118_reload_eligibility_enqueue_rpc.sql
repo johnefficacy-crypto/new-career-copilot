@@ -1,0 +1,13 @@
+-- 118_reload_eligibility_enqueue_rpc.sql
+--
+-- Migration 041 created `public.enqueue_eligibility_recompute`, but did
+-- not emit a `notify pgrst, 'reload schema'` afterwards. On deploys that
+-- applied 041 against a long-lived PostgREST instance, the schema cache
+-- never picked the function up and every `supabase.rpc(...)` call from
+-- `app.eligibility.recompute_queue` falls back to the legacy Python
+-- path (PGRST202 "Could not find the function ... in the schema cache").
+--
+-- This migration is a no-op in DDL terms — it just nudges PostgREST to
+-- refresh. Applying it once on each environment restores the atomic
+-- enqueue contract owned by 041.
+notify pgrst, 'reload schema';

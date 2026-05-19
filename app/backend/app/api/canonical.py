@@ -944,10 +944,48 @@ async def list_exam_attempts(user: dict = Depends(get_current_user)):
     return {"items": rows}
 
 
+def _resolve_exam_ref_id(supabase: Client, raw: Any) -> str | None:
+    """Resolve an inbound exam identifier (slug or uuid) to ``exams.id``.
+
+    The Profile UI used to write whatever free-form text the user typed
+    into the legacy ``aspirant_exam_attempts.exam_id`` column. The
+    eligibility engine matches on ``exam_ref_id`` (uuid FK to
+    ``exams.id``), so unresolved text never participated and DB inserts
+    that looked like UUIDs but weren't crashed with 500s. Resolve up
+    front: accept either a UUID we can confirm in ``exams`` or a slug
+    we can look up, otherwise return ``None`` so the caller can 422.
+    """
+    if not isinstance(raw, str):
+        return None
+    candidate = raw.strip()
+    if not candidate:
+        return None
+    try:
+        UUID(candidate)
+    except (ValueError, AttributeError, TypeError):
+        rows = _safe(
+            lambda: supabase.table("exams").select("id").eq("slug", candidate).limit(1).execute().data,
+            default=[],
+        ) or []
+        return rows[0]["id"] if rows else None
+    rows = _safe(
+        lambda: supabase.table("exams").select("id").eq("id", candidate).limit(1).execute().data,
+        default=[],
+    ) or []
+    return rows[0]["id"] if rows else None
+
+
 @router_profile.post("/exam-attempts")
 async def create_exam_attempt(body: ExamAttemptIn, user: dict = Depends(get_current_user)):
     sb = get_supabase_admin()
-    payload = {**body.model_dump(), "user_id": user["id"]}
+    exam_ref_id = _resolve_exam_ref_id(sb, body.exam_id)
+    if not exam_ref_id:
+        raise HTTPException(status_code=422, detail=f"Unknown exam: {body.exam_id!r}")
+    payload = {
+        "user_id": user["id"],
+        "exam_ref_id": exam_ref_id,
+        "attempts_used": body.attempts_used,
+    }
     row = sb.table("aspirant_exam_attempts").insert(payload).execute().data
     enqueue_eligibility_recompute(sb, user["id"], "profile.attempt_created")
     return {"item": (row or [payload])[0]}
@@ -959,7 +997,11 @@ async def update_exam_attempt(aid: str, body: ExamAttemptIn, user: dict = Depend
     existing = _safe(lambda: sb.table("aspirant_exam_attempts").select("id").eq("id", aid).eq("user_id", user["id"]).limit(1).execute().data, default=[]) or []
     if not existing:
         raise HTTPException(status_code=404, detail="Exam attempt not found")
-    row = sb.table("aspirant_exam_attempts").update(body.model_dump()).eq("id", aid).eq("user_id", user["id"]).execute().data
+    exam_ref_id = _resolve_exam_ref_id(sb, body.exam_id)
+    if not exam_ref_id:
+        raise HTTPException(status_code=422, detail=f"Unknown exam: {body.exam_id!r}")
+    update_payload = {"exam_ref_id": exam_ref_id, "attempts_used": body.attempts_used}
+    row = sb.table("aspirant_exam_attempts").update(update_payload).eq("id", aid).eq("user_id", user["id"]).execute().data
     enqueue_eligibility_recompute(sb, user["id"], "profile.attempt_updated")
     return {"item": (row or [{}])[0]}
 
