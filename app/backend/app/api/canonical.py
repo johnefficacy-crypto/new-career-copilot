@@ -105,6 +105,9 @@ def _shape_recruitment(row: dict[str, Any], saved_ids: set[str]) -> dict[str, An
         },
         "vacancies": row.get("total_vacancies"),
         "notification_url": row.get("official_notification_url"),
+        # Surface the parent exam id on list rows so the frontend can map an
+        # exam slug to its recruitment without a second per-row request.
+        "exam_id": row.get("exam_id"),
         "saved": row.get("id") in saved_ids,
     }
 
@@ -212,9 +215,9 @@ async def saved_recruitments(user: dict = Depends(get_current_user)):
     supabase = get_supabase_admin()
     saved_rows = _safe(
         lambda: supabase.table("tracked_recruitments")
-        .select("recruitment_id, tracked_at")
+        .select("recruitment_id, created_at")
         .eq("user_id", user["id"])
-        .order("tracked_at", desc=True)
+        .order("created_at", desc=True)
         .execute()
         .data,
         default=[],
@@ -259,8 +262,11 @@ async def toggle_save(rec_ref: str, user: dict = Depends(get_current_user)):
             "recruitment_id", rec_id
         ).execute()
         return {"saved": False}
+    # `tracked_recruitments.created_at` has `DEFAULT now()` (migration 002)
+    # and the unique index `uq_tracked_recruitments_user_recruitment`
+    # (migration 005) keeps a concurrent double-save from inserting twice.
     supabase.table("tracked_recruitments").insert(
-        {"user_id": user["id"], "recruitment_id": rec_id, "tracked_at": _now_iso()}
+        {"user_id": user["id"], "recruitment_id": rec_id}
     ).execute()
     return {"saved": True}
 
