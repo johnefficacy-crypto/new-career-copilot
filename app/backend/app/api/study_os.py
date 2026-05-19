@@ -95,6 +95,8 @@ async def list_study_exams(
         .data
         or []
     )
+    if not rows:
+        logger.warning("study/exams: public.exams has zero active rows")
     out = []
     for r in rows:
         cov = (
