@@ -134,9 +134,14 @@ export default function Today() {
         if (!cancelled) setLoading(false);
       }
     }
-    load();
+    // Defer to the next event loop tick so the dashboard shell paints
+    // with the phase-1 recruitments/applications data first; the heavy
+    // mission-control compose then runs in the background and replaces
+    // the skeleton in the mc-dependent sections when it lands.
+    const handle = setTimeout(load, 0);
     return () => {
       cancelled = true;
+      clearTimeout(handle);
     };
   }, [reloadKey]);
 
@@ -170,34 +175,30 @@ export default function Today() {
     });
   }
 
-  if (loading) {
-    return <MissionControlSkeleton />;
-  }
+  // Mission-control failed AND nothing to fall back on → show error.
+  // Phase 1 data is still useful, so we keep the page shell; only the
+  // mc-dependent regions disappear.
+  const mcFailed = !mc && !loading && Boolean(error);
 
-  // ── Today (full) path ──────────────────────────────────────────────────
-  if (!mc) {
-    return (
-      <div className="space-y-6" data-testid="today-page">
-        <div className="rounded-xl bg-clay-50 text-clay-800 text-xs px-3 py-2">
-          {error || "Could not load today's plan."}
-        </div>
-      </div>
-    );
-  }
+  // While mission-control is in flight or failed, drive the page off
+  // safe defaults so the dashboard shell can render the phase-1
+  // sections (top actions, readiness, eligible exams) without waiting.
+  const mcData = mc || EMPTY_MC;
+  const mcLoading = loading;
 
-  const tasks = mc.today_tasks || [];
-  const metrics = mc.metrics || {};
-  const policy = mc.study_policy || {};
-  const plan = mc.plan;
-  const truth = mc.truth_panel;
-  const engine = mc.engine_trace || [];
-  const nextBest = mc.next_best_action;
-  const safeExplanation = mc.user_context?.safe_user_explanation || [];
-  const planReasoning = mc.plan_reasoning || [];
-  const examContext = mc.exam_context;
-  const competitionContext = mc.competition_context;
-  const updateContext = mc.update_context || {};
-  const meta = mc.meta || {};
+  const tasks = mcData.today_tasks || [];
+  const metrics = mcData.metrics || {};
+  const policy = mcData.study_policy || {};
+  const plan = mcData.plan;
+  const truth = mcData.truth_panel;
+  const engine = mcData.engine_trace || [];
+  const nextBest = mcData.next_best_action;
+  const safeExplanation = mcData.user_context?.safe_user_explanation || [];
+  const planReasoning = mcData.plan_reasoning || [];
+  const examContext = mcData.exam_context;
+  const competitionContext = mcData.competition_context;
+  const updateContext = mcData.update_context || {};
+  const meta = mcData.meta || {};
 
   const done = tasks.filter((t) => t.done || t.status === "completed").length;
   const pct = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
@@ -213,9 +214,9 @@ export default function Today() {
 
   return (
     <div className="space-y-6" data-testid="today-page">
-      {error ? (
+      {mcFailed ? (
         <div className="rounded-xl bg-clay-50 text-clay-800 text-xs px-3 py-2">
-          {error}
+          {error || "Could not load today's plan."}
         </div>
       ) : null}
 
@@ -267,8 +268,16 @@ export default function Today() {
       <ReadinessCards />
 
       {/* 3. Exam eligibility — baseline rules per exam against the saved profile */}
-      <EligibleExamsCard variant="card" initialData={mc.eligibility_summary || null} />
+      <EligibleExamsCard variant="card" initialData={mcData.eligibility_summary || null} />
 
+      {/* Mission-control loading state. Until /api/study/mission-control
+          resolves we cannot render real metrics + drawers, but the
+          phase-1 sections above are already useful — keep them and
+          show a skeleton just for the mc-dependent regions. */}
+      {mcLoading ? (
+        <MissionControlSkeleton />
+      ) : (
+      <>
       {/* 3. Progress summary (metrics row) */}
       <section
         className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3"
@@ -358,7 +367,7 @@ export default function Today() {
           </div>
         </StudyCard>
         <div className="mt-4">
-          <PersonaQuestionCard initialQuestion={mc.progressive_question || null} />
+          <PersonaQuestionCard initialQuestion={mcData.progressive_question || null} />
         </div>
       </Drawer>
 
@@ -455,6 +464,8 @@ export default function Today() {
           <PlanPreferencesCard onRegenerated={() => setReloadKey((k) => k + 1)} />
         </div>
       </Drawer>
+      </>
+      )}
     </div>
   );
 }
