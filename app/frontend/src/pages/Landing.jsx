@@ -904,7 +904,7 @@ function EligibilityEngine() {
                 <div className="num-mono text-[11px] text-[#6C5038]">
                   delta: <span className="text-[#33482F]">{S.delta}</span>
                 </div>
-                <Link to="/signup?next=/app/exams" className="text-[12px] font-semibold text-[#2E2218] link-under">
+                <Link to="/signup?next=/app/eligibility/exams" className="text-[12px] font-semibold text-[#2E2218] link-under">
                   Open eligibility matches →
                 </Link>
               </div>
@@ -1027,12 +1027,12 @@ function FactTile({ k, v, sub, tone }) {
 function ExploreScreens() {
   const screens = [
     { tag: "Aspirant", title: "Today", sub: "Plan + reasoning trace per task", to: "/app/today", glyph: "◐" },
-    { tag: "Aspirant", title: "Study Plan", sub: "Timeline + before/after adaptation", to: "/app/study-plan", glyph: "▤" },
+    { tag: "Aspirant", title: "Study Plan", sub: "Timeline + before/after adaptation", to: "/app/study/plan", glyph: "▤" },
     { tag: "Aspirant", title: "Subjects", sub: "Topic tree · locked priority · mastery", to: "/app/study/subjects", glyph: "❖" },
     { tag: "Aspirant", title: "Focus", sub: "25/50/90m timer · reflection drawer", to: "/app/study/focus", glyph: "◍" },
     { tag: "Aspirant", title: "Mocks", sub: "Error patterns → correction tasks", to: "/app/study/mocks", glyph: "△" },
     { tag: "Aspirant", title: "Report Card", sub: "Honest read · next-week preview", to: "/app/study/review", glyph: "↻" },
-    { tag: "Aspirant", title: "Eligibility matches", sub: "Recruitments matched to your profile", to: "/app/exams", glyph: "⌖" },
+    { tag: "Aspirant", title: "Eligibility matches", sub: "Recruitments matched to your profile", to: "/app/eligibility/exams", glyph: "⌖" },
     { tag: "Admin", title: "Exam Intelligence", sub: "7 tabs · verify + lock + plan-impact", to: "/admin/exam-intelligence", glyph: "⊞", dark: true },
     { tag: "Admin", title: "Eligibility verification", sub: "Criteria queue · match impact preview", to: "/admin/eligibility-queue", glyph: "⌗", dark: true },
     { tag: "Admin", title: "Persona Inspector", sub: "Internal dims → study policy", to: "/admin/persona", glyph: "◊", dark: true },
@@ -1577,9 +1577,9 @@ function Footer() {
           h="The app"
           links={[
             { l: "Today", to: "/app/today" },
-            { l: "Study Plan", to: "/app/study-plan" },
+            { l: "Study Plan", to: "/app/study/plan" },
             { l: "Subjects", to: "/app/study/subjects" },
-            { l: "Eligibility matches", to: "/app/exams" },
+            { l: "Eligibility matches", to: "/app/eligibility/exams" },
             { l: "Report Card", to: "/app/study/review" },
             { l: "Admin · Exam Intelligence", to: "/admin/exam-intelligence" },
             { l: "Admin · Eligibility", to: "/admin/eligibility-queue" },

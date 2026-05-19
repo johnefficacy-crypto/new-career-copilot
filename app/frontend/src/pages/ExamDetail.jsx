@@ -87,7 +87,7 @@ export default function ExamDetail() {
   return (
     <div className="space-y-6" data-testid={`exam-detail-${r.id}`}>
       <Link
-        to="/app/exams"
+        to="/app/eligibility/exams"
         className="inline-flex items-center gap-1 text-sm text-muted-foreground link-under"
       >
         <ArrowLeft className="h-4 w-4" /> All recruitments

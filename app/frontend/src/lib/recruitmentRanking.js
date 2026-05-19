@@ -34,21 +34,25 @@ export function getProfileGaps(user) {
   return ELIGIBILITY_CRITICAL_FIELDS.filter((field) => !profile?.[field]);
 }
 
+// PR3 reorg: ranking inputs are scoped to recruitment + application data
+// only. The following Study-OS signals were dropped per spec:
+//   - profileCompletion (was used downstream by TodaysActions, not the
+//     ranker itself; removed at call sites)
+//   - backlogHigh        (mission-control derived)
+//   - studyHoursWeek     (mission-control derived)
+//   - mcData.eligibility_summary (consumer-side, removed in Today.jsx)
+// The deterministic eligibility verdict, application state, apply window,
+// and exam-target signals remain.
 export function scoreRecruitment(recruitment, user, context = {}) {
   const profile = user?.profile || {};
   const app = context?.appByRecruitmentId?.[recruitment.id] || null;
   const missingCritical = getProfileGaps(user);
-  const backlogHigh = !!context.backlogHigh;
 
   const deadlineDays = toDays(recruitment?.apply_end_date);
   const startDays = toDays(recruitment?.apply_start_date);
   const windowClosed = deadlineDays !== null && deadlineDays < 0;
   const windowNotStarted = startDays !== null && startDays > 0;
   const deadlineNear = deadlineDays !== null && deadlineDays >= 0 && deadlineDays <= 3;
-
-  const weeklyGoal = Number(profile?.weekly_hours_goal || profile?.weekly_study_capacity || 0);
-  const weeklyStudied = Number(context?.studyHoursWeek || 0);
-  const lowCapacity = weeklyGoal > 0 && weeklyStudied < weeklyGoal * 0.4;
 
   const hasEligibility = recruitment?.eligibility?.verdict === "eligible" || recruitment?.eligibility?.eligible === true;
   const isConditional = recruitment?.eligibility?.verdict === "conditional" || recruitment?.eligibility?.conditional === true;
@@ -130,16 +134,6 @@ export function scoreRecruitment(recruitment, user, context = {}) {
     reasons.push("Application submitted");
   }
 
-  if (backlogHigh) {
-    score -= 8;
-    risks.push("High study backlog risk");
-  }
-
-  if (lowCapacity) {
-    score -= 5;
-    risks.push("Low weekly study capacity vs goal");
-  }
-
   const appStatus = app?.status || "not_started";
   const submitted = !!app?.submitted_at;
 
@@ -158,10 +152,10 @@ export function scoreRecruitment(recruitment, user, context = {}) {
   } else if (submitted) {
     if (windowClosed) {
       recommendation_stage = "monitor_result";
-      next_action = backlogHigh ? "Recover backlog while monitoring result notifications." : "Monitor result updates and keep revision steady.";
+      next_action = "Monitor result updates and keep revision steady.";
     } else {
       recommendation_stage = "prepare_after_submission";
-      next_action = backlogHigh ? "Recover backlog first, then continue exam preparation." : "Shift from application to preparation strategy.";
+      next_action = "Shift from application to preparation strategy.";
     }
   } else if (app?.clicked_apply_at) {
     recommendation_stage = "continue_application";
