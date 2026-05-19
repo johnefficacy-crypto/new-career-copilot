@@ -62,6 +62,7 @@ export default function ProfileOnboardingShell() {
   const {
     status,
     question,
+    progress,
     completed,
     saving,
     error,
@@ -162,8 +163,8 @@ export default function ProfileOnboardingShell() {
         <OnboardingQuestionCard
           question={question}
           questionSource="persona_question_bank"
-          reason={null}
-          progress={null}
+          reason={question.help_text || null}
+          progress={progress}
           saving={saving}
           onAnswer={handleAnswer}
           onSkip={handleSkip}

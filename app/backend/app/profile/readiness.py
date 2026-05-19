@@ -102,9 +102,11 @@ _FIELD_SOURCES: dict[str, tuple[str, str]] = {
     # weekly_hours_goal lives on aspirant_preferences.study_hours_per_day;
     # derived into profile dict by readiness loader. see canonical.py.
     "weekly_hours_goal": ("profile", "weekly_hours_goal"),
-    # Document fields are tracked on aspirant_documents flags. None of
-    # them exist yet, so they read as missing — exactly what we want
-    # until document upload ships.
+    # Document uploads haven't shipped yet, and `aspirant_documents`
+    # doesn't exist as a table. Mapping these to the empty "documents"
+    # source means they always read as missing — exactly what we want
+    # until the upload pipeline lands — without firing a noisy warning
+    # for a table we know isn't there.
     "photo_doc": ("documents", "photo_doc"),
     "signature_doc": ("documents", "signature_doc"),
     "category_certificate": ("documents", "category_certificate"),
@@ -183,26 +185,15 @@ def _load_sources(supabase: Any, user_id: str) -> dict[str, dict[str, Any]]:
         )
         or [{}]
     )[0]
-    documents = (
-        _safe(
-            lambda: (
-                supabase.table("aspirant_documents")
-                .select("*")
-                .eq("user_id", user_id)
-                .limit(1)
-                .execute()
-                .data
-            ),
-            default=[],
-        )
-        or [{}]
-    )[0]
+    # `aspirant_documents` doesn't exist yet (upload pipeline not shipped),
+    # so we don't query it. The empty dict keeps the source-lookup logic
+    # consistent: every document field reads as missing, as intended.
     return {
         "profile": profile,
         "preferences": preferences,
         "location": location,
         "reservations": reservations,
-        "documents": documents,
+        "documents": {},
     }
 
 

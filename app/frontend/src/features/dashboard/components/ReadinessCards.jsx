@@ -5,11 +5,33 @@ import { api } from "../../../lib/api";
 // Per-feature unlock cards. Each card maps to a real user-facing
 // capability, lists the *specific* missing fields the user has to fill,
 // and lets them resolve those fields without leaving the dashboard
-// via a small inline form that calls /api/profile/onboarding-answer.
+// via a small inline form.
 //
-// This replaces the old single-percent readiness gauge. A user can
-// look at this and know exactly what to do next; no vanity number,
-// no guessing.
+// Most of the readiness fields (full_name, date_of_birth, category,
+// domicile_state, study_mode, weekly_hours_goal, target_exam, phone)
+// are canonical profile data and must be written through PUT
+// /api/profile/me — they are NOT keys in persona_question_bank, so
+// POSTing them to /api/profile/onboarding-answer returns 404 "Unknown
+// question_key". /onboarding-answer is reserved for keys the bank
+// actually declares.
+
+// Fields that resolve via PUT /api/profile/me. The value here is the
+// payload key on ProfileUpdate. `target_exam` lives in
+// aspirant_preferences.target_exams (array), so it ships as
+// `goal_exams: [value]` — matches the existing Profile page path.
+const PROFILE_FIELD_PAYLOAD_KEYS = {
+  full_name: "full_name",
+  phone: "phone",
+  date_of_birth: "date_of_birth",
+  category: "category",
+  domicile_state: "domicile_state",
+  study_mode: "study_mode",
+  weekly_hours_goal: "weekly_hours_goal",
+  target_exam: "goal_exams",
+};
+
+// Document fields are handled via uploads on /app/profile, not text.
+const DOCUMENT_FIELDS = new Set(["photo_doc", "signature_doc", "category_certificate"]);
 
 const FIELD_LABELS = {
   full_name: "Full name",
@@ -150,10 +172,25 @@ export default function ReadinessCards() {
 
   const saveField = useCallback(
     async (values) => {
-      // The endpoint takes one question_key per call — fan out so a
-      // single "Add now" click can fill multiple missing fields.
       const entries = Object.entries(values).filter(([, v]) => v !== "" && v != null);
-      for (const [question_key, value] of entries) {
+      const profilePatch = {};
+      const questionAnswers = [];
+      for (const [field, value] of entries) {
+        if (DOCUMENT_FIELDS.has(field)) continue; // uploads, not text saves
+        const payloadKey = PROFILE_FIELD_PAYLOAD_KEYS[field];
+        if (payloadKey === "goal_exams") {
+          profilePatch[payloadKey] = Array.isArray(value) ? value : [value];
+        } else if (payloadKey) {
+          profilePatch[payloadKey] = value;
+        } else {
+          // Not a profile field — assume it's a persona_question_bank key.
+          questionAnswers.push([field, value]);
+        }
+      }
+      if (Object.keys(profilePatch).length > 0) {
+        await api.put("/api/profile/me", profilePatch);
+      }
+      for (const [question_key, value] of questionAnswers) {
         await api.post("/api/profile/onboarding-answer", {
           question_key,
           value,
