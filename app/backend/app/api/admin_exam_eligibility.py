@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import require_permission
 from app.db.supabase_client import get_supabase_admin
+from app.exam_eligibility.evaluator import invalidate_eligibility_rules_cache
 
 logger = logging.getLogger("career_copilot.api.admin_exam_eligibility")
 
@@ -246,6 +247,7 @@ def create_rule(
         .data
         or []
     )
+    invalidate_eligibility_rules_cache()
     return {"rule": inserted[0] if inserted else None}
 
 
@@ -324,6 +326,7 @@ def update_rule(
         .data
         or []
     )
+    invalidate_eligibility_rules_cache()
     return {"rule": updated[0] if updated else None}
 
 
@@ -348,6 +351,7 @@ def delete_rule(
 
     if hard:
         supabase.table("exam_eligibility_rules").delete().eq("id", str(rule_id)).execute()
+        invalidate_eligibility_rules_cache()
         return {"deleted": True, "hard": True}
 
     supabase.table("exam_eligibility_rules").update(
@@ -358,4 +362,5 @@ def delete_rule(
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
     ).eq("id", str(rule_id)).execute()
+    invalidate_eligibility_rules_cache()
     return {"deleted": True, "hard": False, "archived_by": admin.get("id")}

@@ -4,7 +4,7 @@
 Helpers here read from it defensively — a missing or empty table never
 crashes the API, it just yields "no question right now".
 
-``list_active_questions`` is cached in-process for five minutes — the
+``list_active_questions`` is cached in-process for ten minutes — the
 onboarding-answer endpoint fires it on every call, and the bank is
 admin-edited rarely. Admin writers must call
 :func:`invalidate_bank_cache` after they mutate the table.
@@ -24,7 +24,7 @@ _QUESTION_COLUMNS = (
     "profile_column, priority, trigger_rules, applies_when, is_active"
 )
 
-_BANK_CACHE: TTLCache = TTLCache(maxsize=1, ttl=300)
+_BANK_CACHE: TTLCache = TTLCache(maxsize=1, ttl=600)
 _BANK_CACHE_KEY = "active_questions"
 
 

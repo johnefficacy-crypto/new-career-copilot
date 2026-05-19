@@ -27,7 +27,7 @@ def _reset_per_exam_intelligence_cache():
 
 @pytest.fixture(autouse=True)
 def _reset_persona_bank_cache():
-    """The question-bank TTL cache (cachetools, 5min) lives at module scope.
+    """The question-bank TTL cache (cachetools, 10min) lives at module scope.
 
     Stub Supabase instances differ per test, so a cached row list from
     test A would be served to test B even though B seeded a different
@@ -41,3 +41,29 @@ def _reset_persona_bank_cache():
     invalidate_bank_cache()
     yield
     invalidate_bank_cache()
+
+
+@pytest.fixture(autouse=True)
+def _reset_exam_lookup_cache():
+    """The exam-lookup TTL cache (cachetools, 10min) lives at module scope."""
+    try:
+        from app.exam_intelligence.lookup import invalidate_exam_lookup_cache
+    except ImportError:
+        yield
+        return
+    invalidate_exam_lookup_cache()
+    yield
+    invalidate_exam_lookup_cache()
+
+
+@pytest.fixture(autouse=True)
+def _reset_eligibility_rules_cache():
+    """The eligibility-rules TTL cache (cachetools, 10min) lives at module scope."""
+    try:
+        from app.exam_eligibility.evaluator import invalidate_eligibility_rules_cache
+    except ImportError:
+        yield
+        return
+    invalidate_eligibility_rules_cache()
+    yield
+    invalidate_eligibility_rules_cache()
