@@ -1,22 +1,44 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ArrowLeft,
-  BarChart3,
   Bookmark,
   CheckCircle2,
   XCircle,
   AlertCircle,
   ExternalLink,
+  FileText,
+  Library,
   ListChecks,
   ShieldCheck,
+  Users,
 } from "lucide-react";
 import { api } from "../lib/api";
 import ExamIntelligenceTab from "../features/exams/ExamIntelligenceTab";
+import ExamDetailAnchorNav from "../features/exams/ExamDetailAnchorNav";
 
-const TABS = [
-  { id: "eligibility", label: "Eligibility & posts", icon: ShieldCheck },
-  { id: "intelligence", label: "Exam intelligence", icon: BarChart3 },
+// PR11: ExamDetail is now a single scrollable page with a sticky anchor
+// chip strip and IntersectionObserver-driven scroll-spy. The old
+// 2-tab layout (Eligibility / Intelligence) is gone — both surfaces
+// now live as scroll sections, alongside four new sections that the
+// spec calls out (about, docs & fees, resources, groups).
+//
+// Section design decision (documented for PR body):
+//   The full ExamIntelligenceTab component renders inside #competition.
+//   It already owns its own loading / empty / error states for cutoff
+//   trends, difficulty heatmap, PYQ analysis, option insights, and the
+//   trap-drill launcher. Splitting it across two sections would be
+//   invasive surgery on a 425-line component; the spec's chip strip is
+//   exactly 6 chips and the "Competition" chip is the natural home for
+//   the broader "what we know about the exam" view.
+
+const SECTIONS = [
+  { id: "about", label: "About" },
+  { id: "eligibility", label: "Eligibility" },
+  { id: "docs-fees", label: "Docs & Fees" },
+  { id: "competition", label: "Competition" },
+  { id: "resources", label: "Resources" },
+  { id: "groups", label: "Groups" },
 ];
 
 function VerdictBadge({ verdict }) {
@@ -34,26 +56,60 @@ function VerdictBadge({ verdict }) {
   );
 }
 
+function Section({ id, eyebrow, title, children, testId }) {
+  // Wrap the heading + body in a <section> with stable aria-labelledby
+  // wiring so AT users get a real landmark when they jump to a hash.
+  const headingId = `${id}-heading`;
+  return (
+    <section
+      id={id}
+      aria-labelledby={headingId}
+      data-testid={testId || `section-${id}`}
+      // scroll-margin-top so anchor jumps land below the sticky header.
+      // We also offset manually in JS for behavior:"smooth"; this
+      // covers the browser's native :target behavior too.
+      className="scroll-mt-32"
+    >
+      <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">
+        {eyebrow}
+      </div>
+      <h2 id={headingId} className="font-heading text-2xl font-semibold mt-1">
+        {title}
+      </h2>
+      <div className="mt-4">{children}</div>
+    </section>
+  );
+}
+
 export default function ExamDetail() {
   const { slug } = useParams();
   const [r, setR] = useState(null);
+  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState("eligibility");
 
   async function load() {
-    const d = await api.get(`/api/recruitments/${slug}`);
-    setR(d);
+    try {
+      const d = await api.get(`/api/recruitments/${slug}`);
+      setR(d);
+      setError("");
+    } catch (e) {
+      setError("Couldn't load this recruitment.");
+      if (process.env.NODE_ENV !== "production") console.error(e);
+    }
   }
   useEffect(() => {
     load();
-    // eslint-disable-next-line
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
   async function toggleSave() {
     setBusy(true);
-    await api.post(`/api/recruitments/${slug}/save`, {});
-    await load();
-    setBusy(false);
+    try {
+      await api.post(`/api/recruitments/${slug}/save`, {});
+      await load();
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function trackApplication() {
@@ -74,15 +130,38 @@ export default function ExamDetail() {
     }
   }
 
-  if (!r) return <div data-testid="exam-loading">Loading…</div>;
-
-  const orgCode = r.organization_code || (r.organization || "—").slice(0, 4).toUpperCase();
-  const elig = r.eligibility_preview || { verdict: "pending", fail_reasons: [] };
-  const failReasons = elig.fail_reasons || [];
-  const isEligible = elig.verdict === "eligible";
-  const isConditional = elig.verdict === "conditional";
   const formatDate = (d) =>
     d ? new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—";
+
+  // Aggregated bits derived once per render — keeps the section bodies
+  // legible and avoids re-computing inside JSX.
+  const derived = useMemo(() => {
+    if (!r) return null;
+    const elig = r.eligibility_preview || { verdict: "pending", fail_reasons: [] };
+    return {
+      orgCode: r.organization_code || (r.organization || "—").slice(0, 4).toUpperCase(),
+      elig,
+      failReasons: elig.fail_reasons || [],
+      isEligible: elig.verdict === "eligible",
+      isConditional: elig.verdict === "conditional",
+      examSlug: r.exam_slug || r.exam?.slug || null,
+    };
+  }, [r]);
+
+  if (error && !r) {
+    return (
+      <div className="soft-card rounded-2xl p-6 border border-destructive/30">
+        <p className="text-sm">{error}</p>
+        <button type="button" onClick={load} className="btn btn-ghost mt-3">
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!r) return <div data-testid="exam-loading">Loading…</div>;
+
+  const { orgCode, elig, failReasons, isEligible, isConditional, examSlug } = derived;
 
   return (
     <div className="space-y-6" data-testid={`exam-detail-${r.id}`}>
@@ -149,129 +228,286 @@ export default function ExamDetail() {
             { label: "Apply opens", val: formatDate(r.apply_window?.open) },
             { label: "Apply closes", val: formatDate(r.apply_window?.close) },
           ].map((s) => (
-            <div
-              key={s.label}
-              className="rounded-xl bg-clay-50/70 border border-clay-100 p-4"
-            >
-              <div className="text-[10px] uppercase tracking-widest text-clay-700">
-                {s.label}
-              </div>
+            <div key={s.label} className="rounded-xl bg-clay-50/70 border border-clay-100 p-4">
+              <div className="text-[10px] uppercase tracking-widest text-clay-700">{s.label}</div>
               <div className="mt-2 font-heading text-2xl font-semibold">{s.val}</div>
             </div>
           ))}
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-1 border-b border-clay-200" role="tablist" data-testid="exam-detail-tabs">
-        {TABS.map((t) => {
-          const Icon = t.icon;
-          const active = tab === t.id;
-          return (
-            <button
-              key={t.id}
-              role="tab"
-              aria-selected={active}
-              onClick={() => setTab(t.id)}
-              data-testid={`exam-detail-tab-${t.id}`}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                active
-                  ? "border-clay-700 text-clay-900"
-                  : "border-transparent text-muted-foreground hover:text-clay-800"
-              }`}
-            >
-              <Icon className="h-4 w-4" /> {t.label}
-            </button>
-          );
-        })}
-      </div>
+      <ExamDetailAnchorNav sections={SECTIONS} ready={Boolean(r)} />
 
-      {tab === "intelligence" ? (
-        <ExamIntelligenceTab examSlug={r.exam_slug || r.exam?.slug} />
-      ) : (
-      <div className="grid lg:grid-cols-3 gap-4">
-        <div
-          className="lg:col-span-2 soft-card rounded-2xl p-6"
-          data-testid="eligibility-panel"
+      <div className="space-y-12 pb-24">
+        {/* ─── About ─────────────────────────────────────────────── */}
+        <Section
+          id="about"
+          eyebrow="About this recruitment"
+          title="The cycle at a glance"
         >
-          <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">
-            Eligibility · deterministic engine
-          </div>
-          <h2 className="font-heading text-xl font-semibold mt-1">
-            Verdict:{" "}
-            <span
-              className={
-                isEligible
-                  ? "text-sage-700"
-                  : isConditional
-                  ? "text-dusk-700"
-                  : "text-clay-700"
-              }
-            >
-              {elig.verdict}
-            </span>
-          </h2>
-          {isEligible && failReasons.length === 0 && (
-            <p className="mt-3 text-sm text-foreground/80">
-              All eligibility checks passed. You can apply within the window above.
-            </p>
-          )}
-          {isConditional && (
-            <p className="mt-3 text-sm text-foreground/80">
-              You'll qualify on completion of your current qualification. Confirm
-              eligibility once your final-year results are out.
-            </p>
-          )}
-          {failReasons.length > 0 && (
-            <ul className="mt-4 space-y-2.5" data-testid="fail-reasons">
-              {failReasons.map((reason, idx) => (
-                <li key={idx} className="flex items-start gap-2.5">
-                  <XCircle className="h-4 w-4 text-clay-600 mt-0.5 shrink-0" />
-                  <div className="text-sm text-foreground/85">{reason}</div>
-                </li>
-              ))}
-            </ul>
-          )}
-          {elig.computed_at && (
-            <div className="mt-5 text-[11px] text-muted-foreground">
-              Computed at {new Date(elig.computed_at).toLocaleString("en-IN")} · source:
-              deterministic-engine. AI does not decide eligibility.
+          <div className="grid lg:grid-cols-2 gap-4">
+            <div className="soft-card rounded-2xl p-5">
+              <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">
+                Recruitment
+              </div>
+              <dl className="mt-3 text-sm grid grid-cols-2 gap-x-4 gap-y-2">
+                <dt className="text-muted-foreground">Organization</dt>
+                <dd>{r.organization || "—"}</dd>
+                {r.year ? (
+                  <>
+                    <dt className="text-muted-foreground">Cycle year</dt>
+                    <dd>{r.year}</dd>
+                  </>
+                ) : null}
+                {r.state ? (
+                  <>
+                    <dt className="text-muted-foreground">State</dt>
+                    <dd>{r.state}</dd>
+                  </>
+                ) : null}
+                <dt className="text-muted-foreground">Apply window</dt>
+                <dd>
+                  {formatDate(r.apply_window?.open)} → {formatDate(r.apply_window?.close)}
+                </dd>
+                {r.vacancies != null ? (
+                  <>
+                    <dt className="text-muted-foreground">Vacancies</dt>
+                    <dd>{r.vacancies.toLocaleString()}</dd>
+                  </>
+                ) : null}
+              </dl>
             </div>
-          )}
-          {elig.verdict === "pending" && (
-            <div className="mt-5 text-[11px] text-muted-foreground">
-              No eligibility result yet. Hit "Recompute eligibility" on the
-              Exams list to evaluate this recruitment.
-            </div>
-          )}
-        </div>
 
-        <aside className="soft-card rounded-2xl p-6">
-          <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">
-            Posts in this recruitment
-          </div>
-          {(r.posts || []).length === 0 ? (
-            <p className="mt-3 text-sm text-muted-foreground">No posts ingested yet.</p>
-          ) : (
-            <ul className="mt-3 space-y-2 text-sm">
-              {(r.posts || []).map((p) => (
-                <li key={p.id} className="flex items-start gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-sage-500 mt-0.5 shrink-0" />
-                  <div>
-                    <div className="font-medium">{p.post_name}</div>
-                    {p.group_type && (
-                      <div className="text-xs text-muted-foreground">
-                        Group {p.group_type}
-                        {p.pay_level ? ` · Pay level ${p.pay_level}` : ""}
+            <div className="soft-card rounded-2xl p-5">
+              <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">
+                Posts in this recruitment
+              </div>
+              {(r.posts || []).length === 0 ? (
+                <p className="mt-3 text-sm text-muted-foreground">
+                  No posts ingested yet.
+                </p>
+              ) : (
+                <ul className="mt-3 space-y-2 text-sm" data-testid="posts-list">
+                  {(r.posts || []).map((p) => (
+                    <li key={p.id} className="flex items-start gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-sage-500 mt-0.5 shrink-0" />
+                      <div>
+                        <div className="font-medium">{p.post_name}</div>
+                        {p.group_type && (
+                          <div className="text-xs text-muted-foreground">
+                            Group {p.group_type}
+                            {p.pay_level ? ` · Pay level ${p.pay_level}` : ""}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </aside>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </Section>
+
+        {/* ─── Eligibility ───────────────────────────────────────── */}
+        <Section
+          id="eligibility"
+          eyebrow="About your eligibility"
+          title="Verdict from the deterministic engine"
+        >
+          <div className="soft-card rounded-2xl p-6" data-testid="eligibility-panel">
+            <h3 className="font-heading text-xl font-semibold">
+              Verdict:{" "}
+              <span
+                className={
+                  isEligible
+                    ? "text-sage-700"
+                    : isConditional
+                      ? "text-dusk-700"
+                      : "text-clay-700"
+                }
+              >
+                {elig.verdict}
+              </span>
+            </h3>
+            {isEligible && failReasons.length === 0 && (
+              <p className="mt-3 text-sm text-foreground/80">
+                All eligibility checks passed. You can apply within the window above.
+              </p>
+            )}
+            {isConditional && (
+              <p className="mt-3 text-sm text-foreground/80">
+                You'll qualify on completion of your current qualification. Confirm
+                eligibility once your final-year results are out.
+              </p>
+            )}
+            {failReasons.length > 0 && (
+              <ul className="mt-4 space-y-2.5" data-testid="fail-reasons">
+                {failReasons.map((reason, idx) => (
+                  <li key={idx} className="flex items-start gap-2.5">
+                    <XCircle className="h-4 w-4 text-clay-600 mt-0.5 shrink-0" />
+                    <div className="text-sm text-foreground/85">{reason}</div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {elig.computed_at && (
+              <div className="mt-5 text-[11px] text-muted-foreground">
+                Computed at {new Date(elig.computed_at).toLocaleString("en-IN")} · source:
+                deterministic-engine. AI does not decide eligibility.
+              </div>
+            )}
+            {elig.verdict === "pending" && (
+              <div className="mt-5 text-[11px] text-muted-foreground">
+                No eligibility result yet. Hit "Recompute eligibility" on the
+                Exams list to evaluate this recruitment.
+              </div>
+            )}
+          </div>
+        </Section>
+
+        {/* ─── Docs & Fees ───────────────────────────────────────── */}
+        <Section
+          id="docs-fees"
+          eyebrow="Documents, fees, attempts"
+          title="Criteria-based requirements"
+        >
+          <div className="soft-card rounded-2xl p-6">
+            {(r.posts || []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Per-post documents, fees, and attempt limits will list here once
+                the recruitment is fully ingested.
+              </p>
+            ) : (
+              <ul className="space-y-3 text-sm">
+                {(r.posts || []).map((p) => (
+                  <li
+                    key={p.id}
+                    className="rounded-xl border border-border p-3 bg-white/60"
+                  >
+                    <div className="flex items-start gap-2">
+                      <FileText className="h-4 w-4 text-clay-600 mt-0.5 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="font-medium">{p.post_name}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {p.group_type ? `Group ${p.group_type}` : "Group —"}
+                          {p.pay_level ? ` · Pay level ${p.pay_level}` : ""}
+                        </div>
+                        {p.documents_required?.length ? (
+                          <div className="text-xs text-muted-foreground mt-2">
+                            Documents: {p.documents_required.join(", ")}
+                          </div>
+                        ) : null}
+                        {p.fee_amount != null ? (
+                          <div className="text-xs text-muted-foreground">
+                            Fee: ₹{p.fee_amount}
+                          </div>
+                        ) : null}
+                        {p.attempt_limit != null ? (
+                          <div className="text-xs text-muted-foreground">
+                            Attempt limit: {p.attempt_limit}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </Section>
+
+        {/* ─── Competition ───────────────────────────────────────── */}
+        <Section
+          id="competition"
+          eyebrow="Competition + exam intelligence"
+          title="What we know about this exam"
+        >
+          <ExamIntelligenceTab examSlug={examSlug} />
+        </Section>
+
+        {/* ─── Resources ─────────────────────────────────────────── */}
+        <Section
+          id="resources"
+          eyebrow="Resources"
+          title="Books, courses, and notes"
+        >
+          <div className="soft-card rounded-2xl p-6">
+            <p className="text-sm text-muted-foreground">
+              Curated resources for this exam live in the marketplace.
+            </p>
+            <Link
+              to={
+                examSlug
+                  ? `/app/marketplace?exam=${encodeURIComponent(examSlug)}`
+                  : "/app/marketplace"
+              }
+              className="btn btn-ghost mt-3 inline-flex"
+              data-testid="resources-marketplace-cta"
+            >
+              <Library className="h-4 w-4" /> Browse marketplace
+            </Link>
+          </div>
+        </Section>
+
+        {/* ─── Groups ────────────────────────────────────────────── */}
+        <Section
+          id="groups"
+          eyebrow="Study groups & mentors"
+          title="Find people preparing alongside you"
+        >
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="soft-card rounded-2xl p-5">
+              <div className="flex items-start gap-3">
+                <span
+                  aria-hidden="true"
+                  className="h-9 w-9 grid place-items-center rounded-lg bg-clay-100 text-clay-700 shrink-0"
+                >
+                  <Users className="h-4 w-4" />
+                </span>
+                <div className="min-w-0">
+                  <div className="font-heading text-base font-semibold">Study groups</div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Aspirants on the same exam, in the same week.
+                  </p>
+                  <Link
+                    to="/app/groups"
+                    className="btn btn-ghost mt-3 inline-flex"
+                    data-testid="groups-cta"
+                  >
+                    Browse groups
+                  </Link>
+                </div>
+              </div>
+            </div>
+            <div className="soft-card rounded-2xl p-5">
+              <div className="flex items-start gap-3">
+                <span
+                  aria-hidden="true"
+                  className="h-9 w-9 grid place-items-center rounded-lg bg-clay-100 text-clay-700 shrink-0"
+                >
+                  <ShieldCheck className="h-4 w-4" />
+                </span>
+                <div className="min-w-0">
+                  <div className="font-heading text-base font-semibold">Mentors</div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Book a 1-on-1 with a mentor who's cracked this exam.
+                  </p>
+                  <Link
+                    to="/app/mentors"
+                    className="btn btn-ghost mt-3 inline-flex"
+                    data-testid="mentors-cta"
+                  >
+                    Find a mentor
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Section>
       </div>
-      )}
     </div>
   );
 }
+
+// Exposed for tests.
+export { SECTIONS };
