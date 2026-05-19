@@ -31,7 +31,6 @@ test("renders persistent (non-dismissable) banner when completion < 50%", () => 
   renderBanner();
   const banner = screen.getByTestId("today-profile-banner");
   expect(banner.getAttribute("data-tone")).toBe("red");
-  expect(banner.textContent).toMatch(/30% complete/);
   expect(screen.getByTestId("today-profile-banner-cta")).toBeTruthy();
   expect(screen.queryByTestId("today-profile-banner-dismiss")).toBeNull();
 });
@@ -41,7 +40,6 @@ test("renders dismissable banner when 50% ≤ completion < 80%", () => {
   renderBanner();
   const banner = screen.getByTestId("today-profile-banner");
   expect(banner.getAttribute("data-tone")).toBe("amber");
-  expect(banner.textContent).toMatch(/65% complete/);
   expect(screen.getByTestId("today-profile-banner-dismiss")).toBeTruthy();
 });
 
@@ -86,6 +84,49 @@ test("red (persistent) banner ignores localStorage dismissal", () => {
   renderBanner();
   expect(screen.getByTestId("today-profile-banner")).toBeTruthy();
   expect(screen.queryByTestId("today-profile-banner-dismiss")).toBeNull();
+});
+
+test("approved copy is present and forbidden copy is absent", () => {
+  mockUseProfileCompletion.mockReturnValue({ pct: 42, status: "red", loading: false, error: null });
+  renderBanner();
+  const banner = screen.getByTestId("today-profile-banner");
+  // Approved
+  expect(banner.textContent).toMatch(/Continue setup/);
+  expect(banner.textContent).toMatch(/Picks up where you left off\./);
+  // Forbidden
+  expect(banner.textContent).not.toMatch(/first field you left blank/i);
+  expect(banner.textContent).not.toMatch(/Complete your profile/i);
+  expect(banner.textContent).not.toMatch(/sharpen your matches/i);
+  expect(banner.textContent).not.toMatch(/eligibility kicks in/i);
+});
+
+test("a11y: region, CTA, and dismiss expose the documented aria-labels", () => {
+  mockUseProfileCompletion.mockReturnValue({ pct: 65, status: "amber", loading: false, error: null });
+  renderBanner();
+  const banner = screen.getByTestId("today-profile-banner");
+  expect(banner.getAttribute("role")).toBe("region");
+  expect(banner.getAttribute("aria-label")).toBe("Profile setup reminder");
+
+  const cta = screen.getByTestId("today-profile-banner-cta");
+  expect(cta.getAttribute("aria-label")).toBe("Continue profile setup, 65% complete");
+
+  const dismiss = screen.getByTestId("today-profile-banner-dismiss");
+  expect(dismiss.getAttribute("aria-label")).toBe("Dismiss profile reminder for 7 days");
+});
+
+test("CTA links to /app/onboarding with no query params", () => {
+  mockUseProfileCompletion.mockReturnValue({ pct: 30, status: "red", loading: false, error: null });
+  renderBanner();
+  const cta = screen.getByTestId("today-profile-banner-cta");
+  expect(cta.getAttribute("href")).toBe("/app/onboarding");
+});
+
+test("amber banner reappears 7 days + 1 hour after dismissal", () => {
+  const past = new Date(Date.now() - (7 * 24 * 60 * 60 * 1000 + 60 * 60 * 1000)).toISOString();
+  window.localStorage.setItem("today.profileBanner.dismissedAt", past);
+  mockUseProfileCompletion.mockReturnValue({ pct: 70, status: "amber", loading: false, error: null });
+  renderBanner();
+  expect(screen.getByTestId("today-profile-banner")).toBeTruthy();
 });
 
 test("hides while loading and on error rather than flashing a tone", () => {

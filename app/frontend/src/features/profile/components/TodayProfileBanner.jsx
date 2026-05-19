@@ -66,7 +66,6 @@ export default function TodayProfileBanner() {
   // signal from here on.
   if (status === "green") return null;
 
-  const isPersistent = status === "red";
   const isDismissable = status === "amber";
 
   // If the user dismissed within the reappearance window AND we are in
@@ -85,8 +84,9 @@ export default function TodayProfileBanner() {
       className={`soft-card rounded-2xl p-5 border ${tone}`}
       data-testid="today-profile-banner"
       data-tone={status}
+      data-pct={pct}
       role="region"
-      aria-label="Profile completion"
+      aria-label="Profile setup reminder"
     >
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-0">
@@ -94,19 +94,18 @@ export default function TodayProfileBanner() {
             Profile setup
           </div>
           <div className="font-heading text-lg font-semibold mt-1">
-            {isPersistent
-              ? `Your profile is ${pct}% complete. A few more fields and eligibility kicks in.`
-              : `Your profile is ${pct}% complete. Finish setup so we can sharpen your matches.`}
+            Continue setup
           </div>
           <p className="text-sm text-muted-foreground mt-1">
-            We resume from the first field you left blank — no re-typing.
+            Picks up where you left off.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <Link
             to="/app/onboarding"
             data-testid="today-profile-banner-cta"
-            className="btn btn-primary"
+            aria-label={`Continue profile setup, ${pct}% complete`}
+            className="btn btn-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary"
           >
             Continue setup
           </Link>
@@ -114,11 +113,11 @@ export default function TodayProfileBanner() {
             <button
               type="button"
               data-testid="today-profile-banner-dismiss"
-              aria-label="Dismiss profile banner for 7 days"
+              aria-label="Dismiss profile reminder for 7 days"
               onClick={onDismiss}
-              className="h-9 w-9 grid place-items-center rounded-lg border border-border bg-white/70 hover:bg-white"
+              className="h-9 w-9 grid place-items-center rounded-lg border border-border bg-white/70 hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary"
             >
-              <X className="h-4 w-4" />
+              <X className="h-4 w-4" aria-hidden="true" />
             </button>
           ) : null}
         </div>
