@@ -1,18 +1,20 @@
 import React from "react";
 import { MemoryRouter } from "react-router-dom";
 import { render, screen } from "@testing-library/react";
-import { CalendarRange, BookOpenCheck, ListChecks, Activity, User, LineChart, FileText } from "lucide-react";
+import { CalendarRange, ShieldCheck, GraduationCap, LineChart, FileText } from "lucide-react";
 import AppSidebar from "./AppSidebar";
 
+// Mirrors the DashShell primary section after PR4 of the Today /
+// Eligibility / Study reorg: three primary items only. Exams /
+// Study Plan / Tracker live inside the Eligibility + Study shells.
+// Profile is reached via UserMenu, not the sidebar.
 const SECTIONS = [
   {
     id: "primary",
     items: [
       { to: "/app/today", label: "Today", icon: CalendarRange, testId: "sidebar-today" },
-      { to: "/app/exams", label: "Exams", icon: BookOpenCheck, testId: "sidebar-exams" },
-      { to: "/app/study-plan", label: "Study Plan", icon: ListChecks, testId: "sidebar-study-plan" },
-      { to: "/app/tracker", label: "Tracker", icon: Activity, testId: "sidebar-tracker" },
-      { to: "/app/profile", label: "Profile", icon: User, testId: "sidebar-profile" },
+      { to: "/app/eligibility", label: "Eligibility", icon: ShieldCheck, testId: "sidebar-eligibility" },
+      { to: "/app/study", label: "Study", icon: GraduationCap, testId: "sidebar-study" },
     ],
   },
   {
@@ -43,11 +45,21 @@ function renderSidebar() {
   );
 }
 
-test("renders five primary sidebar items always visible", () => {
+test("renders three primary sidebar items always visible", () => {
   renderSidebar();
-  ["Today", "Exams", "Study Plan", "Tracker", "Profile"].forEach((label) => {
+  ["Today", "Eligibility", "Study"].forEach((label) => {
     expect(screen.getByText(label)).toBeTruthy();
   });
+});
+
+test("does not show the legacy primary items in the sidebar", () => {
+  renderSidebar();
+  // Exams / Study Plan / Tracker moved inside Eligibility + Study shells.
+  // Profile is reached via UserMenu in the top bar, not from the sidebar.
+  expect(screen.queryByTestId("sidebar-exams")).toBeNull();
+  expect(screen.queryByTestId("sidebar-study-plan")).toBeNull();
+  expect(screen.queryByTestId("sidebar-tracker")).toBeNull();
+  expect(screen.queryByTestId("sidebar-profile")).toBeNull();
 });
 
 test("secondary section items are hidden when section is collapsed by default", () => {

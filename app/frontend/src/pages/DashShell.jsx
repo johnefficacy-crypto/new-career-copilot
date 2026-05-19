@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { Activity, Bell, Bookmark, Bot, CalendarRange, Compass, FileText, GraduationCap, HandHeart, Layers, Library, LineChart, ListChecks, Menu, MessagesSquare, NotebookPen, RotateCw, Settings, Shield, ShoppingBag, Tag, Trophy, User, Users, XCircle, BookOpenCheck } from "lucide-react";
+import { Activity, Bell, Bookmark, Bot, CalendarRange, Compass, FileText, GraduationCap, HandHeart, Layers, Library, LineChart, Menu, MessagesSquare, NotebookPen, RotateCw, Settings, Shield, ShoppingBag, Tag, Trophy, Users, XCircle, ShieldCheck } from "lucide-react";
 import { useAuth } from "../lib/authContext";
 import { api } from "../lib/api";
 import AppSidebar from "../shared/layouts/AppSidebar";
@@ -9,13 +9,16 @@ import UserMenu from "../shared/layouts/UserMenu";
 
 const SECTIONS = [
   {
+    // PR4 of the Today / Eligibility / Study reorg: primary section
+    // collapsed to three areas. Exams / Study Plan / Tracker live
+    // under Eligibility + Study now. Profile leaves the sidebar
+    // primary entirely; it's reached via UserMenu in the top bar
+    // (route /app/profile stays mounted).
     id: "primary",
     items: [
       { to: "/app/today", label: "Today", icon: CalendarRange, testId: "sidebar-today" },
-      { to: "/app/exams", label: "Exams", icon: BookOpenCheck, testId: "sidebar-exams" },
-      { to: "/app/study-plan", label: "Study Plan", icon: ListChecks, testId: "sidebar-study-plan" },
-      { to: "/app/tracker", label: "Tracker", icon: Activity, testId: "sidebar-tracker" },
-      { to: "/app/profile", label: "Profile", icon: User, testId: "sidebar-profile" },
+      { to: "/app/eligibility", label: "Eligibility", icon: ShieldCheck, testId: "sidebar-eligibility" },
+      { to: "/app/study", label: "Study", icon: GraduationCap, testId: "sidebar-study" },
     ],
   },
   {
