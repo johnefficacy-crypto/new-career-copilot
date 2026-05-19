@@ -9,7 +9,7 @@ const ACTION_TO_LINK = {
   focus_session: "/app/study/focus",
   mock_review: "/app/study/mocks",
   weekly_review: "/app/study/review",
-  study_plan: "/app/study-plan",
+  study_plan: "/app/study/plan",
 };
 
 // Default action when no `onPrimary` is wired: scroll the today-tasks card

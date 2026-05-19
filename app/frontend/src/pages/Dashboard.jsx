@@ -30,7 +30,7 @@ function MatchSection({ title, items }) {
         <ul className="mt-2 space-y-2">
           {items.map((m) => (
             <li key={`${title}-${m.id || m.slug}`} className="text-sm">
-              <Link to={`/app/exams/${m.slug}`} className="font-medium link-under">
+              <Link to={`/app/eligibility/exams/${m.slug}`} className="font-medium link-under">
                 {m.name}
               </Link>
               <div className="text-xs text-muted-foreground">
@@ -65,7 +65,7 @@ function StatCard({ k }) {
 function RecruitmentRow({ m }) {
   return (
     <Link
-      to={`/app/exams/${m.slug}`}
+      to={`/app/eligibility/exams/${m.slug}`}
       className="py-3.5 flex items-center gap-4 hover:bg-clay-50/60 -mx-3 px-3 rounded-lg transition"
     >
       <div className="h-10 w-10 rounded-xl bg-clay-100 grid place-items-center font-mono font-semibold text-xs text-clay-700">
@@ -259,7 +259,7 @@ export default function Dashboard() {
               </div>
             </div>
             <Link
-              to="/app/exams"
+              to="/app/eligibility/exams"
               className="text-xs font-semibold link-under"
               data-testid="see-all-exams"
             >

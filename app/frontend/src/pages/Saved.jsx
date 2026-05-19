@@ -22,12 +22,12 @@ export default function Saved() {
           <Bookmark className="h-6 w-6 text-clay-500 mx-auto" />
           <div className="mt-3 font-heading text-lg font-semibold">Nothing saved yet</div>
           <div className="text-sm text-muted-foreground">Save exams from the listing to have them here.</div>
-          <Link to="/app/exams" className="inline-flex mt-5 btn btn-primary" data-testid="saved-empty-cta">Browse exams</Link>
+          <Link to="/app/eligibility/exams" className="inline-flex mt-5 btn btn-primary" data-testid="saved-empty-cta">Browse exams</Link>
         </div>
       ) : (
         <div className="space-y-3">
           {items.map((e) => (
-            <Link key={e.slug} to={`/app/exams/${e.slug}`} className="soft-card rounded-2xl p-5 flex items-center gap-4">
+            <Link key={e.slug} to={`/app/eligibility/exams/${e.slug}`} className="soft-card rounded-2xl p-5 flex items-center gap-4">
               <div className="h-12 w-12 rounded-xl bg-clay-100 grid place-items-center font-mono font-semibold text-xs text-clay-700">
                 {e.organization_code}
               </div>

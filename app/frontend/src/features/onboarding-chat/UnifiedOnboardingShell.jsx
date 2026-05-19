@@ -17,8 +17,8 @@ import EligibleExamsCard from "../exam-eligibility/EligibleExamsCard";
 
 const NEXT_ACTION_ROUTES = {
   view_eligibility: "/app",
-  open_study_plan: "/app/study-plan",
-  open_tracker: "/app/tracker",
+  open_study_plan: "/app/study/plan",
+  open_tracker: "/app/eligibility/tracker",
   open_community: "/app/community",
   open_dashboard: "/app",
 };

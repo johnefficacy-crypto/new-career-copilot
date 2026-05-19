@@ -12,11 +12,11 @@ const DEFAULT_FILTERS = { unreadOnly: false, priority: "", type: "" };
 function routeForNotification(n) {
   const t = n.type || n.alert_type;
   if (t === "complete_profile") return "/app/profile";
-  if (t === "apply_deadline_urgent") return n.recruitment_link || "/app/exams";
-  if (t === "continue_application" || t === "submit_form") return "/app/tracker";
-  if (t === "prepare_after_submission" || t === "study_backlog_recovery") return "/app/study-plan";
+  if (t === "apply_deadline_urgent") return n.recruitment_link || "/app/eligibility/exams";
+  if (t === "continue_application" || t === "submit_form") return "/app/eligibility/tracker";
+  if (t === "prepare_after_submission" || t === "study_backlog_recovery") return "/app/study/plan";
   if (t === "weekly_review_ready") return "/app/study/review";
-  if (t === "monitor_result") return n.recruitment_link || "/app/tracker";
+  if (t === "monitor_result") return n.recruitment_link || "/app/eligibility/tracker";
   return n.recruitment_link || "/app";
 }
 

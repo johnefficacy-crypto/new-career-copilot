@@ -110,7 +110,7 @@ function ExamRow({ item, tone, expanded, onToggle }) {
                     profile. Recruitment-level checks may still apply per cycle.
                   </div>
                   <Link
-                    to={`/app/exams/${item.slug}`}
+                    to={`/app/eligibility/exams/${item.slug}`}
                     className="link-under text-[12px] text-clay-900 font-semibold"
                   >
                     Open exam details →
@@ -335,7 +335,7 @@ export default function EligibleExamsCard({ variant = "card", initialData } = {}
             Baseline rules only — recruitment-level checks may still apply per cycle.
           </span>
           <Link
-            to="/app/exams"
+            to="/app/eligibility/exams"
             className="link-under text-[12px] text-clay-900 font-semibold"
             data-testid="eligible-exams-view-all"
           >
