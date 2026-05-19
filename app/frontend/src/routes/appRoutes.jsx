@@ -8,11 +8,6 @@ import Profile from "../pages/Profile";
 import ExamDetail from "../pages/ExamDetail";
 import Saved from "../pages/Saved";
 import StudyPlan from "../pages/StudyPlan";
-import AliasRedirect from "./AliasRedirect";
-// Exams.jsx and Tracker.jsx are intentionally NOT imported any more.
-// PR2 redirects /app/exams and /app/tracker to their new homes under
-// /app/eligibility/*. The page files stay on disk because PR3 will move
-// their content into EligibleExamsPage / EligibilityTrackerPage.
 import Focus from "../pages/study/Focus";
 import Mocks from "../pages/study/Mocks";
 import Subjects from "../pages/study/Subjects";
@@ -57,27 +52,10 @@ export const appRouteElements = (
       <Route path="/app/saved" element={<Saved />} />
 
       {/*
-        Legacy aspirant paths now alias to their canonical homes (PR2 of the
-        Today / Eligibility / Study reorg). AliasRedirect preserves the
-        active `?search` and `#hash` so deep links keep working, and fills
-        :slug from the current URL. These aliases are removed in PR7 once
-        no internal code links to them.
-      */}
-      <Route path="/app/exams" element={<AliasRedirect to="/app/eligibility/exams" />} />
-      <Route path="/app/exams/:slug" element={<AliasRedirect to="/app/eligibility/exams/:slug" />} />
-      <Route path="/app/tracker" element={<AliasRedirect to="/app/eligibility/tracker" />} />
-      <Route path="/app/study-plan" element={<AliasRedirect to="/app/study/plan" />} />
-      <Route path="/app/study/home" element={<AliasRedirect to="/app/study" />} />
-
-      {/*
-        Canonical aspirant areas (added in PR1). Sidebar is not flipped
-        until PR4; until then users mostly reach these via the aliases
-        above or by direct URL.
+        Canonical aspirant areas.
 
         Param convention:
-          :slug  on /eligibility/exams/:slug      — stable catalogue entity
-                                                    (matches existing
-                                                    /app/exams/:slug usage).
+          :slug  on /eligibility/exams/:slug      — stable catalogue entity.
           :id    on /eligibility/recruitments/:id — transient cycle entity
                                                     keyed by DB id.
       */}

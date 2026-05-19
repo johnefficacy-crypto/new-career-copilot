@@ -10,18 +10,13 @@ import {
 } from "lucide-react";
 import { api } from "../../lib/api";
 
-// PR3 reorg: the existing /app/exams page was actually a recruitment
-// listing (queried /api/recruitments, showed apply-window stages, fee
-// + save toggle). It now lives here at /app/eligibility/recruitments
-// to match the spec's domain split — exams = catalogue,
-// recruitments = transient cycles.
-//
-// Detail view (/app/eligibility/recruitments/:id) is rendered by the
-// same component for PR3 — selecting a row is a deep-link to a single
-// recruitment. A richer detail with notification proof, posts,
-// eligibility breakdown, missing fields, apply window, and source
-// trust is deferred (Backend gap: no /api/recruitments/:id/detail
-// shape established yet; FLAGGED in PR description).
+// Recruitment listing — queries /api/recruitments, shows apply-window
+// stages, fee + save toggle. Detail view at
+// /app/eligibility/recruitments/:id is rendered by the same component:
+// selecting a row is a deep-link to a single recruitment row.
+// A richer detail (notification proof, posts, eligibility breakdown,
+// missing fields, apply window, source trust) is deferred — no
+// /api/recruitments/:id/detail shape established yet.
 
 const STAGES = ["Notification", "Open", "Closed", "Result"];
 const STAGE_INDEX = {
