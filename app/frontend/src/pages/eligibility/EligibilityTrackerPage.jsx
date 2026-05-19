@@ -4,12 +4,10 @@ import { ListChecks, Plus, FileText, Receipt, Trophy, Bell } from "lucide-react"
 import { api } from "../../lib/api";
 import useApiAction from "../../lib/hooks/useApiAction";
 
-// PR3 reorg: this page replaces the standalone /app/tracker (now an
-// alias to /app/eligibility/tracker). The full Tracker.jsx logic moved
-// here so there's exactly one implementation. The grouped-by-status
-// timeline is retained; chip filters (All / Applications / Documents /
-// Results / Policy) and a free-text search were layered on top per the
-// PR3 page contract.
+// Application tracker — one grouped-by-status timeline plus chip
+// filters (All / Applications / Documents / Results / Policy) and a
+// free-text search. There is exactly one implementation; the legacy
+// standalone page has been removed.
 
 const STATUSES = ["not_started", "opened", "in_progress", "submitted", "skipped", "not_applicable"];
 
