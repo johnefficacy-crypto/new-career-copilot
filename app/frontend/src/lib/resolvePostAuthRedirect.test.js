@@ -75,3 +75,53 @@ describe("resolvePostAuthRedirect priority order", () => {
     );
   });
 });
+
+describe("isSafeInternalPath open-redirect guards", () => {
+  test("rejects backslash escape", () => {
+    expect(isSafeInternalPath("/\\evil.com")).toBe(false);
+  });
+  test("rejects percent-encoded protocol-relative tricks", () => {
+    expect(isSafeInternalPath("/%2Fevil.com")).toBe(false);
+    expect(isSafeInternalPath("/%2fevil.com")).toBe(false);
+    expect(isSafeInternalPath("/%5Cevil.com")).toBe(false);
+    expect(isSafeInternalPath("/%5cevil.com")).toBe(false);
+  });
+});
+
+describe("resolvePostAuthRedirect object signature", () => {
+  test("accepts safe next", () => {
+    expect(resolvePostAuthRedirect({ next: "/app/study/plan" })).toBe(
+      "/app/study/plan",
+    );
+  });
+  test("falls back to from when next is unsafe", () => {
+    expect(
+      resolvePostAuthRedirect({ next: "//evil.com", from: "/app/profile" }),
+    ).toBe("/app/profile");
+  });
+  test("uses default fallback when both unsafe", () => {
+    expect(
+      resolvePostAuthRedirect({ next: "https://evil.com", from: null }),
+    ).toBe("/app");
+  });
+  test("uses caller-provided fallback", () => {
+    expect(
+      resolvePostAuthRedirect({ next: undefined, fallback: "/x" }),
+    ).toBe("/x");
+  });
+  test("rejects every shape of open-redirect input", () => {
+    for (const bad of [
+      "//evil.com",
+      "/\\evil.com",
+      "/%2Fevil.com",
+      "/%5Cevil.com",
+      "https://evil.com",
+      "",
+      null,
+      undefined,
+      42,
+    ]) {
+      expect(resolvePostAuthRedirect({ next: bad })).toBe("/app");
+    }
+  });
+});

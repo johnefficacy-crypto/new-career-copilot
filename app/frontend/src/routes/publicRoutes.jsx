@@ -5,6 +5,7 @@ import Login from "../pages/auth/Login";
 import Signup from "../pages/auth/Signup";
 import ForgotPassword from "../pages/auth/ForgotPassword";
 import ResetPassword from "../pages/auth/ResetPassword";
+import AuthCallback from "../pages/auth/AuthCallback";
 import OnboardingChat from "../pages/OnboardingChat";
 import FunnelLandingRouter from "../features/funnel/FunnelLandingRouter";
 import { GuestOnly } from "../lib/ProtectedRoute";
@@ -32,6 +33,9 @@ const prototypeRouteElements = ENABLE_PROTOTYPE_ROUTES ? (
     <Route path="/signup" element={<GuestOnly><Signup /></GuestOnly>} />
     <Route path="/forgot-password" element={<ForgotPassword />} />
     <Route path="/reset-password" element={<ResetPassword />} />
+    {/* OAuth round-trip lands here; it must run for authed users too,
+        so it stays outside the GuestOnly guard. */}
+    <Route path="/auth/callback" element={<AuthCallback />} />
     <Route path="/copyright" element={<CopyrightSubmit />} />
     <Route path="/dmca" element={<CopyrightSubmit />} />
     {/* Unified guided onboarding — both entry modes are publicly reachable
@@ -67,6 +71,7 @@ export const publicRouteElements = (
     <Route path="/signup" element={<GuestOnly><Signup /></GuestOnly>} />
     <Route path="/forgot-password" element={<ForgotPassword />} />
     <Route path="/reset-password" element={<ResetPassword />} />
+    <Route path="/auth/callback" element={<AuthCallback />} />
     <Route path="/app/onboarding/chat" element={<OnboardingChat />} />
     <Route path="/blog" element={<Blogs />} />
     <Route path="/blog/:slug" element={<BlogDetail />} />
