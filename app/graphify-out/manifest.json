@@ -1679,10 +1679,6 @@
     "mtime": 1778966911.7248225,
     "hash": "8e1aae7d67e067546f3265df70ff86e4"
   },
-  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\dashboard\\components\\ReadinessCards.jsx": {
-    "mtime": 1779187380.563889,
-    "hash": "a6101c2d57627eae2f6f7658518cf53a"
-  },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\dashboard\\components\\TodaysActions.jsx": {
     "mtime": 1779213947.208348,
     "hash": "d049cdf75e972dcd86075f2a48cc7795"
@@ -1698,6 +1694,14 @@
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\exam-eligibility\\EligibleExamsCard.test.js": {
     "mtime": 1779093806.4744277,
     "hash": "c2d2463ccee68ee6940b0c46cc8818f7"
+  },
+  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\exams\\ExamDetailAnchorNav.jsx": {
+    "mtime": 1779221165.6613362,
+    "hash": "a408176076499829de8559c90137c8a8"
+  },
+  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\exams\\ExamDetailAnchorNav.test.js": {
+    "mtime": 1779221165.6623344,
+    "hash": "1f988f8c849ea29d4e5debcb91e831c2"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\exams\\ExamIntelligenceTab.jsx": {
     "mtime": 1779036736.955997,
@@ -1855,22 +1859,6 @@
     "mtime": 1778782769.9801095,
     "hash": "33b49537d71fcb7f38f0a1e823ee899d"
   },
-  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\persona-questions\\PersonaQuestionCard.jsx": {
-    "mtime": 1779118919.8509736,
-    "hash": "0a12113383674a1c1814daef1d5e04c5"
-  },
-  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\persona-questions\\PersonaQuestionOptionList.jsx": {
-    "mtime": 1778716717.5270114,
-    "hash": "55ffdc86ff9c9a6664d7268a41c005c7"
-  },
-  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\persona-questions\\usePersonaQuestion.initial.test.js": {
-    "mtime": 1779118919.8699746,
-    "hash": "83c622208ff26848de6e0be1cc9778b5"
-  },
-  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\persona-questions\\usePersonaQuestion.js": {
-    "mtime": 1779118919.900971,
-    "hash": "029a5c04af43a191a4879d85d0458b55"
-  },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\profile\\profileSchema.js": {
     "mtime": 1778323263.1137729,
     "hash": "f18b92a7072c4bcdcc32af6506fd9c1f"
@@ -1924,12 +1912,12 @@
     "hash": "3545576212de44b22532083ecd12be50"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\profile\\components\\TodayProfileBanner.jsx": {
-    "mtime": 1779215024.2843192,
-    "hash": "da47c0811272767cdf89ab6e8ac5f8c8"
+    "mtime": 1779221165.6643374,
+    "hash": "2d74ad8a542c9105084640921685f834"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\profile\\components\\TodayProfileBanner.test.js": {
-    "mtime": 1779215024.3885825,
-    "hash": "ee146d43d733eb6f04a72f206f72c0fa"
+    "mtime": 1779221165.6693354,
+    "hash": "c68a3d17dbc32bbc425bc311dc41c0fa"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\profile\\hooks\\useMyPersona.js": {
     "mtime": 1779215024.3906,
@@ -1943,10 +1931,6 @@
     "mtime": 1779054200.1469612,
     "hash": "c1e8b92521e9c6218f772b8e3eed30f4"
   },
-  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\CompetitionContextCard.jsx": {
-    "mtime": 1779019900.8826282,
-    "hash": "3c36409e6f53082829d6e18b02a4781f"
-  },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\CycleProgressRail.jsx": {
     "mtime": 1779012955.279639,
     "hash": "0c2a3475186e892961998b61b38d19aa"
@@ -1954,10 +1938,6 @@
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\CycleSubjectProgress.jsx": {
     "mtime": 1779020927.6185157,
     "hash": "865060870564ffe849664fff5d15b59d"
-  },
-  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\EngineTrace.jsx": {
-    "mtime": 1779051358.163301,
-    "hash": "4bf9b80b7b6656de465c0eba54b2030c"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\ExamContextCard.jsx": {
     "mtime": 1779012955.2826388,
@@ -1978,10 +1958,6 @@
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\MasteryDistribution.jsx": {
     "mtime": 1778842851.5422504,
     "hash": "72050796376302044c0ee8fd95dcb80c"
-  },
-  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\MissionControlSkeleton.jsx": {
-    "mtime": 1778717091.4058516,
-    "hash": "7e1ed885979d3988e7a149de67ecc2a2"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\MockCorrectionPreview.jsx": {
     "mtime": 1779020927.6235158,
@@ -2011,10 +1987,6 @@
     "mtime": 1779012955.364652,
     "hash": "1c673713b012789fb0db3f785727be83"
   },
-  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\PlanPreferencesCard.jsx": {
-    "mtime": 1779012955.363649,
-    "hash": "675420c4e0dae874e57ea381f4db731c"
-  },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\PlanReasoningCard.jsx": {
     "mtime": 1779019900.892645,
     "hash": "95bfe1cbb12d9f2cb8d30df56de30643"
@@ -2023,25 +1995,13 @@
     "mtime": 1779019900.8956294,
     "hash": "1acdbc399fa5d7e9b124ec09142ff9fd"
   },
-  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\SafeExplanationCard.jsx": {
-    "mtime": 1779020927.627504,
-    "hash": "52cf88284d01e784d31ce5eb3f0862e0"
-  },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\SourceTrustBadge.jsx": {
     "mtime": 1778721644.3955395,
     "hash": "05f3adc788e43fd518f440d0e95d01b1"
   },
-  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\StudyMetricCard.jsx": {
-    "mtime": 1779019901.0677443,
-    "hash": "1447d1e73f465f5f17e662c2172041ec"
-  },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\StudyPolicyPreview.jsx": {
     "mtime": 1779020927.629513,
     "hash": "04a91405e25bdec66b163b5cc4c870d4"
-  },
-  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\StudyTaskCard.jsx": {
-    "mtime": 1778782769.999118,
-    "hash": "f514bd9ebc9890e203f88e640c228494"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\SubjectCard.jsx": {
     "mtime": 1779019901.0847495,
@@ -2050,10 +2010,6 @@
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\SubjectCards.jsx": {
     "mtime": 1779012955.368651,
     "hash": "fce1dd83f8b405b29a5fa8fd1b1cd5b6"
-  },
-  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\TaskReasoningPanel.jsx": {
-    "mtime": 1778970551.6710703,
-    "hash": "662c64d169b2e205b2681a0c365a3f07"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\features\\study\\components\\TopicRow.jsx": {
     "mtime": 1779099846.6370964,
@@ -2176,8 +2132,8 @@
     "hash": "a0120aabd80e90a62daf9b84ab3292d5"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\ExamDetail.jsx": {
-    "mtime": 1779213947.2373466,
-    "hash": "c27f4ac36a229adb6997626cbda36b5e"
+    "mtime": 1779221165.6713343,
+    "hash": "03b9d0a3b9941d595e20b7a3fbeff161"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\Landing.intents.test.js": {
     "mtime": 1779093806.4844353,
@@ -2248,16 +2204,16 @@
     "hash": "a519250143138172b649fd552e2d07b7"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\StudyPlan.jsx": {
-    "mtime": 1779188711.9938936,
-    "hash": "061cb1c1f7421f0b25a3aa188abe75e5"
+    "mtime": 1779221165.6733334,
+    "hash": "38b015f479be525d457fc278711fe42c"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\StudyPlan.test.js": {
     "mtime": 1779093806.4934292,
     "hash": "2afed058eb33c784c08e24cad613118b"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\Today.jsx": {
-    "mtime": 1779215024.4026012,
-    "hash": "fba7437482c6c7966c23039475c4782c"
+    "mtime": 1779221165.675339,
+    "hash": "c948bd558b96eab27ca48c01922295c2"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\Today.network.test.js": {
     "mtime": 1779215024.405605,
@@ -2496,16 +2452,24 @@
     "hash": "d2491f700f1d3e8d8846a4df19c03211"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\study\\StudyHome.jsx": {
-    "mtime": 1779212409.5717144,
-    "hash": "4bdfdaa4e848f7e91d33affb27643095"
+    "mtime": 1779221165.6793425,
+    "hash": "25e50b8cd1c009a2b4aa6a445a09c299"
+  },
+  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\study\\StudyHome.next-action.test.js": {
+    "mtime": 1779221165.680342,
+    "hash": "1e969976996a217358d881ad19307862"
+  },
+  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\study\\StudyHubs.test.js": {
+    "mtime": 1779221165.6813443,
+    "hash": "d41ce9fc2c89bd1b74cde745a07788c6"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\study\\StudyLearningHub.jsx": {
-    "mtime": 1779212409.572728,
-    "hash": "e8440175ff2a9693126f21ccdf979785"
+    "mtime": 1779221165.685346,
+    "hash": "033eed089ccf2da20c5c577f85d568d3"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\study\\StudyProgressHub.jsx": {
-    "mtime": 1779212409.5747197,
-    "hash": "322c54bea984f932e98c93630be84b67"
+    "mtime": 1779221165.6863441,
+    "hash": "b8fb382134393e1d7706b6ac5b5a80cc"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\study\\StudyShell.jsx": {
     "mtime": 1779212409.5757236,
@@ -2516,8 +2480,12 @@
     "hash": "74dee2753aea7ab5b9e0f6b655e63980"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\study\\WeeklyReview.jsx": {
-    "mtime": 1779045016.509002,
-    "hash": "e1d74c3a0910ed3a20f6e7d88e14f7c9"
+    "mtime": 1779221165.7033465,
+    "hash": "e7dcd1e50157471e43d4f852af9ac731"
+  },
+  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\study\\WeeklyReview.period-param.test.js": {
+    "mtime": 1779221165.7053342,
+    "hash": "2013c941d9cdf7474ce122f0160c6118"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\study\\mocks\\validateMockForm.js": {
     "mtime": 1778972624.8597758,
@@ -2534,6 +2502,10 @@
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\today\\mergeMissionControl.test.js": {
     "mtime": 1778969383.787015,
     "hash": "bb246938d31c485fd3a8b09103a8d48b"
+  },
+  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\pages\\__tests__\\StudyPlan.copy.test.jsx": {
+    "mtime": 1779221165.6763341,
+    "hash": "d0d698c4d6f85351c0e3067f4e01349e"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\prototype\\PrototypeIndex.jsx": {
     "mtime": 1778830708.474023,
@@ -2651,6 +2623,10 @@
     "mtime": 1779115385.645268,
     "hash": "5e896e61a5dcbb87e3fb2f59837edb70"
   },
+  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\shared\\components\\DisabledCard.jsx": {
+    "mtime": 1779221165.7063427,
+    "hash": "117bf8e896232cc5c46bc3edf812969c"
+  },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\shared\\components\\HowItWorksDrawer.jsx": {
     "mtime": 1779215383.71873,
     "hash": "04f9a100aedd024ca8359819e001c2b1"
@@ -2659,13 +2635,21 @@
     "mtime": 1779215383.720728,
     "hash": "ccc8076c71ea69035f73e5ea288e532c"
   },
+  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\shared\\components\\HowItWorksHeaderButton.jsx": {
+    "mtime": 1779221165.7073407,
+    "hash": "e3c3bac614623ab22df788f1ff6186c3"
+  },
+  "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\shared\\components\\HowItWorksHeaderButton.test.jsx": {
+    "mtime": 1779221165.7093372,
+    "hash": "baa7891f4742a5d18831123ec6efb97c"
+  },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\shared\\components\\HowItWorksProvider.jsx": {
     "mtime": 1779215383.8717434,
     "hash": "272a34b660abe26c46030d9f35331aa7"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\shared\\components\\howItWorksTopics.jsx": {
-    "mtime": 1779215383.9037426,
-    "hash": "d8b56ffe3637a53bc576d08ca90fe5e8"
+    "mtime": 1779221165.7113347,
+    "hash": "ed27bfa5196efc5898bc9f49faf30ba7"
   },
   "D:\\GovtExamAgent\\ccp-mainbuild-v1\\app\\frontend\\src\\shared\\components\\ShellSubNav.jsx": {
     "mtime": 1779212409.580728,
