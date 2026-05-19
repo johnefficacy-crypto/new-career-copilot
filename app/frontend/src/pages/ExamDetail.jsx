@@ -31,6 +31,16 @@ import ExamDetailAnchorNav from "../features/exams/ExamDetailAnchorNav";
 //   invasive surgery on a 425-line component; the spec's chip strip is
 //   exactly 6 chips and the "Competition" chip is the natural home for
 //   the broader "what we know about the exam" view.
+//
+// Routing contract (PR — Bug 3 fix):
+//   /app/eligibility/exams/:slug receives an EXAM slug (from `exams.slug`).
+//   The recruitment detail endpoint resolves by recruitment id/slug only,
+//   so passing an exam slug into /api/recruitments/<slug> returns a real
+//   404 (e.g. `rbi-grade-b`). The page therefore (a) validates the exam
+//   via /api/exams/:slug and (b) maps the exam to its published
+//   recruitment via /api/recruitments before fetching detail by
+//   recruitment id. The /api/recruitments list now surfaces `exam_id` to
+//   make that mapping cheap.
 
 const SECTIONS = [
   { id: "about", label: "About" },
@@ -84,16 +94,49 @@ function Section({ id, eyebrow, title, children, testId }) {
 export default function ExamDetail() {
   const { slug } = useParams();
   const [r, setR] = useState(null);
+  const [examMeta, setExamMeta] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function load() {
     try {
-      const d = await api.get(`/api/recruitments/${slug}`);
-      setR(d);
       setError("");
+      // 1. Validate the exam slug against /api/exams/:slug. This is the
+      //    only endpoint that resolves exam slugs; calling
+      //    /api/recruitments/<exam-slug> would return a real 404.
+      const exam = await api.get(`/api/exams/${slug}`);
+      const examRow = exam?.exam || null;
+      if (!examRow?.id) {
+        setExamMeta(null);
+        setR(null);
+        setError("Exam not found.");
+        return;
+      }
+      setExamMeta(examRow);
+
+      // 2. Map exam → published recruitment via the list (which now
+      //    surfaces `exam_id` per row). Pick the row whose apply window
+      //    ends latest, falling back to first match.
+      const list = await api.get(`/api/recruitments`);
+      const items = Array.isArray(list?.items) ? list.items : [];
+      const matches = items.filter((it) => it.exam_id === examRow.id);
+      const recruitment = matches.sort((a, b) => {
+        const ac = a?.apply_window?.close || "";
+        const bc = b?.apply_window?.close || "";
+        return bc.localeCompare(ac);
+      })[0];
+
+      if (!recruitment?.id) {
+        setR(null);
+        return;
+      }
+
+      // 3. Now fetch the recruitment detail by id (which the resolver
+      //    accepts) — no exam slug crosses into a recruitment endpoint.
+      const d = await api.get(`/api/recruitments/${recruitment.id}`);
+      setR(d);
     } catch (e) {
-      setError("Couldn't load this recruitment.");
+      setError("Couldn't load this exam.");
       if (process.env.NODE_ENV !== "production") console.error(e);
     }
   }
@@ -103,9 +146,12 @@ export default function ExamDetail() {
   }, [slug]);
 
   async function toggleSave() {
+    if (!r?.id) return;
     setBusy(true);
     try {
-      await api.post(`/api/recruitments/${slug}/save`, {});
+      // Save toggles against the resolved recruitment id, not the exam
+      // slug from the URL — see routing-contract note above.
+      await api.post(`/api/recruitments/${r.id}/save`, {});
       await load();
     } finally {
       setBusy(false);
@@ -155,6 +201,26 @@ export default function ExamDetail() {
         <button type="button" onClick={load} className="btn btn-ghost mt-3">
           Retry
         </button>
+      </div>
+    );
+  }
+
+  // Exam validated but no published recruitment cycle for it yet — surface
+  // explicitly instead of looping the loading shell forever.
+  if (!r && examMeta) {
+    return (
+      <div className="soft-card rounded-2xl p-6" data-testid="exam-no-cycle">
+        <h1 className="font-heading text-2xl font-semibold">{examMeta.name}</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          No published recruitment cycle for this exam yet. We'll list it here as
+          soon as a cycle is verified.
+        </p>
+        <Link
+          to="/app/eligibility/exams"
+          className="inline-flex items-center gap-1 mt-4 text-sm text-muted-foreground link-under"
+        >
+          <ArrowLeft className="h-4 w-4" /> Back to all exams
+        </Link>
       </div>
     );
   }

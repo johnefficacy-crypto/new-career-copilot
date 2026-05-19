@@ -44,6 +44,14 @@ def _safe(call: Callable[[], Any], default: Any = None) -> Any:
         return default
 
 
+# Sentinel used by the `_read_*` helpers to signal that the underlying
+# Supabase call raised — distinct from a successful read that simply
+# returned no rows. A read failure must NOT cause `upsert_behavior_snapshot`
+# to persist a zero-valued snapshot (the historical bug: schema drift on
+# `study_sessions.duration_minutes` silently corrupted Behavior Index rows).
+READ_FAILED: Any = object()
+
+
 def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, x))
 
@@ -60,24 +68,32 @@ def _day_bounds(day: date) -> tuple[str, str]:
     return start.isoformat(), end.isoformat()
 
 
-def _read_session_minutes(supabase: Any, user_id: str, day: date) -> list[int]:
-    """Return per-session durations (minutes) for `day`."""
+def _read_session_minutes(supabase: Any, user_id: str, day: date) -> list[int] | Any:
+    """Return per-session durations (minutes) for `day`.
+
+    Returns `READ_FAILED` if the Supabase call raised. Returns `[]` for a
+    legitimate empty result so the caller can still write a zero snapshot
+    for "no sessions today" without confusing it with a schema-drift read
+    failure.
+    """
     start_iso, end_iso = _day_bounds(day)
     rows = _safe(
         lambda: (
             supabase.table("study_sessions")
-            .select("duration_minutes, duration_mins, started_at")
+            .select("duration_mins, started_at")
             .eq("user_id", user_id)
             .gte("started_at", start_iso)
             .lt("started_at", end_iso)
             .execute()
         ),
-        default=None,
+        default=READ_FAILED,
     )
+    if rows is READ_FAILED:
+        return READ_FAILED
     items = getattr(rows, "data", None) or []
     out: list[int] = []
     for r in items:
-        v = r.get("duration_minutes") or r.get("duration_mins") or 0
+        v = r.get("duration_mins") or 0
         try:
             iv = int(v)
         except (TypeError, ValueError):
@@ -87,7 +103,7 @@ def _read_session_minutes(supabase: Any, user_id: str, day: date) -> list[int]:
     return out
 
 
-def _read_task_counts(supabase: Any, user_id: str, day: date) -> dict[str, int]:
+def _read_task_counts(supabase: Any, user_id: str, day: date) -> dict[str, int] | Any:
     rows = _safe(
         lambda: (
             supabase.table("study_tasks")
@@ -96,8 +112,10 @@ def _read_task_counts(supabase: Any, user_id: str, day: date) -> dict[str, int]:
             .eq("scheduled_date", day.isoformat())
             .execute()
         ),
-        default=None,
+        default=READ_FAILED,
     )
+    if rows is READ_FAILED:
+        return READ_FAILED
     items = getattr(rows, "data", None) or []
     planned = len(items)
     completed = sum(1 for r in items if r.get("status") == "completed")
@@ -119,7 +137,7 @@ def _read_task_counts(supabase: Any, user_id: str, day: date) -> dict[str, int]:
     }
 
 
-def _read_backlog_count(supabase: Any, user_id: str, on_date: date) -> int:
+def _read_backlog_count(supabase: Any, user_id: str, on_date: date) -> int | Any:
     """Open tasks scheduled on or before `on_date` that are not completed."""
     rows = _safe(
         lambda: (
@@ -129,13 +147,15 @@ def _read_backlog_count(supabase: Any, user_id: str, on_date: date) -> int:
             .lte("scheduled_date", on_date.isoformat())
             .execute()
         ),
-        default=None,
+        default=READ_FAILED,
     )
+    if rows is READ_FAILED:
+        return READ_FAILED
     items = getattr(rows, "data", None) or []
     return sum(1 for r in items if r.get("status") not in ("completed", "skipped"))
 
 
-def _read_mock_counts(supabase: Any, user_id: str, day: date) -> dict[str, int]:
+def _read_mock_counts(supabase: Any, user_id: str, day: date) -> dict[str, int] | Any:
     start_iso, end_iso = _day_bounds(day)
     rows = _safe(
         lambda: (
@@ -146,8 +166,10 @@ def _read_mock_counts(supabase: Any, user_id: str, day: date) -> dict[str, int]:
             .lt("attempted_at", end_iso)
             .execute()
         ),
-        default=None,
+        default=READ_FAILED,
     )
+    if rows is READ_FAILED:
+        return READ_FAILED
     items = getattr(rows, "data", None) or []
     mock_ids = [r["id"] for r in items if r.get("id")]
     reviewed = sum(
@@ -176,7 +198,7 @@ def _read_mock_counts(supabase: Any, user_id: str, day: date) -> dict[str, int]:
 
 def _read_recent_active_days(
     supabase: Any, user_id: str, anchor: date, window: int = CONSISTENCY_WINDOW_DAYS
-) -> int:
+) -> int | Any:
     """Count distinct UTC dates with at least one positive-duration session
     inside [anchor - (window-1), anchor]."""
     start_day = anchor - timedelta(days=window - 1)
@@ -187,18 +209,20 @@ def _read_recent_active_days(
     rows = _safe(
         lambda: (
             supabase.table("study_sessions")
-            .select("started_at, duration_minutes, duration_mins")
+            .select("started_at, duration_mins")
             .eq("user_id", user_id)
             .gte("started_at", start_iso)
             .lt("started_at", end_iso)
             .execute()
         ),
-        default=None,
+        default=READ_FAILED,
     )
+    if rows is READ_FAILED:
+        return READ_FAILED
     days: set[str] = set()
     for r in getattr(rows, "data", None) or []:
         started = r.get("started_at")
-        dur = r.get("duration_minutes") or r.get("duration_mins") or 0
+        dur = r.get("duration_mins") or 0
         try:
             if int(dur) <= 0:
                 continue
@@ -246,18 +270,57 @@ def _focus_minutes(session_minutes: list[int]) -> tuple[int, int, float | None]:
 def compute_behavior_snapshot(
     supabase: Any, user_id: str, day: date | None = None
 ) -> dict[str, Any]:
-    """Compute (do not persist) a behavior snapshot for the given day."""
+    """Compute (do not persist) a behavior snapshot for the given day.
+
+    Any of the per-table reads can return the `READ_FAILED` sentinel if the
+    underlying Supabase call raised (e.g. a 42703 schema-drift error). The
+    payload always includes `_read_failed: bool` so the persistence layer
+    can skip the upsert without confusing schema failure with a genuine
+    "no activity" day.
+    """
     day = day or datetime.now(timezone.utc).date()
 
-    session_mins = _read_session_minutes(supabase, user_id, day)
+    session_mins_raw = _read_session_minutes(supabase, user_id, day)
+    tasks_raw = _read_task_counts(supabase, user_id, day)
+    mocks_raw = _read_mock_counts(supabase, user_id, day)
+    backlog_today_raw = _read_backlog_count(supabase, user_id, day)
+    backlog_yesterday = _read_yesterday_backlog(supabase, user_id, day)
+    active_days_raw = _read_recent_active_days(supabase, user_id, day)
+
+    read_failed = any(
+        v is READ_FAILED
+        for v in (
+            session_mins_raw,
+            tasks_raw,
+            mocks_raw,
+            backlog_today_raw,
+            active_days_raw,
+        )
+    )
+
+    session_mins = [] if session_mins_raw is READ_FAILED else session_mins_raw
+    tasks = (
+        {
+            "planned": 0,
+            "completed": 0,
+            "missed": 0,
+            "skipped": 0,
+            "revision_total": 0,
+            "revision_done": 0,
+        }
+        if tasks_raw is READ_FAILED
+        else tasks_raw
+    )
+    mocks = (
+        {"count": 0, "reviewed": 0, "corrections_completed": 0}
+        if mocks_raw is READ_FAILED
+        else mocks_raw
+    )
+    backlog_today = 0 if backlog_today_raw is READ_FAILED else backlog_today_raw
+    active_days = 0 if active_days_raw is READ_FAILED else active_days_raw
+
     total_minutes = sum(session_mins)
     focus_min, focus_count, avg_focus = _focus_minutes(session_mins)
-
-    tasks = _read_task_counts(supabase, user_id, day)
-    mocks = _read_mock_counts(supabase, user_id, day)
-    backlog_today = _read_backlog_count(supabase, user_id, day)
-    backlog_yesterday = _read_yesterday_backlog(supabase, user_id, day)
-    active_days = _read_recent_active_days(supabase, user_id, day)
 
     adherence = _ratio(tasks["completed"], tasks["planned"])
     completion_today = _ratio(tasks["completed"], max(tasks["planned"], 1))
@@ -315,14 +378,29 @@ def compute_behavior_snapshot(
         "source_trust": "platform_tracked",
         "_behavior_index": round(_clamp(behavior_index), 3),
         "_components": {k: round(v, 3) for k, v in components.items()},
+        "_read_failed": read_failed,
     }
 
 
 def upsert_behavior_snapshot(
     supabase: Any, user_id: str, day: date | None = None
 ) -> dict[str, Any]:
-    """Compute + upsert a snapshot row. Returns the computed payload."""
+    """Compute + upsert a snapshot row. Returns the computed payload.
+
+    Skips the upsert when `compute_behavior_snapshot` flags `_read_failed`:
+    a schema-drift or transport error must not persist zero-valued metrics
+    that would silently corrupt the user's Behavior Index history. A
+    genuine "no activity" day (all reads return empty but with HTTP 200)
+    still persists a zero snapshot because that is real, observed state.
+    """
     payload = compute_behavior_snapshot(supabase, user_id, day)
+    if payload.get("_read_failed"):
+        logger.warning(
+            "behavior_scores upsert skipped for user=%s day=%s — read failure detected",
+            user_id,
+            payload.get("snapshot_date"),
+        )
+        return payload
     row = {k: v for k, v in payload.items() if not k.startswith("_")}
     _safe(
         lambda: (
