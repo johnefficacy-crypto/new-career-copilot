@@ -6,6 +6,7 @@ import { api } from "../lib/api";
 import AppSidebar from "../shared/layouts/AppSidebar";
 import TopBar from "../shared/layouts/TopBar";
 import UserMenu from "../shared/layouts/UserMenu";
+import HowItWorksProvider from "../shared/components/HowItWorksProvider";
 
 const SECTIONS = [
   {
@@ -89,6 +90,7 @@ export default function DashShell() {
   useEffect(() => { api.get("/api/notifications/me/unread-count").then((d) => setUnreadCount(Number(d?.count || 0))).catch(() => setUnreadCount(0)); }, [pathname]);
 
   return (
+    <HowItWorksProvider>
     <div className="min-h-screen flex linen-bg">
       {immersive ? null : (
         <div className="hidden lg:block"><AppSidebar brandIcon={Compass} brandTitle="Career Copilot" brandSubtitle="Aspirant OS" sections={SECTIONS} user={auth.user} footer={{ adminLink: <Link to="/admin" data-testid="sidebar-admin" className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm bg-dusk-100 text-dusk-700 hover:bg-dusk-200"><Shield className="h-4 w-4" strokeWidth={1.8} /> Admin console</Link>, bottom: <div className="rounded-xl bg-clay-100/70 border border-clay-200 p-4"><div className="text-[10px] uppercase tracking-[0.22em] text-clay-700">Upgrade</div><div className="font-heading font-semibold mt-1 text-clay-800">Unlock the full study OS</div><Link to="/app/pricing" data-testid="sidebar-upgrade" className="mt-3 w-full bg-clay-500 text-white rounded-lg py-2 text-xs font-semibold inline-block text-center">See plans</Link></div> }} /></div>
@@ -100,5 +102,6 @@ export default function DashShell() {
         <main key={pathname} className={immersive ? "animate-fade-up" : "p-5 lg:p-8 max-w-7xl mx-auto animate-fade-up"}><Outlet /></main>
       </div>
     </div>
+    </HowItWorksProvider>
   );
 }
