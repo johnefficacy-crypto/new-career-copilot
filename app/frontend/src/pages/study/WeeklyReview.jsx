@@ -1,8 +1,25 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { api } from "../../lib/api";
 import { Eyebrow, PageHeader, StatusDot, StudyCard } from "../../shared/ui/studyos";
 
 const PERIODS = ["daily", "weekly", "monthly"];
+
+// Resolve the initial period from `?period=` on first mount.
+// Invalid / missing values fall back to the existing "weekly" default.
+// Deliberately read once on mount — switching the query string later
+// shouldn't yank the user out of a period they manually selected.
+function resolveInitialPeriod(search) {
+  try {
+    const params = new URLSearchParams(search || "");
+    const requested = (params.get("period") || "").toLowerCase();
+    if (PERIODS.includes(requested)) return requested;
+  } catch {
+    // URLSearchParams is well supported in target browsers; this catch is
+    // defensive in case `search` is exotic.
+  }
+  return "weekly";
+}
 
 function fmtPct(v) {
   if (v === null || v === undefined) return "—";
@@ -20,7 +37,8 @@ function readTone(score) {
 }
 
 export default function WeeklyReview() {
-  const [period, setPeriod] = useState("weekly");
+  const location = useLocation();
+  const [period, setPeriod] = useState(() => resolveInitialPeriod(location.search));
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
