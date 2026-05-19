@@ -15,6 +15,7 @@ import CertificationsSection from "../features/profile/components/Certifications
 import ExperienceSection from "../features/profile/components/ExperienceSection";
 import ExamAttemptsSection from "../features/profile/components/ExamAttemptsSection";
 import CompletionSidebar from "../features/profile/components/CompletionSidebar";
+import PersonaSummaryCard from "../features/profile/components/PersonaSummaryCard";
 import { profileSchema, toProfilePayload } from "../features/profile/profileSchema";
 import { ErrorState, LoadingSkeleton } from "../shared/ui";
 
@@ -195,6 +196,8 @@ export default function Profile() {
             </div>
           </div>
         )}
+
+        <PersonaSummaryCard />
 
         <div className="flex items-center justify-end">
           <label className="text-xs text-muted-foreground flex items-center gap-2">

@@ -31,6 +31,15 @@ jest.mock("../lib/hooks/useApiAction", () => ({
   default: () => ({ run: jest.fn() }),
 }));
 
+// PR5: TodayProfileBanner uses react-query via useProfileCompletion.
+// The Today.network test doesn't mount a QueryClientProvider (it only
+// cares about the page's own fetch fan-out), so we stub the hook so
+// it doesn't crash and doesn't add a phantom GET to the assertion.
+jest.mock("../features/profile/hooks/useProfileCompletion", () => ({
+  __esModule: true,
+  default: () => ({ pct: 90, status: "green", loading: false, error: null }),
+}));
+
 import Today from "./Today";
 
 beforeEach(() => {
