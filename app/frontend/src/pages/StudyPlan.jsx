@@ -397,15 +397,27 @@ export default function StudyPlan() {
             <div className="mb-2 flex justify-end">
               <StatusDot state="live" label="" />
             </div>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={previewRegenerate}
-              disabled={!selectedExamId}
-              data-testid="preview-regenerate-btn"
-            >
-              <Sparkles className="h-3.5 w-3.5" /> Preview regenerated plan
-            </button>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={previewRegenerate}
+                disabled={!selectedExamId}
+                data-testid="suggest-changes-btn"
+                title="Show planner-suggested changes for review"
+              >
+                Suggest changes
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={previewRegenerate}
+                disabled={!selectedExamId}
+                data-testid="regenerate-plan-btn"
+              >
+                <Sparkles className="h-3.5 w-3.5" /> Regenerate plan
+              </button>
+            </div>
           </div>
         }
       />
@@ -531,7 +543,7 @@ export default function StudyPlan() {
               })
             ) : (
               <p className="py-6 text-sm text-clay-700">
-                No tasks scheduled yet. Regenerate your plan to populate today's blocks.
+                No tasks scheduled yet. Use Regenerate plan to populate today's blocks.
               </p>
             )}
           </div>
@@ -595,7 +607,7 @@ export default function StudyPlan() {
       <Drawer
         open={draftOpen}
         onClose={() => setDraftOpen(false)}
-        title={`Preview regenerated plan${selectedExam?.name ? ` · ${selectedExam.name}` : ""}`}
+        title={`Preview changes${selectedExam?.name ? ` · ${selectedExam.name}` : ""}`}
         width={520}
       >
         {draftLoading ? (
@@ -709,7 +721,7 @@ function DraftDiff({ draft, onApply, applying, applyDisabled = false }) {
           disabled={applying || applyDisabled}
           data-testid="apply-draft-btn"
         >
-          {applying ? "Applying…" : "Apply"}
+          {applying ? "Applying…" : "Apply selected changes"}
         </button>
       </div>
     </div>
