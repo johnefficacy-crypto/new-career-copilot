@@ -1,11 +1,20 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import AuthLayout from "./AuthLayout";
 import { useAuth } from "../../lib/authContext";
 import { resolvePostAuthRedirect } from "../../lib/resolvePostAuthRedirect";
+import { useTurnstileChallenge } from "../../lib/useTurnstileChallenge";
 
 const SIGNUP_DEFAULT = "/app/onboarding/chat?mode=discovery";
+
+function humanizeAuthError(err) {
+  const raw = (err && (err.message || err.error_description)) || "Unable to create account";
+  if (/captcha|turnstile/i.test(raw)) {
+    return "Verification failed. Please try again.";
+  }
+  return raw;
+}
 
 export default function Signup() {
   const [name, setName] = useState("");
@@ -13,19 +22,29 @@ export default function Signup() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [checkEmail, setCheckEmail] = useState(false);
   const auth = useAuth();
   const nav = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const redirectTo = resolvePostAuthRedirect(location, searchParams, SIGNUP_DEFAULT);
+  const {
+    Turnstile,
+    captchaRequired,
+    widgetFailed,
+    waitForCaptchaToken,
+    reset: resetCaptcha,
+  } = useTurnstileChallenge();
+
+  const urlError = useMemo(() => searchParams.get("error"), [searchParams]);
+  const [bannerError, setBannerError] = useState(urlError);
 
   async function handleGoogleSignup() {
     setLoading(true);
     setError(null);
+    setBannerError(null);
     try {
-      await auth.loginWithGoogle({
-        redirectTo: `${window.location.origin}${redirectTo}`,
-      });
+      await auth.loginWithGoogle({ redirectTo });
     } catch (err) {
       setError(err.message || "Unable to continue with Google");
       setLoading(false);
@@ -36,14 +55,62 @@ export default function Signup() {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setBannerError(null);
+    let captchaToken;
+    if (captchaRequired) {
+      try {
+        captchaToken = await waitForCaptchaToken({ timeoutMs: 15000 });
+      } catch (capErr) {
+        if (widgetFailed || capErr?.message === "captcha_widget_failed") {
+          setError(
+            "CAPTCHA failed to load. Disable ad-blockers or try another browser."
+          );
+          setLoading(false);
+          return;
+        }
+      }
+    }
     try {
-      await auth.register({ email: email.trim(), password, name: name.trim() });
-      nav(redirectTo, { replace: true });
+      const result = await auth.register({
+        email: email.trim(),
+        password,
+        name: name.trim(),
+        captchaToken,
+      });
+      // When email confirmation is on, signUp returns no session and register
+      // returns needsEmailConfirmation=true — show a "check your email" panel
+      // instead of navigating into a route the user can't yet access.
+      if (result?.needsEmailConfirmation) {
+        setCheckEmail(true);
+      } else {
+        nav(redirectTo, { replace: true });
+      }
     } catch (err) {
-      setError(err.message || "Unable to create account");
+      resetCaptcha();
+      setError(humanizeAuthError(err));
     } finally {
       setLoading(false);
     }
+  }
+
+  if (checkEmail) {
+    return (
+      <AuthLayout
+        title="Check your email."
+        subtitle="We sent a confirmation link to finish creating your account."
+        footer={
+          <span>
+            Already confirmed?{" "}
+            <Link to="/login" className="link-under font-semibold">Sign in</Link>
+          </span>
+        }
+      >
+        <p className="text-sm text-muted-foreground" data-testid="signup-check-email">
+          Click the link in the email we just sent to {email || "your inbox"} to
+          finish setting up your account.
+        </p>
+      </AuthLayout>
+    );
   }
 
   return (
@@ -58,6 +125,14 @@ export default function Signup() {
       }
     >
       <form onSubmit={onSubmit} className="space-y-5" data-testid="signup-form">
+        {bannerError && (
+          <div
+            className="rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm px-3 py-2"
+            data-testid="signup-banner-error"
+          >
+            {bannerError}
+          </div>
+        )}
         <button
           type="button"
           onClick={handleGoogleSignup}
@@ -107,6 +182,7 @@ export default function Signup() {
             {error}
           </div>
         )}
+        <Turnstile />
         <button
           type="submit"
           disabled={loading}

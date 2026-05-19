@@ -4,6 +4,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -49,13 +50,20 @@ function mergeUser(supabaseUser, backendUser) {
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [status, setStatus] = useState("checking"); // checking | guest | session_authed | backend_authed
+  // Dedupe hydrate() across rapid getSession()/onAuthStateChange fires.
+  // Supabase Session has no stable `id`, so we key off access_token —
+  // it rotates on TOKEN_REFRESHED, so the ref self-invalidates.
+  const lastHydratedTokenRef = useRef(null);
 
   const hydrate = useCallback(async (session) => {
     if (!session?.user) {
+      lastHydratedTokenRef.current = null;
       setUser(null);
       setStatus("guest");
       return;
     }
+    if (lastHydratedTokenRef.current === session.access_token) return;
+    lastHydratedTokenRef.current = session.access_token;
 
     try {
       const { user: backendUser } = await authApi.me();
@@ -81,7 +89,10 @@ export function AuthProvider({ children }) {
         }
       });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT") {
+        lastHydratedTokenRef.current = null;
+      }
       hydrate(session);
     });
     return () => {
@@ -90,38 +101,59 @@ export function AuthProvider({ children }) {
     };
   }, [hydrate]);
 
-  const login = useCallback(async (email, password) => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw new Error(error.message || "Unable to sign in");
-    await hydrate(data.session);
-    return mergeUser(data.user, null);
-  }, [hydrate]);
+  const login = useCallback(
+    async (email, password, { captchaToken } = {}) => {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+        options: captchaToken ? { captchaToken } : undefined,
+      });
+      if (error) throw new Error(error.message || "Unable to sign in");
+      await hydrate(data.session);
+      return mergeUser(data.user, null);
+    },
+    [hydrate]
+  );
 
   const register = useCallback(
-    async ({ email, password, name }) => {
+    async ({ email, password, name, captchaToken }) => {
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { name } },
+        options: {
+          data: { name },
+          ...(captchaToken ? { captchaToken } : {}),
+        },
       });
       if (error) throw new Error(error.message || "Unable to create account");
+      const merged = mergeUser(data.user, null);
       if (data.session) {
         await hydrate(data.session);
-      } else {
-        setUser(null);
-        setStatus("guest");
+        return { user: merged, needsEmailConfirmation: false };
       }
-      return mergeUser(data.user, null);
+      setUser(null);
+      setStatus("guest");
+      return { user: merged, needsEmailConfirmation: true };
     },
     [hydrate]
   );
 
 
   const loginWithGoogle = useCallback(async ({ redirectTo } = {}) => {
-    const resolvedRedirect = redirectTo || `${window.location.origin}/app`;
+    // Only path-relative internal destinations are accepted; full URLs or
+    // protocol-relative values fall back to /app so we can never bounce the
+    // user to an attacker-controlled origin after OAuth.
+    const next =
+      typeof redirectTo === "string" &&
+      redirectTo.startsWith("/") &&
+      !redirectTo.startsWith("//") &&
+      !redirectTo.startsWith("/\\")
+        ? redirectTo
+        : "/app";
+    const callbackUrl = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: resolvedRedirect },
+      options: { redirectTo: callbackUrl },
     });
     if (error) throw new Error(error.message || "Unable to sign in with Google");
     return { ok: true };

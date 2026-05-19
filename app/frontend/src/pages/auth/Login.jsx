@@ -1,9 +1,18 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import AuthLayout from "./AuthLayout";
 import { useAuth } from "../../lib/authContext";
 import { resolvePostAuthRedirect } from "../../lib/resolvePostAuthRedirect";
+import { useTurnstileChallenge } from "../../lib/useTurnstileChallenge";
+
+function humanizeAuthError(err) {
+  const raw = (err && (err.message || err.error_description)) || "Unable to sign in";
+  if (/captcha|turnstile/i.test(raw)) {
+    return "Verification failed. Please try again.";
+  }
+  return raw;
+}
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -15,12 +24,24 @@ export default function Login() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const redirectTo = resolvePostAuthRedirect(location, searchParams, "/app");
+  const {
+    Turnstile,
+    captchaRequired,
+    widgetFailed,
+    waitForCaptchaToken,
+    reset: resetCaptcha,
+  } = useTurnstileChallenge();
+
+  // Surface OAuth provider errors that AuthCallback bounced back here.
+  const urlError = useMemo(() => searchParams.get("error"), [searchParams]);
+  const [bannerError, setBannerError] = useState(urlError);
 
   async function handleGoogleSignIn() {
     setLoading(true);
     setError(null);
+    setBannerError(null);
     try {
-      await auth.loginWithGoogle({ redirectTo: `${window.location.origin}${redirectTo}` });
+      await auth.loginWithGoogle({ redirectTo });
     } catch (err) {
       setError(err.message || "Unable to sign in with Google");
       setLoading(false);
@@ -31,15 +52,33 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setBannerError(null);
+    let captchaToken;
+    if (captchaRequired) {
+      try {
+        captchaToken = await waitForCaptchaToken({ timeoutMs: 15000 });
+      } catch (capErr) {
+        if (widgetFailed || capErr?.message === "captcha_widget_failed") {
+          setError(
+            "CAPTCHA failed to load. Disable ad-blockers or try another browser."
+          );
+          setLoading(false);
+          return;
+        }
+        // Timeout but widget alive — fall through, Supabase will reject with a
+        // clean captcha_failed which the catch below handles + resets.
+      }
+    }
     try {
-      const user = await auth.login(email.trim(), password);
+      const user = await auth.login(email.trim(), password, { captchaToken });
       if (user.role === "admin" || user.role === "super_admin") {
         nav("/admin", { replace: true });
       } else {
         nav(redirectTo, { replace: true });
       }
     } catch (err) {
-      setError(err.message || "Unable to sign in");
+      resetCaptcha();
+      setError(humanizeAuthError(err));
     } finally {
       setLoading(false);
     }
@@ -59,6 +98,14 @@ export default function Login() {
       }
     >
       <form onSubmit={handleSubmit} className="space-y-5" data-testid="login-form">
+        {bannerError && (
+          <div
+            className="rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm px-3 py-2"
+            data-testid="login-banner-error"
+          >
+            {bannerError}
+          </div>
+        )}
         <button
           type="button"
           onClick={handleGoogleSignIn}
@@ -99,6 +146,7 @@ export default function Login() {
             {error}
           </div>
         )}
+        <Turnstile />
         <button
           type="submit"
           disabled={loading}

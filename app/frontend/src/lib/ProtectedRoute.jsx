@@ -1,7 +1,8 @@
 import React from "react";
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate, useLocation, useSearchParams } from "react-router-dom";
 import { useAuth } from "./authContext";
 import { ROLE_HIERARCHY, ROLES } from "./rbac";
+import { isSafeInternalPath } from "./resolvePostAuthRedirect";
 
 export function ProtectedRoute({ children, role, permission, requireBackend = false }) {
   const auth = useAuth();
@@ -52,6 +53,33 @@ export function ProtectedRoute({ children, role, permission, requireBackend = fa
 
 export function GuestOnly({ children }) {
   const auth = useAuth();
-  if (auth.isAuthed) return <Navigate to="/app" replace />;
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+
+  if (auth.isChecking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center linen-bg">
+        <div className="text-sm text-muted-foreground animate-breathe" data-testid="auth-checking">
+          Loading your session…
+        </div>
+      </div>
+    );
+  }
+
+  if (auth.isAuthed) {
+    const next = searchParams.get("next");
+    const stateFrom = location.state?.from;
+    let fromCandidate = null;
+    if (typeof stateFrom === "string") {
+      fromCandidate = stateFrom;
+    } else if (stateFrom && typeof stateFrom.pathname === "string") {
+      const search = typeof stateFrom.search === "string" ? stateFrom.search : "";
+      fromCandidate = `${stateFrom.pathname}${search}`;
+    }
+    let target = "/app";
+    if (isSafeInternalPath(next)) target = next;
+    else if (isSafeInternalPath(fromCandidate)) target = fromCandidate;
+    return <Navigate to={target} replace />;
+  }
   return children;
 }
