@@ -70,7 +70,11 @@ def emit_question_signal(
             max_items = 5
             budget_sec = 1.5
             while drained < max_items and (time.monotonic() - started) < budget_sec:
-                batch = process_pending_persona_recompute(supabase, limit=1)
+                # Scope the drain to the current user so we never steal
+                # work queued for someone else from the request path.
+                batch = process_pending_persona_recompute(
+                    supabase, limit=1, user_id=user_id
+                )
                 if not batch:
                     break
                 drained += len(batch)

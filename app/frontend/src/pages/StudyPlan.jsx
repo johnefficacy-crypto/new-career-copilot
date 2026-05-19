@@ -58,6 +58,8 @@ export default function StudyPlan() {
   const [draftOpen, setDraftOpen] = useState(false);
   const [applying, setApplying] = useState(false);
   const [examItems, setExamItems] = useState([]);
+  const [examsLoading, setExamsLoading] = useState(true);
+  const [examsError, setExamsError] = useState("");
   const [selectedExamId, setSelectedExamId] = useState("");
   const [trackedExams, setTrackedExams] = useState([]);
   const [reloadKey, setReloadKey] = useState(0);
@@ -89,10 +91,19 @@ export default function StudyPlan() {
       .get("/api/study/weekly-review")
       .then((d) => setReview(d || null))
       .catch(() => setReview(null));
+    setExamsLoading(true);
+    setExamsError("");
     api
       .get("/api/study/exams")
-      .then((d) => setExamItems(Array.isArray(d?.items) ? d.items : []))
-      .catch(() => setExamItems([]));
+      .then((d) => {
+        setExamItems(Array.isArray(d?.items) ? d.items : []);
+        setExamsError("");
+      })
+      .catch((e) => {
+        if (process.env.NODE_ENV !== "production") console.error(e);
+        setExamsError("Couldn't load exams — try again in a moment.");
+      })
+      .finally(() => setExamsLoading(false));
     // Hydrate the picker from the user's stored target so the "Choose your
     // exam" empty state only shows when nothing is selected server-side.
     api
@@ -340,14 +351,30 @@ export default function StudyPlan() {
             </div>
           </div>
         )}
-        <div className="mt-3 flex flex-wrap gap-2">
-          {examItems.map((e) => (
-            <button key={e.id} type="button" onClick={() => chooseExam(e.id)} className={`btn ${selectedExamId === e.id ? "btn-primary" : "btn-secondary"}`}>
-              {e.name} {e.planner_ready ? "• ready" : "• not ready"}
-            </button>
-          ))}
-        </div>
-        {!selectedExamId && <p className="text-sm text-clay-700 mt-2">Choose the exam you are preparing for.</p>}
+        {examsLoading ? (
+          <p className="text-sm text-clay-700 mt-3" data-testid="exams-loading">
+            Loading exams…
+          </p>
+        ) : examsError ? (
+          <p className="text-sm text-amber-700 mt-3" data-testid="exams-error">
+            {examsError}
+          </p>
+        ) : examItems.length === 0 ? (
+          <p className="text-sm text-clay-700 mt-3" data-testid="exams-empty">
+            No active exams configured. Contact admin.
+          </p>
+        ) : (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {examItems.map((e) => (
+              <button key={e.id} type="button" onClick={() => chooseExam(e.id)} className={`btn ${selectedExamId === e.id ? "btn-primary" : "btn-secondary"}`}>
+                {e.name} {e.planner_ready ? "• ready" : "• not ready"}
+              </button>
+            ))}
+          </div>
+        )}
+        {!examsLoading && !examsError && examItems.length > 0 && !selectedExamId && (
+          <p className="text-sm text-clay-700 mt-2">Choose the exam you are preparing for.</p>
+        )}
         {selectedExam && !selectedExam.planner_ready && (
           <p className="text-sm text-amber-700 mt-2">Planner not ready — no locked topic coverage.</p>
         )}

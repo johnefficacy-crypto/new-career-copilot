@@ -49,12 +49,20 @@ def _slug(s: str) -> str:
     return base or "post"
 
 
-def _safe(call, default=None):
-    """Wrap a Supabase call; on error return default and log."""
+def _safe(call, default=None, *, treat_error_as_default: bool = True):
+    """Wrap a Supabase call; on error return default (or re-raise).
+
+    Identity-critical reads — those that drive a "does this row exist"
+    decision before an insert — must pass ``treat_error_as_default=False``
+    so a transient supabase error can't be mistaken for "row missing"
+    and produce a duplicate insert.
+    """
     try:
         return call()
     except Exception as exc:  # noqa: BLE001
         logger.warning("supabase call failed: %s", exc)
+        if not treat_error_as_default:
+            raise
         return default
 
 
@@ -547,9 +555,12 @@ def _count_exam_attempts(supabase: Client, user_id: str) -> list[dict[str, Any]]
 
 
 def _upsert_user_scoped_row(supabase: Client, table: str, user_id: str, payload: dict[str, Any]) -> None:
+    # Identity-critical: existence check drives insert-vs-update. Do not
+    # mask a transient error as "row missing".
     existing = _safe(
         lambda: supabase.table(table).select("user_id").eq("user_id", user_id).limit(1).execute().data,
         default=[],
+        treat_error_as_default=False,
     ) or []
     row = {"user_id": user_id, **payload}
     if existing:
@@ -611,21 +622,52 @@ def _assemble_profile_payload(
     return assembled
 
 
+def _read_profile_row(supabase: Client, user_id: str) -> dict[str, Any]:
+    """Read-only profile lookup. Returns ``{}`` when the row is absent."""
+    rows = (
+        supabase.table("profiles")
+        .select(_PROFILE_COLS)
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return rows[0] if rows else {}
+
+
 def _ensure_profile_row(supabase: Client, user_id: str, email: str | None) -> dict[str, Any]:
-    rows = _safe(
-        lambda: supabase.table("profiles").select(_PROFILE_COLS).eq("id", user_id).limit(1).execute().data,
-        default=[],
-    ) or []
+    # Identity-critical: do NOT mask the select. A transient error must
+    # not be confused with "row missing" — that path would race into a
+    # duplicate insert against profiles_pkey.
+    rows = (
+        supabase.table("profiles")
+        .select(_PROFILE_COLS)
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
     if rows:
         return rows[0]
-    # First-time profile bootstrap.
-    supabase.table("profiles").insert(
-        {"id": user_id, "full_name": (email or "").split("@")[0] or "Aspirant"}
-    ).execute()
-    rows = _safe(
-        lambda: supabase.table("profiles").select(_PROFILE_COLS).eq("id", user_id).limit(1).execute().data,
-        default=[],
-    ) or []
+    payload = {"id": user_id, "full_name": (email or "").split("@")[0] or "Aspirant"}
+    try:
+        supabase.table("profiles").upsert(payload, on_conflict="id").execute()
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc)
+        if "23505" not in msg:
+            raise
+        logger.warning("profile upsert lost race for user=%s; refetching", user_id)
+    rows = (
+        supabase.table("profiles")
+        .select(_PROFILE_COLS)
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
     return rows[0] if rows else {"id": user_id}
 
 
@@ -755,14 +797,17 @@ async def update_profile(body: ProfileUpdate, user: dict = Depends(get_current_u
 @router_profile.get("/completion")
 async def profile_completion(user: dict = Depends(get_current_user)):
     supabase = get_supabase_admin()
-    # The eight reads below are independent; serialised they cost ~150 ms
-    # × 8 ≈ 1.2 s of dashboard boot. Fan them out via to_thread + gather
-    # so the supabase-py sync client overlaps on a worker pool and total
-    # wall time drops to about one round-trip.
+    # /completion is read-only — no bootstrap insert here. When the profile
+    # row is missing we return a zeroed payload; the bootstrap lives on the
+    # /me handler and the first-auth onboarding path.
+    #
+    # Sequence the identity read before fanning out optional reads to keep
+    # the supabase-py sync client from racing eight concurrent requests
+    # over a shared httpx connection (we were seeing "Server disconnected"
+    # warnings ahead of the 500 when gather drove all eight in parallel).
     uid = user["id"]
-    email = user.get("email")
+    profile = await asyncio.to_thread(_read_profile_row, supabase, uid)
     (
-        profile,
         education,
         prefs,
         location,
@@ -771,7 +816,6 @@ async def profile_completion(user: dict = Depends(get_current_user)):
         exp,
         attempts,
     ) = await asyncio.gather(
-        asyncio.to_thread(_ensure_profile_row, supabase, uid, email),
         asyncio.to_thread(_get_primary_education, supabase, uid),
         asyncio.to_thread(_get_preferences, supabase, uid),
         asyncio.to_thread(_get_location, supabase, uid),
