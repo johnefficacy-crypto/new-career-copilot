@@ -92,6 +92,21 @@ logging.basicConfig(
 )
 
 
+def _scheduler_enabled() -> bool:
+    """``ENABLE_SCHEDULER`` gates the in-process APScheduler.
+
+    Default ``false`` so dev/test/CI boots don't spin up the cron loop
+    that hammers Supabase with notifications + recompute work. Production
+    must set ``ENABLE_SCHEDULER=true`` to get the background workers.
+    """
+    return os.environ.get("ENABLE_SCHEDULER", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Try to bring up the asyncpg pool eagerly so /api/db-health is cheap.
@@ -101,12 +116,18 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001
         logger.warning("Postgres pool not available at startup: %s", exc)
     # APScheduler — in-process cron for notifications + recompute worker.
-    try:
-        start_scheduler()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Scheduler did not start: %s", exc)
+    scheduler_started = False
+    if _scheduler_enabled():
+        try:
+            start_scheduler()
+            scheduler_started = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Scheduler did not start: %s", exc)
+    else:
+        logger.info("Scheduler disabled (ENABLE_SCHEDULER not set to true).")
     yield
-    stop_scheduler()
+    if scheduler_started:
+        stop_scheduler()
     await close_pool()
 
 
