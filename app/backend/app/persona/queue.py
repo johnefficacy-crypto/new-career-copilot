@@ -60,9 +60,13 @@ def _mark(supabase: Any, row_id: str, patch: dict[str, Any]) -> None:
 
 
 def process_pending_persona_recompute(
-    supabase: Any, limit: int = 25
+    supabase: Any, limit: int = 25, *, user_id: str | None = None
 ) -> list[dict[str, Any]]:
     """Drain up to ``limit`` pending rows, computing a fresh snapshot each.
+
+    When ``user_id`` is set, only that user's rows are considered. Request-
+    path callers MUST pass ``user_id`` so one user's answer can't drain
+    another user's queued work synchronously.
 
     Returns a summary list of {user_id, status, snapshot_id?} dicts.
     Failures are recorded on the queue row but never raise — the worker
@@ -72,18 +76,17 @@ def process_pending_persona_recompute(
     # → study_policy is fine, but tests stub `snapshots` separately.
     from app.persona.snapshots import compute_persona_snapshot
 
-    rows = _safe(
-        lambda: (
+    def _fetch():
+        q = (
             supabase.table("persona_recompute_queue")
             .select("id, user_id, reason, attempts")
             .eq("status", "pending")
-            .order("created_at")
-            .limit(limit)
-            .execute()
-            .data
-        ),
-        default=[],
-    ) or []
+        )
+        if user_id:
+            q = q.eq("user_id", user_id)
+        return q.order("created_at").limit(limit).execute().data
+
+    rows = _safe(_fetch, default=[]) or []
 
     results: list[dict[str, Any]] = []
     for row in rows:

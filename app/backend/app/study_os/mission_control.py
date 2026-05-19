@@ -11,12 +11,14 @@ we degrade to safe defaults instead of failing the endpoint.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from app.exam_intelligence.coverage import locked_topic_coverage
-from app.exam_intelligence.lookup import resolve_exam_by_id
+from app.exam_eligibility.evaluator import summarize_user_eligibility
+from app.exam_intelligence.coverage import locked_topic_coverage_summary
 from app.exam_intelligence.status import exam_intelligence_status
 from app.study_os.competition_context import competition_context
 from app.study_os.update_context import (
@@ -36,6 +38,235 @@ from app.study_os.task_reasoning import (
 logger = logging.getLogger("career_copilot.study_os.mission_control")
 
 MISSION_CONTROL_SOURCE = "mission_control_v1"
+
+
+# ─── Item 5: process-local TTL cache for per-exam intelligence ────────────
+#
+# Every aspirant studying `ssc-cgl` reads the same exam_topic_coverage,
+# pyq_papers, pyq_question_topic_tags, syllabus_topic_mentions, topics,
+# subjects, exam_families, exam_cycles, exam_competition_metrics,
+# exam_policy_updates. There's no user dimension in any of these tables.
+# Cache the assembled status block per exam target for 5 minutes so a
+# repeat mission-control call from any user on the same exam pays zero
+# Supabase round-trips for that block.
+#
+# `set_per_exam_intelligence_cache_ttl_seconds` is exposed for tests.
+# `invalidate_per_exam_intelligence(target=...)` is the admin-side hook
+# called from admin writers when these tables mutate (added in the
+# admin-side commit; surfaced here so it lives next to the cache).
+from cachetools import TTLCache  # noqa: E402
+
+_PER_EXAM_INTEL_TTL_SECONDS = 300
+_per_exam_intel_cache: TTLCache = TTLCache(maxsize=64, ttl=_PER_EXAM_INTEL_TTL_SECONDS)
+_per_exam_intel_lock = threading.Lock()
+
+
+def invalidate_per_exam_intelligence(target: str | None = None) -> None:
+    """Drop cached per-exam intelligence rows.
+
+    Call this from any admin writer that mutates exam-scoped tables
+    (exam_topic_coverage, pyq_*, syllabus_topic_mentions, etc.). With
+    ``target=None`` the whole cache is dropped; with a specific slug or
+    exam id, only that key is evicted (and any sibling lookup that maps
+    to the same exam_id — both forms are dropped to be safe).
+    """
+    with _per_exam_intel_lock:
+        if target is None:
+            _per_exam_intel_cache.clear()
+            return
+        _per_exam_intel_cache.pop(target, None)
+
+
+def _cache_lookup(key: tuple) -> Any:
+    with _per_exam_intel_lock:
+        return _per_exam_intel_cache.get(key)
+
+
+def _cache_store(key: tuple, value: Any, *aliases: tuple) -> None:
+    with _per_exam_intel_lock:
+        _per_exam_intel_cache[key] = value
+        for alias in aliases:
+            _per_exam_intel_cache[alias] = value
+
+
+def _cached_exam_intelligence_status(supabase: Any, target: str) -> dict[str, Any]:
+    """Read-through wrapper around :func:`exam_intelligence_status`."""
+    cache_key = ("exam_intelligence_status", target)
+    hit = _cache_lookup(cache_key)
+    if hit is not None:
+        return hit
+    block = exam_intelligence_status(supabase, target)
+    # Alias under the resolved id and slug so a sibling lookup keyed on
+    # the other form hits the same slot.
+    aliases = []
+    for alt in (block.get("exam_id"), block.get("exam_slug")):
+        if isinstance(alt, str) and alt and alt != target:
+            aliases.append(("exam_intelligence_status", alt))
+    _cache_store(cache_key, block, *aliases)
+    return block
+
+
+def _cached_locked_summary(supabase: Any, exam_id: str) -> list[dict[str, Any]]:
+    cache_key = ("locked_topic_coverage_summary", exam_id)
+    hit = _cache_lookup(cache_key)
+    if hit is not None:
+        return hit
+    rows = locked_topic_coverage_summary(supabase, exam_id) or []
+    _cache_store(cache_key, rows)
+    return rows
+
+
+def _cached_exam_family_name(supabase: Any, exam_family_id: str) -> str | None:
+    cache_key = ("exam_family_name", exam_family_id)
+    hit = _cache_lookup(cache_key)
+    if hit is not None:
+        # The sentinel `False` distinguishes "looked up, none found"
+        # from "not cached yet".
+        return None if hit is False else hit
+    fam_rows = _safe(
+        lambda: (
+            supabase.table("exam_families")
+            .select("name")
+            .eq("id", exam_family_id)
+            .limit(1)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    name = (fam_rows[0] or {}).get("name") if fam_rows else None
+    _cache_store(cache_key, name if name is not None else False)
+    return name
+
+
+def _cached_days_remaining(supabase: Any, exam_id: str) -> int | None:
+    cache_key = ("days_remaining", exam_id, _today_iso())
+    hit = _cache_lookup(cache_key)
+    if hit is not None:
+        return None if hit is False else hit
+    value = _days_remaining_for_exam(supabase, exam_id)
+    _cache_store(cache_key, value if value is not None else False)
+    return value
+
+
+def _cached_competition_context(
+    supabase: Any, exam_id: str | None, days_remaining: int | None
+) -> dict[str, Any]:
+    cache_key = ("competition_context", exam_id, days_remaining)
+    hit = _cache_lookup(cache_key)
+    if hit is not None:
+        return hit
+    block = competition_context(supabase, exam_id, days_remaining=days_remaining)
+    _cache_store(cache_key, block)
+    return block
+
+
+def _cached_policy_update_context(supabase: Any, exam_id: str | None) -> dict[str, Any]:
+    cache_key = ("policy_update_context", exam_id)
+    hit = _cache_lookup(cache_key)
+    if hit is not None:
+        return hit
+    block = policy_update_context(supabase, exam_id)
+    _cache_store(cache_key, block)
+    return block
+
+
+# ─── Per-request read cache ───────────────────────────────────────────────
+#
+# Mission-control composes ~12 sub-loaders and the same logical table read
+# can fire 2× per request (e.g. `study_plans` via both `_load_active_plan`
+# and `_active_plan_id`; `exam_topic_coverage` + `topics` via both the
+# exam-intelligence status path and the exam-context path). The wrapper
+# below memoises read chains by their full signature within one
+# `build_mission_control` call. Writes (insert/update/upsert/delete) are
+# never cached; non-table attrs (e.g. `supabase.auth`) pass straight
+# through. Lifetime = single call; no cross-request state.
+
+
+def _freeze(value: Any) -> Any:
+    if isinstance(value, dict):
+        return tuple(sorted((k, _freeze(v)) for k, v in value.items()))
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return tuple(_freeze(v) for v in value)
+    return value
+
+
+class _CachedQuery:
+    _WRITE_METHODS = {"insert", "update", "upsert", "delete"}
+
+    def __init__(self, owner: "_RequestReadCache", table_name: str, real: Any) -> None:
+        self._owner = owner
+        self._table_name = table_name
+        self._real = real
+        self._chain: list[tuple] = [("table", table_name)]
+        self._is_write = False
+
+    def __getattr__(self, attr: str) -> Any:
+        real_attr = getattr(self._real, attr)
+        if not callable(real_attr):
+            return real_attr
+
+        def _proxy(*args: Any, **kwargs: Any) -> Any:
+            if attr in self._WRITE_METHODS:
+                self._is_write = True
+            self._chain.append((attr, _freeze(args), _freeze(kwargs)))
+            result = real_attr(*args, **kwargs)
+            # supabase-py returns either self or a new builder; either way
+            # we keep delegating from the same wrapper instance.
+            if result is not self._real:
+                self._real = result
+            return self
+
+        return _proxy
+
+    def execute(self) -> Any:
+        if self._is_write:
+            return self._real.execute()
+        key = tuple(self._chain)
+        cache = self._owner._cache
+        # Fast path: a sibling sub-loader already populated the entry.
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+        # Run the (blocking) supabase round-trip *outside* the lock so
+        # concurrent reads of *different* keys still parallelise.
+        result = self._real.execute()
+        with self._owner._lock:
+            cached = cache.get(key)
+            if cached is not None:
+                # Another thread won the race — discard this duplicate.
+                return cached
+            cache[key] = result
+            self._owner._reads[self._table_name] = (
+                self._owner._reads.get(self._table_name, 0) + 1
+            )
+        return result
+
+
+class _RequestReadCache:
+    """Wrap a supabase client so reads dedupe within one request.
+
+    Thread-safe: ``build_mission_control_async`` dispatches sub-loaders
+    via ``asyncio.to_thread`` so two of them may hit the same logical
+    table at the same time. The lock protects the (check-then-insert)
+    section; the blocking I/O happens without holding it.
+    """
+
+    def __init__(self, real: Any) -> None:
+        self._real = real
+        self._cache: dict[tuple, Any] = {}
+        self._reads: dict[str, int] = {}
+        self._lock = threading.Lock()
+
+    def __getattr__(self, attr: str) -> Any:
+        # `supabase.auth`, `supabase.rpc`, etc. pass through unchanged.
+        return getattr(self._real, attr)
+
+    def table(self, name: str) -> _CachedQuery:
+        return _CachedQuery(self, name, self._real.table(name))
+
+    def reads_per_table(self) -> dict[str, int]:
+        return dict(self._reads)
 
 
 def _safe(call: Callable[[], Any], default: Any = None) -> Any:
@@ -70,7 +301,7 @@ def _load_exam_intelligence(supabase: Any, user_id: str) -> dict[str, Any]:
     profile_rows = _safe(
         lambda: (
             supabase.table("profiles")
-            .select("target_exam, goal_exams")
+            .select("target_exam")
             .eq("id", user_id)
             .limit(1)
             .execute()
@@ -107,7 +338,7 @@ def _load_exam_intelligence(supabase: Any, user_id: str) -> dict[str, Any]:
             "verified_syllabus_mentions": 0,
         }
     try:
-        return exam_intelligence_status(supabase, target)
+        return _cached_exam_intelligence_status(supabase, target)
     except Exception as exc:  # noqa: BLE001
         logger.warning("mission_control exam intelligence lookup failed: %s", exc)
         return {
@@ -172,24 +403,41 @@ def _load_exam_context(supabase: Any, exam_intel: dict[str, Any]) -> dict[str, A
         return empty
 
     exam_id = exam_intel["exam_id"]
-    locked = _safe(lambda: locked_topic_coverage(supabase, exam_id), default=[]) or []
+    # Per-exam intelligence is the same across all aspirants on the
+    # same exam — pull from the process TTL cache so warm calls cost
+    # zero Supabase round-trips on exam_topic_coverage + topics.
+    summary_rows = _safe(lambda: _cached_locked_summary(supabase, exam_id), default=[]) or []
+    # Shape-shift to the legacy `locked_topic_coverage` row keys so the
+    # rest of this function (and any caller of `high_yield_topics`) keeps
+    # reading `topic` / `priority_score` / `status`.
+    def _score(row: dict[str, Any]) -> float:
+        try:
+            return float(row.get("exam_priority_score") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
 
+    locked = [
+        {
+            "topic": r.get("topic_name") or r.get("topic_slug"),
+            "topic_id": r.get("topic_id"),
+            "priority_score": r.get("exam_priority_score"),
+            "confidence_score": r.get("confidence_score"),
+            "high_yield": bool(r.get("is_high_yield")),
+            "status": r.get("reviewer_status") or "locked",
+        }
+        for r in sorted(summary_rows, key=_score, reverse=True)
+    ]
+
+    # Item 5: family name + days_remaining come from per-exam TTL caches
+    # so a repeat mission-control call for the same exam pays zero
+    # Supabase round-trips on exam_families / exam_cycles.
     family_name = None
-    exam_row = _safe(lambda: resolve_exam_by_id(supabase, exam_id), default=None)
-    if exam_row and exam_row.get("exam_family_id"):
-        fam_rows = _safe(
-            lambda: (
-                supabase.table("exam_families")
-                .select("name")
-                .eq("id", exam_row["exam_family_id"])
-                .limit(1)
-                .execute()
-                .data
-            ),
-            default=[],
-        ) or []
-        if fam_rows:
-            family_name = fam_rows[0].get("name")
+    exam_family_id = (exam_intel or {}).get("exam_family_id")
+    if exam_family_id:
+        family_name = _safe(
+            lambda: _cached_exam_family_name(supabase, exam_family_id),
+            default=None,
+        )
 
     available = bool(exam_intel.get("available"))
     if locked:
@@ -214,7 +462,7 @@ def _load_exam_context(supabase: Any, exam_intel: dict[str, Any]) -> dict[str, A
         "exam": exam_intel.get("exam_name") or exam_intel.get("exam_slug"),
         "cycle": None,
         "phase": None,
-        "days_remaining": _days_remaining_for_exam(supabase, exam_id),
+        "days_remaining": _cached_days_remaining(supabase, exam_id),
         "verified_intelligence_status": status,
         "high_yield_topics": high_yield_topics,
     }
@@ -233,8 +481,8 @@ def _load_competition_context(
     exam_id = (exam_intel or {}).get("exam_id")
     days_remaining = (exam_context or {}).get("days_remaining")
     return _safe(
-        lambda: competition_context(
-            supabase, exam_id, days_remaining=days_remaining
+        lambda: _cached_competition_context(
+            supabase, exam_id, days_remaining
         ),
         default=competition_context(None, None),
     )
@@ -252,7 +500,7 @@ def _load_policy_update_context(
     """
     exam_id = (exam_intel or {}).get("exam_id")
     return _safe(
-        lambda: policy_update_context(supabase, exam_id),
+        lambda: _cached_policy_update_context(supabase, exam_id),
         default=empty_policy_update_context(),
     )
 
@@ -463,8 +711,7 @@ def _active_plan_id(supabase: Any, user_id: str) -> str | None:
     rows = _safe(
         lambda: (
             supabase.table("study_plans")
-            .select("id, status, day, theme, target, start_date, end_date, "
-                    "weekly_hours_goal, metadata")
+            .select("id")
             .eq("user_id", user_id)
             .eq("status", "active")
             .limit(1)
@@ -483,8 +730,7 @@ def _load_active_plan(supabase: Any, user_id: str) -> dict[str, Any] | None:
         lambda: (
             supabase.table("study_plans")
             .select(
-                "id, status, theme, target, start_date, end_date, "
-                "weekly_hours_goal, metadata"
+                "id, target_exam, metadata, start_date, end_date, weekly_hours_goal"
             )
             .eq("user_id", user_id)
             .eq("status", "active")
@@ -497,11 +743,12 @@ def _load_active_plan(supabase: Any, user_id: str) -> dict[str, Any] | None:
     if not rows:
         return None
     row = rows[0]
+    metadata = row.get("metadata") or {}
     return {
         "id": row.get("id"),
         "day": None,  # the existing /api/study/plan does not compute this
-        "theme": row.get("theme") or "Adaptive weekly plan",
-        "target": row.get("target") or "Complete planned blocks",
+        "theme": metadata.get("theme") or "Adaptive weekly plan",
+        "target": metadata.get("target") or "Complete planned blocks",
         "source": "existing_study_plan",
     }
 
@@ -553,20 +800,29 @@ def _load_today_tasks(supabase: Any, plan_id: str) -> list[dict[str, Any]]:
 
 
 # ─── Focus + weekly review summary ────────────────────────────────────────
-def _focus_summary(supabase: Any, user_id: str) -> dict[str, Any]:
+def _fetch_recent_study_sessions(supabase: Any, user_id: str) -> list[dict[str, Any]]:
+    """Read the user's last 7 days of study sessions.
+
+    Single source of truth for both ``_focus_summary`` (7-day rollup)
+    and ``_weekly_review`` (this-week slice): week_start is always at
+    least week_start ≥ 7-days-ago, so the wider window covers both.
+    """
     since_7d = _iso_days_ago(7)
-    sessions = _safe(
+    return _safe(
         lambda: (
             supabase.table("study_sessions")
             .select("duration_mins, started_at, ended_at")
             .eq("user_id", user_id)
             .gte("started_at", since_7d)
-            .limit(200)
+            .limit(500)
             .execute()
             .data
         ),
         default=[],
     ) or []
+
+
+def _focus_summary_from_sessions(sessions: list[dict[str, Any]]) -> dict[str, Any]:
     total_minutes = sum((s.get("duration_mins") or 0) for s in sessions if s.get("ended_at"))
     return {
         "total_minutes_7d": int(total_minutes or 0),
@@ -575,22 +831,39 @@ def _focus_summary(supabase: Any, user_id: str) -> dict[str, Any]:
     }
 
 
+def _focus_summary(supabase: Any, user_id: str) -> dict[str, Any]:
+    """Legacy sync entrypoint — fetch + shape."""
+    return _focus_summary_from_sessions(_fetch_recent_study_sessions(supabase, user_id))
+
+
 def _weekly_review(
-    supabase: Any, user_id: str, plan_id: str | None
+    supabase: Any,
+    user_id: str,
+    plan_id: str | None,
+    *,
+    recent_sessions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     week_start = _week_start_iso()
-    sessions = _safe(
-        lambda: (
-            supabase.table("study_sessions")
-            .select("duration_mins")
-            .eq("user_id", user_id)
-            .gte("started_at", week_start)
-            .limit(500)
-            .execute()
-            .data
-        ),
-        default=[],
-    ) or []
+    if recent_sessions is None:
+        sessions = _safe(
+            lambda: (
+                supabase.table("study_sessions")
+                .select("duration_mins, started_at")
+                .eq("user_id", user_id)
+                .gte("started_at", week_start)
+                .limit(500)
+                .execute()
+                .data
+            ),
+            default=[],
+        ) or []
+    else:
+        # Pre-fetched 7-day session list from `_fetch_recent_study_sessions`
+        # — derive the this-week slice in Python instead of re-querying.
+        sessions = [
+            s for s in recent_sessions
+            if (s.get("started_at") or "") >= week_start
+        ]
     mocks = _safe(
         lambda: (
             supabase.table("mock_tests")
@@ -924,26 +1197,100 @@ def _engine_trace(
 
 
 # ─── Public entrypoint ─────────────────────────────────────────────────────
-def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
-    """Build the full mission-control response for ``user_id``.
+def _select_next_question_safe(supabase: Any, user_id: str) -> dict[str, Any] | None:
+    """Wrap ``select_next_question`` so failures don't break a gather."""
+    try:
+        sel = select_next_question(supabase, user_id)
+        return sel.get("question") if isinstance(sel, dict) else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("mission_control progressive_question failed: %s", exc)
+        return None
 
-    Defensive throughout — never raises. Optional sections degrade to
-    empty/sentinel values when their source is unavailable.
+
+def _load_eligibility_summary(supabase: Any, user_id: str) -> dict[str, Any]:
+    """Item 6: assemble the four-bucket eligibility summary for Today.
+
+    Mirrors ``GET /api/exams/eligibility-summary`` so EligibleExamsCard
+    can hydrate from mission-control without firing a separate fetch.
+    Falls back to an empty-but-safe shape on failure — never raises.
     """
-    snapshot = _load_persona_snapshot(supabase, user_id)
+    try:
+        return summarize_user_eligibility(supabase, user_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("mission_control eligibility_summary failed: %s", exc)
+        return {
+            "eligible": [],
+            "conditional": [],
+            "not_eligible": [],
+            "unknown": [],
+            "rule_count": 0,
+        }
+
+
+async def build_mission_control_async(supabase: Any, user_id: str) -> dict[str, Any]:
+    """Async version of :func:`build_mission_control`.
+
+    Runs independent sub-loaders concurrently via ``asyncio.gather`` +
+    ``asyncio.to_thread`` so the sync Supabase client's blocking calls
+    overlap instead of serialising. Same response shape as the sync
+    variant. The per-request read cache stays in front of the client so
+    duplicate chains across sub-loaders still dedupe.
+    """
+    supabase = _RequestReadCache(supabase) if not isinstance(supabase, _RequestReadCache) else supabase
+
+    # Stage 1: six fully independent reads. They touch different tables
+    # (aspirant_persona_snapshots, study_plans, study_sessions, profiles
+    # / exams / exam_topic_coverage via exam_intel, persona_questions,
+    # exam_eligibility_rules + exams via eligibility_summary).
+    (
+        snapshot,
+        plan,
+        recent_sessions,
+        exam_intel,
+        progressive_question,
+        eligibility_summary,
+    ) = await asyncio.gather(
+        asyncio.to_thread(_load_persona_snapshot, supabase, user_id),
+        asyncio.to_thread(_load_active_plan, supabase, user_id),
+        asyncio.to_thread(_fetch_recent_study_sessions, supabase, user_id),
+        asyncio.to_thread(_load_exam_intelligence, supabase, user_id),
+        asyncio.to_thread(_select_next_question_safe, supabase, user_id),
+        asyncio.to_thread(_load_eligibility_summary, supabase, user_id),
+    )
+
     dimensions = snapshot.get("dimensions") or {}
     study_policy = dict(snapshot.get("study_policy") or {})
-
-    plan = _load_active_plan(supabase, user_id)
-    plan_id = plan.get("id") if plan else _safe(
-        lambda: _active_plan_id(supabase, user_id), default=None
-    )
-    today_tasks_raw = _load_today_tasks(supabase, plan_id) if plan_id else []
-
-    focus = _focus_summary(supabase, user_id)
+    # Item 2: derive plan_id from `_load_active_plan` only — the old
+    # `_active_plan_id` fallback fired a second study_plans read for the
+    # exact same `(user_id, status=active)` predicate. The full load
+    # already returns the row's id (or None when there is no active plan).
+    plan_id = plan.get("id") if plan else None
     weekly_hours_goal = _weekly_hours_goal(snapshot)
-    review = _weekly_review(supabase, user_id, plan_id)
-    exam_intel = _load_exam_intelligence(supabase, user_id)
+    # Item 2: derive focus from the same session list that feeds the
+    # weekly review — avoids a duplicate study_sessions read whose only
+    # difference was the started_at filter (7-day vs this-week).
+    focus = _focus_summary_from_sessions(recent_sessions)
+
+    # Stage 2: reads that depend on stage-1 outputs (plan_id, exam_intel).
+    # Each touches a different table; the cache still folds the
+    # exam_topic_coverage / topics overlap between exam_intel (stage 1)
+    # and exam_context (stage 2).
+    async def _no_tasks():
+        return []
+
+    today_tasks_raw, review, exam_context, policy_update_ctx = await asyncio.gather(
+        asyncio.to_thread(_load_today_tasks, supabase, plan_id) if plan_id else _no_tasks(),
+        asyncio.to_thread(
+            _weekly_review, supabase, user_id, plan_id, recent_sessions=recent_sessions
+        ),
+        asyncio.to_thread(_load_exam_context, supabase, exam_intel),
+        asyncio.to_thread(_load_policy_update_context, supabase, exam_intel),
+    )
+
+    # Stage 3: competition depends on exam_context (days_remaining).
+    competition_ctx = await asyncio.to_thread(
+        _load_competition_context, supabase, exam_intel, exam_context
+    )
 
     today_tasks: list[dict[str, Any]] = []
     has_active_plan = bool(plan_id)
@@ -955,14 +1302,6 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
             has_active_plan=has_active_plan,
         )
         today_tasks.append({**task, "reasoning": reasoning})
-
-    progressive_question: dict[str, Any] | None = None
-    try:
-        sel = select_next_question(supabase, user_id)
-        progressive_question = sel.get("question") if isinstance(sel, dict) else None
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("mission_control progressive_question failed: %s", exc)
-        progressive_question = None
 
     metrics = _metrics(today_tasks, focus, review, weekly_hours_goal)
     truth_panel = _truth_panel(today_tasks, review, metrics)
@@ -977,14 +1316,6 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
     scores = _scores_block(snapshot)
     engine_trace = _engine_trace(snapshot, plan, exam_intel)
 
-    # Contract blocks: join persona + verified exam intelligence +
-    # competition + policy updates + progress into an explainable,
-    # aspirant-safe shape.
-    exam_context = _load_exam_context(supabase, exam_intel)
-    competition_ctx = _load_competition_context(supabase, exam_intel, exam_context)
-    policy_update_ctx = _load_policy_update_context(supabase, exam_intel)
-    # `update_context` is kept as a backward-compatible alias of the clearer
-    # `policy_update_context` object — both point at the same shape.
     update_context = policy_update_ctx
     safe_user_explanation = _safe_user_explanation(
         snapshot, metrics, review, study_policy
@@ -1004,6 +1335,13 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
         preview_flags.append("exam_intelligence_not_connected")
     if not plan:
         preview_flags.append("no_active_study_plan")
+
+    if isinstance(supabase, _RequestReadCache):
+        logger.debug(
+            "mission_control.read_counts user_id=%s counts=%s",
+            user_id,
+            supabase.reads_per_table(),
+        )
 
     return {
         "date": _today_iso(),
@@ -1029,12 +1367,29 @@ def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
         "progressive_question": progressive_question,
         "engine_trace": engine_trace,
         "exam_intelligence": exam_intel,
+        # Item 6: same shape as GET /api/exams/eligibility-summary so the
+        # EligibleExamsCard on Today can hydrate without a second fetch.
+        "eligibility_summary": eligibility_summary,
         "meta": {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source": MISSION_CONTROL_SOURCE,
             "preview_flags": preview_flags,
+            "degraded": False,
         },
     }
+
+
+def build_mission_control(supabase: Any, user_id: str) -> dict[str, Any]:
+    """Synchronous wrapper around :func:`build_mission_control_async`.
+
+    Kept for tests and any non-async caller. The async variant is what
+    the route handler should await so the parallel sub-loader fan-out
+    actually overlaps blocking Supabase calls.
+    """
+    # `asyncio.run` works whenever no event loop is currently running on
+    # this thread — true for pytest sync tests. Inside a running loop,
+    # callers should `await build_mission_control_async` directly.
+    return asyncio.run(build_mission_control_async(supabase, user_id))
 
 
 # ─── Task reasoning endpoint ──────────────────────────────────────────────
@@ -1090,6 +1445,7 @@ def build_task_reasoning_response(
     Returns ``None`` when the task is not found / not owned by the user.
     Never raises — every read is wrapped.
     """
+    supabase = _RequestReadCache(supabase) if not isinstance(supabase, _RequestReadCache) else supabase
     task = _load_task_for_user(supabase, user_id, task_id)
     if task is None:
         return None

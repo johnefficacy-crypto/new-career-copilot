@@ -1,14 +1,16 @@
 import React from "react";
 import { SectionHeader, StatusDot, StudyCard } from "../../../shared/ui/studyos";
 
+const TONES = {
+  sage: { bg: "#F0F5EF", fg: "#33482F" },
+  rose: { bg: "#F2DDD6", fg: "#7A3925" },
+  amber: { bg: "#F3E9CF", fg: "#6F5A22" },
+};
+
 // Truth panel styled after the prototype: an honest read split into calm
 // columns. Backend `truth_panel` provides { summary, warnings, corrections }.
 function TruthCol({ title, tone, items, emptyText }) {
-  const palette = {
-    sage: { bg: "#F0F5EF", fg: "#33482F" },
-    rose: { bg: "#F2DDD6", fg: "#7A3925" },
-    amber: { bg: "#F3E9CF", fg: "#6F5A22" },
-  }[tone];
+  const palette = TONES[tone] || TONES.amber;
   const list = Array.isArray(items) ? items : [];
   return (
     <div
@@ -44,7 +46,7 @@ export default function TruthPanelCard({ panel }) {
   return (
     <StudyCard data-testid="truth-panel">
       <SectionHeader
-        eyebrow="Truth panel · weekly"
+        eyebrow="Progress vs Plan · weekly"
         title="Honest read. No motivational fluff."
         sub={summary}
         right={<StatusDot state="live" label="" />}

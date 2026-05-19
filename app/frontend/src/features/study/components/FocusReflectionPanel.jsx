@@ -59,8 +59,10 @@ export default function FocusReflectionPanel({ session, onDismiss, onSave, bare 
   const [confidence, setConfidence] = useState(60);
   const [revise, setRevise] = useState(null);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  function handleSave() {
+  async function handleSave() {
     const reflection = {
       subject: session?.subject || "",
       topic: session?.topic || "",
@@ -70,9 +72,44 @@ export default function FocusReflectionPanel({ session, onDismiss, onSave, bare 
       distraction_count: distractions,
       confidence_after: confidence,
       should_revise: revise,
+      saved_at: new Date().toISOString(),
     };
-    if (typeof onSave === "function") onSave(reflection);
-    setSaved(true);
+    setSaving(true);
+    setSaveError("");
+    try {
+      // Persist locally so the "kept on this device" copy is accurate even
+      // before a backend endpoint exists. Keyed by a stable session id when
+      // available; falls back to a session-anonymous bucket of recent
+      // reflections (cap at 50 to bound localStorage usage).
+      try {
+        const key = session?.id
+          ? `focus.reflection.${session.id}`
+          : "focus.reflection.recent";
+        if (session?.id) {
+          window.localStorage.setItem(key, JSON.stringify(reflection));
+        } else {
+          const prior = JSON.parse(
+            window.localStorage.getItem(key) || "[]",
+          );
+          const next = Array.isArray(prior) ? prior : [];
+          next.unshift(reflection);
+          window.localStorage.setItem(key, JSON.stringify(next.slice(0, 50)));
+        }
+      } catch {
+        // localStorage may be disabled (private mode / quota). Don't
+        // surface a false "saved" — if we couldn't persist AND there's
+        // no remote onSave, treat that as a save failure.
+        if (typeof onSave !== "function") {
+          throw new Error("Local storage is disabled — couldn’t save reflection.");
+        }
+      }
+      if (typeof onSave === "function") await onSave(reflection);
+      setSaved(true);
+    } catch (e) {
+      setSaveError(e?.message || "Couldn’t save reflection — try again.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -134,8 +171,8 @@ export default function FocusReflectionPanel({ session, onDismiss, onSave, bare 
             <div className="text-[11px] uppercase tracking-widest text-muted-foreground mb-1.5">
               Distractions
             </div>
-            <div className="flex gap-1.5" role="group" aria-label="Distraction count">
-              {[0, 1, 2, 3, 4, 5].map((n) => (
+            <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label="Distraction count">
+              {[0, 1, 2, 3, 4].map((n) => (
                 <button
                   key={n}
                   type="button"
@@ -148,9 +185,31 @@ export default function FocusReflectionPanel({ session, onDismiss, onSave, bare 
                       : "bg-white/70 text-foreground/80 border-border hover:bg-clay-50"
                   }`}
                 >
-                  {n === 5 ? "5+" : n}
+                  {n}
                 </button>
               ))}
+              {/* Free-form input for 5+: keeps an exact count instead of
+                  silently clamping at 5 the way the prior preset did. */}
+              <label className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span className="sr-only">5 or more — enter exact count</span>
+                <span aria-hidden="true">5+</span>
+                <input
+                  type="number"
+                  min="5"
+                  step="1"
+                  inputMode="numeric"
+                  value={distractions >= 5 ? distractions : ""}
+                  placeholder="N"
+                  aria-label="5 or more distractions — enter exact count"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === "") return setDistractions(4);
+                    const n = Number(v);
+                    if (Number.isFinite(n) && n >= 5) setDistractions(n);
+                  }}
+                  className="w-14 h-8 rounded-full border border-border bg-white/70 px-2 text-xs text-foreground/80 focus-visible:ring-2 focus-visible:ring-clay-900"
+                />
+              </label>
             </div>
           </div>
 
@@ -187,13 +246,32 @@ export default function FocusReflectionPanel({ session, onDismiss, onSave, bare 
           />
 
           <div className="flex items-center gap-2 pt-1">
-            <button type="button" className="btn btn-primary" onClick={handleSave}>
-              Save reflection
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleSave}
+              disabled={saving}
+            >
+              {saving ? "Saving…" : "Save reflection"}
             </button>
-            <button type="button" className="btn btn-ghost" onClick={onDismiss}>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={onDismiss}
+              disabled={saving}
+            >
               Skip
             </button>
           </div>
+          {saveError ? (
+            <div
+              className="text-[11px] text-rose-700"
+              role="status"
+              data-testid="focus-reflection-error"
+            >
+              {saveError}
+            </div>
+          ) : null}
         </>
       )}
 

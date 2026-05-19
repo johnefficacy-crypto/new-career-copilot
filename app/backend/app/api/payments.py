@@ -28,8 +28,6 @@ Notes
 """
 from __future__ import annotations
 
-import hashlib
-import hmac
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -38,14 +36,14 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-try:
-    import razorpay  # type: ignore
-except Exception:  # noqa: BLE001
-    razorpay = None  # type: ignore
-
-from app.core.auth import get_current_user, require_permission
+from app.core.auth import (
+    get_current_user,
+    get_current_user_required_permanent,
+    require_permission,
+)
 from app.core.config import get_settings
 from app.db.supabase_client import get_supabase_admin
+from app.payments import razorpay_client
 
 logger = logging.getLogger("career_copilot.api.payments")
 router = APIRouter()
@@ -54,35 +52,15 @@ router = APIRouter()
 
 
 def _rzp_client():
-    settings = get_settings()
-    if razorpay is None:
-        raise HTTPException(status_code=503, detail="Razorpay SDK not installed")
-    if not settings.RAZORPAY_KEY_ID or not settings.RAZORPAY_KEY_SECRET:
-        raise HTTPException(status_code=503, detail="Razorpay credentials not configured")
-    client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-    client.set_app_details({"title": "Career Copilot", "version": "1.0.0"})
-    return client
+    return razorpay_client.get_client()
 
 
 def _verify_checkout_signature(order_id: str, payment_id: str, signature: str) -> bool:
-    settings = get_settings()
-    if not settings.RAZORPAY_KEY_SECRET:
-        return False
-    body = f"{order_id}|{payment_id}".encode()
-    expected = hmac.new(
-        settings.RAZORPAY_KEY_SECRET.encode(), body, hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature or "")
+    return razorpay_client.verify_signature(order_id, payment_id, signature)
 
 
 def _verify_webhook_signature(raw_body: bytes, signature: str) -> bool:
-    settings = get_settings()
-    if not settings.RAZORPAY_WEBHOOK_SECRET:
-        return False
-    expected = hmac.new(
-        settings.RAZORPAY_WEBHOOK_SECRET.encode(), raw_body, hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature or "")
+    return razorpay_client.verify_webhook_signature(raw_body, signature)
 
 
 def _require_admin(user: dict = Depends(get_current_user)) -> dict:
@@ -376,7 +354,7 @@ def my_payments(user: dict = Depends(get_current_user)):
 
 
 @router.post("/payments/order")
-def create_order(body: OrderIn, user: dict = Depends(get_current_user)):
+def create_order(body: OrderIn, user: dict = Depends(get_current_user_required_permanent)):
     _ensure_profile(user)
     sb = get_supabase_admin()
     plan = _find_plan(sb, body.plan_id, active_only=True)
@@ -445,7 +423,7 @@ def create_order(body: OrderIn, user: dict = Depends(get_current_user)):
 
 
 @router.post("/payments/verify")
-def verify_payment(body: VerifyIn, user: dict = Depends(get_current_user)):
+def verify_payment(body: VerifyIn, user: dict = Depends(get_current_user_required_permanent)):
     if not _verify_checkout_signature(
         body.razorpay_order_id, body.razorpay_payment_id, body.razorpay_signature
     ):

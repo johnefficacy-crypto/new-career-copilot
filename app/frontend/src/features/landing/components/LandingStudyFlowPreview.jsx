@@ -20,7 +20,7 @@ const STAGES = [
   },
   {
     icon: CalendarCheck,
-    label: "Weekly review",
+    label: "Report Card",
     headline: "Close the loop",
     body: "Planned vs studied, what improved, what declined — and what Study OS changes next.",
     chip: "82% adherence",

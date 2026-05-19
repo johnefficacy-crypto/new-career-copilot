@@ -20,6 +20,7 @@ Only ``stitch-anonymous`` requires authentication.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -51,7 +52,6 @@ from app.onboarding_unified.session import (
     load_session,
     mark_session_completed,
     record_answer,
-    set_current_question,
     update_session,
 )
 from app.persona_questions.answers import (
@@ -110,22 +110,34 @@ def _build_state(
     *,
     entry: dict[str, Any] | None = None,
     persist_current: bool = True,
+    extra_patch: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Assemble the full session-state payload the frontend renders."""
+    """Assemble the full session-state payload the frontend renders.
+
+    When ``extra_patch`` is provided, the consolidated session UPDATE
+    folds those fields (e.g. ``asked_question_keys``, ``question_count``,
+    ``intent``) into the single ``set_current_question`` patch so the
+    answer flow issues one UPDATE per call instead of 2–3.
+    """
     next_question = select_next_question(supabase, session)
     answer_log = load_answer_log(supabase, session.get("id"))
     has_next = next_question is not None
 
     if persist_current:
         if has_next:
-            set_current_question(
-                supabase,
-                session.get("id"),
-                next_question["question"].get("question_key"),
-                next_question["source"],
-            )
+            next_key = next_question["question"].get("question_key")
+            next_source = next_question["source"]
         else:
-            set_current_question(supabase, session.get("id"), None, None)
+            next_key = None
+            next_source = None
+        patch: dict[str, Any] = {
+            "current_question_key": next_key,
+            "current_question_source": next_source,
+        }
+        if extra_patch:
+            patch.update(extra_patch)
+        patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+        update_session(supabase, session.get("id"), patch)
 
     progress = build_progress(session, answer_log, has_next)
     readiness = build_readiness(session, answer_log)
@@ -271,18 +283,30 @@ async def answer(
         answer_value=body.answer_value,
         normalized_value=normalized,
         skipped=False,
+        defer_session_patch=True,
     )
 
     user_id = _user_id(user)
+    extra_patch: dict[str, Any] = {
+        "asked_question_keys": session.get("asked_question_keys"),
+        "question_count": session.get("question_count"),
+    }
 
     if current["source"] == "intent_picker":
         # Intent lives on the session row only — never a canonical field.
         normalized_intent = normalize_intent(normalized) or normalized
-        update_session(supabase, session["id"], {"intent": normalized_intent})
         session["intent"] = normalized_intent
+        extra_patch["intent"] = normalized_intent
     else:
-        # Allowlisted canonical write (best effort, never blocks).
-        registry = load_field_registry(supabase)
+        # Allowlisted canonical write (best effort, never blocks). Only
+        # recruitment writes consume candidate_field_registry, and the
+        # adapter no-ops for anonymous callers — skip the 500-row registry
+        # fetch unless we actually need it.
+        needs_registry = (
+            current["source"] == "recruitment_question_requirements"
+            and bool(user_id)
+        )
+        registry = load_field_registry(supabase) if needs_registry else None
         apply_profile_mapping(
             supabase,
             user_id,
@@ -290,6 +314,7 @@ async def answer(
             question=current["question"],
             normalized_value=normalized,
             registry=registry,
+            session_id=session.get("id"),
         )
 
     # Authenticated answers also land in their canonical per-source log so
@@ -305,7 +330,9 @@ async def answer(
             supabase, session, user_id, current_key, body.answer_value, normalized
         )
 
-    return _build_state(supabase, session)
+    # One consolidated session UPDATE folds asked_question_keys,
+    # question_count, intent (if any) and current_question_* together.
+    return _build_state(supabase, session, extra_patch=extra_patch)
 
 
 def _save_onboarding_answer(
@@ -410,30 +437,34 @@ async def complete(
 ) -> dict[str, Any]:
     """Close the session and return the recommended next action.
 
-    Deterministic eligibility recompute is enqueued (async, best-effort)
-    only when the intent is eligibility AND the caller is authenticated —
-    never before an authenticated completion, never in a blocking path.
+    Side-effect-idempotent: if the session is already ``completed``, the
+    same JSON payload is returned and the eligibility recompute is NOT
+    enqueued a second time. Deterministic eligibility recompute is
+    enqueued (async, best-effort) only when the intent is eligibility AND
+    the caller is authenticated — never before an authenticated
+    completion, never in a blocking path.
     """
     supabase = get_supabase_admin()
     session = _load_owned_session(
         supabase, body.session_id, user, body.anonymous_id
     )
 
-    mark_session_completed(supabase, session["id"])
     intent = session.get("intent")
     next_action = _NEXT_ACTION_BY_INTENT.get(intent, "open_dashboard")
-
     user_id = _user_id(user)
-    recompute_enqueued = False
-    if intent == "check_eligibility" and user_id:
-        recompute_enqueued = _enqueue_eligibility_recompute(supabase, user_id)
+    eligibility_eligible = intent == "check_eligibility" and bool(user_id)
+
+    if session.get("status") != "completed":
+        mark_session_completed(supabase, session["id"])
+        if eligibility_eligible:
+            _enqueue_eligibility_recompute(supabase, user_id)
 
     return {
         "completed": True,
         "session_id": session["id"],
         "intent": intent,
         "next_action": next_action,
-        "recompute_enqueued": recompute_enqueued,
+        "recompute_enqueued": eligibility_eligible,
         "authenticated": bool(user_id),
     }
 

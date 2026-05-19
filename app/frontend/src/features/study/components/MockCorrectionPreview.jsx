@@ -30,8 +30,13 @@ export default function MockCorrectionPreview({ weakTopics }) {
             Correction tasks
           </h3>
         </div>
-        <span className="pill pill-dusk text-[10px]">Preview</span>
+        <span className="pill pill-dusk text-[10px]">Preview · not generated</span>
       </div>
+      <p className="mt-2 text-[11.5px] text-clay-700 italic">
+        Preview only — Study OS doesn’t generate these tasks yet. The five
+        categories below describe what the planner <em>will</em> queue once
+        the correction endpoint lands.
+      </p>
       <ul className="mt-3 space-y-2">
         {CATEGORIES.map((c) => (
           <li key={c.key} className="flex items-start gap-2 text-xs">

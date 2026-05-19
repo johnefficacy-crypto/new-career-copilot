@@ -10,6 +10,8 @@ import logging
 from typing import Any, Callable
 
 from app.persona.queue import enqueue_persona_recompute
+from app.persona.queue import process_pending_persona_recompute
+import time
 
 logger = logging.getLogger("career_copilot.persona_questions.events")
 
@@ -56,6 +58,7 @@ def emit_question_signal(
     event_logged = inserted is not None
 
     recompute_status = "queued"
+    drained = 0
     try:
         # Skipping should not trigger a heavy recompute, only an answered
         # one. Skips still log an event for product analytics.
@@ -63,10 +66,22 @@ def emit_question_signal(
             enqueue_persona_recompute(
                 supabase, user_id, reason=f"question_answered:{question_key}"
             )
+            started = time.monotonic()
+            max_items = 5
+            budget_sec = 1.5
+            while drained < max_items and (time.monotonic() - started) < budget_sec:
+                # Scope the drain to the current user so we never steal
+                # work queued for someone else from the request path.
+                batch = process_pending_persona_recompute(
+                    supabase, limit=1, user_id=user_id
+                )
+                if not batch:
+                    break
+                drained += len(batch)
         else:
             recompute_status = "skipped"
     except Exception as exc:  # noqa: BLE001
         logger.warning("persona recompute enqueue failed: %s", exc)
         recompute_status = "failed"
 
-    return {"event_logged": bool(event_logged), "recompute": recompute_status}
+    return {"event_logged": bool(event_logged), "recompute": recompute_status, "drained": drained}

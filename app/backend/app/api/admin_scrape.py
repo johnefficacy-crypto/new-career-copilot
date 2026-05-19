@@ -78,8 +78,20 @@ def _audit(supabase, actor: dict, action: str, *, entity_type: str | None = None
                 "notes": "legacy_admin_scrape" ,
             }
         ).execute()
-    except Exception:  # noqa: BLE001
-        logger.exception("audit log insert failed")
+    except Exception as exc:  # noqa: BLE001
+        # Audit writes must be searchable post-incident: include actor,
+        # mutation, target, and exception class so logs are forensic-grade
+        # even if the row never landed in admin_audit_logs.
+        logger.error(
+            "admin_audit_insert_failed action=%s actor_id=%s entity_type=%s entity_id=%s exc=%s: %s",
+            action,
+            actor.get("id"),
+            entity_type,
+            entity_id,
+            type(exc).__name__,
+            exc,
+            exc_info=True,
+        )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -455,7 +467,11 @@ def _shape_source(row: dict[str, Any]) -> dict[str, Any]:
         "url": row.get("notification_url") or row.get("base_url"),
         "kind": row.get("source_type") or row.get("adapter_type"),
         "source_type": row.get("source_type"),
-        "source_url": row.get("source_url"),
+        # ``source_url`` mirrors ``official_url`` for clients that still
+        # read the legacy key. The DB column was dropped by migration 074;
+        # this keeps Sources.jsx's defensive fallback chain working until
+        # the next frontend refactor retires the alias.
+        "source_url": row.get("official_url"),
         "category": row.get("category"),
         "tier": row.get("tier"),
         "verification_status": row.get("verification_status"),
@@ -867,6 +883,29 @@ def list_scrape_queue(
         except Exception:
             evidence_by_queue = {qid: {} for qid in queue_ids}
             evidence_details_by_queue = {qid: [] for qid in queue_ids}
+
+    # Open consensus-conflict counts per queue item. Older deploys that
+    # have not run migration 087 surface no rows here, so every count
+    # silently falls back to zero.
+    open_conflicts_by_queue: dict[str, int] = {qid: 0 for qid in queue_ids}
+    if queue_ids:
+        try:
+            crows = (
+                supabase.table("recruitment_verification_conflicts")
+                .select("queue_id, status")
+                .in_("queue_id", queue_ids)
+                .eq("status", "open")
+                .execute()
+                .data
+                or []
+            )
+            for cr in crows:
+                qid = cr.get("queue_id")
+                if qid in open_conflicts_by_queue:
+                    open_conflicts_by_queue[qid] += 1
+        except Exception:
+            open_conflicts_by_queue = {qid: 0 for qid in queue_ids}
+
     for r in rows:
         cls = classify_item(r)
         r["relevance_category"] = r.get("relevance_category") or cls["relevance_category"]
@@ -886,9 +925,11 @@ def list_scrape_queue(
         # post would look globally verified).
         reviewed = evidence_by_queue.get(r.get("id"), {})
         r["field_evidence_status"] = reviewed
+        r["field_evidence_details"] = evidence_details_by_queue.get(r.get("id"), [])
         missing = [f for f in _HIGH_RISK_FIELDS if reviewed.get(f) not in {"verified", "corrected"}]
         r["unverified_fields"] = sorted(missing)
-        r["promotable"] = len(missing) == 0
+        r["open_conflicts"] = int(open_conflicts_by_queue.get(r.get("id"), 0))
+        r["promotable"] = len(missing) == 0 and r["open_conflicts"] == 0
     return {
         "items": rows,
         "total": total,
@@ -1109,7 +1150,11 @@ def promote_queue_item(
 ) -> dict[str, Any]:
     from pydantic import ValidationError
 
-    from app.scraping.runner import DuplicatePromotionError, promote_to_recruitments
+    from app.scraping.runner import (
+        DuplicatePromotionError,
+        OpenConflictPromotionError,
+        promote_to_recruitments,
+    )
     from app.scraping.schemas import VerifiedRecruitmentForPromotion
 
     supabase = get_supabase_admin()
@@ -1166,9 +1211,23 @@ def promote_queue_item(
                     "invalid_fields": missing,
                 },
             ) from exc
-        rec_id = promote_to_recruitments(extracted, supabase, source_id=item.get("source_id"))
+        rec_id = promote_to_recruitments(
+            extracted,
+            supabase,
+            source_id=item.get("source_id"),
+            queue_id=queue_id,
+        )
     except HTTPException:
         raise
+    except OpenConflictPromotionError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Resolve consensus conflicts before promotion.",
+                "reason": "consensus_conflicts_open",
+                "unverified_fields": exc.field_keys,
+            },
+        ) from exc
     except DuplicatePromotionError as exc:
         raise HTTPException(status_code=409, detail={
             "message": "Recruitment already exists",
@@ -1319,6 +1378,61 @@ def resolve_official_source_for_queue_item(
         "source_id": body.source_id,
         "official_source_resolved": True,
         "official_source_host": official_host,
+    }
+
+
+@router.post("/admin/scrape/items/{queue_id}/draft-sources")
+def draft_sources_from_queue_item(
+    queue_id: str,
+    admin: dict = Depends(require_permission("sources.manage")),
+) -> dict[str, Any]:
+    """Auto-create draft ``source_registry`` rows for every official-URL
+    host on this queue item that isn't already registered.
+
+    Idempotent: hosts already in ``source_registry`` are returned under
+    ``existing`` without a write. New rows land with
+    ``is_verified=false`` / ``verification_status='needs_review'`` so
+    they cannot back a promotion until an admin runs the existing
+    verify-source flow. The accompanying ``notes`` field records the
+    queue item that surfaced the host so the audit trail is intact.
+    """
+    from app.scraping.source_drafts import extract_candidate_hosts, upsert_draft_sources
+
+    _validate_queue_id(queue_id)
+    supabase = get_supabase_admin()
+    rows = (
+        supabase.table("scrape_queue")
+        .select("id, extracted_data")
+        .eq("id", queue_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+    candidates = extract_candidate_hosts(rows[0].get("extracted_data") or {})
+    if not candidates:
+        return {"queue_id": queue_id, "created": [], "existing": [], "candidates": []}
+
+    result = upsert_draft_sources(supabase, candidates, queue_id=queue_id)
+    if result.get("created"):
+        _audit(
+            supabase,
+            admin,
+            "source.auto_draft_from_queue",
+            entity_type="scrape_queue",
+            entity_id=queue_id,
+            new_value={
+                "created_ids": [r.get("id") for r in result["created"]],
+                "candidate_hosts": [h for h, _ in candidates],
+            },
+        )
+    return {
+        "queue_id": queue_id,
+        "created": result["created"],
+        "existing": result["existing"],
+        "candidates": [{"host": h, "source_url": u} for h, u in candidates],
     }
 
 

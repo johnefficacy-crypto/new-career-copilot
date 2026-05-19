@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import IntentPickerQuestion from "./IntentPickerQuestion";
 import WhyWeAsk from "./WhyWeAsk";
 import OnboardingProgressBar from "./OnboardingProgressBar";
+import { trackOnboardingEvent } from "./analytics";
 
 // One question per card. Tap-first: single_select / boolean / intent are
 // answered with a single tap (fastest path). Multi-select and the rare
@@ -29,6 +30,7 @@ export default function OnboardingQuestionCard({
 
   function submit(value) {
     if (saving) return;
+    trackOnboardingEvent("answer_submitted", { question_key: question?.question_key, question_source: questionSource, value_type: Array.isArray(value) ? "array" : typeof value });
     onAnswer(value);
   }
 
@@ -186,7 +188,10 @@ export default function OnboardingQuestionCard({
           )}
           <button
             type="button"
-            onClick={onSkip}
+            onClick={() => {
+              trackOnboardingEvent("skip_clicked", { question_key: question?.question_key, question_source: questionSource });
+              onSkip();
+            }}
             disabled={saving}
             data-testid="onboarding-skip"
             className="btn btn-ghost"
@@ -195,7 +200,10 @@ export default function OnboardingQuestionCard({
           </button>
           <button
             type="button"
-            onClick={onSaveForLater}
+            onClick={() => {
+              trackOnboardingEvent("save_for_later_clicked", { question_key: question?.question_key, question_source: questionSource });
+              onSaveForLater();
+            }}
             disabled={saving}
             data-testid="onboarding-save-for-later"
             className="btn btn-ghost"

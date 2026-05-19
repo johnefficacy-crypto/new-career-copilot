@@ -104,12 +104,14 @@ def normalize_source_registry(row: dict[str, Any]) -> ScrapeSource:
 
     Reads every typed URL column added by migration 022 and the policy
     flags added by migrations 022 / 028, so the runtime never has to fall
-    back to a single ``base_url`` heuristic.
+    back to a single ``base_url`` heuristic. Migration 074 dropped
+    ``source_url``; ``official_url`` is now the only canonical URL field
+    (the migration backfills any row that previously only had source_url).
     """
     return ScrapeSource(
         id=str(row.get("id") or ""),
-        name=str(row.get("source_name") or row.get("name") or row.get("source_url") or ""),
-        crawl_url=_as_str_or_none(row.get("crawl_url") or row.get("source_url") or row.get("base_url")),
+        name=str(row.get("source_name") or row.get("name") or row.get("official_url") or ""),
+        crawl_url=_as_str_or_none(row.get("crawl_url") or row.get("official_url") or row.get("base_url")),
         official_url=_as_str_or_none(row.get("official_url")),
         notification_url=_as_str_or_none(row.get("notification_url")),
         rss_url=_as_str_or_none(row.get("rss_url")),

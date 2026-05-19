@@ -81,7 +81,7 @@ function RecruitmentDrawer({ row, onClose, onAction, onSave, onReload, busyKey }
           <NextActionCallout
             message={getNextActionForRecruitment(row)}
             href={row.publish_status === "published" ? "/admin/eligibility-queue" : undefined}
-            actionLabel={row.publish_status === "published" ? "Open Eligibility Ops" : undefined}
+            actionLabel={row.publish_status === "published" ? "Open Eligibility Health" : undefined}
             tone={(row.blocking_issues || []).length ? "warn" : "info"}
           />
         </div>
@@ -241,7 +241,7 @@ export default function AdminRecruitments() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Recruitments / trust workflow</div>
-          <h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight">Review publish readiness.</h1>
+          <h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight">Recruitment drafts &amp; publish gate</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Scan recruitment records, inspect blockers, validate provenance, and keep publish decisions explicit.</p>
         </div>
         <button type="button" className="btn btn-ghost" onClick={load}>Refresh</button>

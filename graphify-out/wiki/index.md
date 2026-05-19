@@ -15,6 +15,37 @@ Current committed graph artifacts:
 
 This wiki should be replaced by the real generated Graphify wiki when `graphify update .` produces `graphify-out/wiki/`.
 
+## Notes / Change Log
+
+- [Marketplace Delivery Split — PR1](./marketplace-delivery-split-pr1.md) —
+  `delivery_model` on `courses`, new `affiliate_partners` registry, admin
+  review view, API allowlist enforcement. Migration `112`.
+- [Marketplace Hosted Assets — PR2](./marketplace-assets-pr2.md) —
+  `marketplace_assets` + `marketplace_asset_files` +
+  `marketplace_infringing_hashes`, admin review state machine
+  (`draft → pending_review → approved → published`, with `reject`
+  fallbacks), copyright/infringing-hash gate on file insert. Storage is
+  metadata-only. Migration `114`.
+- [Document Text Extraction — PR2](./document-text-extraction-pr2.md) —
+  `document_pages` table, sync `POST /library/items/{id}/process-text`,
+  auto-enqueue on PDF complete-upload, transactional page swap via
+  `replace_document_pages()` RPC. Migration `113`.
+  - **Hot-fix (post-#328):** removed a duplicate `process-text` /
+    `pages` route block and a dead `TextExtractError` import that the
+    PR2 review-round commit had appended after `archive_item`. Routes
+    are now declared once each in the normal API section and still map
+    `ExtractConflict → 409`, `_ExtractError → 400 {code, message}`.
+    Added `tests/test_library_routes.py` (route count + OpenAPI
+    sanity) to pin the regression. No behaviour change, no migration
+    change, no extraction-service change.
+- [Library PR3 — OCR Wiring + `/pages` light listing](./library-pr3-ocr-wiring.md) —
+  new `library_ocr_jobs` table (migration `114`), three new endpoints
+  (`POST /items/{id}/ocr`, `GET /items/{id}/ocr`, `GET /ocr/jobs/{id}`),
+  auto-enqueue on `likely_needs_ocr=true` after text extract, and
+  additive `include_text=false` query param on `GET /items/{id}/pages`.
+  Engine default `none` finalizes jobs to `skipped` synchronously; real
+  engine lands in PR4.
+
 ## Main Knowledge Areas
 
 ### Frontend Runtime

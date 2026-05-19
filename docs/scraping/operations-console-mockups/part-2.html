@@ -1,0 +1,476 @@
+<style>
+.oc2 { --paper:#FAF7F2; --paper-card:#FFFEFB; --paper-sunk:#F2EDE3; --ink:#1A1815; --ink-soft:#4A4640; --ink-mute:#7A736A; --rule:#D8D2C4; --rule-soft:#E8E2D4; --tier-a:#8B1A1A; --tier-a-bg:#F5E6E6; --tier-b:#8B6914; --tier-b-bg:#F5EDD6; --tier-c:#3D5A2E; --tier-c-bg:#E8EFE0; --blocker:#B83227; --blocker-bg:#FBE6E3; --resolved:#2F6B3E; --resolved-bg:#E2EDE5; --pending:#8B6914; --pending-bg:#F5EDD6; --info:#1E3A5F; --info-bg:#E2E8EF; --fdisp:'Fraunces',Georgia,serif; --fbody:'IBM Plex Sans',system-ui,sans-serif; --fmono:'JetBrains Mono',ui-monospace,Menlo,monospace; background:var(--paper); color:var(--ink); font-family:var(--fbody); font-size:13px; line-height:1.45; padding:0 0 8px; border-radius:6px; border:1px solid var(--rule); }
+.oc2 * { box-sizing:border-box; }
+.oc2 .lbl { font-family:var(--fmono); font-size:11px; text-transform:uppercase; letter-spacing:0.1em; color:var(--ink-mute); }
+.oc2 .mono { font-family:var(--fmono); }
+.oc2 h2.title { font-family:var(--fdisp); font-weight:500; font-size:20px; margin:0; letter-spacing:-0.01em; color:var(--ink); }
+.oc2 h3.title { font-family:var(--fdisp); font-weight:500; font-size:15px; margin:0; color:var(--ink); }
+.oc2 h4.title { font-family:var(--fdisp); font-weight:500; font-size:14px; margin:0; color:var(--ink); }
+.oc2 .scrn { padding:16px 18px; border-top:1px solid var(--rule); }
+.oc2 .scrn:first-of-type { border-top:none; }
+.oc2 .scrn-head { display:flex; justify-content:space-between; align-items:baseline; padding-bottom:8px; margin-bottom:14px; border-bottom:1px solid var(--rule); }
+.oc2 .scrn-tag { font-family:var(--fmono); font-size:10px; text-transform:uppercase; letter-spacing:0.16em; color:var(--ink-mute); }
+.oc2 .card { background:var(--paper-card); border:1px solid var(--rule); border-radius:4px; }
+.oc2 .card-head { padding:10px 14px; border-bottom:1px solid var(--rule); display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.oc2 .card-body { padding:14px; }
+.oc2 .card-foot { padding:9px 14px; border-top:1px solid var(--rule); background:var(--paper-sunk); display:flex; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
+.oc2 .badge { display:inline-flex; align-items:center; gap:5px; font-family:var(--fmono); font-size:11px; text-transform:uppercase; letter-spacing:0.06em; padding:2px 7px; border-radius:2px; font-weight:500; line-height:1.4; }
+.oc2 .badge::before { content:""; width:5px; height:5px; border-radius:50%; background:currentColor; opacity:0.7; }
+.oc2 .badge.tier-a { background:var(--tier-a-bg); color:var(--tier-a); }
+.oc2 .badge.tier-b { background:var(--tier-b-bg); color:var(--tier-b); }
+.oc2 .badge.blocker { background:var(--blocker-bg); color:var(--blocker); }
+.oc2 .badge.resolved { background:var(--resolved-bg); color:var(--resolved); }
+.oc2 .badge.pending { background:var(--pending-bg); color:var(--pending); }
+.oc2 .badge.info { background:var(--info-bg); color:var(--info); }
+.oc2 .badge.neutral { background:var(--paper-sunk); color:var(--ink-soft); }
+.oc2 .btn { font-family:var(--fbody); font-size:12px; font-weight:500; padding:6px 11px; border-radius:3px; border:1px solid var(--rule); background:var(--paper-card); color:var(--ink); cursor:pointer; }
+.oc2 .btn.primary { background:var(--ink); color:var(--paper); border-color:var(--ink); }
+.oc2 .btn.ghost { background:transparent; border-color:transparent; color:var(--ink-soft); }
+.oc2 .btn.danger { background:var(--blocker); color:var(--paper); border-color:var(--blocker); }
+.oc2 .btn.small { padding:4px 9px; font-size:11px; }
+.oc2 .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.oc2 .stack > * + * { margin-top:10px; }
+.oc2 .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.oc2 .grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+.oc2 .grid4 { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+.oc2 .field { border:1px solid var(--rule); border-radius:3px; padding:10px 12px; background:var(--paper); }
+.oc2 .field-lbl { font-family:var(--fmono); font-size:10px; text-transform:uppercase; letter-spacing:0.1em; color:var(--ink-mute); margin-bottom:6px; }
+.oc2 .field-val { font-size:13px; color:var(--ink); font-weight:500; }
+.oc2 .field-sub { font-family:var(--fmono); font-size:11px; color:var(--ink-mute); margin-top:4px; }
+.oc2 .field.big .field-val { font-family:var(--fdisp); font-size:24px; font-weight:400; line-height:1; }
+.oc2 .field.warn { border-color:var(--pending); background:var(--pending-bg); }
+.oc2 .field.warn .field-val { color:var(--pending); }
+.oc2 .field.bad { border-color:var(--blocker); background:var(--blocker-bg); }
+.oc2 .field.bad .field-val { color:var(--blocker); }
+.oc2 .field.good { border-color:var(--resolved); background:var(--resolved-bg); }
+.oc2 .field.good .field-val { color:var(--resolved); }
+.oc2 table.t { width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed; }
+.oc2 table.t th { text-align:left; font-family:var(--fmono); font-size:10px; text-transform:uppercase; letter-spacing:0.08em; color:var(--ink-mute); padding:7px 10px; border-bottom:1px solid var(--rule); font-weight:500; }
+.oc2 table.t td { padding:9px 10px; border-bottom:1px solid var(--rule-soft); vertical-align:top; font-size:12px; word-wrap:break-word; }
+.oc2 table.t td.num { font-family:var(--fmono); }
+.oc2 .row-ttl { font-weight:500; line-height:1.3; }
+.oc2 .row-sub { font-family:var(--fmono); font-size:11px; color:var(--ink-mute); margin-top:2px; }
+.oc2 .input { width:100%; padding:7px 10px; border:1px solid var(--rule); border-radius:3px; background:var(--paper); font-family:var(--fbody); font-size:13px; color:var(--ink); }
+.oc2 textarea.input { min-height:50px; resize:vertical; }
+.oc2 .anno { font-family:var(--fmono); font-size:10px; color:var(--ink-mute); }
+.oc2 .err-row { background:var(--blocker-bg); border:1px solid var(--blocker); border-radius:2px; padding:6px 8px; font-family:var(--fmono); font-size:11px; color:var(--blocker); }
+.oc2 .timeline { padding:0; }
+.oc2 .tline-row { display:grid; grid-template-columns:90px 1fr; gap:12px; padding:10px 0; border-bottom:1px solid var(--rule-soft); }
+.oc2 .tline-row:last-child { border-bottom:none; }
+.oc2 .tline-time { font-family:var(--fmono); font-size:11px; color:var(--ink-mute); }
+.oc2 .tline-action { font-weight:500; font-size:12.5px; color:var(--ink); }
+.oc2 .tline-sub { font-family:var(--fmono); font-size:11px; color:var(--ink-mute); margin-top:3px; }
+.oc2 .tline-payload { font-family:var(--fmono); font-size:11px; color:var(--ink-soft); background:var(--paper-sunk); border-radius:2px; padding:6px 8px; margin-top:6px; max-height:70px; overflow:hidden; }
+.oc2 .post-card { border:1px solid var(--rule); border-radius:3px; padding:12px; background:var(--paper); margin-top:8px; }
+.oc2 .post-card .post-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+.oc2 .blocker-grp { padding:10px 12px; border-bottom:1px solid var(--rule-soft); }
+.oc2 .blocker-grp:last-child { border-bottom:none; }
+.oc2 .blocker-grp .bg-head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.oc2 .blocker-grp .bg-reason { font-family:var(--fmono); font-size:11px; color:var(--blocker); margin-top:4px; }
+.oc2 .batch-card { background:var(--pending-bg); border:2px solid var(--pending); border-radius:4px; padding:16px; }
+.oc2 .impact-pill { display:inline-flex; align-items:center; gap:6px; padding:4px 9px; border-radius:99px; background:var(--paper-sunk); border:1px solid var(--rule); font-family:var(--fmono); font-size:11px; }
+.oc2 .impact-pill.warn { background:var(--pending-bg); color:var(--pending); border-color:var(--pending); }
+.oc2 .impact-pill.bad { background:var(--blocker-bg); color:var(--blocker); border-color:var(--blocker); }
+.oc2 .impact-pill.ok { background:var(--resolved-bg); color:var(--resolved); border-color:var(--resolved); }
+</style>
+<h2 class="sr-only">Admin operations console — seven additional screen mockups covering scrape run detail, publish impact preview, recompute queue status, recruitment criteria editor, audit timeline, bulk action dry run, and reverification batch alert.</h2>
+
+<div class="oc2">
+
+<section class="scrn">
+  <div class="scrn-head">
+    <h3 class="title">Screen 8 · scrape run detail</h3>
+    <span class="scrn-tag">drawer · per-source breakdown</span>
+  </div>
+  <div class="card">
+    <div class="card-head" style="flex-direction:column;align-items:flex-start;gap:6px;">
+      <div class="row" style="gap:5px;"><span class="badge resolved">complete</span><span class="row-sub">triggered by · admin · kavya.iyer</span></div>
+      <h3 class="title" style="font-size:17px;">Run · 8f3a · UPSC official</h3>
+      <div class="row-sub">started 14:08:11 · finished 14:11:25 · duration 3m 14s · auto-refresh 4s</div>
+    </div>
+    <div class="card-body stack">
+      <div class="grid4">
+        <div class="field big"><div class="field-lbl">sources checked</div><div class="field-val">1</div></div>
+        <div class="field big"><div class="field-lbl">items found</div><div class="field-val">142</div></div>
+        <div class="field big good"><div class="field-lbl">items new</div><div class="field-val">109</div></div>
+        <div class="field big warn"><div class="field-lbl">duplicate</div><div class="field-val">33</div></div>
+      </div>
+
+      <div>
+        <div class="lbl" style="margin-bottom:6px;">Per-source breakdown</div>
+        <div class="card" style="margin-top:6px;">
+          <table class="t">
+            <thead><tr><th style="width:30%;">Source</th><th class="num">Pending</th><th class="num">Dup</th><th class="num">Promoted</th><th class="num">Rejected</th><th class="num">Quality</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>
+                  <div class="row-ttl">UPSC notifications</div>
+                  <div class="row-sub">official_html</div>
+                </td>
+                <td class="num">109</td>
+                <td class="num">33</td>
+                <td class="num">0</td>
+                <td class="num">0</td>
+                <td class="num">62 – 94%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <div class="lbl" style="margin-bottom:6px;">Errors · 2</div>
+        <div class="stack">
+          <div class="err-row">UPSC career page · timeout after 15s · retry queued</div>
+          <div class="err-row">PDF extraction · /Notice_03_2026.pdf · pdfminer: invalid xref · skipped</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-foot">
+      <button class="btn ghost small">Export trace</button>
+      <button class="btn small">Re-run failed sources</button>
+    </div>
+  </div>
+</section>
+
+<section class="scrn">
+  <div class="scrn-head">
+    <h3 class="title">Screen 9 · publish impact preview</h3>
+    <span class="scrn-tag">count-only · before clicking publish</span>
+  </div>
+  <div class="card">
+    <div class="card-head" style="flex-direction:column;align-items:flex-start;gap:4px;">
+      <div class="lbl">What publish will trigger</div>
+      <h3 class="title">UPSC Civil Services Examination 2026</h3>
+      <div class="anno" style="margin-top:2px;">Count-only preview. Publish fans out eligibility recompute to every onboarded profile and enables alerts.</div>
+    </div>
+    <div class="card-body stack">
+      <div class="grid3">
+        <div class="field big"><div class="field-lbl">onboarded users</div><div class="field-val">12,418</div><div class="field-sub">recomputes will be enqueued</div></div>
+        <div class="field big warn"><div class="field-lbl">missing dob</div><div class="field-val">842</div><div class="field-sub">conditional verdicts</div></div>
+        <div class="field big"><div class="field-lbl">alerts queued</div><div class="field-val">0</div><div class="field-sub">for this recruitment</div></div>
+      </div>
+
+      <div>
+        <div class="lbl" style="margin-bottom:6px;">Current verdicts · last recompute</div>
+        <div class="grid3">
+          <div class="field good"><div class="field-lbl">eligible</div><div class="field-val">8,214</div></div>
+          <div class="field warn"><div class="field-lbl">conditional</div><div class="field-val">1,089</div></div>
+          <div class="field"><div class="field-lbl">ineligible</div><div class="field-val">3,115</div></div>
+        </div>
+        <div class="anno" style="margin-top:6px;">Sampled from first 10,000 eligibility_results rows.</div>
+      </div>
+
+      <div class="row" style="background:var(--paper-sunk);border:1px solid var(--rule);border-radius:3px;padding:10px 12px;">
+        <div style="flex:1;">
+          <div class="lbl" style="margin-bottom:3px;">deadline</div>
+          <div style="font-size:13px;"><strong>2026-06-26</strong> · <span class="anno anno-arrow" style="color:var(--blocker);">3 days away</span></div>
+        </div>
+        <span class="impact-pill bad">deadline tight</span>
+      </div>
+    </div>
+    <div class="card-foot">
+      <button class="btn ghost small">Refresh</button>
+      <button class="btn primary small">Confirm &amp; publish</button>
+    </div>
+  </div>
+</section>
+
+<section class="scrn">
+  <div class="scrn-head">
+    <h3 class="title">Screen 10 · recompute queue status</h3>
+    <span class="scrn-tag">per recruitment · retry failed rows</span>
+  </div>
+  <div class="card">
+    <div class="card-head" style="flex-direction:column;align-items:flex-start;gap:4px;">
+      <div class="lbl">Eligibility recompute</div>
+      <h3 class="title">Queue · UPSC Civil Services 2026</h3>
+      <div class="anno" style="margin-top:2px;">Failed rows can be retried individually. Manual fan-out enqueues a fresh recompute for every onboarded user.</div>
+    </div>
+    <div class="card-body stack">
+      <div class="row">
+        <span class="impact-pill"><span class="lbl">pending</span><strong>0</strong></span>
+        <span class="impact-pill"><span class="lbl">queued</span><strong>0</strong></span>
+        <span class="impact-pill warn"><span class="lbl">processing</span><strong>14</strong></span>
+        <span class="impact-pill bad"><span class="lbl">failed</span><strong>6</strong></span>
+        <span class="impact-pill ok"><span class="lbl">processed</span><strong>12,398</strong></span>
+        <span style="margin-left:auto;font-size:11px;">
+          <span class="lbl">view</span>
+          <select class="input" style="display:inline-block;width:auto;padding:3px 6px;font-size:11px;"><option>Failed only</option><option>Processing</option><option>All</option></select>
+        </span>
+      </div>
+
+      <div class="card">
+        <div style="padding:10px 12px;border-bottom:1px solid var(--rule-soft);">
+          <div class="row" style="justify-content:space-between;">
+            <div>
+              <div class="row"><span class="badge blocker">failed</span><span class="mono" style="font-size:11px;">9c4a82d1</span><span class="anno">user 7b2f1a4c · attempts: 3</span></div>
+              <div class="err-row" style="margin-top:6px;">profile.date_of_birth missing — engine raised EligibilityProfileIncomplete</div>
+              <div class="anno" style="margin-top:4px;">queued 14:09 · processed 14:09 · reason · publish_fanout</div>
+            </div>
+            <button class="btn small">Retry</button>
+          </div>
+        </div>
+        <div style="padding:10px 12px;border-bottom:1px solid var(--rule-soft);">
+          <div class="row" style="justify-content:space-between;">
+            <div>
+              <div class="row"><span class="badge blocker">failed</span><span class="mono" style="font-size:11px;">2a8f0e91</span><span class="anno">user e1c4 · attempts: 2</span></div>
+              <div class="err-row" style="margin-top:6px;">supabase rpc timeout · 60s</div>
+              <div class="anno" style="margin-top:4px;">queued 14:09 · reason · publish_fanout</div>
+            </div>
+            <button class="btn small">Retry</button>
+          </div>
+        </div>
+        <div style="padding:10px 12px;">
+          <div class="row" style="justify-content:space-between;">
+            <div>
+              <div class="row"><span class="badge pending">processing</span><span class="mono" style="font-size:11px;">3e7b1f08</span><span class="anno">user 91ac</span></div>
+              <div class="anno" style="margin-top:4px;">queued 14:18 · started 14:22</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="background:var(--pending-bg);border:1px solid var(--pending);border-radius:3px;padding:8px 10px;font-family:var(--fmono);font-size:11px;color:var(--pending);">
+        ⚠ many failed recomputes (6). Inspect worker logs before retrying individually.
+      </div>
+    </div>
+    <div class="card-foot">
+      <button class="btn ghost small">Refresh</button>
+      <button class="btn primary small">Recompute now · 12,418 users</button>
+    </div>
+  </div>
+</section>
+
+<section class="scrn">
+  <div class="scrn-head">
+    <h3 class="title">Screen 11 · recruitment criteria editor</h3>
+    <span class="scrn-tag">posts + age + education · per post</span>
+  </div>
+  <div class="card">
+    <div class="card-head" style="flex-direction:column;align-items:flex-start;gap:4px;">
+      <div class="lbl">Canonical criteria editor</div>
+      <h3 class="title">SSC CHSL 2026 · 3 posts</h3>
+      <div class="anno" style="margin-top:2px;">Edit posts, age_criteria, education_criteria. Saving demotes a published recruitment back to needs_review.</div>
+    </div>
+    <div class="card-body stack">
+      <div class="post-card">
+        <div class="post-head">
+          <div class="row"><span class="lbl">post 0</span><input class="input" value="Lower Division Clerk (LDC)" style="font-size:13px;font-weight:500;padding:5px 8px;width:auto;flex:1;" /></div>
+          <span class="badge resolved">complete</span>
+        </div>
+        <div class="grid2">
+          <div class="field">
+            <div class="field-lbl">age criteria</div>
+            <div class="row" style="margin-top:6px;">
+              <input class="input" type="number" placeholder="min" value="18" style="width:70px;font-size:12px;padding:5px 8px;" />
+              <span class="anno">to</span>
+              <input class="input" type="number" placeholder="max" value="27" style="width:70px;font-size:12px;padding:5px 8px;" />
+            </div>
+            <div class="anno" style="margin-top:6px;">cutoff · 2026-08-01</div>
+          </div>
+          <div class="field">
+            <div class="field-lbl">education criteria</div>
+            <select class="input" style="font-size:12px;padding:5px 8px;margin-top:6px;"><option>12th pass</option><option>graduate</option></select>
+            <input class="input" placeholder="disciplines (comma)" style="font-size:11.5px;padding:5px 8px;margin-top:4px;" value="any stream" />
+          </div>
+        </div>
+      </div>
+
+      <div class="post-card">
+        <div class="post-head">
+          <div class="row"><span class="lbl">post 1</span><input class="input" value="Junior Secretariat Assistant (JSA)" style="font-size:13px;font-weight:500;padding:5px 8px;width:auto;flex:1;" /></div>
+          <span class="badge pending">missing edu</span>
+        </div>
+        <div class="grid2">
+          <div class="field">
+            <div class="field-lbl">age criteria</div>
+            <div class="row" style="margin-top:6px;">
+              <input class="input" type="number" value="18" style="width:70px;font-size:12px;padding:5px 8px;" />
+              <span class="anno">to</span>
+              <input class="input" type="number" value="27" style="width:70px;font-size:12px;padding:5px 8px;" />
+            </div>
+          </div>
+          <div class="field bad">
+            <div class="field-lbl" style="color:var(--blocker);">education · required</div>
+            <div class="anno" style="color:var(--blocker);margin-top:4px;">no education_criteria row</div>
+            <button class="btn small" style="margin-top:6px;">Add education criteria</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="padding:10px 12px;background:var(--paper-sunk);border:1px dashed var(--rule);border-radius:3px;">
+        <div class="lbl" style="margin-bottom:6px;">Add new post</div>
+        <div class="row">
+          <input class="input" placeholder="Post name (e.g. Data Entry Operator)" style="flex:1;min-width:160px;font-size:12px;padding:6px 9px;" />
+          <button class="btn primary small">Add post</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="scrn">
+  <div class="scrn-head">
+    <h3 class="title">Screen 12 · audit timeline</h3>
+    <span class="scrn-tag">inline · scoped to entity</span>
+  </div>
+  <div class="card">
+    <div class="card-head">
+      <h4 class="title">Audit timeline · recruitment rec_91bc2d</h4>
+      <span class="row-sub">24 events · last 7 days</span>
+    </div>
+    <div class="card-body timeline">
+      <div class="tline-row">
+        <div class="tline-time">14:22<br />sat 16 may</div>
+        <div>
+          <div class="tline-action">recruitment.verify</div>
+          <div class="tline-sub">by <strong>kavya.iyer</strong> · super_admin</div>
+        </div>
+      </div>
+      <div class="tline-row">
+        <div class="tline-time">14:18<br />sat 16 may</div>
+        <div>
+          <div class="tline-action">recruitment.validate_publish</div>
+          <div class="tline-sub">by <strong>kavya.iyer</strong> · ready=true</div>
+          <div class="tline-payload">{ blocking_issues: [], warnings: ["aggregator_corroboration_missing"] }</div>
+        </div>
+      </div>
+      <div class="tline-row">
+        <div class="tline-time">14:10<br />sat 16 may</div>
+        <div>
+          <div class="tline-action">recruitment.field_edit · official_apply_url</div>
+          <div class="tline-sub">by <strong>vinay.r</strong> · "Corrected from corrigendum-1"</div>
+        </div>
+      </div>
+      <div class="tline-row">
+        <div class="tline-time">13:55<br />sat 16 may</div>
+        <div>
+          <div class="tline-action">recruitment.demote · needs_review</div>
+          <div class="tline-sub">by <strong>system</strong> · critical-field edit detected</div>
+          <div class="tline-payload">{ field: "apply_end_date", old: "2026-06-22", new: "2026-06-26", trigger: "auto_demote" }</div>
+        </div>
+      </div>
+      <div class="tline-row">
+        <div class="tline-time">13:42<br />sat 16 may</div>
+        <div>
+          <div class="tline-action">recruitment.promote_from_queue</div>
+          <div class="tline-sub">by <strong>kavya.iyer</strong> · queue qi_4e29a1</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-foot">
+      <button class="btn ghost small">Refresh</button>
+      <button class="btn small">Export jsonl</button>
+    </div>
+  </div>
+</section>
+
+<section class="scrn">
+  <div class="scrn-head">
+    <h3 class="title">Screen 13 · bulk action · dry run</h3>
+    <span class="scrn-tag">50 selected · bulk_promote</span>
+  </div>
+  <div class="card">
+    <div class="card-head" style="flex-direction:column;align-items:flex-start;gap:4px;">
+      <div class="lbl">Bulk preview · dry run</div>
+      <h3 class="title">Promote 50 queue items</h3>
+      <div class="anno" style="margin-top:2px;">Apply will only act on eligible items. Blocked items remain unchanged with their reason_code intact.</div>
+    </div>
+    <div class="card-body stack">
+      <div class="grid4">
+        <div class="field big"><div class="field-lbl">selected</div><div class="field-val">50</div></div>
+        <div class="field big good"><div class="field-lbl">eligible</div><div class="field-val">42</div></div>
+        <div class="field big bad"><div class="field-lbl">blocked</div><div class="field-val">8</div></div>
+        <div class="field big"><div class="field-lbl">tier split</div><div class="field-val" style="font-size:13px;line-height:1.4;font-family:var(--fmono);font-weight:500;">A·18 B·24 C·8</div></div>
+      </div>
+
+      <div>
+        <div class="lbl" style="margin-bottom:6px;">Blocked · grouped by reason_code</div>
+        <div class="card">
+          <div class="blocker-grp">
+            <div class="bg-head">
+              <div>
+                <div class="row-ttl">official_proof_missing</div>
+                <div class="anno">promotion_blocker · 3 items</div>
+              </div>
+              <button class="btn small">Open list</button>
+            </div>
+            <ul style="margin:6px 0 0;padding-left:18px;font-size:11.5px;color:var(--ink-soft);">
+              <li>RBI Grade B Officer 2026 · rpt_3d92b1</li>
+              <li>Coast Guard Yantrik 02/2026 · rpt_9e21f3</li>
+              <li>BSF Constable (GD) 2026 · rpt_a04c11</li>
+            </ul>
+          </div>
+          <div class="blocker-grp">
+            <div class="bg-head">
+              <div>
+                <div class="row-ttl">eligibility_rule_missing</div>
+                <div class="anno">publish_blocker · 4 items · field_key=gate_score</div>
+              </div>
+              <button class="btn small">Open list</button>
+            </div>
+          </div>
+          <div class="blocker-grp">
+            <div class="bg-head">
+              <div>
+                <div class="row-ttl">consensus_conflict_unresolved</div>
+                <div class="anno">promotion_blocker · 1 item · IBPS PO/MT XV</div>
+              </div>
+              <button class="btn small">Open list</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-foot">
+      <button class="btn ghost small">Cancel</button>
+      <button class="btn small">Export csv</button>
+      <button class="btn primary small">Apply to 42 eligible</button>
+    </div>
+  </div>
+</section>
+
+<section class="scrn">
+  <div class="scrn-head">
+    <h3 class="title">Screen 14 · reverification batch alert</h3>
+    <span class="scrn-tag">mass corrigendum · throttled release</span>
+  </div>
+  <div class="batch-card">
+    <div class="row" style="gap:6px;margin-bottom:6px;">
+      <span class="badge pending">mass change detected</span>
+      <span class="badge tier-a">tier A</span>
+    </div>
+    <h3 class="title" style="font-size:18px;">SSC · 47 reports affected by source change</h3>
+    <div class="row-sub" style="color:var(--ink-soft);margin-top:4px;">
+      source · ssc.nic.in · trigger · source_hash_changed · 14:18 IST
+    </div>
+
+    <div class="grid3" style="margin-top:14px;background:var(--paper-card);border-radius:3px;padding:12px;">
+      <div>
+        <div class="field-lbl">total affected</div>
+        <div style="font-family:var(--fdisp);font-size:22px;font-weight:400;margin-top:3px;">47</div>
+      </div>
+      <div>
+        <div class="field-lbl">flipped to needs_reverification</div>
+        <div style="font-family:var(--fdisp);font-size:22px;font-weight:400;margin-top:3px;">25</div>
+      </div>
+      <div>
+        <div class="field-lbl">held in batch · pending</div>
+        <div style="font-family:var(--fdisp);font-size:22px;font-weight:400;color:var(--pending);margin-top:3px;">22</div>
+      </div>
+    </div>
+
+    <div class="anno" style="margin-top:12px;color:var(--ink-soft);">
+      First 25 reports already in admin attention queue. Remaining 22 held in batch state to prevent flooding. Acknowledge to release in throttled chunks.
+    </div>
+
+    <div class="row" style="margin-top:14px;">
+      <button class="btn primary">Acknowledge &amp; release 22</button>
+      <button class="btn">Open affected list</button>
+      <button class="btn ghost">Snooze 1h</button>
+    </div>
+  </div>
+</section>
+
+</div>

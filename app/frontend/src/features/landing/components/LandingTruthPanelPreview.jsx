@@ -35,11 +35,11 @@ export default function LandingTruthPanelPreview() {
     <div
       className="soft-card rounded-3xl p-6 space-y-4"
       data-testid="landing-truth-panel-preview"
-      aria-label="Sample weekly truth panel preview"
+      aria-label="Sample weekly Progress vs Plan preview"
     >
       <div className="flex items-center justify-between">
         <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
-          Weekly review · the honest panel
+          Report Card · the honest panel
         </div>
         <span className="pill pill-dusk text-[10px]">Sample preview</span>
       </div>

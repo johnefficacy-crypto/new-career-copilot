@@ -1,4 +1,5 @@
-@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+@import "./admin-console.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -83,10 +84,41 @@ h1, h2, h3, h4, h5 {
 
 /* Soft prototype surface — ported verbatim from the UI reference (studyos.html). */
 .soft-card {
-  background: rgba(255, 253, 248, 0.92);
+  background: rgba(255, 253, 248, 0.94);
   border: 1px solid #E7DECB;
-  border-radius: 18px;
-  box-shadow: 0 1px 2px rgba(46, 34, 24, 0.04), 0 10px 28px -20px rgba(46, 34, 24, 0.10);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(46, 34, 24, 0.05), 0 12px 30px -24px rgba(46, 34, 24, 0.18);
+}
+
+.community-workspace {
+  position: relative;
+}
+
+.community-workspace::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(46, 34, 24, 0.028) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(46, 34, 24, 0.018) 1px, transparent 1px),
+    radial-gradient(40% 32% at 15% 8%, rgba(84, 121, 78, 0.08), transparent 70%);
+  background-size: 28px 28px, 28px 28px, auto;
+}
+
+.community-action-card {
+  border-radius: 8px;
+  border: 1px solid #E7DECB;
+  background: rgba(255, 253, 248, 0.82);
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.community-action-card:hover {
+  border-color: #BE9C6B;
+  background: #FFFDFA;
+  box-shadow: 0 12px 26px -24px rgba(46, 34, 24, 0.34);
+  transform: translateY(-1px);
 }
 
 /* Warm linen background used on marketing + dashboard canvas */
@@ -148,7 +180,7 @@ h1, h2, h3, h4, h5 {
 /* Button shapes — prototype: ink primary, hairline ghost. */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
-  padding: 0.7rem 1.25rem; border-radius: 9999px; font-weight: 600; font-size: 14px;
+  padding: 0.7rem 1.25rem; border-radius: 8px; font-weight: 600; font-size: 14px;
   transition: all 200ms ease;
 }
 .btn-primary { background: #2E2218; color: #F3EADB; }
@@ -347,11 +379,11 @@ details > summary::-webkit-details-marker { display: none; }
   width: 100%; text-align: left; transition: background 160ms, color 160ms;
 }
 .nav-link:hover { background: #F1E1CD; color: #2E2218; }
-.nav-link.active { background: #2E2218; color: #F3EADB; font-weight: 600; }
-.nav-link.active .nav-glyph { color: #D6BC93; }
+.nav-link.active { background: #FFFDF9; color: #2E2218; border: 1px solid #D9C7A7; font-weight: 600; }
+.nav-link.active .nav-glyph { color: #A68057; }
 .nav-link-admin:hover { background: #DDDAE3; color: #221D2A; }
-.nav-link-admin.active { background: #31293B; color: #F2F1F4; }
-.nav-link-admin.active .nav-glyph { color: #B7B0C4; }
+.nav-link-admin.active { background: #F7F4FB; color: #221D2A; border: 1px solid #CFC6E0; }
+.nav-link-admin.active .nav-glyph { color: #7C7097; }
 .nav-section {
   font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase;
   color: #A68057; padding: 14px 12px 6px; font-weight: 600;
@@ -459,3 +491,8 @@ details.faq:last-of-type .faq-body { border-bottom: 0; }
 .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
 @keyframes breathe { 0%, 100% { transform: scale(1); opacity: 0.9; } 50% { transform: scale(1.02); opacity: 1; } }
 .breathe { animation: breathe 4.5s ease-in-out infinite; }
+
+/* Field design system — used by features/community/. */
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fieldSlideIn { from { transform: translateX(8px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.field-surface { background: #FFFFFF; }

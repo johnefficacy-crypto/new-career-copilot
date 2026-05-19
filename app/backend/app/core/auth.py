@@ -127,6 +127,14 @@ def _serialize_user(user: Any, claims: dict | None = None) -> dict:
     permissions = app_metadata.get("permissions") or []
     if isinstance(permissions, str):
         permissions = [permissions]
+    # Supabase anonymous sign-ins set `is_anonymous=true` in the JWT claims
+    # and on `app_metadata`. Either source is authoritative — we coerce to
+    # bool so downstream code can rely on a stable shape.
+    is_anonymous = bool(
+        claims.get("is_anonymous")
+        or app_metadata.get("is_anonymous")
+        or getattr(user, "is_anonymous", False)
+    )
     return {
         "id": getattr(user, "id", None) or claims.get("sub"),
         "email": getattr(user, "email", None) or claims.get("email"),
@@ -137,6 +145,7 @@ def _serialize_user(user: Any, claims: dict | None = None) -> dict:
         "plan": metadata.get("plan", "free"),
         "goal_exams": metadata.get("goal_exams", []),
         "permissions": permissions,
+        "is_anonymous": is_anonymous,
         "created_at": getattr(user, "created_at", None),
         "claims": claims,
     }

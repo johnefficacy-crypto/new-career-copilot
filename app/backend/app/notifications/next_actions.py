@@ -7,7 +7,10 @@ PRIORITY_RANK = {"low": 1, "normal": 2, "medium": 2, "high": 3, "critical": 4}
 
 from supabase import Client
 
-from app.api.canonical import my_recommendations, profile_completion, weekly_review
+from app.api.canonical import my_recommendations, profile_completion
+# Phase 5: weekly_review moved to study_os.py as the single owner of
+# /api/study/weekly-review. Re-aliased so call sites below stay unchanged.
+from app.api.study_os import weekly_review_read as weekly_review
 
 
 def _now_iso() -> str:

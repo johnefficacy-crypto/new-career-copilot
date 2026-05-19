@@ -150,8 +150,81 @@ def _attach_rows_by_post(posts: list[dict[str, Any]], table: str, rows: list[dic
         post[table] = grouped.get(post.get("id"), [])
 
 
+def _load_certification_criteria(
+    supabase: Client, post_ids: list[str]
+) -> list[dict[str, Any]]:
+    """Flat loader for certification_criteria + a side lookup on certifications.
+
+    The schema (002_core_runtime_schema.sql:41) keys certification_criteria
+    to certifications by `certification_name` text, not a foreign key, so a
+    PostgREST embed of `certifications(...)` returns PGRST200. Two flat
+    selects + a Python join is the only safe shape.
+
+    Columns:
+      - `certification_criteria`: post_id, certification_name, required
+      - `certifications`: id, name, issuing_body (no `issuer`/`aliases` exist
+        in this schema). `issuing_body` is mapped onto the engine's
+        `issuer` field; `aliases` is left empty.
+
+    Returns rows shaped like the legacy embed so downstream consumers in
+    ``run_eligibility_for_user`` don't need to special-case the flat path:
+        {"post_id", "required", "certifications": {"name", "issuer", "aliases"}}
+    """
+    if not post_ids:
+        return []
+    try:
+        criteria_rows = (
+            supabase.table("certification_criteria")
+            .select("post_id, certification_name, required")
+            .in_("post_id", post_ids)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as exc:  # noqa: BLE001
+        if not _looks_like_missing_relation(exc):
+            raise
+        logger.info("eligibility.certification_criteria table absent; treating as no rows: %s", exc)
+        return []
+
+    names = sorted({r.get("certification_name") for r in criteria_rows if r.get("certification_name")})
+    cert_by_name: dict[str, dict[str, Any]] = {}
+    if names:
+        try:
+            cert_rows = (
+                supabase.table("certifications")
+                .select("name, issuing_body")
+                .in_("name", names)
+                .execute()
+                .data
+                or []
+            )
+            cert_by_name = {c["name"]: c for c in cert_rows if c.get("name")}
+        except Exception as exc:  # noqa: BLE001
+            if not _looks_like_missing_relation(exc):
+                raise
+            logger.info("eligibility.certifications lookup absent; issuer unresolved: %s", exc)
+
+    out: list[dict[str, Any]] = []
+    for row in criteria_rows:
+        name = row.get("certification_name")
+        reg = cert_by_name.get(name) if name else None
+        out.append({
+            "post_id": row.get("post_id"),
+            "required": row.get("required"),
+            "certifications": {
+                "name": name,
+                "issuer": (reg or {}).get("issuing_body"),
+                "aliases": [],
+            },
+        })
+    return out
+
+
 def _load_active_posts_with_criteria(supabase: Client) -> list[dict[str, Any]]:
     """Load active post criteria, falling back when criteria embeds are unavailable."""
+    # certification_criteria is loaded flat (no PostgREST embed): the table
+    # has no FK to `certifications`, so an embed returns PGRST200.
     embedded_select = """
                 id,
                 recruitment_id,
@@ -162,11 +235,10 @@ def _load_active_posts_with_criteria(supabase: Client) -> list[dict[str, Any]]:
                 age_relaxation_rules ( reservation_category, condition_key, additional_years, max_age_cap, cumulative, source_note ),
                 education_criteria ( min_qualification_level, min_percentage, allowed_disciplines, allow_higher_qualification, accepted_equivalent_qualifications, raw_requirement_text ),
                 post_disability_requirements ( disability_code, physical_requirement_code, suitable, source_note ),
-                certification_criteria ( mandatory, certifications ( name, issuer ) ),
                 attempt_limits ( category, max_attempts, attempt_scope )
                 """
     try:
-        return (
+        posts = (
             supabase.table("posts")
             .select(embedded_select)
             .in_("recruitments.status", ["open", "upcoming"])
@@ -179,54 +251,39 @@ def _load_active_posts_with_criteria(supabase: Client) -> list[dict[str, Any]]:
         if not _looks_like_missing_embed(exc):
             raise
         logger.warning("eligibility.posts_fetch_embed_unavailable; using criteria fallback: %s", exc)
-
-    posts = (
-        supabase.table("posts")
-        .select("id, recruitment_id, language_requirements, requires_domicile, recruitments!inner ( status, publish_status, exam_id, organizations ( state ) )")
-        .in_("recruitments.status", ["open", "upcoming"])
-        .in_("recruitments.publish_status", ["verified", "published"])
-        .execute()
-        .data
-        or []
-    )
-    post_ids = [p["id"] for p in posts if p.get("id")]
-    if not post_ids:
-        return posts
-
-    for table, select_cols in (
-        ("age_criteria", "post_id, min_age, max_age, cutoff_date"),
-        ("age_relaxation_rules", "post_id, reservation_category, condition_key, additional_years, max_age_cap, cumulative, source_note"),
-        ("education_criteria", "post_id, min_qualification_level, min_percentage, allowed_disciplines, allow_higher_qualification, accepted_equivalent_qualifications, raw_requirement_text"),
-        ("post_disability_requirements", "post_id, disability_code, physical_requirement_code, suitable, source_note"),
-        ("attempt_limits", "post_id, category, max_attempts, attempt_scope"),
-    ):
-        try:
-            rows = supabase.table(table).select(select_cols).in_("post_id", post_ids).execute().data or []
-        except Exception as exc:  # noqa: BLE001
-            # Fail closed: only treat a *genuinely missing table* as "no
-            # criteria". A transient/unexpected failure must re-raise —
-            # silently dropping e.g. attempt_limits would produce an
-            # overly-permissive verdict.
-            if not _looks_like_missing_relation(exc):
-                raise
-            logger.info("eligibility.%s table absent; treating as no rows: %s", table, exc)
-            rows = []
-        _attach_rows_by_post(posts, table, rows)
-
-    try:
-        cert_rows = (
-            supabase.table("certification_criteria")
-            .select("post_id, mandatory, certifications ( name, issuer, aliases )")
-            .in_("post_id", post_ids)
+        posts = (
+            supabase.table("posts")
+            .select("id, recruitment_id, language_requirements, requires_domicile, recruitments!inner ( status, publish_status, exam_id, organizations ( state ) )")
+            .in_("recruitments.status", ["open", "upcoming"])
+            .in_("recruitments.publish_status", ["verified", "published"])
             .execute()
             .data
             or []
         )
-    except Exception as exc:  # noqa: BLE001
-        if not _looks_like_missing_relation(exc):
-            raise
-        logger.info("eligibility.certification_criteria table absent; treating as no rows: %s", exc)
-        cert_rows = []
+        post_ids_inner = [p["id"] for p in posts if p.get("id")]
+        if post_ids_inner:
+            for table, select_cols in (
+                ("age_criteria", "post_id, min_age, max_age, cutoff_date"),
+                ("age_relaxation_rules", "post_id, reservation_category, condition_key, additional_years, max_age_cap, cumulative, source_note"),
+                ("education_criteria", "post_id, min_qualification_level, min_percentage, allowed_disciplines, allow_higher_qualification, accepted_equivalent_qualifications, raw_requirement_text"),
+                ("post_disability_requirements", "post_id, disability_code, physical_requirement_code, suitable, source_note"),
+                ("attempt_limits", "post_id, category, max_attempts, attempt_scope"),
+            ):
+                try:
+                    rows = supabase.table(table).select(select_cols).in_("post_id", post_ids_inner).execute().data or []
+                except Exception as inner_exc:  # noqa: BLE001
+                    # Fail closed: only treat a *genuinely missing table* as
+                    # "no criteria". A transient failure must re-raise —
+                    # silently dropping e.g. attempt_limits would produce
+                    # an overly-permissive verdict.
+                    if not _looks_like_missing_relation(inner_exc):
+                        raise
+                    logger.info("eligibility.%s table absent; treating as no rows: %s", table, inner_exc)
+                    rows = []
+                _attach_rows_by_post(posts, table, rows)
+
+    post_ids = [p["id"] for p in posts if p.get("id")]
+    cert_rows = _load_certification_criteria(supabase, post_ids)
     _attach_rows_by_post(posts, "certification_criteria", cert_rows)
     return posts
 
@@ -373,7 +430,15 @@ def run_eligibility_for_user(
         cert_criteria = []
         for c in cert_rows:
             reg = _first(c.get("certifications"))
-            cert_criteria.append(CertificationCriteria(mandatory=bool(c.get("mandatory", True)), name=(reg or {}).get("name"), issuer=(reg or {}).get("issuer"), aliases=(reg or {}).get("aliases") or []))
+            # Migration column is `required`; default True to match the
+            # database default. Engine field stays named `mandatory`.
+            mandatory_val = c.get("required", c.get("mandatory", True))
+            cert_criteria.append(CertificationCriteria(
+                mandatory=bool(mandatory_val) if mandatory_val is not None else True,
+                name=(reg or {}).get("name") or c.get("certification_name"),
+                issuer=(reg or {}).get("issuer"),
+                aliases=(reg or {}).get("aliases") or [],
+            ))
 
         post_criteria_list.append(
             PostCriteria(

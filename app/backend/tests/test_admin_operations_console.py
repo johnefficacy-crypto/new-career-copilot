@@ -371,12 +371,25 @@ def test_eligibility_ops_returns_zeros_when_tables_missing(monkeypatch):
 
     monkeypatch.setattr(admin_trust, "get_supabase_admin", lambda: _ExplodingSB())
     result = admin_trust.eligibility_ops(_admin=_admin())
-    assert result == {
+    # Every numeric counter must be 0 (not missing) and the failed_rows
+    # list must be empty so the page renders without crashing on a fresh
+    # deployment where the recompute tables don't exist yet.
+    baseline = {
         "pending_recomputes": 0,
         "failed_recomputes": 0,
+        "queued": 0,
+        "processing": 0,
+        "processed": 0,
         "stale_results": 0,
         "published_awaiting": 0,
+        "failed_rows": [],
+        "onboarded_users": 0,
     }
+    for k, v in baseline.items():
+        assert result[k] == v, f"{k}: expected {v}, got {result[k]}"
+    # When eligibility_results is unreachable, surface (not swallow) the
+    # error so the UI can flag the count as untrusted.
+    assert "stale_results_error" in result
 
 
 # ── admin_recruitments shape: editable fields exposed to the console ────────

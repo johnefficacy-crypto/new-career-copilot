@@ -7,21 +7,30 @@ import { Eyebrow } from "../../../shared/ui/studyos";
 export default function PlannedVsActualChart({ series, status, unit = "minutes" }) {
   const points = useMemo(() => (Array.isArray(series) ? series : []), [series]);
   const chart = useMemo(() => {
-    if (points.length < 2) return null;
+    if (points.length < 1) return null;
     const W = 600;
     const H = 160;
     const padX = 32;
     const padY = 16;
     const innerW = W - padX * 2;
     const innerH = H - padY * 2;
-    const stepX = innerW / (points.length - 1);
+    // Single-point rendering uses a stepX of 0 — circles still draw at
+    // padX so the user sees one week's data instead of a misleading
+    // "chart will appear once tasks are scheduled" fallback on day 1–7.
+    const stepX = points.length > 1 ? innerW / (points.length - 1) : 0;
     const toY = (v) => padY + innerH - (Math.max(0, Math.min(100, v)) / 100) * innerH;
-    const planned = points
-      .map((p, i) => `${padX + i * stepX},${toY(p.planned_pct || 0)}`)
-      .join(" ");
-    const actual = points
-      .map((p, i) => `${padX + i * stepX},${toY(p.actual_pct || 0)}`)
-      .join(" ");
+    const planned =
+      points.length > 1
+        ? points
+            .map((p, i) => `${padX + i * stepX},${toY(p.planned_pct || 0)}`)
+            .join(" ")
+        : "";
+    const actual =
+      points.length > 1
+        ? points
+            .map((p, i) => `${padX + i * stepX},${toY(p.actual_pct || 0)}`)
+            .join(" ")
+        : "";
     return { W, H, padX, padY, innerW, innerH, stepX, toY, planned, actual };
   }, [points]);
 
@@ -32,6 +41,7 @@ export default function PlannedVsActualChart({ series, status, unit = "minutes" 
       </p>
     );
   }
+  const singlePoint = points.length === 1;
 
   const latest = points[points.length - 1] || {};
   const gap = (latest.planned_pct || 0) - (latest.actual_pct || 0);
@@ -85,8 +95,12 @@ export default function PlannedVsActualChart({ series, status, unit = "minutes" 
             </text>
           </g>
         ))}
-        <polyline points={chart.planned} fill="none" stroke="#A68057" strokeWidth="2" />
-        <polyline points={chart.actual} fill="none" stroke="#54794E" strokeWidth="2" />
+        {chart.planned ? (
+          <polyline points={chart.planned} fill="none" stroke="#A68057" strokeWidth="2" />
+        ) : null}
+        {chart.actual ? (
+          <polyline points={chart.actual} fill="none" stroke="#54794E" strokeWidth="2" />
+        ) : null}
         {points.map((p, i) => (
           <g key={p.date || i}>
             <circle
@@ -111,6 +125,11 @@ export default function PlannedVsActualChart({ series, status, unit = "minutes" 
         <span className="inline-flex items-center gap-1.5">
           <span className="w-2.5 h-1 rounded-sm" style={{ background: "#54794E" }} /> Actual
         </span>
+        {singlePoint ? (
+          <span className="num-mono text-clay-700">
+            · Week 1 of the cycle — the trend line appears from week 2.
+          </span>
+        ) : null}
       </div>
     </div>
   );

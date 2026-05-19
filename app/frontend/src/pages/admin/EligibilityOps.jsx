@@ -1,54 +1,135 @@
 import React, { useEffect, useState } from "react";
-import { GaugeCircle } from "lucide-react";
 import { api } from "../../lib/api";
-import { ErrorState, LoadingSkeleton } from "../../shared/ui";
 
 export default function AdminEligibilityOps() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [failedRows, setFailedRows] = useState([]);
+  const [retryingId, setRetryingId] = useState(null);
+  const [retryingAll, setRetryingAll] = useState(false);
 
   async function load() {
     setError(null);
     try {
       const r = await api.get("/api/admin/eligibility-ops");
       setData(r);
+      setFailedRows(r.failed_rows || []);
     } catch (e) {
-      // Backend endpoint may not yet exist on some deployments.
       setError(e);
     }
   }
 
   useEffect(() => { load(); }, []);
 
-  if (!data && !error) return <LoadingSkeleton variant="table" />;
-  if (error) {
+  async function retry(id) {
+    setRetryingId(id);
+    try {
+      await api.post(`/api/admin/eligibility-recompute-queue/${id}/retry`, {});
+      await load();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setRetryingId(null);
+    }
+  }
+
+  async function retryAllFailed() {
+    if (!failedRows.length) return;
+    if (!window.confirm(`Retry ${failedRows.length} failed recompute row${failedRows.length === 1 ? "" : "s"}? Each is reset to pending so the worker picks it up.`)) return;
+    setRetryingAll(true);
+    try {
+      for (const row of failedRows) {
+        try { await api.post(`/api/admin/eligibility-recompute-queue/${row.id}/retry`, {}); }
+        catch (e) { /* surface the last failure but keep retrying the rest */ setError(e); }
+      }
+      await load();
+    } finally {
+      setRetryingAll(false);
+    }
+  }
+
+  if (!data && !error) {
     return (
-      <div className="space-y-4" data-testid="admin-eligibility-ops">
-        <h1 className="font-heading text-3xl">Eligibility Ops</h1>
-        <ErrorState title="Eligibility ops not available" message={error.message} onRetry={load} />
+      <div className="stack">
+        <div className="skel" style={{ height: 40 }} />
+        <div className="skel" style={{ height: 160 }} />
       </div>
     );
   }
 
   return (
-    <div className="space-y-4" data-testid="admin-eligibility-ops">
-      <div>
-        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Operations</div>
-        <h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight inline-flex items-center gap-2">
-          <GaugeCircle className="h-6 w-6" /> Eligibility Ops
-        </h1>
-        <p className="text-muted-foreground mt-1">Downstream eligibility recompute monitoring. Distinct from the promotion queue.</p>
-      </div>
-      <div className="grid gap-3 md:grid-cols-4">
-        <Stat label="Pending recomputes" value={data.pending_recomputes ?? 0} />
-        <Stat label="Failed recomputes" value={data.failed_recomputes ?? 0} />
-        <Stat label="Stale eligibility results" value={data.stale_results ?? 0} />
-        <Stat label="Published awaiting recompute" value={data.published_awaiting ?? 0} />
-      </div>
+    <div className="stack" data-testid="admin-eligibility-ops">
+      <section className="scrn" style={{ padding: 0, border: "none" }}>
+        <div className="scrn-head">
+          <div>
+            <div className="lbl">Operations · eligibility recompute</div>
+            <h2 className="oc-title disp" style={{ fontSize: 22, marginTop: 4 }}>Recompute queue status</h2>
+            <div className="anno" style={{ marginTop: 4 }}>
+              Failed rows can be retried individually. Manual fan-out enqueues a fresh recompute for every onboarded user.
+            </div>
+          </div>
+          <span className="scrn-tag">per recruitment · retry failed rows</span>
+        </div>
+
+        {error ? <div className="err-row">{error.message}</div> : null}
+
+        <div className="card">
+          <div className="card-body stack">
+            <div className="row">
+              <span className="impact-pill"><span className="lbl">pending</span><strong>{data?.pending_recomputes ?? 0}</strong></span>
+              <span className="impact-pill"><span className="lbl">queued</span><strong>{data?.queued ?? 0}</strong></span>
+              <span className="impact-pill warn"><span className="lbl">processing</span><strong>{data?.processing ?? 0}</strong></span>
+              <span className="impact-pill bad"><span className="lbl">failed</span><strong>{data?.failed_recomputes ?? 0}</strong></span>
+              <span className="impact-pill ok"><span className="lbl">processed</span><strong>{data?.processed ?? 0}</strong></span>
+              <span style={{ marginLeft: "auto" }} className="anno">stale results · {data?.stale_results ?? 0}</span>
+            </div>
+
+            {failedRows.length ? (
+              <div className="card">
+                {failedRows.slice(0, 25).map((row) => (
+                  <div key={row.id} style={{ padding: "10px 12px", borderBottom: "1px solid var(--rule-soft)" }}>
+                    <div className="row" style={{ justifyContent: "space-between" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="row">
+                          <span className="badge blocker">failed</span>
+                          <span className="mono" style={{ fontSize: 11 }}>{String(row.id).slice(0, 10)}</span>
+                          <span className="anno">user {String(row.user_id || "").slice(0, 8)} · attempts: {row.attempts ?? 0}</span>
+                        </div>
+                        {row.error_message ? <div className="err-row" style={{ marginTop: 6 }}>{row.error_message}</div> : null}
+                        <div className="anno" style={{ marginTop: 4 }}>
+                          queued {(row.queued_at || "").slice(11, 16)} · {row.reason || "—"}
+                        </div>
+                      </div>
+                      <button type="button" className="btn small" onClick={() => retry(row.id)} disabled={retryingId === row.id}>
+                        {retryingId === row.id ? "Retrying…" : "Retry"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {(data?.failed_recomputes ?? 0) > 3 ? (
+              <div className="warn-row">⚠ {data.failed_recomputes} failed recomputes. Inspect worker logs before retrying in bulk.</div>
+            ) : null}
+          </div>
+          <div className="card-foot">
+            <button type="button" className="btn ghost small" onClick={load}>Refresh</button>
+            <button
+              type="button"
+              className="btn primary small"
+              onClick={retryAllFailed}
+              disabled={retryingAll || failedRows.length === 0}
+              data-testid="elig-ops-retry-all"
+            >
+              {retryingAll ? "Retrying…" : `Retry ${failedRows.length} failed`}
+            </button>
+            <span className="anno" style={{ marginLeft: "auto" }}>
+              {data?.onboarded_users || 0} onboarded users · per-recruitment fan-out lives in Recruitments
+            </span>
+          </div>
+        </div>
+      </section>
     </div>
   );
-}
-
-function Stat({ label, value }) {
-  return <div className="soft-card rounded-2xl p-5"><div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">{label}</div><div className="mt-2 font-heading text-3xl font-semibold">{value}</div></div>;
 }

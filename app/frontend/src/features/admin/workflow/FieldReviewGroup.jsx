@@ -1,16 +1,7 @@
 import React, { useMemo, useState } from "react";
-import { StatusBadge } from "../../../shared/ui";
 
-// Post-scoped high-risk fields (mirror app/backend/app/scraping/promotion_gate.py
-// POST_SCOPED_FIELDS). Reviewers must verify each post individually because the
-// canonical value can differ per post; a single global verification cannot
-// satisfy the gate. Keep this list in sync with the backend constant.
 const POST_SCOPED_FIELDS = new Set(["requires_domicile"]);
 
-// Field-type registry drives the correction input. Adding a field here
-// upgrades the UI from a free text box to a typed control without any
-// backend change: ReviewBody.corrected_value already accepts string,
-// int, float, and bool.
 const FIELD_TYPES = {
   apply_start_date: "date",
   apply_end_date: "date",
@@ -23,9 +14,7 @@ const FIELD_TYPES = {
   requires_domicile: "boolean",
 };
 
-function fieldType(name) {
-  return FIELD_TYPES[name] || "text";
-}
+function fieldType(name) { return FIELD_TYPES[name] || "text"; }
 
 function parseCorrection(type, raw) {
   if (raw === "" || raw == null) return null;
@@ -43,10 +32,7 @@ function parseCorrection(type, raw) {
   if (type === "url") {
     try { new URL(raw); return raw; } catch { throw new Error("Enter a valid URL (https://…)."); }
   }
-  if (type === "date") {
-    // <input type="date"> already enforces YYYY-MM-DD; trust it and pass through.
-    return raw;
-  }
+  if (type === "date") return raw;
   return raw;
 }
 
@@ -56,10 +42,18 @@ function formatValue(v) {
   return String(v);
 }
 
+const STATUS_BADGE = {
+  verified: { cls: "badge resolved", text: "verified" },
+  unverified: { cls: "badge blocker", text: "unverified" },
+  rejected: { cls: "badge neutral", text: "rejected" },
+  corrected: { cls: "badge info", text: "corrected" },
+  suggested: { cls: "badge pending", text: "suggested" },
+};
+
 function CorrectionInput({ type, value, onChange, ariaLabel }) {
   if (type === "boolean") {
     return (
-      <select className="min-w-[180px] flex-1 rounded-lg border border-border bg-white px-2 py-1" value={value} onChange={(e) => onChange(e.target.value)} aria-label={ariaLabel}>
+      <select className="input" style={{ flex: 1, minWidth: 140, fontSize: 11.5, padding: "5px 8px" }} value={value} onChange={(e) => onChange(e.target.value)} aria-label={ariaLabel}>
         <option value="">Select…</option>
         <option value="true">Yes / true</option>
         <option value="false">No / false</option>
@@ -72,7 +66,8 @@ function CorrectionInput({ type, value, onChange, ariaLabel }) {
     <input
       type={inputType}
       step={step}
-      className="min-w-[180px] flex-1 rounded-lg border border-border bg-white px-2 py-1"
+      className="input"
+      style={{ flex: 1, minWidth: 140, fontSize: 11.5, padding: "5px 8px" }}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={type === "date" ? "YYYY-MM-DD" : type === "url" ? "https://…" : "Corrected value"}
@@ -86,31 +81,27 @@ function EvidenceSnippet({ details }) {
   const text = details.evidence_text;
   const page = details.page_number ?? details.source_page;
   const conf = details.confidence;
-  const reviewerNotes = details.reviewer_notes;
-  if (!text && page == null && conf == null && !reviewerNotes) return null;
+  if (!text && page == null && conf == null) return null;
+  const parts = [];
+  if (page != null) parts.push(`page ${page}`);
+  if (conf != null) parts.push(`confidence ${Math.round(Number(conf) * 100)}%`);
   return (
-    <details className="mt-2 rounded-lg border border-border bg-white/70 p-2 text-[11px]">
-      <summary className="cursor-pointer font-semibold text-muted-foreground">
-        Evidence
-        {page != null ? ` · p.${page}` : ""}
-        {conf != null ? ` · confidence ${Math.round(Number(conf) * 100)}%` : ""}
-      </summary>
-      {text ? <blockquote className="mt-2 whitespace-pre-wrap border-l-2 border-border pl-2 text-foreground/80">{text}</blockquote> : <div className="mt-2 italic text-muted-foreground">No source snippet captured.</div>}
-      {reviewerNotes ? <div className="mt-2"><b>Reviewer notes:</b> {reviewerNotes}</div> : null}
-    </details>
+    <div className="fld-evidence">
+      {parts.length ? <span>{parts.join(" · ")} · </span> : null}
+      {text ? `"${text}"` : "No source snippet captured."}
+    </div>
   );
 }
 
 function FieldRow({ field, label, value, status, details, entityScope, onFieldAction }) {
   const type = fieldType(field);
   const [correction, setCorrection] = useState("");
-  const [editing, setEditing] = useState(false);
   const [rejectingOpen, setRejectingOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [localError, setLocalError] = useState("");
   const heading = label || field;
-  const labelText = status || "unverified";
-  const compact = ["verified", "corrected"].includes(labelText) && !editing && !rejectingOpen;
+  const statusKey = (status || "unverified");
+  const meta = STATUS_BADGE[statusKey] || { cls: "badge neutral", text: statusKey };
 
   const submit = (action) => {
     setLocalError("");
@@ -127,58 +118,61 @@ function FieldRow({ field, label, value, status, details, entityScope, onFieldAc
     catch (e) { setLocalError(e.message); return; }
     if (action === "correct" && parsed == null) { setLocalError("Enter a corrected value."); return; }
     onFieldAction(field, action, parsed, entityScope);
-    setEditing(false);
   };
 
-  if (compact) {
-    return (
-      <div className="rounded-xl border border-border bg-white/60 p-2 text-xs">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
-            <span className="font-semibold text-sage-700">✓ {heading}</span>
-            <span className="ml-2 text-muted-foreground">{labelText}</span>
-            {labelText === "corrected" ? <span className="ml-2 break-words">Corrected value: {formatValue(details?.corrected_value ?? value)}</span> : null}
-          </div>
-          <button type="button" className="btn btn-ghost h-7 text-[11px]" onClick={() => setEditing(true)}>{labelText === "corrected" ? "Edit correction" : "Edit"}</button>
-        </div>
-        <EvidenceSnippet details={details} />
-      </div>
-    );
-  }
+  const isCorrected = statusKey === "corrected";
+  const correctedValue = details?.corrected_value;
 
   return (
-    <div className="rounded-xl border border-border bg-white/60 p-3 text-xs">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
-          <b>{heading}</b>: <span className="break-words">{formatValue(value)}</span>
-        </div>
-        <StatusBadge status={labelText} label={labelText} />
+    <div className="fld" id={`field-${field}`} data-field={field}>
+      <div className="fld-head">
+        <span className="fld-key">{heading}</span>
+        <span className={meta.cls}>{meta.text}</span>
+      </div>
+      <div className="fld-val">
+        {isCorrected && correctedValue != null && correctedValue !== value ? (
+          <>
+            <span style={{ textDecoration: "line-through", color: "var(--ink-mute)" }}>{formatValue(value)}</span>
+            {" → "}
+            <strong>{formatValue(correctedValue)}</strong>
+          </>
+        ) : (
+          formatValue(value)
+        )}
       </div>
       <EvidenceSnippet details={details} />
-      {localError ? <div className="mt-2 text-[11px] text-destructive">{localError}</div> : null}
-      {!rejectingOpen ? (
-        <div className="mt-2 flex flex-wrap gap-2">
-          <button type="button" className="btn btn-ghost h-8 text-xs" onClick={() => submit("verify")}>Verify</button>
-          <button type="button" className="btn btn-ghost h-8 text-xs" onClick={() => { setRejectingOpen(true); setLocalError(""); }}>Reject</button>
-          <CorrectionInput type={type} value={correction} onChange={setCorrection} ariaLabel={`Corrected value for ${heading}`} />
-          <button type="button" className="btn btn-ghost h-8 text-xs" disabled={correction === "" || correction == null} onClick={() => submit("correct")}>Correct</button>
-          {editing ? <button type="button" className="btn btn-ghost h-8 text-xs" onClick={() => setEditing(false)}>Cancel</button> : null}
-        </div>
-      ) : (
-        <div className="mt-2 space-y-2">
-          <textarea
-            value={rejectReason}
-            onChange={(e) => { setRejectReason(e.target.value); if (e.target.value.trim()) setLocalError(""); }}
-            placeholder="Why is this evidence wrong? (required)"
-            className="w-full rounded-lg border border-border bg-white px-2 py-1 text-xs"
-            rows={2}
-            aria-label={`Rejection reason for ${heading}`}
-          />
-          <div className="flex justify-end gap-2">
-            <button type="button" className="btn btn-ghost h-8 text-xs" onClick={() => { setRejectingOpen(false); setRejectReason(""); setLocalError(""); }}>Cancel</button>
-            <button type="button" className="btn btn-primary h-8 text-xs" onClick={() => submit("reject")}>Confirm reject</button>
+      {localError ? <div className="err-row" style={{ marginTop: 6 }}>{localError}</div> : null}
+      {statusKey === "verified" ? null : (
+        !rejectingOpen ? (
+          <div className="row" style={{ marginTop: 8 }}>
+            <button type="button" className="btn small" onClick={() => submit("verify")}>Verify</button>
+            <CorrectionInput type={type} value={correction} onChange={setCorrection} ariaLabel={`Corrected value for ${heading}`} />
+            <button type="button" className="btn small" disabled={correction === "" || correction == null} onClick={() => submit("correct")}>Correct</button>
+            <button
+              type="button"
+              className="btn ghost small"
+              onClick={() => { setRejectingOpen(true); setLocalError(""); }}
+              aria-label={`Reject ${heading}`}
+            >
+              Reject
+            </button>
           </div>
-        </div>
+        ) : (
+          <div className="stack" style={{ marginTop: 8 }}>
+            <textarea
+              className="input"
+              value={rejectReason}
+              onChange={(e) => { setRejectReason(e.target.value); if (e.target.value.trim()) setLocalError(""); }}
+              placeholder="Why is this evidence wrong? (required)"
+              rows={2}
+              aria-label={`Rejection reason for ${heading}`}
+            />
+            <div className="row" style={{ justifyContent: "flex-end" }}>
+              <button type="button" className="btn small" onClick={() => { setRejectingOpen(false); setRejectReason(""); setLocalError(""); }}>Cancel</button>
+              <button type="button" className="btn primary small" onClick={() => submit("reject")}>Confirm reject</button>
+            </div>
+          </div>
+        )
       )}
     </div>
   );
@@ -197,88 +191,95 @@ function findDetail(detailsList, field, entityScope) {
 }
 
 function statusFromDetail(detail) {
-  return detail?.reviewer_status || "unverified";
+  // Return undefined when there is no evidence row at all, so the caller
+  // can fall back to the flat ``field_evidence_status`` map. Returning a
+  // hard-coded "unverified" here used to swallow the verified status
+  // that lived on the flat map when the relational detail wasn't shipped
+  // on the queue row.
+  return detail?.reviewer_status || undefined;
 }
 
 function ReviewSection({ title, description, fields, extracted, evidence, evidenceDetails, onFieldAction }) {
+  if (!fields.length) return null;
   return (
-    <section className="space-y-3">
-      <div>
-        <h4 className="text-sm font-semibold">{title}</h4>
-        {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
-      </div>
-      {fields.map((field) => {
-        if (POST_SCOPED_FIELDS.has(field)) {
-          const posts = Array.isArray(extracted?.posts) ? extracted.posts : [];
-          if (!posts.length) {
-            // No posts in the extracted payload: backend gate falls back to
-            // the recruitment-level rule, so we expose a single global row.
-            const detail = findDetail(evidenceDetails, field, { entity_type: "other", entity_key: null });
+    <div>
+      <div className="lbl" style={{ marginBottom: 6 }}>{title}</div>
+      {description ? <div className="anno" style={{ marginBottom: 6 }}>{description}</div> : null}
+      <div className="card fld-list" style={{ marginTop: 6 }}>
+        {fields.map((field) => {
+          if (POST_SCOPED_FIELDS.has(field)) {
+            const posts = Array.isArray(extracted?.posts) ? extracted.posts : [];
+            if (!posts.length) {
+              const detail = findDetail(evidenceDetails, field, { entity_type: "other", entity_key: null });
+              return (
+                <FieldRow
+                  key={field}
+                  field={field}
+                  label={field}
+                  value={extracted?.[field]}
+                  status={statusFromDetail(detail) || evidence?.[field] || "unverified"}
+                  details={detail}
+                  entityScope={{ entity_type: "other", entity_key: null }}
+                  onFieldAction={onFieldAction}
+                />
+              );
+            }
             return (
-              <FieldRow
-                key={field}
-                field={field}
-                label={field}
-                value={extracted?.[field]}
-                status={statusFromDetail(detail) || evidence?.[field] || "unverified"}
-                details={detail}
-                entityScope={{ entity_type: "other", entity_key: null }}
-                onFieldAction={onFieldAction}
-              />
+              <div key={field} className="fld" id={`field-${field}`} data-field={field} style={{ background: "var(--paper-sunk)" }}>
+                <div className="fld-head">
+                  <span className="fld-key">{field} · per post</span>
+                  <span className="badge pending">per post · unverified</span>
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  {posts.map((post, idx) => {
+                    const postName = (post?.post_name || "").trim();
+                    const entityScope = { entity_type: "post", entity_key: postName || `post-${idx}` };
+                    const detail = findDetail(evidenceDetails, field, entityScope);
+                    return (
+                      <FieldRow
+                        key={`${field}:${idx}:${postName}`}
+                        field={field}
+                        label={`${postName || `Post #${idx + 1}`}`}
+                        value={post?.[field]}
+                        status={statusFromDetail(detail)}
+                        details={detail}
+                        entityScope={entityScope}
+                        onFieldAction={onFieldAction}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
             );
           }
+          const detail = findDetail(evidenceDetails, field, { entity_type: "other", entity_key: null });
           return (
-            <div key={field} className="space-y-2 rounded-xl border border-border bg-white/30 p-2">
-              <div className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">{field} · per post</div>
-              {posts.map((post, idx) => {
-                const postName = (post?.post_name || "").trim();
-                const entityScope = { entity_type: "post", entity_key: postName || `post-${idx}` };
-                const detail = findDetail(evidenceDetails, field, entityScope);
-                return (
-                  <FieldRow
-                    key={`${field}:${idx}:${postName}`}
-                    field={field}
-                    label={`${field} · ${postName || `Post #${idx + 1}`}`}
-                    value={post?.[field]}
-                    status={statusFromDetail(detail)}
-                    details={detail}
-                    entityScope={entityScope}
-                    onFieldAction={onFieldAction}
-                  />
-                );
-              })}
-            </div>
+            <FieldRow
+              key={field}
+              field={field}
+              label={field}
+              value={extracted?.[field]}
+              status={statusFromDetail(detail) || evidence?.[field] || "unverified"}
+              details={detail}
+              entityScope={{ entity_type: "other", entity_key: null }}
+              onFieldAction={onFieldAction}
+            />
           );
-        }
-        const detail = findDetail(evidenceDetails, field, { entity_type: "other", entity_key: null });
-        return (
-          <FieldRow
-            key={field}
-            field={field}
-            label={field}
-            value={extracted?.[field]}
-            status={statusFromDetail(detail) || evidence?.[field] || "unverified"}
-            details={detail}
-            entityScope={{ entity_type: "other", entity_key: null }}
-            onFieldAction={onFieldAction}
-          />
-        );
-      })}
-    </section>
+        })}
+      </div>
+    </div>
   );
 }
 
 export default function FieldReviewGroup({ extracted, evidence, evidenceDetails, requiredFields, recommendedFields, onFieldAction }) {
-  // Memoize so a parent re-render doesn't churn the row state (collapsed
-  // verified rows would jump back open on every keystroke elsewhere).
   const required = useMemo(() => requiredFields || [], [requiredFields]);
   const recommended = useMemo(() => recommendedFields || [], [recommendedFields]);
   const details = useMemo(() => evidenceDetails || [], [evidenceDetails]);
 
   return (
-    <div className="space-y-5">
+    <div className="stack">
       <ReviewSection
-        title="Required before promotion"
+        title="Required evidence"
         description="Backend promotion blocks until these high-risk fields are verified or corrected."
         fields={required}
         extracted={extracted}
@@ -287,8 +288,8 @@ export default function FieldReviewGroup({ extracted, evidence, evidenceDetails,
         onFieldAction={onFieldAction}
       />
       <ReviewSection
-        title="Recommended review"
-        description="Review these fields for quality, but they are not promotion blockers unless the backend reports one."
+        title="Quality review"
+        description="Review for quality. Not blockers unless the backend reports one."
         fields={recommended}
         extracted={extracted}
         evidence={evidence}

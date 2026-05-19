@@ -28,9 +28,12 @@ from app.onboarding_unified.entry_resolver import (
     load_verified_recruitment_questions,
 )
 from app.onboarding_unified.session import answered_keys, load_answer_log
+from app.persona.snapshots import get_latest_persona_snapshot
 from app.persona_questions.bank import list_active_questions, shape_question_for_api
 
 logger = logging.getLogger("career_copilot.onboarding_unified.question_selector")
+
+_UNKNOWN_DIMENSION_VALUES = {None, "", "unknown", "insufficient_data"}
 
 # Field/question markers that make a question "sensitive". Sensitive
 # questions are NEVER asked in generic cold/discovery onboarding; they may
@@ -133,6 +136,13 @@ def _active_dismissals(supabase: Any, user_id: str | None) -> set[str]:
     return dismissed
 
 
+def _unknown_dimensions(snapshot: dict[str, Any] | None) -> set[str]:
+    if not snapshot:
+        return set()
+    dims = snapshot.get("dimensions") or {}
+    return {k for k, v in dims.items() if v in _UNKNOWN_DIMENSION_VALUES}
+
+
 def _reason_for(question: dict[str, Any], source: str) -> str:
     """One-line 'why we ask' — prefer registered help_text, else a safe fallback."""
     help_text = question.get("help_text")
@@ -166,6 +176,12 @@ def select_next_question(
     seen = answered | asked
     entry_mode = session.get("entry_mode") or "cold"
     user_id = session.get("user_id")
+    if user_id:
+        snapshot = _safe(lambda: get_latest_persona_snapshot(supabase, user_id), default=None)
+    else:
+        logger.debug("question_selector: anonymous session, skipping persona snapshot lookup")
+        snapshot = None
+    unknown_dims = _unknown_dimensions(snapshot)
 
     # 1. Intent gate — cold/discovery sessions open with the intent picker.
     if not session.get("intent"):
@@ -214,6 +230,7 @@ def select_next_question(
     if candidates:
         candidates.sort(
             key=lambda q: (
+                0 if (q.get("target_dimension") in unknown_dims) else 1,
                 int(q.get("priority") or 100),
                 q.get("question_key") or "",
             )

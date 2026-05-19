@@ -99,11 +99,11 @@ def test_subject_is_locked_when_coverage_exists_for_it():
     assert english["trust_status"] == "preview"
 
 
-def test_manual_override_metadata_sets_source():
+def test_subject_without_locked_coverage_uses_weakness_source():
     sb = _seed_with_tasks(with_coverage=True)
     out = service.list_plan_by_subject(sb, "u-1")
     english = next(it for it in out["items"] if it["subject_name"] == "English")
-    assert english["source"] == "manual_override"
+    assert english["source"] == "weakness_map"
 
 
 def test_overall_trust_is_partial_when_mixed():
@@ -137,6 +137,19 @@ def test_sorted_by_minutes_descending():
 
 
 # ── API ──────────────────────────────────────────────────────────────────
+def test_load_week_tasks_selects_subject_id_column():
+    # Regression: the SELECT in _load_week_tasks must include subject_id so
+    # buckets key on the canonical UUID, not the lowercased subject name.
+    sb = _seed_with_tasks(with_coverage=True)
+    out = service.list_plan_by_subject(sb, "u-1")
+    polity = next(it for it in out["items"] if it["subject_name"] == "Polity")
+    assert polity["subject_id"] == "s1"
+    # And no bucket should fall back to the "name:" sentinel when subject_id
+    # is present on every task row.
+    for item in out["items"]:
+        assert item["subject_id"] is None or not str(item["subject_id"]).startswith("name:")
+
+
 def test_api_returns_envelope():
     sb = _seed_with_tasks(with_coverage=True)
     body = _client(sb).get("/api/study/plan/by-subject").json()

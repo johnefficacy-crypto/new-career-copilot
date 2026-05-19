@@ -1,7 +1,7 @@
 import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Minus } from "lucide-react";
-import { Link } from "react-router-dom";
+import StartFreeButton from "./StartFreeButton";
 
 const FAQS = [
   {
@@ -46,9 +46,13 @@ export default function FAQ() {
             <p className="mt-5 text-foreground/60 max-w-sm">
               Still curious? Email us at <a href="mailto:hello@careercopilot.in" className="link-under font-semibold text-foreground">hello@careercopilot.in</a>.
             </p>
-            <Link to="/app" data-testid="faq-cta" className="mt-8 inline-flex bg-foreground text-background rounded-full px-5 py-3 font-semibold text-sm btn-shine">
-              Jump into the dashboard →
-            </Link>
+            <div className="mt-8 inline-flex">
+              <StartFreeButton
+                testId="faq-cta"
+                label="Jump into the dashboard →"
+                className="inline-flex bg-foreground text-background rounded-full px-5 py-3 font-semibold text-sm btn-shine disabled:opacity-60"
+              />
+            </div>
           </div>
 
           <div className="lg:col-span-7 space-y-3">

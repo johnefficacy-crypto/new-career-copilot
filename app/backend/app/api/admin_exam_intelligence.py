@@ -13,6 +13,7 @@ Allowed status transitions (``reviewer_status``):
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -21,6 +22,8 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import require_permission
 from app.db.supabase_client import get_supabase_admin
+from app.exam_intelligence.option_normalize import option_hash, question_hash
+from app.study_os.mission_control import invalidate_per_exam_intelligence
 from app.study_os.plan_impact import compute_plan_impact, record_plan_impact_decision
 
 logger = logging.getLogger("career_copilot.api.admin_exam_intelligence")
@@ -91,6 +94,16 @@ _REVIEWABLE = {
             "id, pyq_paper_id, question_number, question_type, language, "
             "reviewer_status, created_at, updated_at"
         ),
+        "supports_notes": False,
+    },
+    "pyq_option": {
+        "table": "pyq_options",
+        "select": (
+            "id, question_id, option_label, option_text, is_correct, "
+            "normalized_value, reviewer_status, reviewed_by, reviewed_at, "
+            "metadata, created_at"
+        ),
+        # pyq_options has no reviewer_notes column; notes ride on metadata.
         "supports_notes": False,
     },
 }
@@ -232,19 +245,9 @@ def list_exams(
         ),
         default=[],
     ) or []
-    coverage = _safe(
-        lambda: (
-            sb.table("exam_topic_coverage")
-            .select("exam_id, is_active")
-            .in_("exam_id", exam_ids)
-            .limit(20000)
-            .execute()
-            .data
-        ),
-        default=[],
-    ) or []
-    # Coverage lifecycle read, kept separate from the legacy `is_active` read
-    # above so the new readiness fields stay populated regardless.
+    # Coverage lifecycle read. `exam_topic_coverage` (migration 030) carries
+    # no `is_active` column — readiness is derived solely from
+    # `reviewer_status` and `is_high_yield`.
     coverage_status_rows = _safe(
         lambda: (
             sb.table("exam_topic_coverage")
@@ -262,19 +265,12 @@ def list_exams(
         for r in syllabus:
             slot = d.setdefault(
                 r.get("exam_id") or "",
-                {"syllabus_verified": 0, "syllabus_pending": 0, "coverage_active": 0},
+                {"syllabus_verified": 0, "syllabus_pending": 0},
             )
             if r.get("reviewer_status") == "verified":
                 slot["syllabus_verified"] += 1
             elif r.get("reviewer_status") in {"pending", "needs_correction"}:
                 slot["syllabus_pending"] += 1
-        for r in coverage:
-            slot = d.setdefault(
-                r.get("exam_id") or "",
-                {"syllabus_verified": 0, "syllabus_pending": 0, "coverage_active": 0},
-            )
-            if r.get("is_active"):
-                slot["coverage_active"] += 1
         return d
 
     # Per-exam coverage lifecycle aggregation.
@@ -310,7 +306,6 @@ def list_exams(
                 **e,
                 "syllabus_verified": syllabus_verified,
                 "syllabus_pending": syllabus_pending,
-                "coverage_active": c.get("coverage_active", 0),
                 "coverage_total": cov.get("coverage_total", 0),
                 "verified_topic_count": verified_topics,
                 "high_yield_topic_count": cov.get("high_yield_topic_count", 0),
@@ -343,8 +338,8 @@ def list_items(
         # syllabus mentions and pyq question topic tags have exam-side joins.
         if kind == "syllabus_topic_mention":
             q = q.eq("exam_id", exam_id)
-        elif kind == "pyq_question_topic_tag":
-            # Tags are keyed via question → paper → exam.
+        elif kind in {"pyq_question_topic_tag", "pyq_option"}:
+            # Both are keyed via question → paper → exam.
             paper_rows = _safe(
                 lambda: (
                     sb.table("pyq_papers")
@@ -554,6 +549,9 @@ def review_topic_coverage(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Coverage row not found")
+    # Invalidate the per-exam intelligence cache so the next mission-
+    # control call rebuilds with the updated review status.
+    invalidate_per_exam_intelligence()
     return updated[0]
 
 
@@ -600,6 +598,7 @@ def edit_topic_coverage(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Coverage row not found")
+    invalidate_per_exam_intelligence()
     return updated[0]
 
 
@@ -741,6 +740,7 @@ def review_competition_metric(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Competition metric not found")
+    invalidate_per_exam_intelligence()
     return updated[0]
 
 
@@ -848,6 +848,7 @@ def review_policy_update(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Policy update not found")
+    invalidate_per_exam_intelligence()
     return updated[0]
 
 
@@ -903,3 +904,560 @@ def post_plan_impact_decision(
             status_code=404, detail="Coverage row not found or decision invalid"
         )
     return row
+
+
+# ─── 7. Option-level analytics ─────────────────────────────────────────────
+# Heuristic classifiers for "elimination-style" answers. Matched against a
+# lowercased, trimmed option text; first matching marker wins. Order
+# matters — multi-item subset patterns are checked before single "N only"
+# so that "1 and 2 only" doesn't fall into the single bucket.
+_ELIMINATION_MARKERS: list[tuple[str, str, re.Pattern[str]]] = [
+    ("all_of_the_above", "All of the above", re.compile(r"^all\s+of\s+the\s+above\b")),
+    ("none_of_the_above", "None of the above", re.compile(r"^none\s+of\s+the\s+above\b")),
+    ("both_x_and_y", "Both X and Y", re.compile(r"^both\s+\S+\s+and\s+\S+\b")),
+    ("neither_x_nor_y", "Neither X nor Y", re.compile(r"^neither\s+\S+\s+nor\s+\S+\b")),
+    (
+        "subset_only",
+        "Combination only",
+        re.compile(r"^\d+(\s*,\s*\d+)+\s+(only|and)\b|^\d+\s+and\s+\d+(\s+only)?\b"),
+    ),
+    ("single_only", "N only", re.compile(r"^\d+\s+only\b")),
+]
+
+
+def _option_group_key(opt: dict[str, Any]) -> str:
+    """Pick the canonical group key for an option row.
+
+    Prefers ``normalized_option_hash`` (populated by the ETL pipeline),
+    then ``normalized_value``, then a lowercased ``option_text``. Returns
+    an empty string for options with no usable text — those rows are
+    dropped from the rollup.
+    """
+    hash_v = (opt.get("normalized_option_hash") or "").strip()
+    if hash_v:
+        return hash_v
+    norm = (opt.get("normalized_value") or "").strip().lower()
+    if norm:
+        return norm
+    return (opt.get("option_text") or "").strip().lower()
+
+
+def _classify_elimination(text: str) -> tuple[str, str] | None:
+    t = (text or "").strip().lower()
+    if not t:
+        return None
+    for key, display, pattern in _ELIMINATION_MARKERS:
+        if pattern.search(t):
+            return key, display
+    return None
+
+
+def _fetch_option_universe(
+    sb: Any, exam_id: str, topic_id: str | None = None
+) -> tuple[list[dict[str, Any]], dict[str, int | None], dict[str, list[str]]]:
+    """Return options for verified questions on an exam (optionally a topic).
+
+    Returns ``(options, year_by_question, topics_by_question)`` so callers
+    can roll up by year and topic without re-querying.
+    """
+    paper_rows = _safe(
+        lambda: (
+            sb.table("pyq_papers")
+            .select("id, year")
+            .eq("exam_id", exam_id)
+            .limit(5000)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    if not paper_rows:
+        return [], {}, {}
+    paper_ids = [p["id"] for p in paper_rows if p.get("id")]
+    year_by_paper: dict[str, int | None] = {
+        p["id"]: p.get("year") for p in paper_rows if p.get("id")
+    }
+
+    question_rows = _safe(
+        lambda: (
+            sb.table("pyq_questions")
+            .select("id, pyq_paper_id, reviewer_status")
+            .in_("pyq_paper_id", paper_ids)
+            .eq("reviewer_status", "verified")
+            .limit(20000)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    question_ids = [q["id"] for q in question_rows if q.get("id")]
+    year_by_question: dict[str, int | None] = {
+        q["id"]: year_by_paper.get(q.get("pyq_paper_id"))
+        for q in question_rows
+        if q.get("id")
+    }
+    if not question_ids:
+        return [], year_by_question, {}
+
+    tag_rows = _safe(
+        lambda: (
+            sb.table("pyq_question_topic_tags")
+            .select("question_id, topic_id, tag_role, reviewer_status")
+            .in_("question_id", question_ids)
+            .eq("reviewer_status", "verified")
+            .limit(40000)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    topics_by_question: dict[str, list[str]] = {}
+    for tr in tag_rows:
+        qid = tr.get("question_id")
+        tid = tr.get("topic_id")
+        if not qid or not tid:
+            continue
+        topics_by_question.setdefault(qid, []).append(tid)
+
+    if topic_id:
+        question_ids = [
+            qid for qid in question_ids if topic_id in topics_by_question.get(qid, [])
+        ]
+        if not question_ids:
+            return [], year_by_question, topics_by_question
+
+    options = _safe(
+        lambda: (
+            sb.table("pyq_options")
+            .select(
+                "id, question_id, option_label, option_text, "
+                "normalized_option_hash, normalized_value, is_correct, "
+                "reviewer_status"
+            )
+            .in_("question_id", question_ids)
+            .limit(80000)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    return options, year_by_question, topics_by_question
+
+
+def _group_options(
+    options: list[dict[str, Any]],
+    year_by_question: dict[str, int | None],
+    topics_by_question: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for o in options:
+        key = _option_group_key(o)
+        if not key:
+            continue
+        qid = o.get("question_id")
+        year = year_by_question.get(qid) if qid else None
+        slot = groups.setdefault(
+            key,
+            {
+                "normalized_value": (
+                    o.get("normalized_value") or o.get("option_text") or ""
+                ).strip(),
+                "option_text_sample": o.get("option_text"),
+                "occurrence_count": 0,
+                "is_correct_count": 0,
+                "is_wrong_count": 0,
+                "first_seen_year": None,
+                "last_seen_year": None,
+                "sample_question_ids": [],
+                "sample_option_ids": [],
+                "topic_ids": set(),
+            },
+        )
+        slot["occurrence_count"] += 1
+        if o.get("is_correct"):
+            slot["is_correct_count"] += 1
+        else:
+            slot["is_wrong_count"] += 1
+        if year is not None:
+            if slot["first_seen_year"] is None or year < slot["first_seen_year"]:
+                slot["first_seen_year"] = year
+            if slot["last_seen_year"] is None or year > slot["last_seen_year"]:
+                slot["last_seen_year"] = year
+        if qid and qid not in slot["sample_question_ids"] and len(slot["sample_question_ids"]) < 5:
+            slot["sample_question_ids"].append(qid)
+        oid = o.get("id")
+        if oid and len(slot["sample_option_ids"]) < 5:
+            slot["sample_option_ids"].append(oid)
+        for tid in topics_by_question.get(qid or "", []):
+            slot["topic_ids"].add(tid)
+    out: list[dict[str, Any]] = []
+    for key, slot in groups.items():
+        slot["group_key"] = key
+        slot["topic_ids"] = sorted(slot["topic_ids"])
+        out.append(slot)
+    return out
+
+
+@router.get("/options/repetitions")
+def list_option_repetitions(
+    exam_id: str = Query(...),
+    topic_id: str | None = Query(None),
+    min_occurrences: int = Query(2, ge=1, le=50),
+    correctness: str = Query("any", pattern="^(any|correct|wrong)$"),
+    limit: int = Query(100, ge=1, le=500),
+    _admin: dict = Depends(require_permission(ADMIN_PERM)),
+) -> dict[str, Any]:
+    """Same option text recurring across verified questions in an exam.
+
+    Computed live from ``pyq_options`` joined to verified questions in
+    the given exam (and topic, if supplied). Falls back to a lowercased
+    ``option_text`` when the ETL hash is unset — which is the seed case.
+    """
+    sb = get_supabase_admin()
+    options, year_by_question, topics_by_question = _fetch_option_universe(
+        sb, exam_id, topic_id
+    )
+    groups = _group_options(options, year_by_question, topics_by_question)
+    if correctness == "correct":
+        groups = [g for g in groups if g["is_correct_count"] > 0]
+    elif correctness == "wrong":
+        groups = [g for g in groups if g["is_wrong_count"] > 0]
+    groups = [g for g in groups if g["occurrence_count"] >= min_occurrences]
+    groups.sort(key=lambda g: (-g["occurrence_count"], g.get("normalized_value") or ""))
+    return {
+        "exam_id": exam_id,
+        "topic_id": topic_id,
+        "groups": groups[:limit],
+        "total_groups": len(groups),
+    }
+
+
+@router.get("/options/traps")
+def list_option_traps(
+    exam_id: str = Query(...),
+    topic_id: str | None = Query(None),
+    min_occurrences: int = Query(2, ge=1, le=50),
+    limit: int = Query(100, ge=1, le=500),
+    _admin: dict = Depends(require_permission(ADMIN_PERM)),
+) -> dict[str, Any]:
+    """Wrong-option repetitions ranked by a "trap score".
+
+    Without attempt data we approximate trap-likelihood as
+    ``wrong_count^2 / occurrence_count`` (i.e. how dominant the
+    wrong-answer pattern is). Helpful for spotting distractors that
+    examiners keep recycling.
+    """
+    sb = get_supabase_admin()
+    options, year_by_question, topics_by_question = _fetch_option_universe(
+        sb, exam_id, topic_id
+    )
+    groups = _group_options(options, year_by_question, topics_by_question)
+    out: list[dict[str, Any]] = []
+    for g in groups:
+        if g["is_wrong_count"] < min_occurrences:
+            continue
+        denom = g["occurrence_count"] or 1
+        g["trap_score"] = round((g["is_wrong_count"] ** 2) / denom, 3)
+        out.append(g)
+    out.sort(key=lambda g: (-g["trap_score"], -g["is_wrong_count"]))
+    return {
+        "exam_id": exam_id,
+        "topic_id": topic_id,
+        "groups": out[:limit],
+        "total_groups": len(out),
+    }
+
+
+@router.get("/options/elimination-patterns")
+def list_elimination_patterns(
+    exam_id: str = Query(...),
+    _admin: dict = Depends(require_permission(ADMIN_PERM)),
+) -> dict[str, Any]:
+    """Counts of structural option markers used on verified questions.
+
+    Buckets the option text into a small set of well-known elimination
+    markers (``all_of_the_above``, ``none_of_the_above``, ``both_x_and_y``,
+    ``neither_x_nor_y``, ``single_only``, ``subset_only``) and reports
+    how often each appears and how often it ends up correct.
+    """
+    sb = get_supabase_admin()
+    options, _years, _topics = _fetch_option_universe(sb, exam_id)
+    counts: dict[str, dict[str, Any]] = {}
+    for o in options:
+        classified = _classify_elimination(o.get("option_text") or "")
+        if not classified:
+            continue
+        key, display = classified
+        slot = counts.setdefault(
+            key,
+            {
+                "pattern": key,
+                "display_text": display,
+                "occurrence_count": 0,
+                "correct_count": 0,
+                "wrong_count": 0,
+            },
+        )
+        slot["occurrence_count"] += 1
+        if o.get("is_correct"):
+            slot["correct_count"] += 1
+        else:
+            slot["wrong_count"] += 1
+    out: list[dict[str, Any]] = []
+    for slot in counts.values():
+        total = slot["occurrence_count"] or 1
+        slot["correct_rate"] = round(slot["correct_count"] / total, 3)
+        out.append(slot)
+    out.sort(key=lambda s: -s["occurrence_count"])
+    return {"exam_id": exam_id, "patterns": out}
+
+
+@router.post("/options/recompute")
+def recompute_option_analytics(
+    exam_id: str = Query(...),
+    _admin: dict = Depends(require_permission(ADMIN_PERM)),
+) -> dict[str, Any]:
+    """Materialise the live group/marker rollups into the persisted tables.
+
+    Wipes existing ``pyq_option_repetitions`` + ``pyq_option_patterns``
+    rows scoped to this exam, then re-inserts. Safe to run repeatedly.
+    """
+    sb = get_supabase_admin()
+    options, year_by_question, topics_by_question = _fetch_option_universe(sb, exam_id)
+    groups = _group_options(options, year_by_question, topics_by_question)
+
+    rep_rows: list[dict[str, Any]] = []
+    for g in groups:
+        if g["occurrence_count"] < 2:
+            continue
+        topic_ids: list[str | None] = list(g["topic_ids"]) or [None]
+        for tid in topic_ids:
+            rep_rows.append(
+                {
+                    "exam_id": exam_id,
+                    "topic_id": tid,
+                    "option_hash": g["group_key"],
+                    "normalized_value": g["normalized_value"],
+                    "occurrence_count": g["occurrence_count"],
+                    "first_seen_year": g["first_seen_year"],
+                    "last_seen_year": g["last_seen_year"],
+                    "examples": {"question_ids": g["sample_question_ids"]},
+                    "metadata": {
+                        "is_correct_count": g["is_correct_count"],
+                        "is_wrong_count": g["is_wrong_count"],
+                    },
+                    "updated_at": _now_iso(),
+                }
+            )
+
+    options_by_key: dict[str, list[dict[str, Any]]] = {}
+    for o in options:
+        k = _option_group_key(o)
+        if k:
+            options_by_key.setdefault(k, []).append(o)
+
+    pattern_rows: list[dict[str, Any]] = []
+    for g in groups:
+        if g["occurrence_count"] < 2:
+            continue
+        for o in options_by_key.get(g["group_key"], []):
+            primary_topic = (topics_by_question.get(o.get("question_id") or "", []) or [None])[0]
+            pattern_type = "common_trap" if not o.get("is_correct") else "repeated_value"
+            pattern_rows.append(
+                {
+                    "option_id": o["id"],
+                    "topic_id": primary_topic,
+                    "pattern_type": pattern_type,
+                    "normalized_value": g["normalized_value"],
+                    "confidence_score": min(0.95, 0.4 + 0.1 * g["occurrence_count"]),
+                    "metadata": {
+                        "group_key": g["group_key"],
+                        "occurrence_count": g["occurrence_count"],
+                    },
+                }
+            )
+    for o in options:
+        classified = _classify_elimination(o.get("option_text") or "")
+        if not classified:
+            continue
+        key, _display = classified
+        primary_topic = (topics_by_question.get(o.get("question_id") or "", []) or [None])[0]
+        pattern_rows.append(
+            {
+                "option_id": o["id"],
+                "topic_id": primary_topic,
+                "pattern_type": "elimination_pattern",
+                "normalized_value": o.get("option_text"),
+                "confidence_score": 0.9,
+                "metadata": {"marker": key},
+            }
+        )
+
+    _safe(
+        lambda: sb.table("pyq_option_repetitions")
+        .delete()
+        .eq("exam_id", exam_id)
+        .execute()
+        .data,
+        default=[],
+    )
+    option_ids = [o["id"] for o in options if o.get("id")]
+    if option_ids:
+        _safe(
+            lambda: sb.table("pyq_option_patterns")
+            .delete()
+            .in_("option_id", option_ids)
+            .execute()
+            .data,
+            default=[],
+        )
+
+    rep_inserted = 0
+    if rep_rows:
+        inserted = (
+            _safe(
+                lambda: sb.table("pyq_option_repetitions").insert(rep_rows).execute().data,
+                default=[],
+            )
+            or []
+        )
+        rep_inserted = len(inserted)
+    pat_inserted = 0
+    if pattern_rows:
+        inserted = (
+            _safe(
+                lambda: sb.table("pyq_option_patterns").insert(pattern_rows).execute().data,
+                default=[],
+            )
+            or []
+        )
+        pat_inserted = len(inserted)
+
+    return {
+        "exam_id": exam_id,
+        "repetitions_upserted": rep_inserted,
+        "patterns_upserted": pat_inserted,
+        "groups_considered": len(groups),
+    }
+
+
+@router.post("/options/backfill-hashes")
+def backfill_option_hashes(
+    exam_id: str = Query(...),
+    include_questions: bool = Query(False),
+    dry_run: bool = Query(False),
+    _admin: dict = Depends(require_permission(ADMIN_PERM)),
+) -> dict[str, Any]:
+    """Populate ``normalized_option_hash`` (and optionally
+    ``normalized_question_hash``) for rows where it's still null.
+
+    Scoped to one exam at a time via papers → questions → options so an
+    operator can validate the rollout exam-by-exam. ``dry_run`` returns
+    the count that *would* be written without touching anything. Reads
+    every option for the exam regardless of reviewer_status — the hash
+    is a content property and is useful even on rejected/pending rows.
+    """
+    sb = get_supabase_admin()
+    paper_rows = _safe(
+        lambda: (
+            sb.table("pyq_papers")
+            .select("id")
+            .eq("exam_id", exam_id)
+            .limit(5000)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    paper_ids = [p["id"] for p in paper_rows if p.get("id")]
+    if not paper_ids:
+        return {
+            "exam_id": exam_id,
+            "dry_run": dry_run,
+            "option_rows_scanned": 0,
+            "option_hashes_written": 0,
+            "question_rows_scanned": 0,
+            "question_hashes_written": 0,
+        }
+
+    question_rows = _safe(
+        lambda: (
+            sb.table("pyq_questions")
+            .select("id, question_text, normalized_question_hash")
+            .in_("pyq_paper_id", paper_ids)
+            .limit(20000)
+            .execute()
+            .data
+        ),
+        default=[],
+    ) or []
+    question_ids = [q["id"] for q in question_rows if q.get("id")]
+
+    options = []
+    if question_ids:
+        options = _safe(
+            lambda: (
+                sb.table("pyq_options")
+                .select("id, question_id, option_text, normalized_option_hash")
+                .in_("question_id", question_ids)
+                .limit(80000)
+                .execute()
+                .data
+            ),
+            default=[],
+        ) or []
+
+    # Group updates by hash value so the stub's ``.eq("id", ...)`` path
+    # only fires when there's something to write. Skip rows that already
+    # carry a hash so the operation is safe to re-run.
+    option_writes: list[tuple[str, str]] = []
+    for o in options:
+        if o.get("normalized_option_hash"):
+            continue
+        h = option_hash(o.get("option_text"))
+        if not h:
+            continue
+        option_writes.append((o["id"], h))
+
+    question_writes: list[tuple[str, str]] = []
+    if include_questions:
+        for q in question_rows:
+            if q.get("normalized_question_hash"):
+                continue
+            h = question_hash(q.get("question_text"))
+            if not h:
+                continue
+            question_writes.append((q["id"], h))
+
+    if not dry_run:
+        for option_id, h in option_writes:
+            _safe(
+                lambda oid=option_id, hh=h: (
+                    sb.table("pyq_options")
+                    .update({"normalized_option_hash": hh})
+                    .eq("id", oid)
+                    .execute()
+                    .data
+                ),
+                default=None,
+            )
+        for question_id, h in question_writes:
+            _safe(
+                lambda qid=question_id, hh=h: (
+                    sb.table("pyq_questions")
+                    .update({"normalized_question_hash": hh})
+                    .eq("id", qid)
+                    .execute()
+                    .data
+                ),
+                default=None,
+            )
+
+    return {
+        "exam_id": exam_id,
+        "dry_run": dry_run,
+        "option_rows_scanned": len(options),
+        "option_hashes_written": len(option_writes),
+        "question_rows_scanned": len(question_rows) if include_questions else 0,
+        "question_hashes_written": len(question_writes),
+    }

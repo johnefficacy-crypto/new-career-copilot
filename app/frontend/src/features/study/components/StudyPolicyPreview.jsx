@@ -4,16 +4,37 @@ import { StudyCard } from "../../../shared/ui/studyos";
 
 const SIZE_LABEL = { small: "Small", medium: "Medium", large: "Large" };
 
-// Mirrors the prototype StudyPolicyPreview: 3-column grid of daily target,
-// task-mix bars and constraints. Generated from the persona snapshot.
+// Build a display row for each constraint. Supports:
+//   - boolean: `{no_late_night_study: true}`      → "no late night study"
+//   - number / string: `{min_break_minutes: 15}`  → "min break minutes · 15"
+//   - array (e.g. tags): `{quiet_hours: ["22-06"]}` → "quiet hours · 22-06"
+//   - object `{label, value}`: rendered as the explicit pair
+// The prior truthy-only filter silently dropped every non-boolean,
+// hiding numeric constraints the policy engine may emit.
+function formatConstraint([key, raw]) {
+  if (raw == null || raw === false) return null;
+  const label = key.replaceAll("_", " ");
+  if (raw === true) return { label, value: null };
+  if (Array.isArray(raw)) {
+    if (raw.length === 0) return null;
+    return { label, value: raw.join(", ") };
+  }
+  if (typeof raw === "object") {
+    const explicit = raw.label || label;
+    const value = raw.value ?? raw.minutes ?? raw.hours ?? null;
+    return { label: explicit, value };
+  }
+  return { label, value: String(raw) };
+}
+
 export default function StudyPolicyPreview({ policy }) {
   if (!policy || !Object.keys(policy).length) return null;
   const mix = policy.task_mix || {};
   const constraints = policy.constraints || {};
   const sizeLabel = SIZE_LABEL[policy.preferred_task_size] || "—";
-  const constraintBadges = Object.entries(constraints)
-    .filter(([, v]) => v === true)
-    .map(([k]) => k.replaceAll("_", " "));
+  const constraintRows = Object.entries(constraints)
+    .map(formatConstraint)
+    .filter(Boolean);
   const mixEntries = Object.entries(mix);
 
   return (
@@ -60,12 +81,20 @@ export default function StudyPolicyPreview({ policy }) {
         </div>
         <div>
           <Eyebrow>Constraints</Eyebrow>
-          {constraintBadges.length ? (
+          {constraintRows.length ? (
             <ul className="mt-2 space-y-1.5 text-[12.5px] text-clay-800">
-              {constraintBadges.map((c) => (
-                <li key={c} className="flex items-start gap-2 capitalize">
+              {constraintRows.map((c, i) => (
+                <li
+                  key={`${c.label}-${i}`}
+                  className="flex items-start gap-2"
+                >
                   <span className="text-sage-600 mt-0.5" aria-hidden="true">·</span>
-                  <span>{c}</span>
+                  <span className="capitalize">{c.label}</span>
+                  {c.value != null && c.value !== "" ? (
+                    <span className="num-mono text-[11px] text-clay-700 ml-auto">
+                      {c.value}
+                    </span>
+                  ) : null}
                 </li>
               ))}
             </ul>

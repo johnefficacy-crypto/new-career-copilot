@@ -26,7 +26,17 @@ export default function AppSidebar({ brandTitle, brandSubtitle, sections, footer
       </Link>
       <nav className={`${collapsed ? "p-3" : "p-3"} flex-1 overflow-y-auto`}>
         {sections.map((s) => (
-          <NavSection key={s.label} label={s.label} items={s.items} onItemClick={onClose} tone={tone} collapsed={collapsed} />
+          <NavSection
+            key={s.label || s.id}
+            label={s.label}
+            items={s.items}
+            onItemClick={onClose}
+            tone={tone}
+            collapsed={collapsed}
+            collapsible={!!s.collapsible}
+            defaultOpen={s.defaultOpen !== false}
+            testId={s.testId}
+          />
         ))}
         {!collapsed && footer?.adminLink && (user?.role === "admin" || user?.role === "super_admin") && (
           <div className="mt-4">{footer.adminLink}</div>

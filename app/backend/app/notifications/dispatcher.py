@@ -34,6 +34,12 @@ def _looks_like_missing_email_sent(exc: Exception) -> bool:
 logger = logging.getLogger("career_copilot.notifications.dispatcher")
 
 
+# Tracks last observed kill-switch state so we can emit a single INFO on
+# the active↔paused transition instead of one per dispatch tick. Lives
+# at module scope by design — the scheduler reuses the same process.
+_LAST_KILL_STATE: bool | None = None
+
+
 # ─── Kill switch ────────────────────────────────────────────────────────────
 
 
@@ -200,7 +206,21 @@ def dispatch_pending_alerts(
 
     Returns ``{checked, in_app, emailed, skipped, failed, killed}``.
     """
-    if kill_switch_enabled(supabase):
+    global _LAST_KILL_STATE
+    killed_now = kill_switch_enabled(supabase)
+    if killed_now != _LAST_KILL_STATE:
+        # State transition — surface once at INFO so operators see the
+        # active↔paused flip without scanning DEBUG logs.
+        logger.info(
+            "notification kill switch transition: paused=%s (was %s)",
+            killed_now,
+            _LAST_KILL_STATE,
+        )
+        _LAST_KILL_STATE = killed_now
+    if killed_now:
+        # Repeat skips are routine while paused; keep them at DEBUG so a
+        # 5-minute idle window doesn't print ~30 INFO lines.
+        logger.debug("notification dispatch skipped: kill_reason=notifications_paused")
         return {"checked": 0, "in_app": 0, "emailed": 0, "skipped": 0, "failed": 0, "killed": 1}
 
     try:

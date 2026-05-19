@@ -29,6 +29,26 @@ module.exports = {
         clay: { 50: "#FBF6EF", 100: "#F3EADB", 200: "#E7D6BA", 300: "#D6BC93", 400: "#BE9C6B", 500: "#A68057", 600: "#8A6846", 700: "#6C5038", 800: "#4E3A29", 900: "#2E2218" },
         sage: { 50: "#F0F5EF", 100: "#DAE7D6", 200: "#B9CFAF", 300: "#94B28A", 400: "#719468", 500: "#54794E", 600: "#41603D", 700: "#33482F", 800: "#263623", 900: "#172017" },
         dusk: { 50: "#F2F1F4", 100: "#DDDAE3", 200: "#B7B0C4", 300: "#8F86A1", 400: "#6D637F", 500: "#524864", 600: "#40384E", 700: "#31293B", 800: "#221D2A", 900: "#141018" },
+        // Field design tokens — used by the community-layer redesign.
+        // Single accent, hairline borders, calm off-white surfaces.
+        field: {
+          paper: "#FAFAF6",
+          canvas: "#FFFFFF",
+          line: "#E6E2D8",
+          "line-soft": "#F0EDE5",
+          ink: "#1B1A16",
+          "ink-muted": "#5A554B",
+          "ink-quiet": "#8C857A",
+          accent: "#2F6A47",
+          "accent-ink": "#1E4730",
+          "accent-soft": "#E4EFE7",
+          warn: "#9F6A12",
+          "warn-soft": "#F4EAD3",
+          danger: "#8B2F1F",
+          "danger-soft": "#F2DDD7",
+          info: "#42588B",
+          "info-soft": "#E1E5EE",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -42,6 +62,7 @@ module.exports = {
         breathe: { "0%,100%": { transform: "scale(1)", opacity: 0.9 }, "50%": { transform: "scale(1.02)", opacity: 1 } },
         "pulse-dot": { "0%,100%": { opacity: 1, transform: "scale(1)" }, "50%": { opacity: 0.6, transform: "scale(1.4)" } },
         shimmer: { "100%": { transform: "translateX(100%)" } },
+        "slide-in-right": { from: { transform: "translateX(100%)" }, to: { transform: "translateX(0)" } },
       },
       animation: {
         "fade-up": "fade-up 0.6s cubic-bezier(.22,1,.36,1) both",
@@ -50,6 +71,7 @@ module.exports = {
         breathe: "breathe 4.5s ease-in-out infinite",
         "pulse-dot": "pulse-dot 2s ease-in-out infinite",
         shimmer: "shimmer 2.5s linear infinite",
+        "slide-in-right": "slide-in-right 0.25s cubic-bezier(.22,1,.36,1) both",
       },
     },
   },

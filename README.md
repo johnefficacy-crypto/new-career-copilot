@@ -43,6 +43,13 @@ From `app/backend`:
 
 The backend runs as a FastAPI app (`app/backend/server.py`) with `/api` routers for auth, eligibility, notifications, admin scrape/trust, payments, canonical APIs, and placeholders. It uses Supabase REST (via `supabase-py`) and optional asyncpg pool health checks. Primary runtime wiring is in `server.py` lifespan and router registration.
 
+### Background scheduler (APScheduler)
+
+The in-process scheduler (notifications dispatcher + eligibility-recompute worker) is gated by the `ENABLE_SCHEDULER` env var.
+
+- **Dev / test / CI:** leave it unset (or `false`). The API still serves requests; only the cron loop is skipped, so local boots don't hammer Supabase.
+- **Production:** set `ENABLE_SCHEDULER=true` on the backend process so notification dispatch and recompute runners actually fire. Run exactly one instance with the flag on — APScheduler is in-process, not distributed.
+
 Key backend modules:
 
 - API routers: `app/backend/app/api/*`

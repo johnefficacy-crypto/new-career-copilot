@@ -1,8 +1,9 @@
-"""Verified-only coverage / PYQ aggregates.
+"""Locked-only coverage / PYQ aggregates.
 
-Reads ``exam_topic_coverage`` joined with ``topics`` + ``subjects``
-(taxonomy is itself admin-managed, so we filter only on ``is_active``).
-PYQ aggregates filter strictly to ``pyq_question_topic_tags.reviewer_status='verified'``.
+Reads ``exam_topic_coverage`` joined with ``topics`` + ``subjects``.
+Only ``reviewer_status='locked'`` rows are planner-ready and may surface
+to aspirants. PYQ aggregates filter strictly to
+``pyq_question_topic_tags.reviewer_status='verified'``.
 
 No claims, no AI inference, no scraping. If a table is missing every
 helper returns an empty list.
@@ -14,20 +15,37 @@ from typing import Any, Callable
 
 logger = logging.getLogger("career_copilot.exam_intelligence.coverage")
 
+# Postgres SQLSTATEs we want to surface loudly (schema drift / missing
+# table) rather than swallow as a warning.
+_LOUD_PG_CODES = {"42703", "42P01"}
 
-def _safe(call: Callable[[], Any], default: Any = None) -> Any:
+
+def _safe(call: Callable[[], Any], default: Any = None, *, table: str | None = None, operation: str | None = None) -> Any:
     try:
         return call()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("exam_intelligence coverage read failed: %s", exc)
+        code = getattr(exc, "code", None) or getattr(exc, "pgcode", None)
+        message = str(exc)
+        level = logging.ERROR if code in _LOUD_PG_CODES else logging.WARNING
+        logger.log(
+            level,
+            "exam_intelligence coverage read failed",
+            extra={
+                "operation": operation or "read",
+                "table": table,
+                "error_code": code,
+                "error_message": message,
+            },
+        )
         return default
 
 
-def verified_topic_coverage(supabase: Any, exam_id: str) -> list[dict[str, Any]]:
-    """Return active topic-coverage rows for ``exam_id``.
+def locked_topic_coverage_summary(supabase: Any, exam_id: str) -> list[dict[str, Any]]:
+    """Return locked topic-coverage rows for ``exam_id`` joined with topic + subject metadata.
 
-    Joined via two follow-up reads against ``topics`` and ``subjects``
-    rather than a Supabase embedded-select, so behaviour is identical
+    Only ``reviewer_status='locked'`` rows surface — the same verified-only
+    contract the rest of exam intelligence uses. Joined via two follow-up
+    reads against ``topics`` and ``subjects`` so behaviour is identical
     against the live client and against unit-test stubs.
 
     Result row shape::
@@ -39,7 +57,10 @@ def verified_topic_coverage(supabase: Any, exam_id: str) -> list[dict[str, Any]]
             "topic_level": "topic|microtopic|concept",
             "subject_id": "...",
             "subject_name": "...",
-            "priority": int|None,
+            "exam_priority_score": float|None,   # 0..100 numeric
+            "is_high_yield": bool,
+            "confidence_score": float|None,
+            "reviewer_status": "locked",
             "exam_phase_id": str|None,
         }
     """
@@ -49,14 +70,19 @@ def verified_topic_coverage(supabase: Any, exam_id: str) -> list[dict[str, Any]]
     flat = _safe(
         lambda: (
             supabase.table("exam_topic_coverage")
-            .select("topic_id, exam_phase_id, priority, is_active")
+            .select(
+                "topic_id, exam_phase_id, exam_priority_score, "
+                "is_high_yield, confidence_score, reviewer_status"
+            )
             .eq("exam_id", exam_id)
-            .eq("is_active", True)
+            .eq("reviewer_status", "locked")
             .limit(1000)
             .execute()
             .data
         ),
         default=[],
+        table="exam_topic_coverage",
+        operation="select_locked_summary",
     ) or []
     topic_ids = list({r.get("topic_id") for r in flat if r.get("topic_id")})
     if not topic_ids:
@@ -72,6 +98,8 @@ def verified_topic_coverage(supabase: Any, exam_id: str) -> list[dict[str, Any]]
             .data
         ),
         default=[],
+        table="topics",
+        operation="select_by_ids",
     ) or []
     topics_by_id = {t["id"]: t for t in topic_rows if t.get("id")}
 
@@ -88,6 +116,8 @@ def verified_topic_coverage(supabase: Any, exam_id: str) -> list[dict[str, Any]]
                 .data
             ),
             default=[],
+            table="subjects",
+            operation="select_by_ids",
         ) or []
         subjects_by_id = {s["id"]: s for s in subj_rows if s.get("id")}
 
@@ -107,7 +137,10 @@ def verified_topic_coverage(supabase: Any, exam_id: str) -> list[dict[str, Any]]
                 "topic_level": topic.get("level"),
                 "subject_id": subject.get("id") or topic.get("subject_id"),
                 "subject_name": subject.get("name"),
-                "priority": r.get("priority"),
+                "exam_priority_score": r.get("exam_priority_score"),
+                "is_high_yield": bool(r.get("is_high_yield")),
+                "confidence_score": r.get("confidence_score"),
+                "reviewer_status": r.get("reviewer_status"),
                 "exam_phase_id": r.get("exam_phase_id"),
             }
         )
@@ -133,6 +166,8 @@ def verified_pyq_topic_counts(supabase: Any, exam_id: str) -> dict[str, int]:
             .data
         ),
         default=[],
+        table="pyq_papers",
+        operation="select_by_exam",
     ) or []
     paper_ids = [r["id"] for r in paper_rows if r.get("id")]
     if not paper_ids:
@@ -149,6 +184,8 @@ def verified_pyq_topic_counts(supabase: Any, exam_id: str) -> dict[str, int]:
             .data
         ),
         default=[],
+        table="pyq_questions",
+        operation="select_verified",
     ) or []
     question_ids = [r["id"] for r in question_rows if r.get("id")]
     if not question_ids:
@@ -165,6 +202,8 @@ def verified_pyq_topic_counts(supabase: Any, exam_id: str) -> dict[str, int]:
             .data
         ),
         default=[],
+        table="pyq_question_topic_tags",
+        operation="select_verified",
     ) or []
 
     counts: dict[str, int] = {}
@@ -213,6 +252,8 @@ def locked_topic_coverage(supabase: Any, exam_id: str) -> list[dict[str, Any]]:
             .data
         ),
         default=[],
+        table="exam_topic_coverage",
+        operation="select_locked",
     ) or []
     if not flat:
         return []
@@ -228,6 +269,8 @@ def locked_topic_coverage(supabase: Any, exam_id: str) -> list[dict[str, Any]]:
             .data
         ),
         default=[],
+        table="topics",
+        operation="select_by_ids",
     ) or []
     topics_by_id = {t["id"]: t for t in topic_rows if t.get("id")}
 

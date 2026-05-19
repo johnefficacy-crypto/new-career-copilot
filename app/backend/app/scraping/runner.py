@@ -64,6 +64,44 @@ class DuplicatePromotionError(PromotionError):
         self.slug = slug
 
 
+class OpenConflictPromotionError(PromotionError):
+    """Raised when a queue item has unresolved consensus conflicts.
+
+    Carries the list of conflicting ``field_key`` values so the API
+    layer can surface them through the same ``unverified_fields``
+    contract the frontend already reads via ``getApiUnverifiedFields``.
+    """
+
+    def __init__(self, *, queue_id: str | None, field_keys: list[str]):
+        super().__init__("Unresolved consensus conflicts block promotion")
+        self.queue_id = queue_id
+        self.field_keys = list(field_keys)
+
+
+def _open_conflict_field_keys(supabase: Client, queue_id: str | None) -> list[str]:
+    """Return field_key list for any open conflicts on ``queue_id``.
+
+    Silently returns empty when the table is missing (older deploys
+    that have not run migration 087 yet) so the runner stays
+    forward-compatible.
+    """
+    if not queue_id:
+        return []
+    try:
+        rows = (
+            supabase.table("recruitment_verification_conflicts")
+            .select("field_key, status")
+            .eq("queue_id", queue_id)
+            .eq("status", "open")
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return []
+    return sorted({(r.get("field_key") or "") for r in rows if r.get("field_key")})
+
+
 def _document_type_for_url(url: str) -> str:
     lower = (url or "").split("?", 1)[0].lower()
     if lower.endswith(".pdf"):
@@ -1466,6 +1504,36 @@ def run_scraping_pass(
         ).data or []
         inserted_id = inserted[0].get("id") if inserted else None
 
+        # Scraper-driven source_registry drafts: for every official URL
+        # the extractor pulled (notification/apply/pdf), surface the host
+        # as a needs_review draft if it isn't already registered. Admins
+        # see the new draft in the resolver dropdown immediately and can
+        # promote it to verified via /admin/sources/{id}/verify. The
+        # helper is idempotent — registered hosts are no-ops.
+        try:
+            from .source_drafts import extract_candidate_hosts, upsert_draft_sources
+
+            extracted_payload = queue_payload.get("extracted_data") or {}
+            host_candidates = extract_candidate_hosts(extracted_payload)
+            if host_candidates and not decision.is_duplicate:
+                drafts = upsert_draft_sources(
+                    supabase,
+                    host_candidates,
+                    queue_id=inserted_id,
+                )
+                if drafts.get("created"):
+                    logger.info(
+                        "scrape.source_drafts_created run_id=%s queue_id=%s hosts=%s",
+                        run_id, inserted_id,
+                        [r.get("source_name") for r in drafts["created"]],
+                    )
+        except Exception as exc:  # noqa: BLE001
+            # Draft creation is best-effort; never let it kill the run.
+            logger.warning(
+                "scrape.source_drafts_failed run_id=%s queue_id=%s err=%s",
+                run_id, inserted_id, exc,
+            )
+
         if decision.is_duplicate:
             total_dup += 1
         else:
@@ -2793,6 +2861,7 @@ def promote_to_recruitments(
     supabase: Client,
     *,
     source_id: str | None = None,
+    queue_id: str | None = None,
 ) -> str:
     """Promote a queue item into the canonical schema atomically.
 
@@ -2807,6 +2876,13 @@ def promote_to_recruitments(
     compensation pattern introduced in PR #121. Behaviour stays a
     strict subset of the RPC path.
     """
+    open_conflict_fields = _open_conflict_field_keys(supabase, queue_id)
+    if open_conflict_fields:
+        raise OpenConflictPromotionError(
+            queue_id=queue_id,
+            field_keys=open_conflict_fields,
+        )
+
     slug = compute_promotion_slug(data)
     rpc_payload = _build_promotion_rpc_payload(data, source_id=source_id, slug=slug)
     try:
@@ -3091,7 +3167,12 @@ def promote_run(
             # Strict shape: structurally-incomplete rows fail here with a
             # clear ValidationError instead of half-writing a recruitment.
             extracted = VerifiedRecruitmentForPromotion(**d)
-            rec_id = promote_to_recruitments(extracted, supabase, source_id=item.get("source_id"))
+            rec_id = promote_to_recruitments(
+                extracted,
+                supabase,
+                source_id=item.get("source_id"),
+                queue_id=queue_id,
+            )
             rec_ids.append(rec_id)
             update = {
                 "status": "approved",
@@ -3105,6 +3186,18 @@ def promote_run(
                 lambda update=update, qid=queue_id: supabase.table("scrape_queue").update(update).eq("id", qid).execute(),
             )
             promoted += 1
+        except OpenConflictPromotionError as exc:
+            skipped += 1
+            errors.append({
+                "queue_id": queue_id,
+                "error": "open_conflicts",
+                "reason": "consensus_conflicts_open",
+                "unverified_fields": exc.field_keys,
+            })
+            logger.info(
+                "[promote_run] queue_id=%s skipped: open consensus conflicts on %s",
+                queue_id, exc.field_keys,
+            )
         except Exception as exc:  # noqa: BLE001
             failed += 1
             errors.append({"queue_id": queue_id, "error": str(exc)})

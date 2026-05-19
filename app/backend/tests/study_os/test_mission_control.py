@@ -6,8 +6,17 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.study_os.mission_control import build_mission_control
-from tests.persona_questions._stub import SBStub
+from app.study_os.mission_control import (
+    build_mission_control,
+    invalidate_per_exam_intelligence,
+)
+from tests.persona_questions._stub import SBStub  # noqa: F401  (re-exported for tests)
+
+
+# Item 5's per-exam intelligence cache is reset in tests/conftest.py for
+# every test (autouse). `invalidate_per_exam_intelligence` is re-exported
+# here only because tests may want to clear mid-test for ordering checks.
+_ = invalidate_per_exam_intelligence  # explicitly mark as intentional
 
 
 def _today():
@@ -68,6 +77,33 @@ def test_mission_control_uses_existing_persona_snapshot():
     assert out["user_context"]["dimensions"]["preparation_stage"] == "beginner"
 
 
+def test_mission_control_returns_metadata_theme_and_target():
+    # theme/target live in study_plans.metadata jsonb, not at the row top level.
+    sb = SBStub({
+        "aspirant_persona_snapshots": [_snapshot_row()],
+        "study_plans": [
+            {"id": "plan-1", "user_id": "u-1", "status": "active",
+             "metadata": {"theme": "SSC adaptive plan", "target": "Cover locked topics"}},
+        ],
+    })
+    out = build_mission_control(sb, "u-1")
+    assert out["plan"]["theme"] == "SSC adaptive plan"
+    assert out["plan"]["target"] == "Cover locked topics"
+
+
+def test_mission_control_plan_falls_back_when_metadata_missing():
+    sb = SBStub({
+        "aspirant_persona_snapshots": [_snapshot_row()],
+        "study_plans": [
+            {"id": "plan-1", "user_id": "u-1", "status": "active", "metadata": {}},
+        ],
+    })
+    out = build_mission_control(sb, "u-1")
+    # Defaults must still surface so the UI never reads None for these fields.
+    assert out["plan"]["theme"] == "Adaptive weekly plan"
+    assert out["plan"]["target"] == "Complete planned blocks"
+
+
 def test_mission_control_handles_missing_study_plan():
     sb = SBStub({"aspirant_persona_snapshots": [_snapshot_row()]})
     out = build_mission_control(sb, "u-1")
@@ -97,7 +133,7 @@ def test_incomplete_task_becomes_next_best_action():
     sb = SBStub({
         "aspirant_persona_snapshots": [_snapshot_row()],
         "study_plans": [
-            {"id": "plan-1", "user_id": "u-1", "status": "active", "theme": "T", "target": "X"}
+            {"id": "plan-1", "user_id": "u-1", "status": "active", "metadata": {"theme": "T", "target": "X"}}
         ],
         "study_tasks": [
             {"id": "task-1", "plan_id": "plan-1", "title": "Revise quant",
@@ -136,7 +172,7 @@ def test_next_best_action_falls_through_to_focus_when_no_focus_minutes():
     sb = SBStub({
         "aspirant_persona_snapshots": [_snapshot_row()],
         "study_plans": [
-            {"id": "plan-1", "user_id": "u-1", "status": "active", "theme": "T", "target": "X"}
+            {"id": "plan-1", "user_id": "u-1", "status": "active", "metadata": {"theme": "T", "target": "X"}}
         ],
         "study_tasks": [],
         "persona_question_bank": [],
@@ -150,7 +186,7 @@ def test_task_reasoning_is_attached_to_each_task():
     sb = SBStub({
         "aspirant_persona_snapshots": [_snapshot_row()],
         "study_plans": [
-            {"id": "plan-1", "user_id": "u-1", "status": "active", "theme": "T", "target": "X"}
+            {"id": "plan-1", "user_id": "u-1", "status": "active", "metadata": {"theme": "T", "target": "X"}}
         ],
         "study_tasks": [
             {"id": "task-1", "plan_id": "plan-1", "title": "Revise quant",
@@ -166,7 +202,7 @@ def test_task_reasoning_falls_back_when_metadata_missing():
     sb = SBStub({
         "aspirant_persona_snapshots": [],  # no persona
         "study_plans": [
-            {"id": "plan-1", "user_id": "u-1", "status": "active", "theme": "T", "target": "X"}
+            {"id": "plan-1", "user_id": "u-1", "status": "active", "metadata": {"theme": "T", "target": "X"}}
         ],
         "study_tasks": [
             {"id": "task-1", "plan_id": "plan-1", "title": "Untitled",
@@ -316,3 +352,254 @@ def test_truth_panel_summary_reflects_today_completion():
     out = build_mission_control(sb, "u-1")
     summary = out["truth_panel"]["summary"]
     assert "1 of 2" in summary
+
+
+# ── Per-request read cache: each logical table read once per call ─────────
+
+
+def _seed_full_world():
+    return {
+        "aspirant_persona_snapshots": [_snapshot_row()],
+        "profiles": [{"id": "u-1", "target_exam": "ssc-cgl"}],
+        "exams": [{"id": "exam-1", "slug": "ssc-cgl", "name": "SSC CGL",
+                   "exam_type": "recruitment", "is_active": True,
+                   "exam_family_id": "fam-1"}],
+        "exam_families": [{"id": "fam-1", "name": "SSC"}],
+        "exam_topic_coverage": [
+            {"id": "c1", "exam_id": "exam-1", "topic_id": "t1",
+             "exam_priority_score": 80, "is_high_yield": True,
+             "confidence_score": 0.8, "reviewer_status": "locked"},
+        ],
+        "topics": [{"id": "t1", "name": "Percentage", "slug": "percentage",
+                    "is_active": True, "subject_id": "s1", "level": "core"}],
+        "subjects": [{"id": "s1", "name": "Quant", "slug": "quant",
+                      "subject_group": "core", "is_active": True}],
+        "study_plans": [{"id": "p1", "user_id": "u-1", "status": "active",
+                         "metadata": {"theme": "Adaptive", "target": "Cover"}}],
+    }
+
+
+def test_mission_control_caches_repeat_reads_within_one_call():
+    # Without the cache, the following tables are read twice per call:
+    #   - study_plans      (active-plan + fallback id)
+    #   - exam_topic_coverage / topics (status summary + context locked)
+    #   - exams            (resolve_by_slug + resolve_by_id)
+    #   - aspirant_persona_snapshots (latest + recompute fallback)
+    # The wrapper exposes `reads_per_table()` so we can assert ≤1.
+    from app.study_os.mission_control import _RequestReadCache
+
+    wrapped = _RequestReadCache(SBStub(_seed_full_world()))
+    build_mission_control(wrapped, "u-1")
+    reads = wrapped.reads_per_table()
+    for table in (
+        "study_plans",
+        "exam_topic_coverage",
+        "topics",
+        "aspirant_persona_snapshots",
+    ):
+        assert reads.get(table, 0) <= 1, (
+            f"{table} read {reads.get(table)}× (expected ≤1); counts={reads}"
+        )
+    # `exams` is legitimately read with two distinct chains:
+    #   - filter by id/slug (target lookup from exam_intelligence_status)
+    #   - filter by is_active=true (eligibility_summary's active-exams
+    #     list — completely different read pattern, not a duplicate).
+    # Cap at 2 to catch any new accidental duplicate.
+    assert reads.get("exams", 0) <= 2, (
+        f"exams read {reads.get('exams')}× (expected ≤2); counts={reads}"
+    )
+
+
+# ── Item 1: async sub-loader fan-out runs reads concurrently ───────────────
+
+
+def test_async_mission_control_returns_same_shape_as_sync():
+    import asyncio
+
+    from app.study_os.mission_control import build_mission_control_async
+
+    seed = _seed_full_world()
+    sync_out = build_mission_control(SBStub(seed), "u-1")
+    async_out = asyncio.run(build_mission_control_async(SBStub(_seed_full_world()), "u-1"))
+
+    # Same keys at the top level (modulo `meta.generated_at`, which is
+    # a wall-clock timestamp).
+    assert set(sync_out.keys()) == set(async_out.keys())
+    assert async_out["plan"] == sync_out["plan"]
+    assert async_out["metrics"] == sync_out["metrics"]
+    assert async_out["exam_intelligence"]["exam_id"] == sync_out["exam_intelligence"]["exam_id"]
+
+
+def test_async_mission_control_runs_independent_loaders_concurrently():
+    # Stage 1 has five independent reads. If they're serialised, the
+    # total elapsed time of mission-control will be ≥ 5×T where T is
+    # per-sub-loader sleep. If they run via asyncio.gather + to_thread,
+    # total ≈ T (plus a couple of stage 2/3 hops).
+    import asyncio
+    import time
+
+    from app.study_os.mission_control import (
+        _RequestReadCache,
+        build_mission_control_async,
+    )
+
+    delay = 0.10
+
+    class _SlowSB:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, attr):
+            return getattr(self._inner, attr)
+
+        def table(self, name):
+            q = self._inner.table(name)
+            real_execute = q.execute
+
+            def _slow_execute():
+                time.sleep(delay)
+                return real_execute()
+
+            q.execute = _slow_execute  # type: ignore[assignment]
+            return q
+
+    slow = _SlowSB(SBStub(_seed_full_world()))
+    started = time.monotonic()
+    asyncio.run(build_mission_control_async(slow, "u-1"))
+    elapsed = time.monotonic() - started
+
+    # Strictly serial mission-control fires ~24 reads × 0.10s ≈ 2.4s.
+    # Stage-1 fan-out should overlap the heaviest sub-loaders so the
+    # observed latency is clearly under that baseline. We assert
+    # improvement here, not a hard perf-budget number.
+    serial_baseline_seconds = 24 * delay
+    assert elapsed < serial_baseline_seconds * 0.75, (
+        f"expected concurrent execution; elapsed={elapsed:.2f}s "
+        f"(serial baseline ~{serial_baseline_seconds:.2f}s)"
+    )
+
+
+# ── Item 2: every (table, primary filter) fires at most once ──────────────
+
+
+def test_mission_control_does_not_duplicate_study_plans_or_sessions():
+    # Previously: `study_plans` fired twice (full select + id-only
+    # fallback) and `study_sessions` fired twice (7-day focus +
+    # this-week review). Both should now be single-shot.
+    sb = SBStub(_seed_full_world())
+    calls: list[tuple[str, str]] = []
+    real_table = sb.table
+
+    def _spy_table(name):
+        q = real_table(name)
+        real_execute = q.execute
+
+        def _capture():
+            filters = tuple(sorted((f[0], f[1]) for f in getattr(q, "filters", []) if f[1] == "eq"))
+            calls.append((name, str(filters)))
+            return real_execute()
+
+        q.execute = _capture  # type: ignore[assignment]
+        return q
+
+    sb.table = _spy_table  # type: ignore[assignment]
+    build_mission_control(sb, "u-1")
+
+    by_table: dict[str, int] = {}
+    for name, _ in calls:
+        by_table[name] = by_table.get(name, 0) + 1
+    # Allow ≤1 read per logical table for the deduped tables; others can
+    # legitimately appear N times (e.g. study_tasks has 5 distinct slices,
+    # `exams` has 2 distinct chains — target lookup + active-exams list).
+    assert by_table.get("study_plans", 0) <= 1, f"study_plans={by_table.get('study_plans')}; calls={calls}"
+    assert by_table.get("study_sessions", 0) <= 1, f"study_sessions={by_table.get('study_sessions')}; calls={calls}"
+    assert by_table.get("exams", 0) <= 2, f"exams={by_table.get('exams')}; calls={calls}"
+
+
+# ── Item 5: per-exam intelligence TTL cache ───────────────────────────────
+
+
+def test_per_exam_intelligence_cache_serves_second_call_with_zero_reads():
+    # First call builds the cache; second call for the same exam target
+    # must hit ZERO of the tables that feed exam_intelligence_status,
+    # locked_topic_coverage_summary, exam_families, exam_cycles,
+    # competition_context, or policy_update_context.
+    # `exams` is intentionally excluded — the eligibility_summary's
+    # active-exams list is a different access pattern (filter by
+    # is_active=true, not per target id/slug). The cached helper covers
+    # only the per-target lookups (status, coverage, etc.).
+    PER_EXAM_TABLES = {
+        "exam_topic_coverage",
+        "topics",
+        "subjects",
+        "pyq_papers",
+        "pyq_questions",
+        "pyq_question_topic_tags",
+        "syllabus_topic_mentions",
+        "exam_families",
+        "exam_cycles",
+        "exam_competition_metrics",
+        "exam_policy_updates",
+    }
+
+    seed = _seed_full_world()
+
+    def _with_counted_table(sb):
+        counts: dict[str, int] = {}
+        real = sb.table
+
+        def _counted(name):
+            counts[name] = counts.get(name, 0) + 1
+            return real(name)
+
+        sb.table = _counted  # type: ignore[assignment]
+        return counts
+
+    # Warm-up call
+    sb1 = SBStub(seed)
+    counts1 = _with_counted_table(sb1)
+    build_mission_control(sb1, "u-1")
+    warm_table_reads = {t: counts1.get(t, 0) for t in PER_EXAM_TABLES if counts1.get(t)}
+    # Sanity: the first call DID hit at least some of the per-exam tables.
+    assert warm_table_reads, f"warm-up should touch per-exam tables; counts={counts1}"
+
+    # Second call: same exam target → all per-exam tables should be cold.
+    sb2 = SBStub(seed)
+    counts2 = _with_counted_table(sb2)
+    build_mission_control(sb2, "u-1")
+    leaked = {t: counts2.get(t, 0) for t in PER_EXAM_TABLES if counts2.get(t)}
+    assert not leaked, f"per-exam tables leaked through cache on warm call: {leaked}"
+
+
+def test_per_exam_intelligence_cache_is_per_exam_id():
+    # Two different exam targets should NOT share a cache slot.
+    seed = _seed_full_world()
+    seed_b = _seed_full_world()
+    seed_b["profiles"] = [{"id": "u-1", "target_exam": "ibps-po"}]
+    seed_b["exams"] = [
+        {"id": "exam-2", "slug": "ibps-po", "name": "IBPS PO",
+         "exam_type": "recruitment", "is_active": True,
+         "exam_family_id": "fam-2"},
+    ]
+    seed_b["exam_topic_coverage"] = []
+    seed_b["topics"] = []
+    seed_b["subjects"] = []
+    seed_b["exam_families"] = [{"id": "fam-2", "name": "IBPS"}]
+
+    # Populate cache for ssc-cgl
+    build_mission_control(SBStub(seed), "u-1")
+
+    # Second call uses a different exam — must do real reads.
+    sb2 = SBStub(seed_b)
+    counts2: dict[str, int] = {}
+    real = sb2.table
+
+    def _counted(name):
+        counts2[name] = counts2.get(name, 0) + 1
+        return real(name)
+
+    sb2.table = _counted  # type: ignore[assignment]
+    build_mission_control(sb2, "u-1")
+    assert counts2.get("exams", 0) >= 1, (
+        f"different exam_id must miss cache; counts={counts2}"
+    )

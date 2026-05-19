@@ -14,6 +14,7 @@ already consumes, so no frontend page rewrites are required.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import date, datetime, timezone
@@ -97,7 +98,7 @@ router_recruitments = APIRouter(prefix="/recruitments", tags=["recruitments"])
 _REC_SELECT = (
     "id, slug, name, year, status, publish_status, "
     "notification_date, apply_start_date, apply_end_date, "
-    "total_vacancies, official_notification_url, "
+    "total_vacancies, official_notification_url, exam_id, "
     "organizations ( id, name, type, state )"
 )
 
@@ -126,6 +127,9 @@ def _shape_recruitment(row: dict[str, Any], saved_ids: set[str]) -> dict[str, An
         },
         "vacancies": row.get("total_vacancies"),
         "notification_url": row.get("official_notification_url"),
+        # Surface the parent exam id on list rows so the frontend can map an
+        # exam slug to its recruitment without a second per-row request.
+        "exam_id": row.get("exam_id"),
         "saved": row.get("id") in saved_ids,
     }
 
@@ -233,9 +237,9 @@ async def saved_recruitments(user: dict = Depends(get_current_user)):
     supabase = get_supabase_admin()
     saved_rows = _safe(
         lambda: supabase.table("tracked_recruitments")
-        .select("recruitment_id, tracked_at")
+        .select("recruitment_id, created_at")
         .eq("user_id", user["id"])
-        .order("tracked_at", desc=True)
+        .order("created_at", desc=True)
         .execute()
         .data,
         default=[],
@@ -280,8 +284,11 @@ async def toggle_save(rec_ref: str, user: dict = Depends(get_current_user)):
             "recruitment_id", rec_id
         ).execute()
         return {"saved": False}
+    # `tracked_recruitments.created_at` has `DEFAULT now()` (migration 002)
+    # and the unique index `uq_tracked_recruitments_user_recruitment`
+    # (migration 005) keeps a concurrent double-save from inserting twice.
     supabase.table("tracked_recruitments").insert(
-        {"user_id": user["id"], "recruitment_id": rec_id, "tracked_at": _now_iso()}
+        {"user_id": user["id"], "recruitment_id": rec_id}
     ).execute()
     return {"saved": True}
 
@@ -347,6 +354,27 @@ async def get_recruitment(rec_ref: str, user: dict | None = Depends(get_optional
     out = _shape_recruitment(row, saved_ids)
     out["posts"] = row.get("posts") or []
     out["units"] = row.get("recruitment_units") or []
+    exam_id = row.get("exam_id")
+    exam_slug = None
+    if exam_id:
+        exam_rows = _safe(
+            lambda: supabase.table("exams")
+            .select("id, slug, name")
+            .eq("id", exam_id)
+            .limit(1)
+            .execute()
+            .data,
+            default=[],
+        ) or []
+        if exam_rows:
+            exam_slug = exam_rows[0].get("slug")
+            out["exam"] = {
+                "id": exam_rows[0].get("id"),
+                "slug": exam_slug,
+                "name": exam_rows[0].get("name"),
+            }
+    out["exam_id"] = exam_id
+    out["exam_slug"] = exam_slug
     out["eligibility_preview"] = {
         "verdict": (
             "eligible"
@@ -520,10 +548,47 @@ def _get_reservations(supabase: Client, user_id: str) -> dict[str, Any]:
     return rows[0] if rows else {}
 
 
+def _count_certifications(supabase: Client, user_id: str) -> list[dict[str, Any]]:
+    return _safe(
+        lambda: supabase.table("aspirant_certifications")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("is_active", True)
+        .execute()
+        .data,
+        default=[],
+    ) or []
+
+
+def _count_experience(supabase: Client, user_id: str) -> list[dict[str, Any]]:
+    return _safe(
+        lambda: supabase.table("aspirant_experience")
+        .select("id")
+        .eq("user_id", user_id)
+        .execute()
+        .data,
+        default=[],
+    ) or []
+
+
+def _count_exam_attempts(supabase: Client, user_id: str) -> list[dict[str, Any]]:
+    return _safe(
+        lambda: supabase.table("aspirant_exam_attempts")
+        .select("id")
+        .eq("user_id", user_id)
+        .execute()
+        .data,
+        default=[],
+    ) or []
+
+
 def _upsert_user_scoped_row(supabase: Client, table: str, user_id: str, payload: dict[str, Any]) -> None:
+    # Identity-critical: existence check drives insert-vs-update. Do not
+    # mask a transient error as "row missing".
     existing = _safe(
         lambda: supabase.table(table).select("user_id").eq("user_id", user_id).limit(1).execute().data,
         default=[],
+        treat_error_as_default=False,
     ) or []
     row = {"user_id": user_id, **payload}
     if existing:
@@ -585,21 +650,52 @@ def _assemble_profile_payload(
     return assembled
 
 
+def _read_profile_row(supabase: Client, user_id: str) -> dict[str, Any]:
+    """Read-only profile lookup. Returns ``{}`` when the row is absent."""
+    rows = (
+        supabase.table("profiles")
+        .select(_PROFILE_COLS)
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return rows[0] if rows else {}
+
+
 def _ensure_profile_row(supabase: Client, user_id: str, email: str | None) -> dict[str, Any]:
-    rows = _safe(
-        lambda: supabase.table("profiles").select(_PROFILE_COLS).eq("id", user_id).limit(1).execute().data,
-        default=[],
-    ) or []
+    # Identity-critical: do NOT mask the select. A transient error must
+    # not be confused with "row missing" — that path would race into a
+    # duplicate insert against profiles_pkey.
+    rows = (
+        supabase.table("profiles")
+        .select(_PROFILE_COLS)
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
     if rows:
         return rows[0]
-    # First-time profile bootstrap.
-    supabase.table("profiles").insert(
-        {"id": user_id, "full_name": (email or "").split("@")[0] or "Aspirant"}
-    ).execute()
-    rows = _safe(
-        lambda: supabase.table("profiles").select(_PROFILE_COLS).eq("id", user_id).limit(1).execute().data,
-        default=[],
-    ) or []
+    payload = {"id": user_id, "full_name": (email or "").split("@")[0] or "Aspirant"}
+    try:
+        supabase.table("profiles").upsert(payload, on_conflict="id").execute()
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc)
+        if "23505" not in msg:
+            raise
+        logger.warning("profile upsert lost race for user=%s; refetching", user_id)
+    rows = (
+        supabase.table("profiles")
+        .select(_PROFILE_COLS)
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
     return rows[0] if rows else {"id": user_id}
 
 
@@ -729,11 +825,33 @@ async def update_profile(body: ProfileUpdate, user: dict = Depends(get_current_u
 @router_profile.get("/completion")
 async def profile_completion(user: dict = Depends(get_current_user)):
     supabase = get_supabase_admin()
-    profile = _ensure_profile_row(supabase, user["id"], user.get("email"))
-    education = _get_primary_education(supabase, user["id"])
-    prefs = _get_preferences(supabase, user["id"])
-    location = _get_location(supabase, user["id"])
-    reservations = _get_reservations(supabase, user["id"])
+    # /completion is read-only — no bootstrap insert here. When the profile
+    # row is missing we return a zeroed payload; the bootstrap lives on the
+    # /me handler and the first-auth onboarding path.
+    #
+    # Sequence the identity read before fanning out optional reads to keep
+    # the supabase-py sync client from racing eight concurrent requests
+    # over a shared httpx connection (we were seeing "Server disconnected"
+    # warnings ahead of the 500 when gather drove all eight in parallel).
+    uid = user["id"]
+    profile = await asyncio.to_thread(_read_profile_row, supabase, uid)
+    (
+        education,
+        prefs,
+        location,
+        reservations,
+        certs,
+        exp,
+        attempts,
+    ) = await asyncio.gather(
+        asyncio.to_thread(_get_primary_education, supabase, uid),
+        asyncio.to_thread(_get_preferences, supabase, uid),
+        asyncio.to_thread(_get_location, supabase, uid),
+        asyncio.to_thread(_get_reservations, supabase, uid),
+        asyncio.to_thread(_count_certifications, supabase, uid),
+        asyncio.to_thread(_count_experience, supabase, uid),
+        asyncio.to_thread(_count_exam_attempts, supabase, uid),
+    )
     checks = {
         "identity_profile": {
             "fields": ["full_name", "phone", "date_of_birth", "category", "domicile_state"],
@@ -751,7 +869,7 @@ async def profile_completion(user: dict = Depends(get_current_user)):
             "next_action": "Select target exams and preferred states.",
         },
         "study_profile": {
-            "fields": ["weekly_hours_goal", "career_goal"],
+            "fields": ["weekly_hours_goal"],
             "why_it_matters": "Study rhythm powers planning and backlog risk signals.",
             "next_action": "Set study rhythm and target outcome.",
         },
@@ -787,9 +905,6 @@ async def profile_completion(user: dict = Depends(get_current_user)):
         }
     # Backward compatibility for next-actions engine.
     out["eligibility_profile"] = out["identity_profile"]
-    certs = _safe(lambda: supabase.table("aspirant_certifications").select("id").eq("user_id", user["id"]).eq("is_active", True).execute().data, default=[]) or []
-    exp = _safe(lambda: supabase.table("aspirant_experience").select("id").eq("user_id", user["id"]).execute().data, default=[]) or []
-    attempts = _safe(lambda: supabase.table("aspirant_exam_attempts").select("id").eq("user_id", user["id"]).execute().data, default=[]) or []
     out["certification_profile"] = {
         "completion_pct": 100 if certs else 0,
         "missing_fields": [] if certs else ["certification_name"],
@@ -901,10 +1016,48 @@ async def list_exam_attempts(user: dict = Depends(get_current_user)):
     return {"items": rows}
 
 
+def _resolve_exam_ref_id(supabase: Client, raw: Any) -> str | None:
+    """Resolve an inbound exam identifier (slug or uuid) to ``exams.id``.
+
+    The Profile UI used to write whatever free-form text the user typed
+    into the legacy ``aspirant_exam_attempts.exam_id`` column. The
+    eligibility engine matches on ``exam_ref_id`` (uuid FK to
+    ``exams.id``), so unresolved text never participated and DB inserts
+    that looked like UUIDs but weren't crashed with 500s. Resolve up
+    front: accept either a UUID we can confirm in ``exams`` or a slug
+    we can look up, otherwise return ``None`` so the caller can 422.
+    """
+    if not isinstance(raw, str):
+        return None
+    candidate = raw.strip()
+    if not candidate:
+        return None
+    try:
+        UUID(candidate)
+    except (ValueError, AttributeError, TypeError):
+        rows = _safe(
+            lambda: supabase.table("exams").select("id").eq("slug", candidate).limit(1).execute().data,
+            default=[],
+        ) or []
+        return rows[0]["id"] if rows else None
+    rows = _safe(
+        lambda: supabase.table("exams").select("id").eq("id", candidate).limit(1).execute().data,
+        default=[],
+    ) or []
+    return rows[0]["id"] if rows else None
+
+
 @router_profile.post("/exam-attempts")
 async def create_exam_attempt(body: ExamAttemptIn, user: dict = Depends(get_current_user)):
     sb = get_supabase_admin()
-    payload = {**body.model_dump(), "user_id": user["id"]}
+    exam_ref_id = _resolve_exam_ref_id(sb, body.exam_id)
+    if not exam_ref_id:
+        raise HTTPException(status_code=422, detail=f"Unknown exam: {body.exam_id!r}")
+    payload = {
+        "user_id": user["id"],
+        "exam_ref_id": exam_ref_id,
+        "attempts_used": body.attempts_used,
+    }
     row = sb.table("aspirant_exam_attempts").insert(payload).execute().data
     enqueue_eligibility_recompute(sb, user["id"], "profile.attempt_created")
     return {"item": (row or [payload])[0]}
@@ -916,7 +1069,11 @@ async def update_exam_attempt(aid: str, body: ExamAttemptIn, user: dict = Depend
     existing = _safe(lambda: sb.table("aspirant_exam_attempts").select("id").eq("id", aid).eq("user_id", user["id"]).limit(1).execute().data, default=[]) or []
     if not existing:
         raise HTTPException(status_code=404, detail="Exam attempt not found")
-    row = sb.table("aspirant_exam_attempts").update(body.model_dump()).eq("id", aid).eq("user_id", user["id"]).execute().data
+    exam_ref_id = _resolve_exam_ref_id(sb, body.exam_id)
+    if not exam_ref_id:
+        raise HTTPException(status_code=422, detail=f"Unknown exam: {body.exam_id!r}")
+    update_payload = {"exam_ref_id": exam_ref_id, "attempts_used": body.attempts_used}
+    row = sb.table("aspirant_exam_attempts").update(update_payload).eq("id", aid).eq("user_id", user["id"]).execute().data
     enqueue_eligibility_recompute(sb, user["id"], "profile.attempt_updated")
     return {"item": (row or [{}])[0]}
 
@@ -1261,20 +1418,30 @@ def _rank_recruitment(
 @router_recommendations.get("/me")
 async def my_recommendations(user: dict = Depends(get_current_user)):
     supabase = get_supabase_admin()
-    rec_data = await list_recruitments(user=user)
+    # All five top-level reads are independent — fire them concurrently.
+    # The two async helpers (`list_recruitments`, `get_profile`,
+    # `weekly_review`) compose multiple supabase reads each, and the two
+    # sync helpers are pushed onto worker threads so they overlap with
+    # the async helpers' own I/O. Result shape unchanged.
+    rec_data, profile, eligibility, app_rows, review = await asyncio.gather(
+        list_recruitments(user=user),
+        get_profile(user),
+        asyncio.to_thread(_eligibility_summary, supabase, user["id"]),
+        asyncio.to_thread(
+            lambda: _safe(
+                lambda: supabase.table("user_recruitment_applications")
+                .select("recruitment_id,status,submitted_at,clicked_apply_at")
+                .eq("user_id", user["id"])
+                .execute()
+                .data,
+                default=[],
+            )
+            or []
+        ),
+        weekly_review(user),
+    )
     rec_items = rec_data.get("items", [])
-    profile = await get_profile(user)
-    eligibility = _eligibility_summary(supabase, user["id"])
-    app_rows = _safe(
-        lambda: supabase.table("user_recruitment_applications")
-        .select("recruitment_id,status,submitted_at,clicked_apply_at")
-        .eq("user_id", user["id"])
-        .execute()
-        .data,
-        default=[],
-    ) or []
     app_by_rec = {a["recruitment_id"]: a for a in app_rows}
-    review = await weekly_review(user)
     backlog_high = (review.get("backlog_count", 0) or 0) > 3 or (review.get("missed_tasks", 0) or 0) > 3
 
     ranked = [
@@ -1338,24 +1505,12 @@ async def categories():
     }
 
 
-@router_community.get("/spaces")
-async def spaces():
-    """Telegram-style spaces + channels.
-
-    Returns the structured community map that the frontend
-    `features/community/CommunityScreen` consumes. Until forum_spaces /
-    forum_channels canonical tables land we serve a deterministic
-    reference snapshot — the same shape lives in
-    `frontend/src/features/community/data.js`, so the UI degrades
-    gracefully when this endpoint is missing or DB rows are empty.
-    """
-    return {
-        "spaces": _COMMUNITY_SPACES_SNAPSHOT,
-        "users": _COMMUNITY_USERS_SNAPSHOT,
-        "threads": _COMMUNITY_THREADS_SNAPSHOT,
-        "flairs": _COMMUNITY_FLAIRS_SNAPSHOT,
-        "channel_rules": _COMMUNITY_CHANNEL_RULES_SNAPSHOT,
-    }
+# NOTE: GET /community/spaces previously lived here as a reference-snapshot
+# fallback. The real DB-backed handler in ``app/api/community_runtime.py``
+# wins at runtime via router precedence; this duplicate has been removed
+# in the Phase 5 follow-up cleanup. The snapshot data still lives in
+# ``frontend/src/features/community/data.js`` so the UI degrades
+# gracefully if the runtime endpoint is unavailable.
 
 
 def _shape_thread(row: dict[str, Any], with_body: bool = False) -> dict[str, Any]:
@@ -1566,194 +1721,9 @@ async def vote_thread(post_id: str, user: dict = Depends(get_current_user)):
 #  MARKETPLACE (courses)
 # ════════════════════════════════════════════════════════════════════════════
 
-router_marketplace = APIRouter(prefix="/marketplace", tags=["marketplace"])
+# Marketplace routes moved to app/api/marketplace.py (PR1).
+# Keep the helper around if other modules ever imported it; nothing here mounts.
 
-
-def _shape_course(c: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "id": c.get("id"),
-        "title": c.get("title"),
-        "slug": c.get("slug"),
-        "provider": (c.get("profiles") or {}).get("full_name") if isinstance(c.get("profiles"), dict) else None,
-        "type": "course",
-        "price": c.get("price_inr"),
-        "original_price": c.get("original_price_inr"),
-        "rating": float(c.get("avg_rating") or 0),
-        "students": c.get("total_enrollments") or 0,
-        "exams": c.get("exam_tags") or [],
-        "level": c.get("level"),
-        "language": c.get("language"),
-        "thumbnail": c.get("thumbnail_url"),
-        "short_description": c.get("short_description"),
-        "duration_mins": c.get("total_duration_mins"),
-        "total_lessons": c.get("total_lessons"),
-    }
-
-
-@router_marketplace.get("/resources")
-async def list_resources(exam: str | None = Query(default=None), type: str | None = Query(default=None)):
-    supabase = get_supabase_admin()
-    q = (
-        supabase.table("courses")
-        .select(
-            "id, title, slug, short_description, thumbnail_url, price_inr, original_price_inr, "
-            "level, language, exam_tags, total_lessons, total_duration_mins, "
-            "avg_rating, total_enrollments, profiles!instructor_id ( full_name )"
-        )
-        .eq("status", "published")
-    )
-    if exam:
-        q = q.contains("exam_tags", [exam])
-    rows = _safe(lambda: q.order("total_enrollments", desc=True).limit(60).execute().data, default=[]) or []
-    return {"items": [_shape_course(r) for r in rows]}
-
-
-@router_marketplace.get("/resources/{rid}")
-async def resource_detail(rid: str):
-    supabase = get_supabase_admin()
-    rows = _safe(
-        lambda: supabase.table("courses")
-        .select(
-            "*, profiles!instructor_id ( full_name, instructor_bio ), "
-            "course_sections ( id, title, order_index, lessons ( id, title, type, duration_mins, is_free_preview ) )"
-        )
-        .eq("id", rid)
-        .limit(1)
-        .execute()
-        .data,
-        default=[],
-    ) or []
-    if not rows:
-        raise HTTPException(status_code=404, detail="Resource not found")
-    c = rows[0]
-    out = _shape_course(c)
-    out["description"] = c.get("description")
-    sections = sorted(c.get("course_sections") or [], key=lambda s: s.get("order_index") or 0)
-    out["curriculum"] = [
-        {
-            "module": s.get("title"),
-            "lessons": len(s.get("lessons") or []),
-            "duration": sum((lesson.get("duration_mins") or 0) for lesson in (s.get("lessons") or [])),
-        }
-        for s in sections
-    ]
-    review_rows = _safe(
-        lambda: supabase.table("reviews")
-        .select("rating, body, created_at, profiles!reviews_user_id_fkey ( full_name )")
-        .eq("course_id", rid)
-        .order("created_at", desc=True)
-        .limit(20)
-        .execute()
-        .data,
-        default=[],
-    ) or []
-    out["reviews"] = [
-        {
-            "name": (r.get("profiles") or {}).get("full_name") if isinstance(r.get("profiles"), dict) else "Anonymous",
-            "rating": r.get("rating"),
-            "text": r.get("body"),
-        }
-        for r in review_rows
-    ]
-    return out
-
-
-@router_marketplace.get("/mentors")
-async def list_mentors(exam: str | None = Query(default=None)):
-    """Mentors are instructors with courses. We surface them via profiles + courses."""
-    supabase = get_supabase_admin()
-    q = (
-        supabase.table("profiles")
-        .select("id, full_name, instructor_bio, avatar_url, courses!instructor_id ( id, exam_tags )")
-        .eq("is_instructor", True)
-        .limit(60)
-    )
-    rows = _safe(lambda: q.execute().data, default=[]) or []
-    items = []
-    for p in rows:
-        all_exams = sorted({tag for c in (p.get("courses") or []) for tag in (c.get("exam_tags") or [])})
-        if exam and exam not in all_exams:
-            continue
-        items.append(
-            {
-                "id": p.get("id"),
-                "name": p.get("full_name"),
-                "headline": (p.get("instructor_bio") or "")[:80],
-                "bio": p.get("instructor_bio"),
-                "exams": all_exams,
-                "avatar": p.get("avatar_url"),
-                "sessions": len(p.get("courses") or []),
-            }
-        )
-    return {"items": items}
-
-
-@router_marketplace.get("/mentors/{mid}")
-async def mentor_detail(mid: str):
-    supabase = get_supabase_admin()
-    rows = _safe(
-        lambda: supabase.table("profiles")
-        .select(
-            "id, full_name, instructor_bio, avatar_url, "
-            "courses!instructor_id ( id, title, slug, exam_tags, price_inr, avg_rating, total_enrollments )"
-        )
-        .eq("id", mid)
-        .limit(1)
-        .execute()
-        .data,
-        default=[],
-    ) or []
-    if not rows:
-        raise HTTPException(status_code=404, detail="Mentor not found")
-    p = rows[0]
-    courses = p.get("courses") or []
-    return {
-        "id": p["id"],
-        "name": p.get("full_name"),
-        "headline": (p.get("instructor_bio") or "")[:120],
-        "bio": p.get("instructor_bio"),
-        "avatar": p.get("avatar_url"),
-        "exams": sorted({t for c in courses for t in (c.get("exam_tags") or [])}),
-        "courses": courses,
-        "sessions": sum((c.get("total_enrollments") or 0) for c in courses),
-    }
-
-
-@router_marketplace.get("/providers")
-async def providers():
-    supabase = get_supabase_admin()
-    rows = _safe(
-        lambda: supabase.table("profiles")
-        .select("id, full_name, courses!instructor_id ( id, exam_tags, avg_rating )")
-        .eq("is_instructor", True)
-        .limit(40)
-        .execute()
-        .data,
-        default=[],
-    ) or []
-    items = []
-    for p in rows:
-        courses = p.get("courses") or []
-        if not courses:
-            continue
-        ratings = [c.get("avg_rating") for c in courses if c.get("avg_rating")]
-        items.append(
-            {
-                "id": p["id"],
-                "name": p.get("full_name"),
-                "type": "Individual",
-                "courses": len(courses),
-                "rating": round(sum(ratings) / len(ratings), 2) if ratings else None,
-                "exams": sorted({t for c in courses for t in (c.get("exam_tags") or [])}),
-            }
-        )
-    return {"items": items}
-
-
-@router_marketplace.get("/affiliates")
-async def affiliates():
-    """No canonical affiliates table — returns empty list (placeholder UI handles)."""
-    return {"items": []}
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1989,41 +1959,12 @@ class MockTopicBreakdown(BaseModel):
     error_types: dict[str, int] | None = None
 
 
-class MockEntry(BaseModel):
-    exam_name: str | None = None
-    exam: str | None = None  # legacy alias
-    test_name: str | None = None
-    score: float | None = None
-    accuracy: float | None = Field(default=None, ge=0, le=100)
-    total_marks: int | None = None
-    scored_marks: float | None = None
-    total_questions: int | None = None
-    correct_answers: int | None = None
-    wrong_answers: int | None = None
-    duration_mins: int | None = None
-    notes: str | None = None
-    # Optional canonical scoping + per-topic results. When topic_breakdowns
-    # is present it is persisted to mock_topic_breakdowns and feeds the
-    # Phase 6 user_topic_mastery recompute.
-    exam_id: str | None = None
-    exam_phase_id: str | None = None
-    topic_breakdowns: list[MockTopicBreakdown] | None = None
-
-
-@router_study.get("/mocks")
-async def list_mocks(user: dict = Depends(get_current_user)):
-    supabase = get_supabase_admin()
-    rows = _safe(
-        lambda: supabase.table("mock_tests")
-        .select("*")
-        .eq("user_id", user["id"])
-        .order("attempted_at", desc=True)
-        .limit(50)
-        .execute()
-        .data,
-        default=[],
-    ) or []
-    return {"items": rows}
+# NOTE: GET/POST /mocks and the MockEntry body model previously lived here
+# but were duplicated by app/api/study_os.py with different semantics.
+# study_os.py won at runtime via router precedence in server.py. Phase 5
+# of the admin Study OS ops layer removes the duplicates from canonical.py
+# so the single owner is study_os.py. ``_mock_breakdown_row`` is kept —
+# review_mock below still uses it.
 
 
 def _mock_breakdown_row(mock_test_id: str, b: "MockTopicBreakdown") -> dict[str, Any]:
@@ -2048,51 +1989,10 @@ def _mock_breakdown_row(mock_test_id: str, b: "MockTopicBreakdown") -> dict[str,
     return {k: v for k, v in row.items() if v is not None}
 
 
-@router_study.post("/mocks")
-async def add_mock(body: MockEntry, user: dict = Depends(get_current_user)):
-    supabase = get_supabase_admin()
-    payload: dict[str, Any] = {
-        "user_id": user["id"],
-        "exam_name": body.exam_name or body.exam,
-        "test_name": body.test_name,
-        "scored_marks": body.scored_marks if body.scored_marks is not None else body.score,
-        "total_marks": body.total_marks,
-        "total_questions": body.total_questions,
-        "correct_answers": body.correct_answers,
-        "wrong_answers": body.wrong_answers,
-        "duration_mins": body.duration_mins,
-        "notes": body.notes,
-        "exam_id": body.exam_id,
-        "exam_phase_id": body.exam_phase_id,
-        "attempted_at": _now_iso(),
-    }
-    payload = {k: v for k, v in payload.items() if v is not None}
-    inserted = supabase.table("mock_tests").insert(payload).execute().data or []
-    mock = inserted[0] if inserted else payload
-
-    # Persist per-topic results and refresh the user's mastery snapshot.
-    # Both are best-effort: a mock submission must still succeed even if
-    # the topic-intelligence side fails.
-    mock_id = mock.get("id")
-    if body.topic_breakdowns and mock_id:
-        rows = [_mock_breakdown_row(mock_id, b) for b in body.topic_breakdowns]
-        _safe(lambda: supabase.table("mock_topic_breakdowns").insert(rows).execute())
-        from app.study_os.mastery import recompute_topic_mastery
-
-        _safe(lambda: recompute_topic_mastery(supabase, user["id"]))
-
-        # Mastery just changed — event-driven regen refreshes the plan so
-        # newly-revealed weak areas surface immediately. Best-effort: a
-        # mock submission still succeeds even if regeneration fails.
-        from app.study_os.regen import regenerate_on_signal
-
-        _safe(
-            lambda: regenerate_on_signal(
-                supabase, user["id"], event_type="mock_logged", reason="mock_logged"
-            )
-        )
-
-    return mock
+# NOTE: POST /mocks previously lived here but was a duplicate of
+# app/api/study_os.py. study_os.py won at runtime via router precedence
+# in server.py. Phase 5 removes the canonical.py duplicate; study_os.py
+# is the single owner.
 
 
 class MockReviewBody(BaseModel):
@@ -2196,234 +2096,25 @@ async def review_mock(
     return refreshed[0]
 
 
-class MockCorrectionTasksBody(BaseModel):
-    """Optional inputs for ``POST /api/study/mocks/:id/correction-tasks``.
-
-    When ``topic_ids`` is omitted we pull every weak / error topic from
-    this mock's persisted breakdowns. ``add_to_today`` defaults to True so
-    correction tasks land on the user's today plan.
-    """
-
-    topic_ids: list[str] | None = None
-    add_to_today: bool = True
+# NOTE: MockCorrectionTasksBody + POST /mocks/{mock_id}/correction-tasks
+# previously lived here but were duplicates of app/api/study_os.py with
+# diverging behavior (different weak-topic heuristics). study_os.py won
+# at runtime via router precedence in server.py. Phase 5 of the admin
+# Study OS ops layer removes this duplicate so the single owner is
+# study_os.py.
 
 
-@router_study.post("/mocks/{mock_id}/correction-tasks")
-async def create_correction_tasks(
-    mock_id: str,
-    body: MockCorrectionTasksBody | None = None,
-    user: dict = Depends(get_current_user),
-):
-    """Create one ``mock_correction`` task per weak / errored topic on a mock.
+# NOTE: GET /subjects and GET /weekly-review previously lived here but
+# were duplicates of app/api/study_os.py with diverging response shapes.
+# study_os.py won at runtime via router precedence in server.py. Phase 5
+# of the admin Study OS ops layer removes these duplicates so the single
+# owner is study_os.py.
 
-    Reads the persisted ``mock_topic_breakdowns`` for the mock (or
-    ``body.topic_ids`` if supplied), and inserts a task per topic onto the
-    user's active plan. Returns the created tasks. Best-effort regen
-    signal so the planner's next pass picks up the new tasks.
-    """
-    body = body or MockCorrectionTasksBody()
-    supabase = get_supabase_admin()
-
-    mock_rows = _safe(
-        lambda: supabase.table("mock_tests").select("id, user_id, exam_id").eq("id", mock_id).limit(1).execute().data,
-        default=[],
-    ) or []
-    if not mock_rows or mock_rows[0].get("user_id") != user["id"]:
-        raise HTTPException(status_code=404, detail="Mock not found")
-    mock = mock_rows[0]
-
-    plan_id = _ensure_active_plan(supabase, user["id"])
-    if not plan_id:
-        return {"items": [], "reason": "no_active_plan"}
-
-    if body.topic_ids:
-        topic_ids = list(dict.fromkeys(body.topic_ids))
-    else:
-        breakdowns = _safe(
-            lambda: (
-                supabase.table("mock_topic_breakdowns")
-                .select("topic_id, accuracy, wrong_answers, error_types")
-                .eq("mock_test_id", mock_id)
-                .execute()
-                .data
-            ),
-            default=[],
-        ) or []
-        topic_ids = []
-        for b in breakdowns:
-            tid = b.get("topic_id")
-            if not tid:
-                continue
-            wrong = b.get("wrong_answers") or 0
-            accuracy = b.get("accuracy")
-            has_errors = bool(b.get("error_types"))
-            if wrong > 0 or has_errors or (accuracy is not None and accuracy < 70):
-                topic_ids.append(tid)
-        topic_ids = list(dict.fromkeys(topic_ids))
-
-    if not topic_ids:
-        return {"items": [], "reason": "no_weak_topics"}
-
-    topic_rows = _safe(
-        lambda: supabase.table("topics").select("id, name, subject_id").in_("id", topic_ids).execute().data,
-        default=[],
-    ) or []
-    topics_by_id = {t["id"]: t for t in topic_rows if t.get("id")}
-
-    today = datetime.now(timezone.utc).date().isoformat()
-    payloads = []
-    for tid in topic_ids:
-        topic = topics_by_id.get(tid) or {}
-        payloads.append(
-            {
-                "user_id": user["id"],
-                "plan_id": plan_id,
-                "topic_id": tid,
-                "subject_id": topic.get("subject_id"),
-                "exam_id": mock.get("exam_id"),
-                "task_type": "mock_correction",
-                "title": f"Correct {topic.get('name') or 'mock topic'} from this mock",
-                "topic": topic.get("name"),
-                "scheduled_date": today if body.add_to_today else None,
-                "day_label": "Today" if body.add_to_today else None,
-                "status": "planned",
-                "planned_minutes": 25,
-                "why_this_task": {
-                    "summary": "Correction task generated from a reviewed mock.",
-                    "mock_id": mock_id,
-                    "source": "mock_review",
-                },
-            }
-        )
-    payloads = [{k: v for k, v in p.items() if v is not None} for p in payloads]
-    inserted = _safe(
-        lambda: supabase.table("study_tasks").insert(payloads).execute().data,
-        default=[],
-    ) or []
-
-    from app.study_os.regen import regenerate_on_signal
-
-    _safe(
-        lambda: regenerate_on_signal(
-            supabase, user["id"], event_type="mock_correction_tasks_created", reason="mock_correction"
-        )
-    )
-
-    return {"items": inserted, "count": len(inserted)}
-
-
-@router_study.get("/subjects")
-async def subjects(user: dict = Depends(get_current_user)):
-    """Subject progress derived from completed study_tasks per subject."""
-    supabase = get_supabase_admin()
-    plan_id = _ensure_active_plan(supabase, user["id"])
-    if not plan_id:
-        return {"items": []}
-    rows = _safe(
-        lambda: supabase.table("study_tasks")
-        .select("subject, status")
-        .eq("plan_id", plan_id)
-        .execute()
-        .data,
-        default=[],
-    ) or []
-    by_subject: dict[str, dict[str, int]] = {}
-    for r in rows:
-        s = r.get("subject") or "General"
-        d = by_subject.setdefault(s, {"total": 0, "done": 0})
-        d["total"] += 1
-        if r.get("status") == "completed":
-            d["done"] += 1
-    items = [
-        {
-            "subject": s,
-            "progress": int(round((v["done"] / v["total"]) * 100)) if v["total"] else 0,
-            "trend": "up" if v["done"] >= v["total"] / 2 else "flat",
-        }
-        for s, v in by_subject.items()
-    ]
-    return {"items": items}
-
-
-@router_study.get("/weekly-review")
-async def weekly_review(user: dict = Depends(get_current_user)):
-    supabase = get_supabase_admin()
-    from datetime import timedelta
-
-    week_start = (datetime.now(timezone.utc) - timedelta(days=datetime.now(timezone.utc).weekday())).date().isoformat()
-    sessions = _safe(
-        lambda: supabase.table("study_sessions")
-        .select("duration_mins, started_at")
-        .eq("user_id", user["id"])
-        .gte("started_at", week_start)
-        .execute()
-        .data,
-        default=[],
-    ) or []
-    mocks = _safe(
-        lambda: supabase.table("mock_tests")
-        .select("id")
-        .eq("user_id", user["id"])
-        .gte("attempted_at", week_start)
-        .execute()
-        .data,
-        default=[],
-    ) or []
-    plan_id = _ensure_active_plan(supabase, user["id"])
-    closed = 0
-    skipped_tasks = 0
-    missed_tasks = 0
-    if plan_id:
-        closed_rows = _safe(
-            lambda: supabase.table("study_tasks")
-            .select("id")
-            .eq("plan_id", plan_id)
-            .eq("status", "completed")
-            .gte("completed_at", week_start)
-            .execute()
-            .data,
-            default=[],
-        ) or []
-        closed = len(closed_rows)
-        skipped_tasks = len(_safe(lambda: supabase.table("study_tasks").select("id").eq("plan_id", plan_id).eq("status", "skipped").gte("updated_at", week_start).execute().data, default=[]) or [])
-        missed_tasks = len(_safe(lambda: supabase.table("study_tasks").select("id").eq("plan_id", plan_id).in_("status", ["missed", "carried_forward"]).gte("updated_at", week_start).execute().data, default=[]) or [])
-    hours = round(sum((s.get("duration_mins") or 0) for s in sessions) / 60.0, 1)
-    profile = _ensure_profile_row(supabase, user["id"], user.get("email"))
-    hours_planned = float(profile.get("weekly_hours_goal") or 0)
-    if not hours_planned and plan_id:
-        planned_rows = _safe(
-            lambda: supabase.table("study_tasks")
-            .select("planned_minutes")
-            .eq("plan_id", plan_id)
-            .gte("scheduled_date", week_start)
-            .execute()
-            .data,
-            default=[],
-        ) or []
-        hours_planned = round(sum((r.get("planned_minutes") or 0) for r in planned_rows) / 60.0, 1)
-    total_tasks = 0
-    if plan_id:
-        total_tasks = len(_safe(lambda: supabase.table("study_tasks").select("id").eq("plan_id", plan_id).gte("scheduled_date", week_start).execute().data, default=[]) or [])
-    adherence = (hours / hours_planned) if hours_planned else 0
-    return {
-        "week_of": week_start or "This week",
-        "hours_studied": hours,
-        "hours_planned": hours_planned,
-        "adherence": round(adherence, 3),
-        "completed_tasks": closed,
-        "planned_tasks": total_tasks,
-        "skipped_tasks": skipped_tasks,
-        "missed_tasks": missed_tasks,
-        "task_completion_rate": round((closed / total_tasks), 3) if total_tasks else 0,
-        "mocks_taken": len(mocks),
-        "mock_trend": [],
-        "highlights": [],
-        "corrections": [],
-        "correction_actions": [],
-        "backlog_count": None,
-        "backlog_topics": [],
-        "revision_coverage": None,
-    }
+# Backwards-compat alias for in-process callers that imported
+# ``canonical.weekly_review`` directly (notifications.next_actions,
+# my_recommendations below, and tests that monkeypatch this attribute).
+# This is a thin re-export — not a duplicate route registration.
+from app.api.study_os import weekly_review_read as weekly_review  # noqa: E402
 
 
 @router_metadata.get("/certifications")
@@ -2465,6 +2156,5 @@ router.include_router(router_tracker)
 router.include_router(router_applications)
 router.include_router(router_recommendations)
 router.include_router(router_community)
-router.include_router(router_marketplace)
 router.include_router(router_study)
 router.include_router(router_metadata)

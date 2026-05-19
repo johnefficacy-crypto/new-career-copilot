@@ -51,7 +51,7 @@ export default function Marketplace() {
             data-testid={`mkt-filter-${t}`}
             className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition ${
               filter === t
-                ? "bg-[#2E2218] text-[#F3EADB]"
+                ? "bg-[#FFFDF9] text-[#2E2218] border border-[#D9C7A7]"
                 : "bg-white/70 border border-[#E7DECB] text-clay-700 hover:bg-[#F3EADB]"
             }`}
           >
@@ -85,10 +85,18 @@ export default function Marketplace() {
                 </div>
               </div>
               <div className="p-4 flex-1 flex flex-col">
-                <h3 className="font-heading text-[16px] leading-snug">{r.title}</h3>
+                <div className="flex items-start gap-2">
+                  <h3 className="font-heading text-[16px] leading-snug flex-1">{r.title}</h3>
+                  {r.is_affiliate ? <Pill tone="amber">Affiliate</Pill> : null}
+                </div>
                 <div className="num-mono text-[10.5px] text-clay-700 mt-1">{r.provider}</div>
+                {Number(r.refund_window_days || 0) > 0 ? (
+                  <div className="num-mono text-[10px] text-clay-600 mt-1">{r.refund_window_days}-day refund window</div>
+                ) : null}
                 <div className="mt-auto pt-3 flex items-center justify-between border-t border-[#E7DECB] mt-3">
-                  <span className="font-heading text-[18px]">₹{Number(r.price || 0).toLocaleString()}</span>
+                  <span className="font-heading text-[18px]">
+                    {Number(r.price || 0) <= 0 ? "Free" : `₹${Number(r.price || 0).toLocaleString()}`}
+                  </span>
                   <span className="num-mono text-[10.5px] text-clay-700 inline-flex items-center gap-1">
                     <Star className="h-3.5 w-3.5 text-amber-500" fill="currentColor" aria-hidden="true" />
                     {r.rating} · {Number(r.students || 0).toLocaleString()} learners
@@ -136,16 +144,28 @@ export default function Marketplace() {
         />
         <div className="grid md:grid-cols-3 gap-3">
           {affiliates.map((a) => (
-            <div key={a.id} className="rounded-xl border border-[#E7DECB] bg-[#FBF8F2] p-4">
+            <Link
+              to={`/app/marketplace/${a.id}`}
+              key={a.id}
+              className="rounded-xl border border-[#E7DECB] bg-[#FBF8F2] p-4 block hover:border-[#A68057]"
+              data-testid={`affiliate-${a.id}`}
+            >
               <div className="flex items-start justify-between gap-2">
                 <div className="font-heading text-[15px]">{a.name}</div>
                 <Pill tone="amber">Affiliate</Pill>
               </div>
-              <div className="num-mono text-[10.5px] text-clay-700 mt-1">{a.type}</div>
+              <div className="num-mono text-[10.5px] text-clay-700 mt-1">
+                {a.provider || a.type}
+              </div>
+              {a.disclosure ? (
+                <div className="mt-2 text-[12px] text-clay-700">
+                  {a.disclosure}
+                </div>
+              ) : null}
               <div className="mt-2 text-[12.5px] text-clay-800">
                 Commission: <span className="font-semibold">{a.commission}</span>
               </div>
-            </div>
+            </Link>
           ))}
           {!affiliates.length ? (
             <div className="text-sm text-clay-700">No affiliate partners listed yet.</div>

@@ -31,7 +31,8 @@ export function Avatar({ user = {}, size = 28 }) {
         fontSize: size * 0.42,
         flex: "0 0 auto",
         lineHeight: 1,
-        letterSpacing: -0.5,
+        letterSpacing: 0,
+        boxShadow: "inset 0 0 0 1px rgba(255,253,248,0.42), 0 1px 2px rgba(46,34,24,0.12)",
       }}
     >
       {initials}
@@ -94,7 +95,7 @@ export function AdminBadge() {
   return (
     <span
       className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded num-mono"
-      style={{ background: "#2E2218", color: "#F3EADB", fontSize: 10, fontWeight: 600, letterSpacing: 0.4 }}
+      style={{ background: "#4E3A29", color: "#F3EADB", fontSize: 10, fontWeight: 600, letterSpacing: 0.4 }}
     >
       <span style={{ width: 6, height: 6, background: "#D6BC93", display: "inline-block" }} />
       <span>ADMIN</span>
@@ -151,7 +152,7 @@ export function VoteColumn({ count, vertical = true, voted, onVote }) {
         <button
           type="button"
           onClick={() => onVote && onVote(1)}
-          className={`px-1.5 py-0.5 rounded ${voted === 1 ? "bg-[#54794E] text-[#F0F5EF]" : "text-clay-700 hover:bg-[#F3EADB]"}`}
+          className={`px-1.5 py-0.5 rounded-md transition ${voted === 1 ? "bg-[#54794E] text-[#F0F5EF]" : "text-clay-700 hover:bg-[#F3EADB]"}`}
           aria-label="Upvote"
         >
           <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
@@ -162,7 +163,7 @@ export function VoteColumn({ count, vertical = true, voted, onVote }) {
         <button
           type="button"
           onClick={() => onVote && onVote(-1)}
-          className={`px-1.5 py-0.5 rounded ${voted === -1 ? "bg-[#7A3925] text-[#F2DDD6]" : "text-clay-700 hover:bg-[#F3EADB]"}`}
+          className={`px-1.5 py-0.5 rounded-md transition ${voted === -1 ? "bg-[#7A3925] text-[#F2DDD6]" : "text-clay-700 hover:bg-[#F3EADB]"}`}
           aria-label="Downvote"
         >
           <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
@@ -180,7 +181,7 @@ export function VoteColumn({ count, vertical = true, voted, onVote }) {
           e.stopPropagation();
           onVote && onVote(1);
         }}
-        className={`w-8 h-8 rounded-lg flex items-center justify-center ${voted === 1 ? "bg-[#54794E] text-[#F0F5EF]" : "text-clay-700 hover:bg-[#F3EADB]"}`}
+        className={`w-8 h-8 rounded-md flex items-center justify-center transition ${voted === 1 ? "bg-[#54794E] text-[#F0F5EF]" : "text-clay-700 hover:bg-[#F3EADB]"}`}
         aria-label="Upvote"
       >
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -194,7 +195,7 @@ export function VoteColumn({ count, vertical = true, voted, onVote }) {
           e.stopPropagation();
           onVote && onVote(-1);
         }}
-        className={`w-8 h-8 rounded-lg flex items-center justify-center ${voted === -1 ? "bg-[#7A3925] text-[#F2DDD6]" : "text-clay-700 hover:bg-[#F3EADB]"}`}
+        className={`w-8 h-8 rounded-md flex items-center justify-center transition ${voted === -1 ? "bg-[#7A3925] text-[#F2DDD6]" : "text-clay-700 hover:bg-[#F3EADB]"}`}
         aria-label="Downvote"
       >
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -213,8 +214,8 @@ export function ChannelIcon({ ch = {}, color = "#6C5038", size = 30 }) {
       style={{
         width: size,
         height: size,
-        background: locked ? "#2E2218" : "#FBF6EF",
-        border: `1px solid ${locked ? "#2E2218" : "#E7DECB"}`,
+        background: locked ? "#4E3A29" : "#FBF6EF",
+        border: `1px solid ${locked ? "#4E3A29" : "#E7DECB"}`,
         color: locked ? "#D6BC93" : color,
       }}
     >
@@ -257,7 +258,7 @@ export function ChannelRulesRibbon({ channel = {}, rules = [] }) {
   const locked = channel.lockedAdminWrite;
   return (
     <div
-      className={`px-5 py-3 ${locked ? "bg-[#2E2218] text-[#D6BC93]" : "bg-[#F3EADB]/70 text-clay-700"} text-[11.5px] border-b border-[#E7DECB]`}
+      className={`px-5 py-3 ${locked ? "bg-[#4E3A29] text-[#D6BC93]" : "bg-[#F3EADB]/70 text-clay-700"} text-[11.5px] border-b border-[#E7DECB]`}
     >
       <div className="flex items-start gap-3">
         <div

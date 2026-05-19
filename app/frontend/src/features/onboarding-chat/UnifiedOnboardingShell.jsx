@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertCircle, ArrowRight, CheckCircle2, Loader2, Sparkles } from "lucide-react";
 import { useUnifiedOnboardingSession } from "./useUnifiedOnboardingSession";
 import OnboardingQuestionCard from "./OnboardingQuestionCard";
 import ReadinessMeter from "./ReadinessMeter";
+import { trackOnboardingEvent } from "./analytics";
+import EligibleExamsCard from "../exam-eligibility/EligibleExamsCard";
 
 // The single shell both entry modes render into:
 //   * cold/discovery — homepage, intent unknown, opens with the intent picker
@@ -15,8 +17,8 @@ import ReadinessMeter from "./ReadinessMeter";
 
 const NEXT_ACTION_ROUTES = {
   view_eligibility: "/app",
-  open_study_plan: "/app/study-plan",
-  open_tracker: "/app/tracker",
+  open_study_plan: "/app/study/plan",
+  open_tracker: "/app/eligibility/tracker",
   open_community: "/app/community",
   open_dashboard: "/app",
 };
@@ -77,7 +79,10 @@ function FallbackNotice({ data }) {
   );
 }
 
-function LoginCta({ from }) {
+function LoginCta({ from, source }) {
+  const actionCopy = source === "recruitment_question_requirements"
+    ? "Save your eligibility check and continue."
+    : "Save your study profile and continue.";
   return (
     <div
       data-testid="onboarding-login-cta"
@@ -87,7 +92,7 @@ function LoginCta({ from }) {
         <Sparkles className="h-4 w-4 text-clay-500 mt-0.5 shrink-0" aria-hidden="true" />
         <div className="flex-1">
           <p className="text-sm font-medium text-clay-900">
-            Save your answers and sign in to continue.
+            {actionCopy}
           </p>
           <p className="text-xs text-muted-foreground mt-0.5">
             You won&apos;t need to repeat these details again — we&apos;ll pick
@@ -119,14 +124,27 @@ function LoginCta({ from }) {
 function CompletionScreen({ data, isAuthed, onComplete }) {
   const [result, setResult] = useState(null);
   const [completing, setCompleting] = useState(true);
+  // Submit-lock: ignore re-fires of onComplete (e.g. callback identity
+  // change in the parent hook). Server-side is idempotent, but this also
+  // avoids a wasted round-trip and any UI flicker.
+  const submitted = useRef(false);
 
   useEffect(() => {
+    if (submitted.current) return;
+    submitted.current = true;
     let active = true;
     (async () => {
-      const out = await onComplete();
-      if (active) {
-        setResult(out);
-        setCompleting(false);
+      try {
+        const out = await onComplete();
+        if (active) {
+          setResult(out);
+          setCompleting(false);
+        }
+      } catch (e) {
+        if (active) {
+          setCompleting(false);
+          submitted.current = false; // allow retry on error
+        }
       }
     })();
     return () => {
@@ -202,6 +220,32 @@ export default function UnifiedOnboardingShell({
     navigate(isAuthed ? "/app" : "/");
   }
 
+  // Derive these — and run the analytics effects — before any conditional
+  // return so the hook order stays stable across renders. Each effect is
+  // already self-guarded, so loading/error renders don't fire events.
+  const answeredCount = data?.progress?.answered || 0;
+  const hasValuePreview = Boolean(data?.readiness) || answeredCount >= 4;
+  const showLoginCta = !isAuthed && !data?.complete && answeredCount >= 2 && hasValuePreview;
+
+  useEffect(() => {
+    if (!data?.question) return;
+    trackOnboardingEvent("question_shown", {
+      entry_mode: data?.entry_mode,
+      question_source: data?.question_source,
+      question_key: data?.question?.question_key,
+      answered_count: answeredCount,
+    });
+  }, [data?.entry_mode, data?.question, data?.question_source, answeredCount]);
+
+  useEffect(() => {
+    if (!showLoginCta) return;
+    trackOnboardingEvent("login_cta_shown", {
+      entry_mode: data?.entry_mode,
+      question_source: data?.question_source,
+      answered_count: answeredCount,
+    });
+  }, [showLoginCta, data?.entry_mode, data?.question_source, answeredCount]);
+
   if (status === "loading") {
     return (
       <div className="flex items-center justify-center py-20 text-muted-foreground">
@@ -229,20 +273,20 @@ export default function UnifiedOnboardingShell({
     );
   }
 
-  const answeredCount = data?.progress?.answered || 0;
-  const showLoginCta = !isAuthed && !data?.complete && answeredCount >= 2;
-
   return (
     <div className="space-y-4">
       <Intro data={data} />
       <FallbackNotice data={data} />
 
       {data?.complete ? (
-        <CompletionScreen
-          data={data}
-          isAuthed={isAuthed}
-          onComplete={session.complete}
-        />
+        <>
+          <CompletionScreen
+            data={data}
+            isAuthed={isAuthed}
+            onComplete={session.complete}
+          />
+          {isAuthed && <EligibleExamsCard variant="panel" />}
+        </>
       ) : data?.question ? (
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
@@ -270,7 +314,7 @@ export default function UnifiedOnboardingShell({
         </div>
       )}
 
-      {showLoginCta && <LoginCta from={fromPath} />}
+      {showLoginCta && <LoginCta from={fromPath} source={data?.question_source} />}
 
       {!data?.complete && data?.readiness && (
         <ReadinessMeter readiness={data.readiness} />

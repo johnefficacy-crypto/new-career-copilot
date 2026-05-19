@@ -25,6 +25,10 @@ app/frontend/.env
 app/frontend/.env.*
 app/backend/.env
 app/backend/.env.*
+# but DO commit env templates so devs know what variables exist.
+!.env.example
+!app/frontend/.env.example
+!app/backend/.env.example
 
 # local Supabase CLI state / generated temp files
 supabase/.temp/
@@ -46,3 +50,4 @@ yarn-error.log*
 
 .graphify/
 .graphify-cache/
+graphify-out/

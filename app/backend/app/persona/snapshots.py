@@ -79,7 +79,14 @@ def save_persona_snapshot(supabase: Any, snapshot: dict[str, Any]) -> dict[str, 
     return snapshot
 
 
+_PLACEHOLDER_USER_IDS = {"None", "undefined", "null", ""}
+
+
 def get_latest_persona_snapshot(supabase: Any, user_id: str) -> dict[str, Any] | None:
+    # Anonymous onboarding occasionally passes a None or stringified placeholder
+    # through query params; short-circuit before hitting Supabase.
+    if not user_id or (isinstance(user_id, str) and user_id.strip() in _PLACEHOLDER_USER_IDS):
+        return None
     rows = _safe(
         lambda: (
             supabase.table("aspirant_persona_snapshots")

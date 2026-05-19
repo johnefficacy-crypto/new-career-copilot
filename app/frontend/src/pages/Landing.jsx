@@ -12,7 +12,14 @@ import { useAuth } from "../lib/authContext";
  *           Pricing · FAQ · CTA · Footer
  * ===================================================================== */
 
-const PROTOTYPE_HOME = "/app/today";
+// Build a guest-aware target: for `/app/*` paths the unauthenticated user
+// is routed through `/signup?next=<path>` so the page they land on isn't a
+// dead-end. Authenticated users go straight to the deep link.
+function guestSafe(path, isAuthed) {
+  if (isAuthed) return path;
+  if (typeof path !== "string" || !path.startsWith("/app/")) return path;
+  return `/signup?next=${encodeURIComponent(path)}`;
+}
 
 function layerGlyph(layer) {
   if (layer === "user") return "u·";
@@ -44,7 +51,7 @@ function Nav() {
           <a href="#trust" className="link-under">Trust &amp; sources</a>
           <a href="#exams" className="link-under">Exams</a>
           <a href="#pricing" className="link-under">Pricing</a>
-          <Link to={PROTOTYPE_HOME} className="link-under text-[#6C5038]">See the prototype →</Link>
+          <Link to="/signup?next=/app/today" className="link-under text-[#6C5038]">See the prototype →</Link>
         </nav>
         <div className="flex items-center gap-2">
           {auth.isAuthed ? (
@@ -56,7 +63,7 @@ function Nav() {
               <Link to="/login" data-testid="nav-login" className="btn btn-ghost hidden sm:inline-flex">
                 Sign in
               </Link>
-              <Link to="/signup" data-testid="nav-signup" className="btn btn-primary">
+              <Link to="/app/onboarding/chat?mode=discovery" data-testid="nav-signup" className="btn btn-primary">
                 Start free
               </Link>
             </>
@@ -92,12 +99,43 @@ function Hero() {
             <strong>personal progress</strong> into one concrete plan a day. No content firehose. No
             motivational fluff. No "AI says so" without showing the work.
           </p>
-          <div className="mt-7 flex gap-3 flex-wrap">
-            <Link to="/signup" data-testid="hero-cta-signup" className="btn btn-primary">
-              Start free · pick your exam
+          <div className="mt-7 grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-[520px]">
+            <Link
+              to="/app/onboarding/chat?mode=discovery&intent=check_eligibility"
+              data-testid="hero-cta-check-eligibility"
+              className="btn btn-primary"
+            >
+              Check eligibility
             </Link>
-            <Link to={PROTOTYPE_HOME} data-testid="hero-cta-login" className="btn btn-ghost">
-              See a real day →
+            <Link
+              to="/app/onboarding/chat?mode=discovery&intent=prepare_exam"
+              data-testid="hero-cta-create-study-plan"
+              className="btn btn-primary"
+            >
+              Create study plan
+            </Link>
+            <Link
+              to="/app/onboarding/chat?mode=discovery&intent=track_deadlines"
+              data-testid="hero-cta-track-deadlines"
+              className="btn btn-ghost"
+            >
+              Track deadlines/documents
+            </Link>
+            <Link
+              to="/app/onboarding/chat?mode=discovery&intent=join_study_group"
+              data-testid="hero-cta-join-group"
+              className="btn btn-ghost"
+            >
+              Join study group
+            </Link>
+          </div>
+          <div className="mt-3 text-[12px] text-[#6C5038]">
+            <Link
+              to="/signup?next=/app/today"
+              data-testid="hero-cta-see-prototype"
+              className="link-under"
+            >
+              See a real day → sign in first
             </Link>
           </div>
           <div className="mt-7 grid grid-cols-3 gap-6 max-w-[480px]">
@@ -117,8 +155,9 @@ function Hero() {
 
 function Stat({ n, l }) {
   return (
-    <div className="border-t border-[#E7DECB] pt-3">
-      <div className="font-serif text-[28px] leading-none">{n}</div>
+    <div className="border-t border-[#E7DECB] pt-3" data-testid="landing-stat">
+      <span className="pill pill-outline text-[9.5px] uppercase tracking-[0.18em]">Example</span>
+      <div className="font-serif text-[28px] leading-none mt-2">{n}</div>
       <div className="text-[11.5px] text-[#6C5038] mt-2 leading-snug">{l}</div>
     </div>
   );
@@ -204,8 +243,11 @@ function HeroPreview() {
 
         <div className="hairline my-3" />
         <div className="flex items-center justify-between text-[11px]">
-          <div className="text-[#6C5038]">Why this plan? · 41 signals · 7 rules fired</div>
-          <Link to={PROTOTYPE_HOME} className="text-[#2E2218] font-semibold link-under">
+          <div className="text-[#6C5038] flex items-center gap-2">
+            <span className="pill pill-outline text-[9.5px] uppercase tracking-[0.18em]">Example</span>
+            <span>Why this plan? · 41 signals · 7 rules fired</span>
+          </div>
+          <Link to="/signup?next=/app/today" className="text-[#2E2218] font-semibold link-under">
             Open today →
           </Link>
         </div>
@@ -241,7 +283,10 @@ function HeroPreview() {
         className="absolute -right-2 lg:-right-6 bottom-8 soft-card grain px-4 py-3 lift"
         style={{ maxWidth: 240 }}
       >
-        <div className="eyebrow">Engine</div>
+        <div className="eyebrow flex items-center gap-2">
+          <span>Engine</span>
+          <span className="pill pill-outline text-[9px] uppercase tracking-[0.18em]">Example</span>
+        </div>
         <div className="text-[12.5px] mt-1">7 rules fired · 4 layers used</div>
         <div className="mt-2 flex gap-1">
           {["u", "e", "n", "⚙"].map((g, i) => (
@@ -413,7 +458,7 @@ function HowItWorks() {
       visual: <StepVisualCompile />,
     },
     { id: "plan", title: "Today's plan", sub: "One compiled day, every morning.", visual: <StepVisualPlan /> },
-    { id: "adapt", title: "Adapt weekly", sub: "Weekly review closes the loop.", visual: <StepVisualAdapt /> },
+    { id: "adapt", title: "Adapt weekly", sub: "Report Card closes the loop.", visual: <StepVisualAdapt /> },
   ];
   const [active, setActive] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -610,13 +655,16 @@ function StepVisualCompile() {
         ))}
       </ul>
       <div className="rounded-xl border border-[#2E2218] bg-[#2E2218] text-[#F3EADB] p-4">
-        <div className="num-mono text-[9.5px] text-[#D6BC93] tracking-[0.18em] uppercase">Engine v0.6</div>
+        <div className="num-mono text-[9.5px] text-[#D6BC93] tracking-[0.18em] uppercase flex items-center gap-2">
+          <span>Engine v0.6</span>
+          <span className="pill pill-outline text-[9px] uppercase tracking-[0.18em] !border-[#D6BC93] !text-[#D6BC93]">Example</span>
+        </div>
         <div className="font-serif text-[20px] mt-1">
           7 rules
           <br />
           fired
         </div>
-        <div className="text-[11px] text-[#D6BC93] mt-2">2 held back · trust policy</div>
+        <div className="text-[11px] text-[#D6BC93] mt-2">2 held back</div>
         <div
           className="hairline my-3"
           style={{ background: "linear-gradient(90deg,transparent,#4E3A29,transparent)" }}
@@ -856,7 +904,7 @@ function EligibilityEngine() {
                 <div className="num-mono text-[11px] text-[#6C5038]">
                   delta: <span className="text-[#33482F]">{S.delta}</span>
                 </div>
-                <Link to="/app/exams" className="text-[12px] font-semibold text-[#2E2218] link-under">
+                <Link to="/signup?next=/app/eligibility/exams" className="text-[12px] font-semibold text-[#2E2218] link-under">
                   Open eligibility matches →
                 </Link>
               </div>
@@ -865,6 +913,12 @@ function EligibilityEngine() {
 
           {/* Right: fact tiles + trust pillar */}
           <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="pill pill-outline text-[9.5px] uppercase tracking-[0.18em]">Example</span>
+              <span className="text-[11px] text-[#6C5038]">
+                Illustrative profile facets &amp; rule coverage — not your live numbers.
+              </span>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <FactTile k="profile facets" v="9" sub="age · category · education · domicile · GATE · …" />
               <FactTile k="rules per match" v="6" sub="every recruitment, every change" />
@@ -972,13 +1026,13 @@ function FactTile({ k, v, sub, tone }) {
  * ----------------------------------------------------------------- */
 function ExploreScreens() {
   const screens = [
-    { tag: "Aspirant", title: "Today · Mission Control", sub: "Plan + reasoning trace per task", to: "/app/today", glyph: "◐" },
-    { tag: "Aspirant", title: "Study Plan", sub: "Timeline + before/after adaptation", to: "/app/study-plan", glyph: "▤" },
+    { tag: "Aspirant", title: "Today", sub: "Plan + reasoning trace per task", to: "/app/today", glyph: "◐" },
+    { tag: "Aspirant", title: "Study Plan", sub: "Timeline + before/after adaptation", to: "/app/study/plan", glyph: "▤" },
     { tag: "Aspirant", title: "Subjects", sub: "Topic tree · locked priority · mastery", to: "/app/study/subjects", glyph: "❖" },
     { tag: "Aspirant", title: "Focus", sub: "25/50/90m timer · reflection drawer", to: "/app/study/focus", glyph: "◍" },
     { tag: "Aspirant", title: "Mocks", sub: "Error patterns → correction tasks", to: "/app/study/mocks", glyph: "△" },
-    { tag: "Aspirant", title: "Weekly review", sub: "Honest read · next-week preview", to: "/app/study/review", glyph: "↻" },
-    { tag: "Aspirant", title: "Eligibility matches", sub: "Recruitments matched to your profile", to: "/app/exams", glyph: "⌖" },
+    { tag: "Aspirant", title: "Report Card", sub: "Honest read · next-week preview", to: "/app/study/review", glyph: "↻" },
+    { tag: "Aspirant", title: "Eligibility matches", sub: "Recruitments matched to your profile", to: "/app/eligibility/exams", glyph: "⌖" },
     { tag: "Admin", title: "Exam Intelligence", sub: "7 tabs · verify + lock + plan-impact", to: "/admin/exam-intelligence", glyph: "⊞", dark: true },
     { tag: "Admin", title: "Eligibility verification", sub: "Criteria queue · match impact preview", to: "/admin/eligibility-queue", glyph: "⌗", dark: true },
     { tag: "Admin", title: "Persona Inspector", sub: "Internal dims → study policy", to: "/admin/persona", glyph: "◊", dark: true },
@@ -995,19 +1049,27 @@ function ExploreScreens() {
           <ScreenLinkCard key={i} s={s} />
         ))}
       </div>
-      <div className="mt-6 text-center">
-        <Link to="/app" className="btn btn-ghost">
-          Or jump straight into your dashboard →
-        </Link>
-      </div>
+      <ExploreFooterLink />
     </section>
   );
 }
 
+function ExploreFooterLink() {
+  const auth = useAuth();
+  return (
+    <div className="mt-6 text-center">
+      <Link to={guestSafe("/app/today", auth.isAuthed)} className="btn btn-ghost">
+        Or jump straight into your dashboard →
+      </Link>
+    </div>
+  );
+}
+
 function ScreenLinkCard({ s }) {
+  const auth = useAuth();
   return (
     <Link
-      to={s.to}
+      to={guestSafe(s.to, auth.isAuthed)}
       className={`group relative rounded-2xl border p-5 lift ${
         s.dark ? "bg-[#2E2218] border-[#2E2218]" : "bg-white/70 border-[#E7DECB]"
       }`}
@@ -1306,9 +1368,9 @@ function Pricing() {
             price="Free"
             note="forever"
             bullets={[
-              "Today · Mission Control",
+              "Today",
               "Subjects + topic tree",
-              "Weekly review (manual)",
+              "Report Card (manual)",
               "Update feed (read-only)",
             ]}
             cta="Start free"
@@ -1465,10 +1527,10 @@ function CTA() {
           Pick your exam. Tell us your hours. We'll give you a calm, traceable plan tomorrow at 06:00.
         </p>
         <div className="mt-8 flex justify-center gap-3 flex-wrap">
-          <Link to="/signup" className="btn btn-primary">
+          <Link to="/app/onboarding/chat?mode=discovery" className="btn btn-primary">
             Start free · pick your exam
           </Link>
-          <Link to={PROTOTYPE_HOME} className="btn btn-ghost">
+          <Link to="/signup?next=/app/today" className="btn btn-ghost">
             Walk through the app
           </Link>
         </div>
@@ -1514,11 +1576,11 @@ function Footer() {
         <FooterCol
           h="The app"
           links={[
-            { l: "Today · Mission Control", to: "/app/today" },
-            { l: "Study Plan", to: "/app/study-plan" },
+            { l: "Today", to: "/app/today" },
+            { l: "Study Plan", to: "/app/study/plan" },
             { l: "Subjects", to: "/app/study/subjects" },
-            { l: "Eligibility matches", to: "/app/exams" },
-            { l: "Weekly review", to: "/app/study/review" },
+            { l: "Eligibility matches", to: "/app/eligibility/exams" },
+            { l: "Report Card", to: "/app/study/review" },
             { l: "Admin · Exam Intelligence", to: "/admin/exam-intelligence" },
             { l: "Admin · Eligibility", to: "/admin/eligibility-queue" },
             { l: "Open the app", to: "/app" },
@@ -1527,11 +1589,11 @@ function Footer() {
         <FooterCol
           h="Company"
           links={[
-            { l: "Trust policy", h: "#trust" },
+            { l: "Trust & sources", h: "#trust" },
             { l: "Mentors", to: "/app/mentors" },
             { l: "Pricing", h: "#pricing" },
             { l: "Sign in", to: "/login" },
-            { l: "Get started", to: "/signup" },
+            { l: "Get started", to: "/app/onboarding/chat?mode=discovery" },
           ]}
         />
       </div>
@@ -1563,6 +1625,7 @@ function Footer() {
 }
 
 function FooterCol({ h, links }) {
+  const auth = useAuth();
   return (
     <div>
       <div className="eyebrow">{h}</div>
@@ -1570,7 +1633,7 @@ function FooterCol({ h, links }) {
         {links.map((l, i) => (
           <li key={i}>
             {l.to ? (
-              <Link to={l.to} className="text-[13px] text-[#3a2e22] link-under">
+              <Link to={guestSafe(l.to, auth.isAuthed)} className="text-[13px] text-[#3a2e22] link-under">
                 {l.l}
               </Link>
             ) : (

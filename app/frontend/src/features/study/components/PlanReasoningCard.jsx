@@ -30,8 +30,15 @@ export default function PlanReasoningCard({ reasoning }) {
       <ul className="space-y-2">
         {list.map((r, i) => {
           const label = REASON_LABEL[r.reason_type] || r.reason_type || "Signal";
+          // Key on stable content (id when backend provides it, otherwise
+          // reason_type + a hash of the summary prefix) so React keeps DOM
+          // state aligned when the backend reorders or filters entries
+          // between renders. key={i} would carry stale state across reorders.
+          const key =
+            r.id ||
+            `${r.reason_type || "signal"}-${String(r.summary || "").slice(0, 48)}-${i}`;
           return (
-            <li key={i} className="flex items-start gap-3 text-[13px]">
+            <li key={key} className="flex items-start gap-3 text-[13px]">
               <span className="sdot sdot-live mt-1.5" aria-hidden="true" />
               <span className="flex-1 text-clay-800">{r.summary}</span>
               <span className="num-mono text-[10px] text-clay-700 mt-1 shrink-0">{label}</span>

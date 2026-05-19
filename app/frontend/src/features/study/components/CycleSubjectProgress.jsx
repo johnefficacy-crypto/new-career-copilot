@@ -24,9 +24,18 @@ export default function CycleSubjectProgress({ subjects }) {
       <ul className="space-y-2">
         {rows.map((s) => {
           const actual = Number(s.actual_pct || 0);
-          const planned = Number(s.planned_pct || 100);
-          const ratio = planned ? Math.max(0, Math.min(1, actual / planned)) : 0;
-          const onTrack = ratio >= 0.85;
+          // Distinguish "not planned" from "100% planned." The prior
+          // default-to-100 collapsed an unplanned subject into ratio =
+          // actual/100, which then rendered as progress against an
+          // imaginary plan that doesn’t exist.
+          const plannedRaw = s.planned_pct;
+          const planned = Number(plannedRaw);
+          const notPlanned =
+            plannedRaw === null || plannedRaw === undefined || !Number.isFinite(planned) || planned <= 0;
+          const ratio = notPlanned
+            ? 0
+            : Math.max(0, Math.min(1, actual / planned));
+          const onTrack = !notPlanned && ratio >= 0.85;
           return (
             <li
               key={s.subject_id || s.subject_name}
@@ -45,14 +54,22 @@ export default function CycleSubjectProgress({ subjects }) {
                 <span className="num-mono text-[11px] text-clay-700">
                   {actual}%
                 </span>
-                {onTrack ? (
+                {notPlanned ? (
+                  <Pill tone="outline">not planned</Pill>
+                ) : onTrack ? (
                   <Pill tone="sage">on track</Pill>
                 ) : actual === 0 ? (
                   <Pill tone="outline">not started</Pill>
                 ) : (
                   <Pill tone="amber">behind</Pill>
                 )}
-                <TrustStamp kind={s.trust_status === "locked" ? "locked" : "preview"} />
+                <TrustStamp
+                  // Pass the backend status through; the TrustStamp map
+                  // already handles "locked" / "needs" / "verified" /
+                  // "preview" / "notcon". Coercing every non-locked status
+                  // to "preview" mislabelled "needs verification" rows.
+                  kind={notPlanned ? "preview" : s.trust_status || "preview"}
+                />
               </div>
             </li>
           );

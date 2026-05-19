@@ -22,6 +22,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.db.supabase_client import get_supabase_admin
 from app.notifications.dispatcher import dispatch_pending_alerts, kill_switch_enabled
 from app.notifications.recompute_worker import drain_recompute_queue
+from app.profile.anonymous_cleanup import cleanup_anonymous_users
 from app.scraping.alerts import send_deadline_alerts
 
 logger = logging.getLogger("career_copilot.notifications.scheduler")
@@ -30,13 +31,44 @@ _scheduler: BackgroundScheduler | None = None
 _last_run: dict[str, dict[str, Any]] = {}
 
 
+def _is_noop_result(name: str, result: Any) -> bool:
+    """True when a scheduled-job result reflects "nothing happened".
+
+    Idle ticks happen every couple of minutes and produced ~30 INFO
+    lines per 5-minute window. We still record the result on
+    ``_last_run`` (so operators can pull it from the admin endpoint),
+    but route the heartbeat to DEBUG.
+    """
+    if not isinstance(result, dict):
+        return False
+    if name == "notif:dispatch":
+        # Either kill-switched, or a normal tick that found nothing to send.
+        if result.get("killed"):
+            return True
+        return (
+            (result.get("checked") or 0) == 0
+            and (result.get("in_app") or 0) == 0
+            and (result.get("emailed") or 0) == 0
+        )
+    if name == "elig:recompute":
+        return (result.get("checked") or 0) == 0 and (result.get("completed") or 0) == 0
+    if name == "notif:deadline_sweep":
+        return bool(result.get("killed")) or (result.get("sent") or 0) == 0
+    if name == "anon:cleanup":
+        return (result.get("deleted") or 0) == 0
+    return False
+
+
 def _wrap(name: str, func) -> Any:
     def runner() -> None:
         started = datetime.now(timezone.utc).isoformat()
         try:
             result = func()
             _last_run[name] = {"at": started, "ok": True, "result": result}
-            logger.info("[%s] %s", name, result)
+            if _is_noop_result(name, result):
+                logger.debug("[%s] %s", name, result)
+            else:
+                logger.info("[%s] %s", name, result)
         except Exception as exc:  # noqa: BLE001
             _last_run[name] = {"at": started, "ok": False, "error": str(exc)}
             logger.exception("[%s] failed", name)
@@ -70,12 +102,17 @@ def _job_plan_regen() -> dict[str, Any]:
     return regenerate_stale_plans(get_supabase_admin())
 
 
+def _job_cleanup_anonymous_users() -> dict[str, Any]:
+    return cleanup_anonymous_users(get_supabase_admin())
+
+
 # Public registry — also used by the manual-trigger admin endpoint.
 JOBS: dict[str, callable] = {  # type: ignore[type-arg]
     "notif:dispatch": _job_dispatch,
     "notif:deadline_sweep": _job_deadline_sweep,
     "elig:recompute": _job_recompute,
     "study:plan_regen": _job_plan_regen,
+    "anon:cleanup": _job_cleanup_anonymous_users,
 }
 
 
@@ -124,6 +161,15 @@ def start_scheduler() -> BackgroundScheduler | None:
         max_instances=1,
         coalesce=True,
     )
+    # Daily 04:00 UTC — sweep anonymous Supabase users older than 30d.
+    sched.add_job(
+        _wrap("anon:cleanup", _job_cleanup_anonymous_users),
+        CronTrigger(hour=4, minute=0, timezone="UTC"),
+        id="anon:cleanup",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
 
     sched.start()
     _scheduler = sched
@@ -136,8 +182,10 @@ def stop_scheduler() -> None:
     if _scheduler is not None:
         try:
             _scheduler.shutdown(wait=False)
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # Suppress to keep shutdown idempotent, but log so a failing
+            # scheduler shutdown does not vanish from operational view.
+            logger.warning("scheduler_shutdown_failed exc=%s: %s", type(exc).__name__, exc, exc_info=True)
         _scheduler = None
 
 

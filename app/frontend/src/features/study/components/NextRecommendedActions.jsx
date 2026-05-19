@@ -25,12 +25,20 @@ export default function NextRecommendedActions({ topics }) {
     for (const t of rows) {
       const sid = t.subject_id || t.subject || "General";
       const cur = buckets.get(sid);
-      // Higher priority wins; ties broken by "needs the most work" — lower
-      // mastery and any error signal.
-      const score =
-        (t.exam_priority_score || 0) * 10 -
-        (t.mastery_score || 100) +
-        (t.error_pattern_count ? 25 : 0);
+      // Normalise both signals to [0, 1] before weighting so neither side
+      // dominates by scale alone. exam_priority_score is the backend's
+      // 0..100 coverage_priority; mastery_score is the 0..100 percent.
+      const priority = Math.max(0, Math.min(1, (Number(t.exam_priority_score) || 0) / 100));
+      const masteryRaw = t.mastery_score;
+      const hasMastery = masteryRaw !== null && masteryRaw !== undefined;
+      // Neutral midpoint when mastery is unknown — neither a free pass nor
+      // a penalty.
+      const masteryNorm = hasMastery
+        ? Math.max(0, Math.min(1, Number(masteryRaw) / 100))
+        : 0.5;
+      const errorBoost = t.error_pattern_count ? 0.25 : 0;
+      // 60% prior on exam weight, 40% on inverse mastery, plus error boost.
+      const score = priority * 0.6 + (1 - masteryNorm) * 0.4 + errorBoost;
       if (!cur || score > cur.score) {
         buckets.set(sid, {
           sid,

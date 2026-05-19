@@ -33,7 +33,7 @@ const SAMPLE_UNVERIFIED = [
     summary:
       "Items from aggregator sites are surfaced for awareness only. They never silently rewrite your plan.",
     source: "(static example)",
-    kind: "aggregator",
+    source_type: "aggregator",
     tag: "Date rumor",
     effect: "No plan change",
   },
@@ -43,7 +43,7 @@ const SAMPLE_UNVERIFIED = [
     summary:
       "Research and trend analysis is shown as a hint, not as an official communication.",
     source: "(static example)",
-    kind: "research",
+    source_type: "research",
     tag: "Trend",
     effect: "Hint only",
   },
@@ -53,23 +53,28 @@ const SAMPLE_UNVERIFIED = [
     summary:
       "When you become eligible for an adjacent recruitment, it surfaces here — not in your main plan.",
     source: "(static example)",
-    kind: "opportunity",
+    source_type: "opportunity",
     tag: "Opportunity",
     effect: "Affects eligibility",
   },
 ];
 
+// Canonical contract is snake_case (matches the FastAPI backend default for
+// every other Study OS endpoint). The component renders camelCase
+// internally; this adapter is the only place that crosses the wire. The
+// SAMPLE_* preview cards are camelCase legacy and continue to work because
+// the adapter falls back when the snake_case key is absent.
 function normalizeUpdate(u) {
   return {
     id: u.id,
     title: u.title || "Update",
     summary: u.summary || "",
     source: u.source || "",
-    sourceUrl: u.source_url || u.sourceUrl,
+    sourceUrl: u.source_url ?? u.sourceUrl ?? null,
     tag: u.tag || "",
     effect: u.effect || "",
-    receivedAt: u.received_at || u.receivedAt || "",
-    kind: u.kind || u.sourceType || "official",
+    receivedAt: u.received_at ?? u.receivedAt ?? "",
+    kind: u.source_type ?? u.kind ?? "official",
   };
 }
 
@@ -150,17 +155,34 @@ function UnverifiedCard({ u }) {
   );
 }
 
-export default function UpdateIntelligencePanel({ official, unverified, isPreview = true }) {
-  const officialList = Array.isArray(official) && official.length
-    ? official.map(normalizeUpdate)
-    : SAMPLE_OFFICIAL.map(normalizeUpdate);
-  const unverifiedList = Array.isArray(unverified) && unverified.length
-    ? unverified.map(normalizeUpdate)
-    : SAMPLE_UNVERIFIED.map(normalizeUpdate);
+// Sample cards only render when the caller explicitly opts in via
+// `showSamplesWhenEmpty` (Storybook, design previews). Production callers
+// pass real lists; an empty backend response now produces an explicit
+// "no updates" empty state rather than five fictional "example" cards that
+// aspirants could mistake for live verified intelligence.
+export default function UpdateIntelligencePanel({
+  official,
+  unverified,
+  isPreview = false,
+  showSamplesWhenEmpty = false,
+}) {
+  const hasOfficial = Array.isArray(official) && official.length > 0;
+  const hasUnverified = Array.isArray(unverified) && unverified.length > 0;
 
-  const noOfficial = !Array.isArray(official) || !official.length;
-  const noUnverified = !Array.isArray(unverified) || !unverified.length;
-  const showingPreview = isPreview || (noOfficial && noUnverified);
+  const officialList = hasOfficial
+    ? official.map(normalizeUpdate)
+    : showSamplesWhenEmpty
+      ? SAMPLE_OFFICIAL.map(normalizeUpdate)
+      : [];
+  const unverifiedList = hasUnverified
+    ? unverified.map(normalizeUpdate)
+    : showSamplesWhenEmpty
+      ? SAMPLE_UNVERIFIED.map(normalizeUpdate)
+      : [];
+
+  const renderingSamples =
+    showSamplesWhenEmpty && (!hasOfficial || !hasUnverified);
+  const showingPreviewTag = isPreview || renderingSamples;
 
   return (
     <section
@@ -185,7 +207,7 @@ export default function UpdateIntelligencePanel({ official, unverified, isPrevie
             surfaced only — they never silently rewrite your plan.
           </p>
         </div>
-        {showingPreview ? (
+        {showingPreviewTag ? (
           <span className="pill pill-amber" data-testid="updates-preview-tag">
             Preview · static example
           </span>
@@ -201,9 +223,17 @@ export default function UpdateIntelligencePanel({ official, unverified, isPrevie
             </div>
           </div>
           <div className="space-y-3">
-            {officialList.map((u) => (
-              <OfficialCard key={u.id} u={u} />
-            ))}
+            {officialList.length ? (
+              officialList.map((u) => <OfficialCard key={u.id} u={u} />)
+            ) : (
+              <div
+                className="rounded-xl border border-dashed border-clay-200 bg-clay-50/40 p-3 text-xs text-muted-foreground"
+                data-testid="updates-official-empty"
+              >
+                No verified updates for your exam right now. Official changes
+                will appear here as they’re ingested.
+              </div>
+            )}
           </div>
         </div>
         <div>
@@ -217,14 +247,22 @@ export default function UpdateIntelligencePanel({ official, unverified, isPrevie
             </div>
           </div>
           <div className="space-y-3">
-            {unverifiedList.map((u) => (
-              <UnverifiedCard key={u.id} u={u} />
-            ))}
+            {unverifiedList.length ? (
+              unverifiedList.map((u) => <UnverifiedCard key={u.id} u={u} />)
+            ) : (
+              <div
+                className="rounded-xl border border-dashed border-clay-200 bg-clay-50/40 p-3 text-xs text-muted-foreground"
+                data-testid="updates-unverified-empty"
+              >
+                No aggregator, research or opportunity items surfaced this
+                week.
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      {showingPreview ? (
+      {renderingSamples ? (
         <div className="mt-4 text-[11px] text-muted-foreground italic">
           Update intelligence endpoint is not connected yet — these cards are
           static examples illustrating the trust contract.

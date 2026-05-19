@@ -46,7 +46,9 @@ def test_mission_control_flips_engine_trace_to_available_with_verified_data():
             {"id": "exam-1", "slug": "ssc-cgl", "name": "SSC CGL", "exam_type": "recruitment", "is_active": True}
         ],
         "exam_topic_coverage": [
-            {"exam_id": "exam-1", "topic_id": "t1", "priority": 1, "is_active": True}
+            {"exam_id": "exam-1", "topic_id": "t1",
+             "exam_priority_score": 80, "is_high_yield": True,
+             "confidence_score": 0.8, "reviewer_status": "locked"}
         ],
         "topics": [
             {"id": "t1", "slug": "p", "name": "Percentages", "level": "topic", "is_active": True, "subject_id": "s1"}

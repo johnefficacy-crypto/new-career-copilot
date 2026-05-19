@@ -1,37 +1,73 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Clock3, FileJson, Search, X } from "lucide-react";
+import { AlertTriangle, FileJson, X } from "lucide-react";
 import { api } from "../../lib/api";
 import { useFocusTrap } from "../../shared/a11y/useFocusTrap";
-import { EmptyState, ErrorState, LoadingSkeleton, StatusBadge } from "../../shared/ui";
+
+function formatTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const days = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  return `${hh}:${mm}\n${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}`;
+}
 
 function AuditDrawer({ event, onClose }) {
   const panelRef = useRef(null);
   const closeRef = useRef(null);
   useFocusTrap({ active: !!event, containerRef: panelRef, onEscape: onClose, initialFocusRef: closeRef });
   if (!event) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/30">
+    <div className="fixed inset-0 z-50 flex justify-end" style={{ background: "rgba(26, 24, 21, 0.35)" }}>
       <div className="absolute inset-0" onClick={onClose} />
-      <aside ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="audit-detail-title" className="relative h-full w-full max-w-2xl overflow-auto border-l border-border bg-[#FBF6EF] p-5 shadow-xl">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Audit event</div>
-            <h2 id="audit-detail-title" className="mt-1 font-heading text-2xl">{event.action || "Unknown action"}</h2>
+      <aside
+        ref={panelRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="audit-detail-title"
+        className="oc"
+        style={{ position: "relative", height: "100%", width: "min(100%, 640px)", overflow: "auto", borderLeft: "1px solid var(--rule)" }}
+      >
+        <div style={{ padding: "16px 20px" }}>
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <div className="lbl">Audit event</div>
+              <h2 id="audit-detail-title" className="oc-title" style={{ fontSize: 22, marginTop: 4 }}>{event.action || "Unknown action"}</h2>
+            </div>
+            <button ref={closeRef} type="button" className="btn small" onClick={onClose} aria-label="Close audit details">
+              <X className="h-4 w-4" />
+            </button>
           </div>
-          <button ref={closeRef} type="button" className="btn btn-ghost h-9 w-9 p-0" onClick={onClose} aria-label="Close audit details"><X className="h-4 w-4" /></button>
-        </div>
-        <dl className="mt-5 grid gap-3 text-sm md:grid-cols-2">
-          <Info label="When" value={event.created_at || event.at} />
-          <Info label="Actor" value={event.actor_email || event.actor} />
-          <Info label="Entity" value={`${event.entity_type || ""}:${event.entity_id || event.target || ""}`} />
-          <Info label="Event ID" value={event.id} />
-        </dl>
-        <div className="mt-5 soft-card rounded-2xl p-4">
-          <div className="flex items-center gap-2 font-semibold"><FileJson className="h-4 w-4" /> Payload</div>
-          <pre className="mt-3 max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-xl bg-white/70 p-3 text-[11px]">{JSON.stringify({ old_value: event.old_value, new_value: event.new_value, notes: event.notes }, null, 2)}</pre>
+          <div className="grid2" style={{ marginTop: 16 }}>
+            <Info label="when" value={event.created_at || event.at} />
+            <Info label="actor" value={event.actor_email || event.actor} />
+            <Info label="entity" value={`${event.entity_type || ""}:${event.entity_id || event.target || ""}`} />
+            <Info label="event id" value={event.id} />
+          </div>
+          <div className="card" style={{ marginTop: 16 }}>
+            <div className="card-head">
+              <div className="row"><FileJson className="h-4 w-4" /><strong style={{ fontFamily: "var(--fmono)", fontSize: 12 }}>Payload</strong></div>
+            </div>
+            <div className="card-body">
+              <div className="tline-payload" style={{ maxHeight: "60vh" }}>
+                {JSON.stringify({ old_value: event.old_value, new_value: event.new_value, notes: event.notes }, null, 2)}
+              </div>
+            </div>
+          </div>
         </div>
       </aside>
+    </div>
+  );
+}
+
+function Info({ label, value }) {
+  return (
+    <div className="field">
+      <div className="field-lbl">{label}</div>
+      <div className="field-val" style={{ wordBreak: "break-word" }}>{value || "—"}</div>
     </div>
   );
 }
@@ -46,7 +82,10 @@ export default function AdminAudit() {
   const load = async () => {
     setLoading(true); setErr("");
     try {
-      const d = await api.get("/api/admin/audit");
+      // Backend requires `entity_type` (admin_eligibility.py:list_audit_entries
+      // is entity-scoped by contract; calling without it returns 422).
+      // TODO: when this page grows a filter UI, source entity_type from it.
+      const d = await api.get("/api/admin/audit?entity_type=recruitment");
       setItems(d.items || []);
     } catch (e) {
       setErr(e.message || "Failed");
@@ -65,12 +104,12 @@ export default function AdminAudit() {
 
   if (err?.includes("403")) {
     return (
-      <div className="soft-card rounded-2xl p-5 text-sm" data-testid="admin-audit">
-        <div className="flex items-start gap-3">
-          <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-700" />
+      <div className="card" data-testid="admin-audit">
+        <div className="card-body row" style={{ alignItems: "flex-start", gap: 12 }}>
+          <AlertTriangle className="h-5 w-5" style={{ color: "var(--blocker)" }} />
           <div>
-            <h1 className="font-heading text-xl">Audit access restricted</h1>
-            <p className="mt-1 text-muted-foreground">You do not have <code>audit.view</code> permission.</p>
+            <h2 className="oc-title" style={{ fontSize: 18 }}>Audit access restricted</h2>
+            <div className="anno" style={{ marginTop: 4 }}>You do not have <code>audit.view</code> permission.</div>
           </div>
         </div>
       </div>
@@ -78,42 +117,72 @@ export default function AdminAudit() {
   }
 
   return (
-    <div className="space-y-5" data-testid="admin-audit">
-      <div>
-        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground font-semibold">Governance / audit</div>
-        <h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight">Audit log.</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Review admin actions without expanding raw payloads inside the list.</p>
-      </div>
-      <div className="soft-card rounded-2xl p-4">
-        <label className="relative block">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <span className="sr-only">Search audit log</span>
-          <input value={query} onChange={(e) => setQuery(e.target.value)} className="w-full rounded-xl border border-border bg-white/80 py-2 pl-9 pr-3 text-sm" placeholder="Search actor, action, entity" />
-        </label>
-      </div>
-      {err && <ErrorState title="Failed to load audit log" message={err} onRetry={load} />}
-      {loading ? <LoadingSkeleton variant="table" /> : null}
-      {!loading && !err && filtered.length === 0 ? <EmptyState icon={Clock3} title="No audit events match this view" description="Adjust the search to inspect more events." /> : null}
-      {!loading && !err && filtered.length > 0 ? (
-        <div className="space-y-3">
-          {filtered.map((event) => (
-            <button key={event.id} type="button" onClick={() => setSelected(event)} className="soft-card block w-full rounded-2xl p-4 text-left transition hover:border-clay-300">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="font-semibold">{event.action || "unknown.action"}</div>
-                  <div className="mt-1 truncate text-xs text-muted-foreground">{event.actor_email || event.actor || "system"} / {event.entity_type || "entity"}:{event.entity_id || event.target || "-"}</div>
-                </div>
-                <StatusBadge status="pending" label={event.created_at || event.at || "Unknown time"} />
-              </div>
-            </button>
-          ))}
+    <div className="stack" data-testid="admin-audit">
+      <section className="scrn" style={{ padding: 0, border: "none" }}>
+        <div className="scrn-head">
+          <div>
+            <div className="lbl">Governance · audit</div>
+            <h2 className="oc-title disp" style={{ fontSize: 22, marginTop: 4 }}>Audit timeline</h2>
+            <div className="anno" style={{ marginTop: 4 }}>Review admin actions. Click any row for the full payload.</div>
+          </div>
+          <span className="scrn-tag">inline · scoped to admin</span>
         </div>
-      ) : null}
+
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div className="card-body">
+            <div className="lbl" style={{ marginBottom: 5 }}>Search</div>
+            <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="actor / action / entity" />
+          </div>
+        </div>
+
+        {err ? <div className="err-row">{err}</div> : null}
+        {loading ? (
+          <div className="stack">
+            <div className="skel" style={{ height: 50 }} />
+            <div className="skel" style={{ height: 50 }} />
+            <div className="skel" style={{ height: 50 }} />
+          </div>
+        ) : null}
+
+        {!loading && !err && filtered.length === 0 ? (
+          <div className="empty"><div className="empty-title">No audit events</div>Adjust the search to inspect more events.</div>
+        ) : null}
+
+        {!loading && !err && filtered.length > 0 ? (
+          <div className="card">
+            <div className="card-head">
+              <h4 className="oc-title">Recent events</h4>
+              <span className="row-sub">{filtered.length} event{filtered.length === 1 ? "" : "s"}</span>
+            </div>
+            <div className="timeline">
+              {filtered.slice(0, 200).map((event) => (
+                <button
+                  key={event.id}
+                  type="button"
+                  className="tline-row"
+                  onClick={() => setSelected(event)}
+                  style={{ width: "100%", background: "transparent", border: 0, borderBottom: "1px solid var(--rule-soft)", textAlign: "left", cursor: "pointer", color: "inherit", fontFamily: "inherit" }}
+                >
+                  <div className="tline-time" style={{ whiteSpace: "pre" }}>{formatTime(event.created_at || event.at)}</div>
+                  <div>
+                    <div className="tline-action">{event.action || "unknown.action"}</div>
+                    <div className="tline-sub">
+                      by <strong>{event.actor_email || event.actor || "system"}</strong>
+                      {event.entity_type ? ` · ${event.entity_type}:${(event.entity_id || event.target || "").slice(0, 12)}` : ""}
+                    </div>
+                    {event.notes ? <div className="tline-payload" style={{ maxHeight: 50 }}>{event.notes}</div> : null}
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div className="card-foot">
+              <button type="button" className="btn ghost small" onClick={load}>Refresh</button>
+            </div>
+          </div>
+        ) : null}
+      </section>
+
       <AuditDrawer event={selected} onClose={() => setSelected(null)} />
     </div>
   );
-}
-
-function Info({ label, value }) {
-  return <div className="rounded-xl border border-border bg-white/60 p-3"><dt className="text-[11px] uppercase tracking-widest text-muted-foreground">{label}</dt><dd className="mt-1 break-words">{value || "-"}</dd></div>;
 }

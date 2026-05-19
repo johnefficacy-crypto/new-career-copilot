@@ -11,6 +11,8 @@ Supabase-backed implementation.
 from __future__ import annotations
 
 import logging
+import importlib
+
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -26,19 +28,51 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app.api.accountability import router as accountability_router
 from app.api.admin_exam_intelligence import router as admin_exam_intel_router
+from app.api.admin_overview import router as admin_overview_router
+from app.api.ai import router as ai_router
 from app.api.admin_persona import router as admin_persona_router
 from app.api.admin_scrape import router as admin_scrape_router
+from app.api.admin_study_os import router as admin_study_os_router
+from app.api.admin_exam_intel_cms import router as admin_exam_intel_cms_router
+from app.api.admin_community_governance import router as admin_community_governance_router
+from app.api.admin_conflicts import router as admin_conflicts_router
 from app.api.admin_eligibility import router as admin_eligibility_router
+from app.api.admin_copyright import (
+    public_router as copyright_public_router,
+    admin_router as admin_copyright_router,
+)
+from app.api.admin_kpis import router as admin_kpis_router
+from app.api.admin_ops import router as admin_ops_router
+
+from app.api.blogs import router as blogs_router, admin_router as admin_blogs_router
+from app.api.admin_moderation import (
+    router as moderation_router,
+    admin_router as admin_moderation_router,
+)
 from app.api.auth import router as auth_router
 from app.api.admin_trust import router as admin_trust_router
+from app.api.admin_verification_reports import router as admin_verification_reports_router
 from app.api.evidence import router as evidence_router
+from app.api.flashcards import router as flashcards_router
+from app.api.mistakes import router as mistakes_router
+from app.api.library import router as library_router
+from app.api.notes import router as notes_router
+from app.api.reports import router as reports_router
+from app.api.revision import router as revision_router
 from app.api.exam_intelligence import router as exam_intelligence_router
 from app.api.canonical import router as canonical_router
-from app.api.community_people import router as community_people_router
+from app.api.community_runtime import router as community_runtime_router
 from app.api.eligibility import router as eligibility_router
+from app.api.exam_eligibility import router as exam_eligibility_router
+from app.api.admin_exam_eligibility import router as admin_exam_eligibility_router
+from app.api.marketplace import router as marketplace_router
+from app.api.admin_marketplace import router as admin_marketplace_router
 from app.api.notifications import router as notifications_router
 from app.api.onboarding_unified import router as onboarding_unified_router
+from app.profile.onboarding import router as profile_onboarding_router
+from app.profile.readiness import router as profile_readiness_router
 from app.api.payments import router as payments_router
 from app.api.persona import router as persona_router
 from app.api.persona_questions import router as persona_questions_router
@@ -50,7 +84,27 @@ from app.core.config import get_settings
 from app.db.postgres import close_pool, get_pool
 
 logger = logging.getLogger("career_copilot")
-logging.basicConfig(level=logging.INFO)
+# Explicit format so scheduler/dispatcher records don't end up
+# concatenated or with truncated URLs in captured logs.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+
+
+def _scheduler_enabled() -> bool:
+    """``ENABLE_SCHEDULER`` gates the in-process APScheduler.
+
+    Default ``false`` so dev/test/CI boots don't spin up the cron loop
+    that hammers Supabase with notifications + recompute work. Production
+    must set ``ENABLE_SCHEDULER=true`` to get the background workers.
+    """
+    return os.environ.get("ENABLE_SCHEDULER", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 @asynccontextmanager
@@ -62,12 +116,18 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001
         logger.warning("Postgres pool not available at startup: %s", exc)
     # APScheduler — in-process cron for notifications + recompute worker.
-    try:
-        start_scheduler()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Scheduler did not start: %s", exc)
+    scheduler_started = False
+    if _scheduler_enabled():
+        try:
+            start_scheduler()
+            scheduler_started = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Scheduler did not start: %s", exc)
+    else:
+        logger.info("Scheduler disabled (ENABLE_SCHEDULER not set to true).")
     yield
-    stop_scheduler()
+    if scheduler_started:
+        stop_scheduler()
     await close_pool()
 
 
@@ -100,6 +160,20 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 
 api = APIRouter(prefix="/api")
+
+
+def _load_required_router(module_path: str, attr: str = "router") -> APIRouter:
+    """Load a required APIRouter with an explicit runtime error message."""
+    try:
+        mod = importlib.import_module(module_path)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Failed to import router module '{module_path}': {exc}") from exc
+    router_obj = getattr(mod, attr, None)
+    if not isinstance(router_obj, APIRouter):
+        raise RuntimeError(
+            f"Module '{module_path}' does not expose APIRouter '{attr}'"
+        )
+    return router_obj
 
 
 class Health(BaseModel):
@@ -163,9 +237,13 @@ async def db_health() -> DbHealth:
 
 api.include_router(auth_router)
 api.include_router(eligibility_router)
+api.include_router(exam_eligibility_router)  # PR-D1 exam-level baseline eligibility
+api.include_router(admin_exam_eligibility_router)  # PR-D2 admin CRUD for exam_eligibility_rules
 api.include_router(notifications_router)
 api.include_router(admin_scrape_router)  # admin scraper trust-gate routes
+api.include_router(admin_conflicts_router)  # consensus conflict resolution
 api.include_router(admin_trust_router)
+api.include_router(admin_verification_reports_router)  # PR7 gateway read API
 api.include_router(admin_eligibility_router)  # recompute queue, publish impact, generic audit
 api.include_router(admin_persona_router)  # PR4 admin persona controls
 api.include_router(admin_exam_intel_router)  # PR5 admin exam intelligence review
@@ -175,10 +253,43 @@ api.include_router(payments_router)  # razorpay + plans
 api.include_router(persona_router)  # internal aspirant persona v1
 api.include_router(persona_questions_router)  # PR2 progressive tiny questions
 api.include_router(study_os_router)  # PR3 Study OS Mission Control — before canonical so /study/mission-control wins
+api.include_router(admin_study_os_router)  # admin Study OS ops (flagged via ADMIN_STUDY_OS_ENABLED)
+api.include_router(admin_exam_intel_cms_router)  # admin Exam Intelligence CMS — Phase 4 (same flag)
+api.include_router(admin_community_governance_router)  # admin Community / Mentors / Resources governance (§4.1–§4.4)
 api.include_router(study_compare_router)  # Study OS comparison + social + verification
-api.include_router(onboarding_unified_router)  # unified guided onboarding — before placeholders
+api.include_router(onboarding_unified_router)  # legacy unified guided onboarding (deprecated; Item 8 will drop)
+api.include_router(profile_onboarding_router)  # POST /api/profile/onboarding-answer (Supabase anonymous auth v2)
+api.include_router(profile_readiness_router)  # GET  /api/profile/readiness (per-feature unlock cards)
+# Real Supabase-backed accountability + admin ops — must precede community_runtime
+# and placeholders so route order wins for /accountability/mentors/* and /admin/*.
+api.include_router(accountability_router)
+api.include_router(_load_required_router("app.api.admin_ops"))
+api.include_router(community_runtime_router)  # durable community/social routes — must precede canonical seed fallbacks
+api.include_router(marketplace_router)  # marketplace catalogue + Razorpay course purchase — before canonical
+api.include_router(admin_marketplace_router)  # admin marketplace CRUD + refunds
 api.include_router(canonical_router)  # canonical Supabase routes — must precede placeholders
-api.include_router(community_people_router)  # community-people: groups, partner, mentors, resources
+# NOTE: community_people_router was removed — every route under that prefix
+# duplicated community_runtime_router's. The legacy file's own docstring
+# said it was "being phased out in favour of community_runtime"; the
+# real DB-backed router is the single owner now.
+# Real Supabase-backed AI + admin overview — must precede placeholders so route order wins.
+api.include_router(ai_router)
+api.include_router(admin_overview_router)
+# Phase-2 user surfaces: notes, flashcards, mistakes, revision, reports
+api.include_router(library_router)  # PR1 document-asset foundation (user uploads)
+api.include_router(notes_router)
+api.include_router(flashcards_router)
+api.include_router(mistakes_router)
+api.include_router(revision_router)
+api.include_router(reports_router)
+# Moderation & trust workflows
+api.include_router(moderation_router)  # /moderation/report, /moderation/my-reports
+api.include_router(admin_moderation_router)  # /admin/moderation/...
+api.include_router(admin_kpis_router)  # /admin/kpis/...
+api.include_router(blogs_router)  # /blogs public list/detail
+api.include_router(admin_blogs_router)  # /admin/blogs CRUD
+api.include_router(copyright_public_router)  # /copyright/submit (public DMCA intake)
+api.include_router(admin_copyright_router)  # /admin/copyright/...
 api.include_router(placeholders_router)
 app.include_router(api)
 
