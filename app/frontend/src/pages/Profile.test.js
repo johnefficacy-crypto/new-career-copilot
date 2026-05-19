@@ -18,6 +18,15 @@ jest.mock("../features/profile/hooks/useProfileData", () => ({
   default: jest.fn(),
 }));
 
+// PR5: Profile now renders PersonaSummaryCard which uses react-query.
+// These tests don't mount a QueryClientProvider, so stub the persona
+// hook to a stable empty snapshot — the tests assert form behaviour,
+// not persona rendering.
+jest.mock("../features/profile/hooks/useMyPersona", () => ({
+  __esModule: true,
+  default: () => ({ snapshot: null, loading: false, error: null }),
+}));
+
 import useProfileData from "../features/profile/hooks/useProfileData";
 import Profile from "./Profile";
 
