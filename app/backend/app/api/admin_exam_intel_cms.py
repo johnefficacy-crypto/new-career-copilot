@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field
 from app.core.auth import require_permission
 from app.core.config import get_settings
 from app.db.supabase_client import get_supabase_admin
+from app.exam_intelligence.lookup import invalidate_exam_lookup_cache
 from app.exam_intelligence.option_normalize import option_hash, question_hash
 
 logger = logging.getLogger("career_copilot.api.admin_exam_intel_cms")
@@ -276,6 +277,7 @@ def create_exam(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=409, detail=f"Insert failed: {exc}")
     new = inserted[0] if inserted else row
+    invalidate_exam_lookup_cache()
     audit_id = _audit(
         supabase, admin, "exam_intel.cms.exam.create",
         entity_type="exam", entity_id=new.get("id"),
@@ -300,6 +302,7 @@ def update_exam(
         raise HTTPException(status_code=422, detail="No allowed fields in payload")
     patch["updated_at"] = _now_iso()
     updated = supabase.table("exams").update(patch).eq("id", exam_id).execute().data or []
+    invalidate_exam_lookup_cache()
     audit_id = _audit(
         supabase, admin, "exam_intel.cms.exam.update",
         entity_type="exam", entity_id=exam_id,
@@ -320,6 +323,7 @@ def soft_delete_exam(
     if not existing:
         raise HTTPException(status_code=404, detail="Exam not found")
     supabase.table("exams").update({"is_active": False, "updated_at": _now_iso()}).eq("id", exam_id).execute()
+    invalidate_exam_lookup_cache()
     audit_id = _audit(
         supabase, admin, "exam_intel.cms.exam.soft_delete",
         entity_type="exam", entity_id=exam_id,

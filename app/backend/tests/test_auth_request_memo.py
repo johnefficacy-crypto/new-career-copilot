@@ -70,10 +70,13 @@ def test_single_request_hits_supabase_get_user_once():
     assert calls == ["auth.get_user"], calls
 
 
-def test_separate_requests_each_hit_supabase_once():
-    # Memo is request-scoped — it must NOT survive across requests.
+def test_separate_requests_with_different_tokens_each_validate():
+    # Two distinct tokens must each be validated against Supabase. The
+    # cross-request cache is keyed per-token, so it cannot conflate.
     calls: list[str] = []
+    auth_module.invalidate_token("tok-a")
+    auth_module.invalidate_token("tok-b")
     client = TestClient(_build_app(calls))
-    client.get("/probe", headers={"Authorization": "Bearer abc"})
-    client.get("/probe", headers={"Authorization": "Bearer abc"})
+    client.get("/probe", headers={"Authorization": "Bearer tok-a"})
+    client.get("/probe", headers={"Authorization": "Bearer tok-b"})
     assert calls == ["auth.get_user", "auth.get_user"], calls

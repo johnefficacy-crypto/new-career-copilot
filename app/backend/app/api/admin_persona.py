@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from app.core.auth import require_permission
 from app.db.supabase_client import get_supabase_admin
 from app.persona.queue import enqueue_persona_recompute, process_pending_persona_recompute
+from app.persona_questions.bank import invalidate_bank_cache
 
 logger = logging.getLogger("career_copilot.api.admin_persona")
 
@@ -410,6 +411,9 @@ def patch_question(
     )
     if not updated_rows:
         raise HTTPException(status_code=500, detail="Question update failed")
+    # Read path caches list_active_questions for 10 minutes; bust it so
+    # the next onboarding fetch sees this edit.
+    invalidate_bank_cache()
     return updated_rows[0]
 
 

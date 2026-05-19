@@ -24,7 +24,23 @@ import logging
 from datetime import date
 from typing import Any, Iterable
 
+from cachetools import TTLCache
+
 logger = logging.getLogger("career_copilot.exam_eligibility.evaluator")
+
+
+# Verified rules change rarely (admin-mutable, but only on approval). A
+# 10-minute in-process cache cuts the dashboard fan-out cost without
+# making stale data outlive a reviewer's edit by more than the TTL.
+# Admin writers in ``app/api/admin_exam_eligibility.py`` must call
+# :func:`invalidate_eligibility_rules_cache` after they mutate the
+# table.
+_RULES_CACHE: TTLCache = TTLCache(maxsize=128, ttl=600)
+
+
+def invalidate_eligibility_rules_cache() -> None:
+    """Drop the verified-rules cache. Call after admin writes."""
+    _RULES_CACHE.clear()
 
 
 # Ordered enum used by the ``education_min_level`` rule. A user with the
@@ -297,6 +313,11 @@ def _load_rules_by_exam(
 ) -> dict[str, list[dict[str, Any]]]:
     if not exam_ids:
         return {}
+    cache_key = tuple(sorted(exam_ids))
+    cached = _RULES_CACHE.get(cache_key)
+    if cached is not None:
+        # Return a shallow copy so callers can't mutate the cache.
+        return {k: list(v) for k, v in cached.items()}
     rows = _safe(
         lambda: (
             supabase.table("exam_eligibility_rules")
@@ -315,6 +336,7 @@ def _load_rules_by_exam(
     out: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
         out.setdefault(r["exam_id"], []).append(r)
+    _RULES_CACHE[cache_key] = {k: list(v) for k, v in out.items()}
     return out
 
 
@@ -336,18 +358,13 @@ def summarize_user_eligibility(supabase: Any, user_id: str) -> dict[str, Any]:
     onboarding/dashboard surfaces (PR-D3). ``not_eligible`` and ``unknown``
     are included so the admin tool / debug surfaces can audit coverage.
     """
-    exam_rows = _safe(
-        lambda: (
-            supabase.table("exams")
-            .select("id, slug, name, is_active, exam_family_id")
-            .eq("is_active", True)
-            .order("name")
-            .limit(500)
-            .execute()
-            .data
-        ),
-        default=[],
-    ) or []
+    # Route through the cached lookup so the dashboard fan-out shares
+    # one read of the exams table per TTL window. The lookup superset
+    # includes the columns this caller needs (id, slug, name,
+    # exam_family_id, is_active).
+    from app.exam_intelligence.lookup import list_active_exams
+
+    exam_rows = list_active_exams(supabase, limit=500)
 
     rules_by_exam = _load_rules_by_exam(supabase, [e["id"] for e in exam_rows])
     profile = _load_user_profile(supabase, user_id)
