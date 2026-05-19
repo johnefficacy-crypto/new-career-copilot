@@ -512,6 +512,40 @@ def _get_reservations(supabase: Client, user_id: str) -> dict[str, Any]:
     return rows[0] if rows else {}
 
 
+def _count_certifications(supabase: Client, user_id: str) -> list[dict[str, Any]]:
+    return _safe(
+        lambda: supabase.table("aspirant_certifications")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("is_active", True)
+        .execute()
+        .data,
+        default=[],
+    ) or []
+
+
+def _count_experience(supabase: Client, user_id: str) -> list[dict[str, Any]]:
+    return _safe(
+        lambda: supabase.table("aspirant_experience")
+        .select("id")
+        .eq("user_id", user_id)
+        .execute()
+        .data,
+        default=[],
+    ) or []
+
+
+def _count_exam_attempts(supabase: Client, user_id: str) -> list[dict[str, Any]]:
+    return _safe(
+        lambda: supabase.table("aspirant_exam_attempts")
+        .select("id")
+        .eq("user_id", user_id)
+        .execute()
+        .data,
+        default=[],
+    ) or []
+
+
 def _upsert_user_scoped_row(supabase: Client, table: str, user_id: str, payload: dict[str, Any]) -> None:
     existing = _safe(
         lambda: supabase.table(table).select("user_id").eq("user_id", user_id).limit(1).execute().data,
@@ -721,11 +755,31 @@ async def update_profile(body: ProfileUpdate, user: dict = Depends(get_current_u
 @router_profile.get("/completion")
 async def profile_completion(user: dict = Depends(get_current_user)):
     supabase = get_supabase_admin()
-    profile = _ensure_profile_row(supabase, user["id"], user.get("email"))
-    education = _get_primary_education(supabase, user["id"])
-    prefs = _get_preferences(supabase, user["id"])
-    location = _get_location(supabase, user["id"])
-    reservations = _get_reservations(supabase, user["id"])
+    # The eight reads below are independent; serialised they cost ~150 ms
+    # × 8 ≈ 1.2 s of dashboard boot. Fan them out via to_thread + gather
+    # so the supabase-py sync client overlaps on a worker pool and total
+    # wall time drops to about one round-trip.
+    uid = user["id"]
+    email = user.get("email")
+    (
+        profile,
+        education,
+        prefs,
+        location,
+        reservations,
+        certs,
+        exp,
+        attempts,
+    ) = await asyncio.gather(
+        asyncio.to_thread(_ensure_profile_row, supabase, uid, email),
+        asyncio.to_thread(_get_primary_education, supabase, uid),
+        asyncio.to_thread(_get_preferences, supabase, uid),
+        asyncio.to_thread(_get_location, supabase, uid),
+        asyncio.to_thread(_get_reservations, supabase, uid),
+        asyncio.to_thread(_count_certifications, supabase, uid),
+        asyncio.to_thread(_count_experience, supabase, uid),
+        asyncio.to_thread(_count_exam_attempts, supabase, uid),
+    )
     checks = {
         "identity_profile": {
             "fields": ["full_name", "phone", "date_of_birth", "category", "domicile_state"],
@@ -779,9 +833,6 @@ async def profile_completion(user: dict = Depends(get_current_user)):
         }
     # Backward compatibility for next-actions engine.
     out["eligibility_profile"] = out["identity_profile"]
-    certs = _safe(lambda: supabase.table("aspirant_certifications").select("id").eq("user_id", user["id"]).eq("is_active", True).execute().data, default=[]) or []
-    exp = _safe(lambda: supabase.table("aspirant_experience").select("id").eq("user_id", user["id"]).execute().data, default=[]) or []
-    attempts = _safe(lambda: supabase.table("aspirant_exam_attempts").select("id").eq("user_id", user["id"]).execute().data, default=[]) or []
     out["certification_profile"] = {
         "completion_pct": 100 if certs else 0,
         "missing_fields": [] if certs else ["certification_name"],
