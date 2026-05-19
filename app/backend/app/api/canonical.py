@@ -34,6 +34,7 @@ from app.api.community_seed import (
 )
 from app.core.auth import get_current_user, get_optional_user
 from app.db.supabase_client import get_supabase_admin
+from app.utils.safe import SchemaDriftError, detect_schema_drift
 from app.eligibility.recompute_queue import enqueue_eligibility_recompute
 from app.profile.eligibility_mapper import build_user_eligibility_profile
 
@@ -56,12 +57,33 @@ def _safe(call, default=None, *, treat_error_as_default: bool = True):
     decision before an insert — must pass ``treat_error_as_default=False``
     so a transient supabase error can't be mistaken for "row missing"
     and produce a duplicate insert.
+
+    Schema drift (missing column / relation / RPC) is detected and logged
+    at WARNING level with the missing identifier so an operator can spot
+    the gap in their migration state. The fallback to ``default`` is
+    preserved for backward compatibility with read endpoints that prefer
+    to surface an empty payload to the UI rather than 500. Persisting
+    callers must continue to use ``treat_error_as_default=False`` so a
+    drift surfaces before a downstream write happens on stale data.
     """
     try:
         return call()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("supabase call failed: %s", exc)
+        is_drift, code, missing = detect_schema_drift(exc)
+        if is_drift:
+            logger.warning(
+                "supabase schema drift code=%s missing=%s: %s",
+                code,
+                missing,
+                exc,
+            )
+        else:
+            logger.warning("supabase call failed: %s", exc)
         if not treat_error_as_default:
+            if is_drift:
+                raise SchemaDriftError(
+                    str(exc), code=code or "schema_drift", missing=missing
+                ) from exc
             raise
         return default
 
@@ -2097,12 +2119,30 @@ from app.api.study_os import weekly_review_read as weekly_review  # noqa: E402
 
 @router_metadata.get("/certifications")
 async def metadata_certifications():
+    # Schema audit (2026-05-19): the ``certifications`` table has only the
+    # five baseline columns ``id, name, issuing_body, is_active, created_at``.
+    # The previous select for ``aliases / exam_families / sectors /
+    # qualification_levels / certification_type`` failed with PG 42703 and
+    # was silently swallowed by ``_safe`` — shipping ``{items: []}`` to the
+    # UI. The frontend only consumes ``name`` and ``issuer``
+    # (CertificationsSection.jsx — line 7), so dropping the extra columns
+    # is the right shape. Add a migration if/when product wants the rich
+    # metadata back; do not re-add the select first.
     sb = get_supabase_admin()
-    rows = _safe(lambda: sb.table("certifications").select("id,name,issuing_body,aliases,exam_families,sectors,qualification_levels,certification_type,is_active").eq("is_active", True).execute().data, default=[]) or []
+    rows = _safe(
+        lambda: sb.table("certifications")
+        .select("id,name,issuing_body,is_active")
+        .eq("is_active", True)
+        .execute()
+        .data,
+        default=[],
+    ) or []
     shaped = []
     for r in rows:
         row = dict(r)
-        row["issuer"] = row.get("issuing_body")
+        # Expose ``issuer`` for the UI (it has always shipped that key);
+        # keep ``issuing_body`` too for callers that already read it.
+        row.setdefault("issuer", row.get("issuing_body"))
         shaped.append(row)
     return {"items": shaped}
 
