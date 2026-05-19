@@ -4,6 +4,7 @@ import { Flame, Play } from "lucide-react";
 import { api } from "../../lib/api";
 import ExamCycleTimeline from "../../features/study/components/ExamCycleTimeline";
 import PlanChangeLogCard from "../../features/study/components/PlanChangeLogCard";
+import HowItWorksHeaderButton from "../../shared/components/HowItWorksHeaderButton";
 
 // PR10: real Study Home. Vertical stack of cards.
 // No new endpoints. Each card owns its loading / error / empty state
@@ -439,6 +440,12 @@ export default function StudyHome() {
 
   return (
     <div className="space-y-5" data-testid="study-home-page">
+      <div className="flex justify-end">
+        <HowItWorksHeaderButton
+          defaultTopic="study_home"
+          pageName="Study Home"
+        />
+      </div>
       <ActivePlanCard
         plan={plan.data?.plan}
         tasks={plan.data?.tasks}

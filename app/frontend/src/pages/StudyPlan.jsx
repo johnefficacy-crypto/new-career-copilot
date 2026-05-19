@@ -6,6 +6,7 @@ import PlanChangeLogCard from "../features/study/components/PlanChangeLogCard";
 import PlanByTopic from "../features/study/components/PlanByTopic";
 import ExamCycleTimeline from "../features/study/components/ExamCycleTimeline";
 import useApiAction from "../lib/hooks/useApiAction";
+import HowItWorksHeaderButton from "../shared/components/HowItWorksHeaderButton";
 
 const STATUS_TONE = {
   completed: "sage",
@@ -394,8 +395,12 @@ export default function StudyPlan() {
         }
         right={
           <div className="text-right">
-            <div className="mb-2 flex justify-end">
+            <div className="mb-2 flex justify-end items-center gap-2">
               <StatusDot state="live" label="" />
+              <HowItWorksHeaderButton
+                defaultTopic="study_plan"
+                pageName="Study Plan"
+              />
             </div>
             <div className="flex items-center justify-end gap-2">
               <button

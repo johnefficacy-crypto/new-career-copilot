@@ -144,6 +144,107 @@ export const HOW_IT_WORKS_TOPICS = {
   },
 };
 
+// PR9: page-level explainers reached from the header "?" trigger on
+// Study Home, Study Plan, and Today. Plain-language, deterministic
+// framing — the planner is the authority and AI only assists.
+HOW_IT_WORKS_TOPICS.study_home = {
+  title: "How Study Home works",
+  description:
+    "A single view of your active plan, your next study action, focus time, and the latest report-card snapshot.",
+  render: () => (
+    <div className="space-y-3 text-sm text-clay-800">
+      <p>
+        Study Home reads from the same sources as the rest of the app — your
+        active plan, your task list, your focus sessions, and your weekly
+        report card. Nothing on this page is generated; every card shows live
+        values from your data, or an explicit empty state when there is
+        nothing to show.
+      </p>
+      <p>
+        "Next study action" is picked deterministically from your plan, in
+        this order:
+      </p>
+      <ol className="list-decimal pl-5 space-y-1.5">
+        <li>Overdue tasks first, earliest due date wins.</li>
+        <li>Then upcoming tasks, by due date.</li>
+        <li>If two tasks tie, the original plan order breaks the tie.</li>
+      </ol>
+      <p>
+        No AI ranks this list — the same input always produces the same next
+        action.
+      </p>
+    </div>
+  ),
+};
+
+HOW_IT_WORKS_TOPICS.study_plan = {
+  title: "How Study Plan works",
+  description:
+    "A deterministic planner owns your schedule. AI only suggests and explains; you decide what to apply.",
+  render: () => (
+    <div className="space-y-3 text-sm text-clay-800">
+      <p>
+        Your plan is produced by a deterministic planner that respects your
+        target exam, your locked topic coverage, and your study policy. The
+        same inputs always produce the same plan — the planner is the
+        authority over what is scheduled.
+      </p>
+      <p>
+        AI never edits the plan in place. When it has something to say it
+        appears as a suggestion: an explanation of why a slot moved, or a
+        proposed change you can preview.
+      </p>
+      <ul className="list-disc pl-5 space-y-1.5">
+        <li>
+          <span className="font-medium">Regenerate plan</span> asks the
+          planner to recompute the schedule against your current inputs.
+        </li>
+        <li>
+          <span className="font-medium">Suggest changes</span> surfaces
+          planner-suggested edits for review.
+        </li>
+        <li>
+          <span className="font-medium">Preview changes</span> shows the
+          diff before anything is saved.
+        </li>
+        <li>
+          <span className="font-medium">Apply selected changes</span> is the
+          only action that mutates the live plan.
+        </li>
+      </ul>
+    </div>
+  ),
+};
+
+HOW_IT_WORKS_TOPICS.today_overview = {
+  title: "How Today works",
+  description:
+    "A cross-product overview of what to act on right now — applications, eligibility, and study — pulled live from each surface.",
+  render: () => (
+    <div className="space-y-3 text-sm text-clay-800">
+      <p>
+        Today is a snapshot, not a separate data store. The hero action, the
+        quick actions, and the applications snapshot are computed from the
+        same recruitments, applications, and document data you see on their
+        owning pages.
+      </p>
+      <p>
+        The profile banner only appears when a profile signal crosses a
+        threshold — for example, missing required fields for an active
+        recruitment, an expired document, or a stale preference that
+        blocks an eligibility check. When every threshold is clear, the
+        banner stays hidden.
+      </p>
+      <p>
+        Policy updates shown here follow a freshness rule: only items
+        published since your last visit and still relevant to your tracked
+        exams are surfaced. Older items roll off automatically — they are
+        not deleted, just no longer flagged as new.
+      </p>
+    </div>
+  ),
+};
+
 export function lookupTopic(topic) {
   if (!topic) return null;
   return HOW_IT_WORKS_TOPICS[topic] || null;

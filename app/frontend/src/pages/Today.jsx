@@ -6,6 +6,7 @@ import { rankRecruitments } from "../lib/recruitmentRanking";
 import { useAuth } from "../lib/authContext";
 import { Eyebrow, StudyCard } from "../shared/ui/studyos";
 import TodayProfileBanner from "../features/profile/components/TodayProfileBanner";
+import HowItWorksHeaderButton from "../shared/components/HowItWorksHeaderButton";
 
 // PR3 reorg: Today is now scoped to what an aspirant needs to act on
 // today — one primary action, up to three quick actions, an
@@ -50,6 +51,12 @@ export default function Today() {
 
   return (
     <div className="space-y-6" data-testid="today-page">
+      <div className="flex justify-end">
+        <HowItWorksHeaderButton
+          defaultTopic="today_overview"
+          pageName="Today"
+        />
+      </div>
       <TodayProfileBanner />
 
       {heroAction ? (
