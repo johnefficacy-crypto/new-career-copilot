@@ -28,7 +28,11 @@ function reviewState(item) {
   if (item.status === "rejected") return { key: "rejected", label: "Rejected", reason: "Candidate rejected" };
   if (item.status === "merged") return { key: "merged", label: "Merged", reason: "Merged into existing recruitment" };
   if (item.promoted_recruitment_id) return { key: "promoted", label: "Promoted", reason: "Draft created" };
-  if (item.status === "duplicate" || item.duplicate_of || (item.duplicate_candidates || []).length) return { key: "duplicate", label: "Duplicate", reason: "Existing recruitment candidate found" };
+  // ``has_duplicate_candidates`` is the lightweight indicator the list
+  // path returns; the full ``duplicate_candidates`` array only ships
+  // with include_detail=true (i.e. in the drawer).
+  const hasDupes = item.has_duplicate_candidates || (item.duplicate_candidates || []).length;
+  if (item.status === "duplicate" || item.duplicate_of || hasDupes) return { key: "duplicate", label: "Duplicate", reason: "Existing recruitment candidate found" };
   if ((item.unverified_fields || []).length) return { key: "blocked", label: "Needs review", reason: `Verify: ${item.unverified_fields.join(", ")}` };
   if (item.promotable) return { key: "ready", label: "Ready to promote", reason: "Required fields verified" };
   return { key: "pending", label: "Pending", reason: "Awaiting review" };
@@ -212,6 +216,8 @@ export default function AdminScraper() {
   const toast = useToast();
 
   // Reloads the queue from the server using the active filter/sort/search
+  const didInitialQueueLoadRef = useRef(false);
+
   // controls. Pulled out of ``load`` so the typing-debounced query input
   // can refetch without re-fetching runs and sources every keystroke.
   const reloadQueue = useCallback(async () => {
@@ -236,6 +242,7 @@ export default function AdminScraper() {
   async function load() {
     setLoading(true);
     setLoadError(null);
+    didInitialQueueLoadRef.current = false;
     try {
       const [runs, src] = await Promise.all([
         api.get("/api/admin/scrape/runs"),
@@ -255,8 +262,19 @@ export default function AdminScraper() {
   useEffect(() => { load().catch(() => {}); }, []);
 
   // Debounce the search input so backend isn't hammered while typing.
+  // The ref guard keeps the initial mount from double-fetching: load()
+  // already issued one queue request, so the very first run of this
+  // effect (which fires the moment `loading` flips false because the
+  // dep list includes `loading`) flips the ref true and returns without
+  // issuing a request. Every subsequent run — filter/search/sort changes
+  // — finds the ref already true and proceeds normally. Reload button
+  // calls load(), which resets the ref so the cycle repeats.
   useEffect(() => {
     if (loading) return;
+    if (!didInitialQueueLoadRef.current) {
+      didInitialQueueLoadRef.current = true;
+      return;
+    }
     const handle = setTimeout(() => { reloadQueue().catch(() => {}); }, 250);
     return () => clearTimeout(handle);
   }, [queueQuery, queueFilter, queueRisk, queueSort, reloadQueue, loading]);
@@ -337,6 +355,30 @@ export default function AdminScraper() {
           : `${action} failed: ${e.message}`;
       setMsg(text);
       toast.error(text);
+    }
+  };
+
+  // Open the inspect drawer for a queue row. The list response is the
+  // lightweight shape (no raw_html / raw_payload / extracted_data), so
+  // pull the full record on demand via ``include_detail=true``. The
+  // lightweight row is shown immediately so the drawer never blinks
+  // empty; the full record replaces it once it arrives.
+  const openQueueDetail = async (row) => {
+    if (!row || !row.id) return;
+    setSelected(row);
+    try {
+      const params = new URLSearchParams();
+      params.set("item_id", row.id);
+      params.set("status", "all");
+      params.set("include_detail", "true");
+      params.set("limit", "1");
+      const r = await api.get(`/api/admin/scrape/queue?${params.toString()}`);
+      const full = (r.items || [])[0];
+      if (full) setSelected(full);
+    } catch (e) {
+      // Drawer keeps the lightweight row; surface the issue but don't
+      // crash the page — the user can still close and retry.
+      toast?.error?.(`Could not load full detail: ${e.message}`);
     }
   };
 
@@ -498,15 +540,19 @@ export default function AdminScraper() {
           </thead>
           <tbody>
             {visibleQueue.map((q) => {
-              const e = q.extracted_data || {};
+              // Lightweight list response: full extracted_data lives behind
+              // ``include_detail=true``. The table reads from the flat
+              // ``extracted_summary`` the backend derives server-side so
+              // the JSON blob never crosses the wire to the table view.
+              const summary = q.extracted_summary || {};
               const state = reviewState(q);
               return (
                 <tr key={q.id} className="border-t border-border align-middle" data-testid={`scrape-row-${q.id}`}>
-                  <td className="px-3 py-3"><div className="truncate font-medium">{e.title || e.name || "-"}</div><div className="truncate text-[10px] text-muted-foreground">Queue {shortId(q.id)} · {q.source_name || "-"}</div></td>
+                  <td className="px-3 py-3"><div className="truncate font-medium">{summary.title || "-"}</div><div className="truncate text-[10px] text-muted-foreground">Queue {shortId(q.id)} · {q.source_name || "-"}</div></td>
                   <td className="px-3 py-3"><div className="truncate">{typeLabel(q.source_type)}</div><div className="truncate text-[10px] text-muted-foreground">{q.source_url}</div></td>
                   <td className="px-3 py-3"><StatusBadge status={state.key} label={state.label} /><div className="mt-1 truncate text-[10px] text-muted-foreground">{state.reason}</div></td>
                   <td className="px-3 py-3"><div>conf {formatScorePct(q.confidence_score)}</div><div className="text-[10px] text-muted-foreground">quality {formatScorePct(q.data_quality_score)}</div></td>
-                  <td className="px-3 py-3"><QueueRowAction item={q} state={state} onOpen={() => setSelected(q)} /></td>
+                  <td className="px-3 py-3"><QueueRowAction item={q} state={state} onOpen={() => openQueueDetail(q)} /></td>
                 </tr>
               );
             })}

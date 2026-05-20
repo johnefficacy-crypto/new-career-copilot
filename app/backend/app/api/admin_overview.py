@@ -62,15 +62,26 @@ def overview(user: dict = Depends(_require_admin)) -> dict:
     now = datetime.now(timezone.utc)
     today = now - timedelta(hours=24)
 
+    # The legacy implementation fired ``moderation_items status=open`` three
+    # times (open_flags, queue_depth, moderation_p0_open — although the
+    # last carries an extra severity filter, the first two were identical)
+    # and ``copyright_claims status=received`` twice (queue_depth,
+    # copyright_open). Coalesce to one query per distinct (table, filters)
+    # tuple — the totals are still composed in Python so the response
+    # shape is byte-identical to before.
+    open_flags = _count(sb, "moderation_items", status="open")
+    copyright_received = _count(sb, "copyright_claims", status="received")
+    copyright_triage = _count(sb, "copyright_claims", status="triage")
+
     kpis = {
         "users": _count(sb, "profiles"),
         "recruitments": _count(sb, "recruitments", status="active"),
         "threads": _count(sb, "forum_posts"),
-        "open_flags": _count(sb, "moderation_items", status="open"),
+        "open_flags": open_flags,
         "scrape_runs_today": _count_since(sb, "scrape_runs", "started_at", today),
-        "queue_depth": _count(sb, "moderation_items", status="open") + _count(sb, "copyright_claims", status="received"),
+        "queue_depth": open_flags + copyright_received,
         "moderation_p0_open": _count(sb, "moderation_items", status="open", severity="p0"),
-        "copyright_open": _count(sb, "copyright_claims", status="received") + _count(sb, "copyright_claims", status="triage"),
+        "copyright_open": copyright_received + copyright_triage,
     }
 
     try:

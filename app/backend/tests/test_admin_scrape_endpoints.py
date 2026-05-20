@@ -197,6 +197,11 @@ def _list_queue(**kwargs):
         "source_type": None,
         "risk": None,
         "sort": "risky_first",
+        # Direct-call helper has to pass these explicitly because the
+        # function signature uses fastapi.Query(...) defaults — those
+        # objects are truthy when the request never went through FastAPI.
+        "include_detail": False,
+        "item_id": None,
         "_admin": ADMIN_USER,
     }
     defaults.update(kwargs)
@@ -324,6 +329,184 @@ def test_queue_list_response_carries_filter_echo(sb):
     }
     assert out["limit"] == 50
     assert out["offset"] == 0
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  GET /api/admin/scrape/queue — lightweight vs detail response
+# ════════════════════════════════════════════════════════════════════════════
+
+
+_FULL_ROW = {
+    "id": "q-full",
+    "status": "pending",
+    "source_id": "src-1",
+    "source_url": "https://x.gov.in/notif.pdf",
+    "source_name": "Source One",
+    "raw_html": "<html>… very large …</html>",
+    "raw_payload": {"big": "blob"},
+    "extracted_data": {
+        "title": "Recruitment X",
+        "organization_name": "Org X",
+        "apply_start_date": "2026-06-01",
+        "apply_end_date": "2026-06-30",
+        "posts": [{"post_name": "A"}, {"post_name": "B"}],
+        "_meta": {"source_type": "official"},
+    },
+    "confidence_score": 0.9,
+    "data_quality_score": 80,
+    "duplicate_of": None,
+    "duplicate_recruitment_id": None,
+    "duplicate_candidates": None,
+    "promoted_recruitment_id": None,
+    "reviewer_id": None,
+    "reviewer_notes": None,
+    "reviewed_at": None,
+    "official_source_resolved": True,
+    "official_source_host": "x.gov.in",
+    "extraction_status": "verified",
+    "evidence_required": True,
+    "scraped_at": "2026-05-19T00:00:00+00:00",
+}
+
+
+def test_list_lightweight_strips_heavy_fields(sb):
+    sb.tables["scrape_queue"] = [dict(_FULL_ROW)]
+    out = _list_queue(include_detail=False)
+    item = out["items"][0]
+    # Heavy payload kept off the wire.
+    assert "raw_html" not in item
+    assert "raw_payload" not in item
+    assert "extracted_data" not in item
+    # Lightweight summary derived server-side.
+    assert item["extracted_summary"] == {
+        "title": "Recruitment X",
+        "organization_name": "Org X",
+        "apply_start_date": "2026-06-01",
+        "apply_end_date": "2026-06-30",
+        "posts_count": 2,
+        "multiple_posts_detected": True,
+        "source_type": "official",
+    }
+    # Indicator-only duplicate hint, never the full candidate list.
+    assert item["has_duplicate_candidates"] is False
+    assert item["duplicate_candidates"] == []
+
+
+def test_list_lightweight_evidence_query_is_three_columns(sb):
+    sb.tables["scrape_queue"] = [dict(_FULL_ROW)]
+    sb.tables["extracted_field_evidence"] = [
+        {"scrape_queue_id": "q-full", "field_name": "apply_end_date", "reviewer_status": "verified"},
+    ]
+    _list_queue(include_detail=False)
+    # Find the evidence query the endpoint sent.
+    evidence_queries = [q for q in sb.queries if q.table == "extracted_field_evidence"]
+    assert evidence_queries, "expected at least one evidence query"
+    # The select(...) call's first positional arg is the column list. The
+    # mock doesn't record it, so re-inspect the function by re-running
+    # with a wrapper. Simpler: assert the function asks the evidence
+    # table for ≤ 3 fields by inspecting the source string.
+    import inspect
+
+    src = inspect.getsource(admin_scrape.list_scrape_queue)
+    lightweight_select = (
+        '"scrape_queue_id, field_name, reviewer_status"'
+    )
+    assert lightweight_select in src, (
+        "lightweight evidence path must select only the 3-column slim view"
+    )
+
+
+def test_list_detail_preserves_legacy_shape(sb):
+    sb.tables["scrape_queue"] = [dict(_FULL_ROW)]
+    sb.tables["recruitments"] = [
+        {"id": "rec-1", "name": "Recruitment X", "year": 2026,
+         "official_notification_url": "https://x.gov.in/notif.pdf"},
+    ]
+    out = _list_queue(include_detail=True)
+    item = out["items"][0]
+    # Drawer compat: full payload remains.
+    assert item["raw_html"] == _FULL_ROW["raw_html"]
+    assert item["extracted_data"] == _FULL_ROW["extracted_data"]
+    # ``duplicate_candidates`` rebuilt as the full list (may be empty
+    # when no dedup match, but never the indicator-only shape).
+    assert isinstance(item["duplicate_candidates"], list)
+    # Detail path does NOT swap the response into the lightweight shape.
+    assert "extracted_summary" not in item
+    assert "has_duplicate_candidates" not in item
+
+
+def test_list_detail_skips_recruitments_fetch_on_lightweight(sb):
+    sb.tables["scrape_queue"] = [dict(_FULL_ROW)]
+    sb.tables["recruitments"] = [
+        {"id": "rec-1", "name": "Recruitment X", "year": 2026,
+         "official_notification_url": "https://x.gov.in/notif.pdf"},
+    ]
+    _list_queue(include_detail=False)
+    # No query touches recruitments on the lightweight path.
+    assert not any(q.table == "recruitments" for q in sb.queries)
+
+
+def test_list_detail_does_fetch_recruitments(sb):
+    sb.tables["scrape_queue"] = [dict(_FULL_ROW)]
+    sb.tables["recruitments"] = []
+    _list_queue(include_detail=True)
+    assert any(q.table == "recruitments" for q in sb.queries)
+
+
+def test_in_filter_chunked_when_over_cap(sb):
+    # 250 queue rows → in.() must be chunked into ceil(250/100) = 3 batches.
+    sb.tables["scrape_queue"] = [
+        {**_FULL_ROW, "id": f"q-{i:03d}"} for i in range(250)
+    ]
+    _list_queue(include_detail=False, limit=200, offset=0)
+    evidence_batches = [
+        q for q in sb.queries
+        if q.table == "extracted_field_evidence" and q.in_filters.get("scrape_queue_id")
+    ]
+    conflict_batches = [
+        q for q in sb.queries
+        if q.table == "recruitment_verification_conflicts" and q.in_filters.get("queue_id")
+    ]
+    # range(0, 199) → 200 rows fetched (limit cap is 200), so 200 ids.
+    fetched_ids = {row["id"] for row in sb.tables["scrape_queue"]} - {
+        f"q-{i:03d}" for i in range(200, 250)
+    }
+    assert len(fetched_ids) == 200
+    # 200 ids should produce exactly 2 batches each.
+    assert len(evidence_batches) == 2, evidence_batches
+    assert len(conflict_batches) == 2
+    # Confirm batch sizes never exceed MAX_IN_FILTER_IDS.
+    for b in evidence_batches + conflict_batches:
+        assert len(b.in_filters[next(iter(b.in_filters))]) <= admin_scrape.MAX_IN_FILTER_IDS
+
+
+def test_in_filter_single_batch_when_under_cap(sb):
+    sb.tables["scrape_queue"] = [
+        {**_FULL_ROW, "id": f"q-{i:03d}"} for i in range(50)
+    ]
+    _list_queue(include_detail=False, limit=200, offset=0)
+    evidence_batches = [
+        q for q in sb.queries
+        if q.table == "extracted_field_evidence" and q.in_filters.get("scrape_queue_id")
+    ]
+    assert len(evidence_batches) == 1
+
+
+def test_item_id_narrows_to_single_row(sb):
+    sb.tables["scrape_queue"] = [
+        {**_FULL_ROW, "id": "q-a"},
+        {**_FULL_ROW, "id": "q-b"},
+    ]
+    out = _list_queue(include_detail=True, status="all", item_id="q-b", limit=1)
+    assert [it["id"] for it in out["items"]] == ["q-b"]
+
+
+def test_lightweight_has_duplicate_candidates_truthy_when_precomputed(sb):
+    row = dict(_FULL_ROW, id="q-dup", duplicate_candidates=[{"recruitment_id": "rec-9", "score": 0.9}])
+    sb.tables["scrape_queue"] = [row]
+    out = _list_queue(include_detail=False)
+    assert out["items"][0]["has_duplicate_candidates"] is True
+    assert out["items"][0]["duplicate_candidates"] == []  # never the full list on lightweight
 
 
 # ════════════════════════════════════════════════════════════════════════════
