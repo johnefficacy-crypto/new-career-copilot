@@ -70,7 +70,7 @@ def _seed() -> dict:
             {"user_id": "u-1", "computed_at": "2026-05-01T00:00:00+00:00",
              "study_policy": {"max_tasks_per_day": 3, "preferred_task_size": "small"}},
         ],
-        "pyq_papers": [{"id": "paper-1", "exam_id": "exam-1"}],
+        "pyq_papers": [{"id": "paper-1", "exam_id": "exam-1", "trust_status": "verified"}],
         "pyq_questions": [
             {"id": "q1", "pyq_paper_id": "paper-1", "reviewer_status": "verified"}
         ],

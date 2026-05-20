@@ -54,7 +54,7 @@ def test_mission_control_flips_engine_trace_to_available_with_verified_data():
             {"id": "t1", "slug": "p", "name": "Percentages", "level": "topic", "is_active": True, "subject_id": "s1"}
         ],
         "subjects": [{"id": "s1", "name": "Quant", "is_active": True}],
-        "pyq_papers": [{"id": "paper-1", "exam_id": "exam-1"}],
+        "pyq_papers": [{"id": "paper-1", "exam_id": "exam-1", "trust_status": "verified"}],
         "pyq_questions": [
             {"id": "q1", "pyq_paper_id": "paper-1", "reviewer_status": "verified"}
         ],
@@ -84,7 +84,7 @@ def test_mission_control_ignores_unverified_pyq_tags():
         "aspirant_persona_snapshots": [_persona_row()],
         "profiles": [{"id": "u-1", "target_exam": "ssc-cgl"}],
         "exams": [{"id": "exam-1", "slug": "ssc-cgl", "name": "SSC CGL", "exam_type": "recruitment", "is_active": True}],
-        "pyq_papers": [{"id": "paper-1", "exam_id": "exam-1"}],
+        "pyq_papers": [{"id": "paper-1", "exam_id": "exam-1", "trust_status": "verified"}],
         "pyq_questions": [{"id": "q1", "pyq_paper_id": "paper-1", "reviewer_status": "pending"}],
         "pyq_question_topic_tags": [
             {"question_id": "q1", "topic_id": "t1", "reviewer_status": "verified", "tag_role": "primary"}

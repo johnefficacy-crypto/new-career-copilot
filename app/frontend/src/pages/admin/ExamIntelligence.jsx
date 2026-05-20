@@ -214,7 +214,7 @@ export default function AdminExamIntelligence() {
       is_high_yield: !!row.high_yield,
       confidence_score: row.confidence_score ?? "",
       source_basis: row.source_basis || "",
-      reviewer_notes: row.reviewer_notes || "",
+      review_notes: row.review_notes || "",
     });
   }
 
@@ -229,7 +229,7 @@ export default function AdminExamIntelligence() {
       if (payload.coverage_depth === "") delete payload.coverage_depth;
       if (payload.expected_difficulty === "") delete payload.expected_difficulty;
       if (payload.source_basis === "") delete payload.source_basis;
-      if (payload.reviewer_notes === "") delete payload.reviewer_notes;
+      if (payload.review_notes === "") delete payload.review_notes;
       if (payload.exam_priority_score !== undefined) {
         payload.exam_priority_score = Number(payload.exam_priority_score);
       }
@@ -563,13 +563,13 @@ export default function AdminExamIntelligence() {
                     onChange={(e) => setCoverageEditForm((p) => ({ ...p, source_basis: e.target.value }))}
                   />
                 </Field>
-                <Field label="Reviewer notes">
+                <Field label="Review notes">
                   <textarea
                     rows={3}
                     className="input-row"
-                    value={coverageEditForm.reviewer_notes || ""}
+                    value={coverageEditForm.review_notes || ""}
                     onChange={(e) =>
-                      setCoverageEditForm((p) => ({ ...p, reviewer_notes: e.target.value }))
+                      setCoverageEditForm((p) => ({ ...p, review_notes: e.target.value }))
                     }
                   />
                 </Field>
