@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
 import FieldReviewGroup from "./FieldReviewGroup";
@@ -144,6 +144,22 @@ function QueueFixSection({ item, conflicts = [], sources = [], onFieldAction, on
     bumpPreview();
     return r;
   }, [onFieldAction, item.id, bumpPreview]);
+
+  // P2-2: when the official-source gate flips false → true for the SAME
+  // item (admin just attached proof), scroll the promote bar into view so
+  // the next action is obvious. Tracking the id alongside the flag stops
+  // a scroll when the admin merely switches from an unresolved item to an
+  // already-resolved one.
+  const promoteBarRef = useRef(null);
+  const prevRef = useRef({ id: item.id, resolved: item.official_source_resolved });
+  useEffect(() => {
+    const prev = prevRef.current;
+    const now = item.official_source_resolved;
+    prevRef.current = { id: item.id, resolved: now };
+    if (prev.id === item.id && prev.resolved === false && now === true) {
+      promoteBarRef.current?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    }
+  }, [item.id, item.official_source_resolved]);
 
   return (
     <section className="card" data-testid="queue-fix-section">
@@ -314,6 +330,7 @@ function QueueFixSection({ item, conflicts = [], sources = [], onFieldAction, on
         ) : null}
 
         <div
+          ref={promoteBarRef}
           className="promote-bar"
           style={{
             position: "sticky",

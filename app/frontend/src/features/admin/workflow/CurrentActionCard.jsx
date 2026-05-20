@@ -6,9 +6,14 @@ import { ADMIN_PROGRESS_PHASES, ADMIN_PROGRESS_STEPS } from "./AdminProgressBar"
 // Operations review surface stays focused on one decision.
 //
 // Contract:
-//   progress       — return value of computeProgress() in AdminProgressBar.jsx,
-//                    shape `{ [stepId]: { status, reason? } }`
-//   onOpenDetails  — () => void, opens the drawer with the full bar.
+//   progress        — return value of computeProgress() in AdminProgressBar.jsx,
+//                     shape `{ [stepId]: { status, reason? } }`
+//   onOpenDetails   — () => void, opens the drawer with the full bar.
+//   onPrimaryAction — (kind: string) => void. Fired when the admin clicks the
+//                     primary action button. The parent maps the kind to the
+//                     right AdminFixPanel section and scrolls it into view.
+//                     Without this prop the primary button is disabled rather
+//                     than rendered as a dead control.
 
 function findCurrentStep(progress) {
   const order = ["blocked", "active", "pending"];
@@ -50,6 +55,20 @@ function actionLabelFor(step) {
   }
 }
 
+// Map a progress step to the semantic action kind the parent handler
+// understands. Defaults to the step id so new steps still emit a usable
+// kind without a code change here.
+function actionKindFor(step) {
+  if (!step) return null;
+  switch (step.id) {
+    case "official_source_resolved": return "attach_official_source";
+    case "field_fixes": return "verify_fields";
+    case "conflicts_resolved": return "resolve_conflicts";
+    case "promoted_draft": return "promote_to_draft";
+    default: return step.id;
+  }
+}
+
 function statusToBadge(status) {
   if (status === "blocked") return { cls: "badge blocker", text: "blocked" };
   if (status === "active") return { cls: "badge info", text: "current" };
@@ -57,7 +76,7 @@ function statusToBadge(status) {
   return { cls: "badge pending", text: "next" };
 }
 
-export default function CurrentActionCard({ progress, onOpenDetails }) {
+export default function CurrentActionCard({ progress, onOpenDetails, onPrimaryAction }) {
   const total = ADMIN_PROGRESS_STEPS.length;
   const done = ADMIN_PROGRESS_STEPS.filter((s) => (progress?.[s.id]?.status) === "complete").length;
   const current = findCurrentStep(progress);
@@ -66,7 +85,9 @@ export default function CurrentActionCard({ progress, onOpenDetails }) {
   const badge = statusToBadge(status);
   const reason = current?.entry?.reason || null;
   const primaryLabel = actionLabelFor(current?.step);
+  const primaryKind = actionKindFor(current?.step);
   const allComplete = done === total;
+  const canAct = !allComplete && Boolean(primaryKind) && typeof onPrimaryAction === "function";
 
   return (
     <section className="card oc-current-action" data-testid="oc-current-action">
@@ -95,7 +116,8 @@ export default function CurrentActionCard({ progress, onOpenDetails }) {
           <button
             type="button"
             className="btn primary small"
-            disabled={allComplete}
+            disabled={!canAct}
+            onClick={canAct ? () => onPrimaryAction(primaryKind) : undefined}
             data-testid="oc-current-action-primary"
           >
             {primaryLabel}
