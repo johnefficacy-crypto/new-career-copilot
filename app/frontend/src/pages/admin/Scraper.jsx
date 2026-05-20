@@ -9,7 +9,7 @@ import ScrapeRunDetailDrawer from "../../features/admin/scraping/ScrapeRunDetail
 import InlineAuditTimeline from "../../features/admin/shared/InlineAuditTimeline";
 import { HIGH_RISK_QUEUE_FIELDS, NEXT_ACTION_MESSAGES, RECOMMENDED_REVIEW_FIELDS, SOURCE_TYPE_LABELS } from "../../features/admin/workflow/adminWorkflowContract";
 import { useFocusTrap } from "../../shared/a11y/useFocusTrap";
-import { EmptyState, ErrorState, LoadingSkeleton, StatusBadge, useToast } from "../../shared/ui";
+import { EmptyState, LoadingSkeleton, StatusBadge, useToast } from "../../shared/ui";
 import { formatScorePct } from "../../features/admin/workflow/scoreUtils";
 
 function shortId(value) {
@@ -198,7 +198,12 @@ export default function AdminScraper() {
   const [queue, setQueue] = useState([]);
   const [sources, setSources] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(null);
+  // Per-block load errors so a runs/sources 500 can't hide the queue.
+  // Each block (runs / sources / queue) renders its own banner + Retry
+  // instead of a single page-level failure that blanks everything.
+  const [runsError, setRunsError] = useState(null);
+  const [sourcesError, setSourcesError] = useState(null);
+  const [queueError, setQueueError] = useState(null);
   const [running, setRunning] = useState(null);
   const [selected, setSelected] = useState(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -227,36 +232,58 @@ export default function AdminScraper() {
     if (queueRisk && queueRisk !== "all") params.set("risk", queueRisk);
     if (queueQuery.trim()) params.set("q", queueQuery.trim());
     params.set("limit", "100");
-    try {
-      const q = await api.get(`/api/admin/scrape/queue?${params.toString()}`);
-      setQueue(q.items || []);
-      setQueueTotal(typeof q.total === "number" ? q.total : null);
-    } catch (e) {
-      // Surface as a load error if the initial fetch never succeeded; once
-      // we have a page rendered, silently keep the previous data and let
-      // the next reload retry. A toast would be noisy on every keystroke.
-      if (loading) setLoadError(e);
-    }
-  }, [queueFilter, queueQuery, queueRisk, queueSort, loading]);
+    const q = await api.get(`/api/admin/scrape/queue?${params.toString()}`);
+    setQueue(q.items || []);
+    setQueueTotal(typeof q.total === "number" ? q.total : null);
+    setQueueError(null);
+  }, [queueFilter, queueQuery, queueRisk, queueSort]);
 
-  async function load() {
+  // Standalone per-block fetchers so each error banner's Retry can
+  // refire ONLY the failed call without dragging the others along.
+  const fetchRuns = useCallback(async () => {
+    const runs = await api.get("/api/admin/scrape/runs");
+    setItems(runs.items || []);
+    setRunsError(null);
+  }, []);
+
+  const fetchSources = useCallback(async () => {
+    const src = await api.get("/api/admin/sources");
+    setSources(src.items || []);
+    setSourcesError(null);
+  }, []);
+
+  const retryRuns = useCallback(() => {
+    fetchRuns().catch((e) => { setRunsError(e); setItems([]); });
+  }, [fetchRuns]);
+
+  const retrySources = useCallback(() => {
+    fetchSources().catch((e) => { setSourcesError(e); setSources([]); });
+  }, [fetchSources]);
+
+  const retryQueue = useCallback(() => {
+    reloadQueue().catch((e) => setQueueError(e));
+  }, [reloadQueue]);
+
+  // Load all three blocks independently. Promise.allSettled means a
+  // runs/sources 500 (the reported HTTP/2 disconnect) can no longer
+  // short-circuit the queue fetch — each block resolves or fails on its
+  // own and renders its own state.
+  const load = useCallback(async () => {
     setLoading(true);
-    setLoadError(null);
+    setRunsError(null);
+    setSourcesError(null);
+    setQueueError(null);
     didInitialQueueLoadRef.current = false;
-    try {
-      const [runs, src] = await Promise.all([
-        api.get("/api/admin/scrape/runs"),
-        api.get("/api/admin/sources"),
-      ]);
-      setItems(runs.items || []);
-      setSources(src.items || []);
-      await reloadQueue();
-    } catch (e) {
-      setLoadError(e);
-    } finally {
-      setLoading(false);
-    }
-  }
+    const [runsRes, sourcesRes, queueRes] = await Promise.allSettled([
+      fetchRuns(),
+      fetchSources(),
+      reloadQueue(),
+    ]);
+    if (runsRes.status === "rejected") { setRunsError(runsRes.reason); setItems([]); }
+    if (sourcesRes.status === "rejected") { setSourcesError(sourcesRes.reason); setSources([]); }
+    if (queueRes.status === "rejected") { setQueueError(queueRes.reason); }
+    setLoading(false);
+  }, [fetchRuns, fetchSources, reloadQueue]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load().catch(() => {}); }, []);
@@ -480,7 +507,7 @@ export default function AdminScraper() {
               <p className="text-sm text-muted-foreground">Run dry scrape first. No publishing occurs; review is still required.</p>
             </div>
           </div>
-          <button disabled={!!running || !canRunSelected} onClick={runDry} className="btn btn-ghost mt-4"><Play className={`h-4 w-4 ${running === "dry" ? "animate-spin" : ""}`} />{running === "dry" ? "Running..." : "Dry run / discover candidates"}</button>
+          <button disabled={!!running || !canRunSelected || Boolean(sourcesError)} onClick={runDry} className="btn btn-ghost mt-4"><Play className={`h-4 w-4 ${running === "dry" ? "animate-spin" : ""}`} />{running === "dry" ? "Running..." : "Dry run / discover candidates"}</button>
         </section>
         <section className="soft-card rounded-2xl p-4">
           <div className="flex items-start gap-3">
@@ -490,13 +517,24 @@ export default function AdminScraper() {
               <p className="text-sm text-muted-foreground">Creates queue items for review, does not publish.</p>
             </div>
           </div>
-          <button disabled={!!running || !canRunSelected} onClick={() => setConfirmOpen(true)} className="btn btn-primary mt-4"><Play className={`h-4 w-4 ${running === "live" ? "animate-spin" : ""}`} />{running === "live" ? "Running..." : "Run live scrape"}</button>
+          <button disabled={!!running || !canRunSelected || Boolean(sourcesError)} onClick={() => setConfirmOpen(true)} className="btn btn-primary mt-4"><Play className={`h-4 w-4 ${running === "live" ? "animate-spin" : ""}`} />{running === "live" ? "Running..." : "Run live scrape"}</button>
         </section>
       </div>
 
       <section className="soft-card rounded-2xl p-4">
+        {sourcesError ? (
+          <div className="mb-3">
+            <LoadErrorBanner
+              testId="scraper-sources-error"
+              retryTestId="scraper-sources-retry"
+              message="Couldn't load sources. Source picker disabled."
+              detail={sourcesError.message}
+              onRetry={retrySources}
+            />
+          </div>
+        ) : null}
         <div className="grid gap-3 md:grid-cols-4">
-          <label className="text-sm"><div className="mb-1 text-[11px] uppercase tracking-widest text-muted-foreground">Sources</div><select className="input" value={sourceMode} onChange={(e) => setSourceMode(e.target.value)}><option value="all">All active sources</option><option value="selected">Selected source(s)</option></select></label>
+          <label className="text-sm"><div className="mb-1 text-[11px] uppercase tracking-widest text-muted-foreground">Sources</div><select className="input" value={sourceMode} disabled={Boolean(sourcesError)} onChange={(e) => setSourceMode(e.target.value)}><option value="all">All active sources</option><option value="selected">Selected source(s)</option></select></label>
           <label className="text-sm"><div className="mb-1 text-[11px] uppercase tracking-widest text-muted-foreground">Source type</div><select className="input" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}><option value="all">All types</option>{typeOptions.map((type) => <option key={type} value={type}>{typeLabel(type)}</option>)}</select></label>
           <label className="text-sm"><div className="mb-1 text-[11px] uppercase tracking-widest text-muted-foreground">Max items</div><input className="input" type="number" min="1" max="100" value={limit} onChange={(e) => setLimit(e.target.value)} /></label>
           <div className="text-sm"><div className="mb-1 text-[11px] uppercase tracking-widest text-muted-foreground">Run scope</div><div className="rounded-xl border border-border bg-white/70 px-3 py-2">{sourceMode === "selected" ? `${selectedIds.length} selected` : `${filteredSources.length} active`}</div></div>
@@ -511,7 +549,15 @@ export default function AdminScraper() {
       </section>
 
       {msg && <div className="soft-card rounded-xl p-3 text-xs">{msg}</div>}
-      {loadError ? <ErrorState title="Failed to load scraper monitor" message={loadError.message} onRetry={load} /> : null}
+      {queueError ? (
+        <LoadErrorBanner
+          testId="scraper-queue-error"
+          retryTestId="scraper-queue-retry"
+          message="Couldn't load queue."
+          detail={queueError.message}
+          onRetry={retryQueue}
+        />
+      ) : null}
 
       <section className="soft-card rounded-2xl p-4">
         <div className="grid gap-3">
@@ -524,10 +570,12 @@ export default function AdminScraper() {
       </section>
 
       {loading ? <LoadingSkeleton variant="table" /> : null}
-      {!loading && !loadError && queue.length === 0 ? <EmptyState icon={Search} title="No scrape queue items yet" description="Run a dry scrape or live scrape to discover candidates for manual review." /> : null}
-      {!loading && !loadError && queue.length > 0 && visibleQueue.length === 0 ? <EmptyState icon={Filter} title="No queue items match this view" description="Adjust search or filter chips." /> : null}
+      {/* Empty states only render when the queue actually loaded — a queue
+          error shows its own banner above instead of a misleading "no items". */}
+      {!loading && !queueError && queue.length === 0 ? <EmptyState icon={Search} title="No scrape queue items yet" description="Run a dry scrape or live scrape to discover candidates for manual review." /> : null}
+      {!loading && !queueError && queue.length > 0 && visibleQueue.length === 0 ? <EmptyState icon={Filter} title="No queue items match this view" description="Adjust search or filter chips." /> : null}
 
-      {!loading && !loadError && visibleQueue.length > 0 ? <div className="overflow-auto rounded-2xl border border-border bg-white/70">
+      {!loading && !queueError && visibleQueue.length > 0 ? <div className="overflow-auto rounded-2xl border border-border bg-white/70">
         <table className="w-full min-w-[900px] table-fixed text-xs">
           <thead className="bg-[#FBF6EF] text-left text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
             <tr>
@@ -563,6 +611,15 @@ export default function AdminScraper() {
       <section className="soft-card rounded-2xl p-4">
         <h2 className="font-semibold">Recent runs</h2>
         <p className="mt-1 text-xs text-muted-foreground">Click a row for per-source breakdown, errors, and quality range.</p>
+        {runsError ? (
+          <LoadErrorBanner
+            testId="scraper-runs-error"
+            retryTestId="scraper-runs-retry"
+            message="Couldn't load run history."
+            detail={runsError.message}
+            onRetry={retryRuns}
+          />
+        ) : (
         <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
           {items.slice(0, 6).map((run) => (
             <button
@@ -581,6 +638,7 @@ export default function AdminScraper() {
             </button>
           ))}
         </div>
+        )}
       </section>
 
       <QueueDetailDrawer item={selected} onClose={() => setSelected(null)} onAction={act} onFieldAction={fieldAct} onMerge={mergeIntoRecruitment} />
@@ -622,4 +680,30 @@ function QueueRowAction({ item, state, onOpen }) {
 
 function Info({ label, value }) {
   return <div className="rounded-xl border border-border bg-white/60 p-3 text-sm"><div className="text-[11px] uppercase tracking-widest text-muted-foreground">{label}</div><div className="break-words">{value || "-"}</div></div>;
+}
+
+// Per-block load-failure banner. Distinguishes "load failed" from "no
+// data" and carries its own Retry that refires only the failed fetch.
+function LoadErrorBanner({ testId, retryTestId, message, detail, onRetry }) {
+  return (
+    <div
+      role="alert"
+      data-testid={testId}
+      className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900"
+    >
+      <AlertTriangle className="h-4 w-4 shrink-0" />
+      <span className="min-w-0">
+        {message}
+        {detail ? <span className="ml-1 text-xs text-rose-700">({detail})</span> : null}
+      </span>
+      <button
+        type="button"
+        className="btn btn-ghost h-8 text-xs"
+        onClick={onRetry}
+        data-testid={retryTestId}
+      >
+        Retry
+      </button>
+    </div>
+  );
 }
