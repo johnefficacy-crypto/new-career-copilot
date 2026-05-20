@@ -5,8 +5,10 @@ import { StatusBadge, ConfidencePill, EmptyState } from "../../../shared/ui";
 // exam_competition_metrics review surface.
 //
 // Lifecycle: draft -> pending_review -> reviewed -> locked -> rejected.
-// Only `locked` rows are read by competition_context in Study OS. When
-// `onReview` is passed the table renders lifecycle actions.
+// `reviewed` or `locked` rows feed the planner via competition_context in
+// Study OS (locked preferred over reviewed; see competition_context.py
+// `_READABLE_STATUSES`). When `onReview` is passed the table renders
+// lifecycle actions.
 const TRANSITIONS = {
   draft: [{ to: "pending_review", label: "Send to review" }],
   pending_review: [

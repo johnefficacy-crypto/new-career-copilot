@@ -822,12 +822,39 @@ def _fetch_recent_study_sessions(supabase: Any, user_id: str) -> list[dict[str, 
     ) or []
 
 
+def _focus_week_breakdown(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per-day minutes for the last 7 days, oldest → newest.
+
+    Matches the shape of ``GET /api/study/focus/summary``'s ``week`` so a
+    StudyHome FocusCard reading from Mission Control renders identically.
+    Only completed sessions (``ended_at`` present) count toward minutes.
+    """
+    from datetime import timedelta
+
+    completed = [s for s in sessions if s.get("ended_at")]
+    today = datetime.now(timezone.utc).date()
+    week: list[dict[str, Any]] = []
+    for i in range(6, -1, -1):
+        d = today - timedelta(days=i)
+        mins = sum(
+            (s.get("duration_mins") or 0)
+            for s in completed
+            if str(s.get("started_at", "")).startswith(d.isoformat())
+        )
+        week.append({"date": d.isoformat(), "minutes": mins})
+    return week
+
+
 def _focus_summary_from_sessions(sessions: list[dict[str, Any]]) -> dict[str, Any]:
     total_minutes = sum((s.get("duration_mins") or 0) for s in sessions if s.get("ended_at"))
+    week = _focus_week_breakdown(sessions)
     return {
         "total_minutes_7d": int(total_minutes or 0),
         "total_hours_7d": round((total_minutes or 0) / 60.0, 2),
         "active_count": sum(1 for s in sessions if not s.get("ended_at")),
+        # Per-day breakdown so StudyHome can read focus from Mission
+        # Control instead of a separate /api/study/focus/summary call.
+        "week": week,
     }
 
 
@@ -1355,6 +1382,10 @@ async def build_mission_control_async(supabase: Any, user_id: str) -> dict[str, 
         },
         "study_policy": study_policy,
         "plan": plan,
+        # Focus rollup surfaced as a top-level block (total_hours_7d + the
+        # per-day week breakdown) so StudyHome reads it straight from
+        # Mission Control instead of a second /api/study/focus/summary hit.
+        "focus": focus,
         "exam_context": exam_context,
         "competition_context": competition_ctx,
         "policy_update_context": policy_update_ctx,
