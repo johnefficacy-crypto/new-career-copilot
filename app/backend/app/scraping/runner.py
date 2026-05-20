@@ -1277,6 +1277,7 @@ def run_scraping_pass(
         "status": "running",
         "triggered_by": triggered_by,
         "started_at": utc_now_iso(),
+        "is_dry_run": bool(mock),
     }
     if triggered_by_user:
         run_payload["triggered_by_user"] = triggered_by_user
@@ -1327,7 +1328,7 @@ def run_scraping_pass(
                 "scrape_queue.read_open_for_dedupe",
                 lambda: supabase.table("scrape_queue")
                 .select("id, extracted_data, status")
-                .not_.in_("status", ["rejected", "duplicate"])
+                .not_.in_("status", ["rejected", "duplicate", "dry_run"])
                 .execute(),
             ).data
             or []
@@ -1511,7 +1512,13 @@ def run_scraping_pass(
             "duplicate_recruitment_id": decision.duplicate_recruitment_id,
             "scraped_at": utc_now_iso(),
             # Never auto-approve — see runner.ts safety hardening note.
-            "status": "duplicate" if decision.is_duplicate else "pending",
+            # Dry-run (mock) rows get a terminal ``dry_run`` status so every
+            # existing ``status='pending'`` review/promotion filter excludes
+            # them; ``is_dry_run`` below is the durable flag dedup and the
+            # promotion gate key off. Synthetic output must never look like a
+            # real, promotable candidate.
+            "status": "dry_run" if mock else ("duplicate" if decision.is_duplicate else "pending"),
+            "is_dry_run": bool(mock),
             "official_source_resolved": official_source_resolved,
             "official_source_host": official_source_host,
             "evidence_required": evidence_required,
@@ -3205,7 +3212,7 @@ def promote_run(
         .select(
             "id, source_id, extracted_data, status, official_source_resolved, "
             "official_source_host, extraction_status, notification_document_id, "
-            "evidence_required"
+            "evidence_required, is_dry_run"
         )
         .eq("scrape_run_id", run_id)
         .eq("status", "pending")

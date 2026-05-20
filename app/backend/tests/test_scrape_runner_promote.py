@@ -438,9 +438,13 @@ def test_duplicate_target_writes_recruitment_id_not_queue_id():
     run_scraping_pass(sb, source_ids=["src-1"], mock=True)
     rows = sb.db["scrape_queue"]
     assert rows
-    # All three mock detail urls share the same sim_key → all duplicates.
+    # All three mock detail urls share the same sim_key. Dedup still runs for
+    # dry-run rows (the duplicate target is computed), but the row status is
+    # the isolated ``dry_run`` value, not ``duplicate`` — synthetic output
+    # never enters the promotable flow.
     for row in rows:
-        assert row["status"] == "duplicate"
+        assert row["status"] == "dry_run"
+        assert row["is_dry_run"] is True
         assert row["duplicate_recruitment_id"] == "rec-existing-1"
         # duplicate_of is the queue→queue pointer; nothing in queue when run started.
         assert row["duplicate_of"] is None

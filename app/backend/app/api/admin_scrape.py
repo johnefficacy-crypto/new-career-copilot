@@ -868,7 +868,7 @@ def list_scrape_queue(
         "duplicate_recruitment_id, duplicate_candidates, "
         "promoted_recruitment_id, reviewer_id, reviewer_notes, reviewed_at, "
         "official_source_resolved, official_source_host, "
-        "extraction_status, evidence_required, scraped_at"
+        "extraction_status, evidence_required, is_dry_run, scraped_at"
     )
     _DETAIL_COLUMNS = _BASE_COLUMNS + ", raw_html, raw_payload"
     selection = (

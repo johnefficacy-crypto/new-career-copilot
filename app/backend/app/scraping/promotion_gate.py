@@ -119,6 +119,12 @@ def evaluate_promotion_gate(supabase: Client, queue_item: dict[str, Any]) -> Gat
     """
     queue_id = queue_item.get("id")
 
+    # Dry-run (mock) output must never reach the canonical tables, even if a
+    # status edit somehow let it past the status-based review filters. This is
+    # a hard, non-overridable block — synthetic data has no promotion path.
+    if queue_item.get("is_dry_run"):
+        return GateResult(ok=False, reason="dry_run_not_promotable")
+
     if queue_item.get("official_source_resolved") is False:
         return GateResult(
             ok=False,
