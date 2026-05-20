@@ -31,8 +31,52 @@ promotes a draft into a usable official source.
 """
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any, Iterable
 from urllib.parse import urlparse
+
+logger = logging.getLogger("career_copilot.scraping.source_drafts")
+
+# ── Task 4: per-process source_registry cache for host matching ────────
+# ``_existing_by_host`` has to pull the whole source_registry (official_url
+# can be a deep page, so we host-match in Python). That full-table read
+# fired once per queue insert — i.e. many times per run. Cache the list
+# per process with a short TTL so a run touching one source makes at most
+# one source_registry GET for host-matching (0 if a prior run cached it
+# within the TTL). Per-process only — no Redis. Invalidated whenever this
+# process inserts a draft source (the only write that changes the host set
+# this cache indexes); status-only PATCHes elsewhere don't touch
+# official_url, so they intentionally don't invalidate it.
+_REGISTRY_CACHE_TTL_SECONDS = 300.0
+_HOST_MATCH_COLUMNS = "id, source_name, official_url, source_type, is_verified, verification_status"
+_registry_host_cache: dict[str, Any] = {"expires_at": 0.0, "rows": None}
+
+
+def invalidate_source_registry_cache() -> None:
+    """Drop the cached registry list. Call after any write that changes
+    which official_url / host rows exist (e.g. a draft source insert)."""
+    _registry_host_cache["rows"] = None
+    _registry_host_cache["expires_at"] = 0.0
+
+
+def _load_registry_for_host_match(supabase) -> list[dict[str, Any]]:
+    """Return the registry rows used for host matching, served from a
+    per-process TTL cache. One GET per TTL window, not one per call."""
+    now = time.monotonic()
+    rows = _registry_host_cache.get("rows")
+    if rows is not None and now < _registry_host_cache.get("expires_at", 0.0):
+        return rows
+    fetched = (
+        supabase.table("source_registry")
+        .select(_HOST_MATCH_COLUMNS)
+        .execute()
+        .data
+        or []
+    )
+    _registry_host_cache["rows"] = fetched
+    _registry_host_cache["expires_at"] = now + _REGISTRY_CACHE_TTL_SECONDS
+    return fetched
 
 # Top-level fields on extracted_data that may carry an official URL.
 _OFFICIAL_URL_FIELDS = (
@@ -165,13 +209,7 @@ def _existing_by_host(supabase, hosts: Iterable[str]) -> dict[str, dict[str, Any
     if not hostset:
         return {}
     try:
-        rows = (
-            supabase.table("source_registry")
-            .select("id, source_name, official_url, source_type, is_verified, verification_status")
-            .execute()
-            .data
-            or []
-        )
+        rows = _load_registry_for_host_match(supabase)
     except Exception:
         return {}
     out: dict[str, dict[str, Any]] = {}
@@ -225,4 +263,8 @@ def upsert_draft_sources(
             row = res[0]
             created.append(row)
             existing_by_host[host] = row  # so a follow-up in the same call sees it
+    if created:
+        # A new official_url/host now exists — drop the host-match cache so
+        # the next run (or call) re-reads and sees it.
+        invalidate_source_registry_cache()
     return {"created": created, "existing": existing}

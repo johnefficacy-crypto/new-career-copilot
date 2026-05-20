@@ -301,6 +301,43 @@ def recruitment_key(org_name: str | None, year: int | None, title: str | None) -
     return f"{norm(org_name)}-{year or 0}-{norm(title)[:30]}"
 
 
+# A valid canonical key has exactly three non-empty segments:
+# ``{org}-{year}-{title}`` (see ``recruitment_key`` above). Anything else
+# — a trailing dash (empty title), a leading dash (empty org), a double
+# dash (empty middle segment), or the wrong segment count — means at
+# least one identity component was missing from the extraction, so the
+# key cannot safely participate in dedup.
+EXPECTED_KEY_SEGMENTS = 3
+
+
+def canonical_key_invalid(key: str | None) -> bool:
+    """Return True when ``key`` is unsafe to use for dedup matching.
+
+    Rules (all reject):
+      * empty / non-string;
+      * starts or ends with '-' (empty terminal segment);
+      * contains '--' (empty interior segment);
+      * not exactly ``EXPECTED_KEY_SEGMENTS`` segments;
+      * any segment empty.
+
+    Note: the queue row still gets inserted when a key is invalid — only
+    the dedup pre-check skips it (callers must consult this before keying
+    a dedup query on the value).
+    """
+    if not key or not isinstance(key, str):
+        return True
+    if key.startswith("-") or key.endswith("-"):
+        return True
+    if "--" in key:
+        return True
+    segments = key.split("-")
+    if len(segments) != EXPECTED_KEY_SEGMENTS:
+        return True
+    if any(not seg for seg in segments):
+        return True
+    return False
+
+
 def compute_similarity_key(data: ExtractedRecruitment) -> str:
     return recruitment_key(data.organization_name, data.year, data.title)
 

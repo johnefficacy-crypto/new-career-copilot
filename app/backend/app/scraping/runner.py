@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import uuid
 from dataclasses import dataclass
@@ -30,6 +31,7 @@ from supabase import Client
 
 from .extractor import (
     PROMPT_VERSION,
+    canonical_key_invalid,
     compute_similarity_key,
     extract_recruitment_data,
     fetch_page_html,
@@ -1395,6 +1397,30 @@ def run_scraping_pass(
         confidence = float(extraction.get("confidence") or 0.5)
         total_found += 1
 
+        # ── Task 5: low-confidence gate ────────────────────────────────────
+        # A reviewer would discard this row anyway. Skip the scrape_queue
+        # insert (and all downstream document / candidate / draft writes),
+        # record it for triage, and bump the per-source strike counter —
+        # which auto-disables a source that keeps producing low-confidence
+        # output so we stop paying for LLM calls on it.
+        if confidence < _min_confidence_to_queue():
+            try:
+                low_quality = normalize_recruitment(data).data_quality_score
+            except Exception:  # noqa: BLE001 - quality is best-effort here
+                low_quality = None
+            _record_low_confidence_and_maybe_disable(
+                supabase,
+                run_id=run_id,
+                src=src,
+                source_url=item_url,
+                confidence=confidence,
+                data_quality_score=low_quality,
+                extracted_data=to_json_safe(data),
+            )
+            return None
+        # A confident extraction clears the source's low-confidence streak.
+        _reset_low_confidence_strikes(src.get("id"))
+
         sim_key = compute_similarity_key(data)
         # Canonical-identity sanity. RawExtractedRecruitment is permissive,
         # so a low-quality extraction can produce e.g. ``"-0-"`` (empty
@@ -1406,7 +1432,10 @@ def run_scraping_pass(
         # so find_duplicate can't false-match, (b) skip the canonical
         # candidate upsert later. The queue row is still inserted and
         # marked needs_review so an admin can fill the gaps.
-        canonical_collapsed = bool(re.fullmatch(r"-\d+-", sim_key))
+        # Task 6: full validator — flags trailing/leading dash, double
+        # dash, and wrong segment count, not just the all-empty ``-0-``
+        # collapse. An invalid key is excluded from dedup keying below.
+        canonical_collapsed = canonical_key_invalid(sim_key)
         sim_key_for_dedup = sim_key if not canonical_collapsed else f"__incomplete_{uuid.uuid4().hex}"
         decision = find_duplicate(
             data.model_dump(),
@@ -1592,6 +1621,39 @@ def run_scraping_pass(
         )
         return inserted_id
 
+    # Task 1: fold the end-of-source claim release into the success PATCH.
+    # Previously a normal run did TWO source_registry PATCHes per source
+    # ~100ms apart — ``mark_success`` then a separate ``currently_scraping_at``
+    # clear in the ``finally``. ``_mark_source_success`` now clears the claim
+    # in the same PATCH and records the id so the ``finally`` skips the
+    # redundant second write. Failure-path PATCHes (``_bump_source_failure``
+    # + the finally release) stay independent and may still fire.
+    released_source_ids: set[str] = set()
+
+    def _mark_source_success(
+        src_row: dict[str, Any], *, op: str = "source_registry.mark_success"
+    ) -> None:
+        sid = src_row.get("id")
+        execute_or_default(
+            op,
+            lambda: supabase.table("source_registry").update({
+                "last_scraped_at": utc_now_iso(),
+                "last_success_at": utc_now_iso(),
+                "consecutive_fails": 0,
+                "last_error": None,
+                "last_error_class": None,
+                "last_error_message": None,
+                "last_error_at": None,
+                "last_error_http_status": None,
+                "last_error_url": None,
+                # Release the per-source scrape claim in the SAME PATCH.
+                "currently_scraping_at": None,
+            }).eq("id", sid).execute(),
+            None,
+        )
+        if sid:
+            released_source_ids.add(sid)
+
     for src in sources:
         source = normalize_source_registry(src)
         # Per-source concurrency claim. A worker that can't take the
@@ -1644,21 +1706,7 @@ def run_scraping_pass(
                             attempted_url=target_url,
                         )
                         continue
-                    execute_or_default(
-                        "source_registry.mark_success",
-                        lambda src=src: supabase.table("source_registry").update({
-                            "last_scraped_at": utc_now_iso(),
-                            "last_success_at": utc_now_iso(),
-                            "consecutive_fails": 0,
-                            "last_error": None,
-                            "last_error_class": None,
-                            "last_error_message": None,
-                            "last_error_at": None,
-                            "last_error_http_status": None,
-                            "last_error_url": None,
-                        }).eq("id", src["id"]).execute(),
-                        None,
-                    )
+                    _mark_source_success(src)
                 except Exception as exc:  # noqa: BLE001
                     error_class, error_message = _classify_exception(exc)
                     error_log.append({"source": source.name, "error": error_class, "error_message": error_message, "at": utc_now_iso()})
@@ -1690,21 +1738,7 @@ def run_scraping_pass(
                             attempted_url=target_url,
                         )
                         continue
-                    execute_or_default(
-                        "source_registry.mark_success",
-                        lambda src=src: supabase.table("source_registry").update({
-                            "last_scraped_at": utc_now_iso(),
-                            "last_success_at": utc_now_iso(),
-                            "consecutive_fails": 0,
-                            "last_error": None,
-                            "last_error_class": None,
-                            "last_error_message": None,
-                            "last_error_at": None,
-                            "last_error_http_status": None,
-                            "last_error_url": None,
-                        }).eq("id", src["id"]).execute(),
-                        None,
-                    )
+                    _mark_source_success(src)
                 except Exception as exc:  # noqa: BLE001
                     error_class, error_message = _classify_exception(exc)
                     error_log.append({"source": source.name, "error": error_class, "error_message": error_message, "at": utc_now_iso()})
@@ -1736,21 +1770,7 @@ def run_scraping_pass(
                             attempted_url=target_url,
                         )
                         continue
-                    execute_or_default(
-                        "source_registry.mark_success",
-                        lambda src=src: supabase.table("source_registry").update({
-                            "last_scraped_at": utc_now_iso(),
-                            "last_success_at": utc_now_iso(),
-                            "consecutive_fails": 0,
-                            "last_error": None,
-                            "last_error_class": None,
-                            "last_error_message": None,
-                            "last_error_at": None,
-                            "last_error_http_status": None,
-                            "last_error_url": None,
-                        }).eq("id", src["id"]).execute(),
-                        None,
-                    )
+                    _mark_source_success(src)
                 except Exception as exc:  # noqa: BLE001
                     error_class, error_message = _classify_exception(exc)
                     error_log.append({"source": source.name, "error": error_class, "error_message": error_message, "at": utc_now_iso()})
@@ -1788,21 +1808,7 @@ def run_scraping_pass(
                             attempted_url=target_url,
                         )
                         continue
-                    execute_or_default(
-                        "source_registry.mark_success",
-                        lambda src=src: supabase.table("source_registry").update({
-                            "last_scraped_at": utc_now_iso(),
-                            "last_success_at": utc_now_iso(),
-                            "consecutive_fails": 0,
-                            "last_error": None,
-                            "last_error_class": None,
-                            "last_error_message": None,
-                            "last_error_at": None,
-                            "last_error_http_status": None,
-                            "last_error_url": None,
-                        }).eq("id", src["id"]).execute(),
-                        None,
-                    )
+                    _mark_source_success(src)
                 except Exception as exc:  # noqa: BLE001
                     error_class, error_message = _classify_exception(exc)
                     error_log.append({"source": source.name, "error": error_class, "error_message": error_message, "at": utc_now_iso()})
@@ -1839,20 +1845,8 @@ def run_scraping_pass(
                                     "scrape.listing_unchanged source_id=%s source_name=%s url=%s",
                                     src.get("id"), source.name, target_url,
                                 )
-                                execute_or_default(
-                                    "source_registry.mark_success_unchanged",
-                                    lambda src=src: supabase.table("source_registry").update({
-                                        "last_scraped_at": utc_now_iso(),
-                                        "last_success_at": utc_now_iso(),
-                                        "consecutive_fails": 0,
-                                        "last_error": None,
-                                        "last_error_class": None,
-                                        "last_error_message": None,
-                                        "last_error_at": None,
-                                        "last_error_http_status": None,
-                                        "last_error_url": None,
-                                    }).eq("id", src["id"]).execute(),
-                                    None,
+                                _mark_source_success(
+                                    src, op="source_registry.mark_success_unchanged"
                                 )
                                 continue
                             if not listing_result.ok or not listing_result.text:
@@ -2088,26 +2082,7 @@ def run_scraping_pass(
                         )
                         continue
 
-                execute_or_default(
-                    "source_registry.mark_success",
-                    lambda src=src: supabase.table("source_registry")
-                    .update(
-                        {
-                            "last_scraped_at": utc_now_iso(),
-                            "last_success_at": utc_now_iso(),
-                            "consecutive_fails": 0,
-                            "last_error": None,
-                            "last_error_class": None,
-                            "last_error_message": None,
-                            "last_error_at": None,
-                            "last_error_http_status": None,
-                            "last_error_url": None,
-                        }
-                    )
-                    .eq("id", src["id"])
-                    .execute(),
-                    None,
-                )
+                _mark_source_success(src)
 
             except Exception as exc:  # noqa: BLE001
                 error_class, error_message = _classify_exception(exc)
@@ -2125,7 +2100,11 @@ def run_scraping_pass(
                 )
 
         finally:
-            _release_source_claim(supabase, src)
+            # Success already cleared currently_scraping_at inside the
+            # single mark_success PATCH (Task 1). Only the failure / no-op
+            # paths need the standalone release here.
+            if src.get("id") not in released_source_ids:
+                _release_source_claim(supabase, src)
 
     # ── 5. Finalise the run row ──────────────────────────────────────────
     if sources and len(error_log) == len(sources):
@@ -2300,6 +2279,104 @@ def _bump_source_failure(
         .execute(),
         None,
     )
+
+
+# ── Task 5: low-confidence gate + per-source circuit breaker ───────────
+# A reviewer discards near-zero-confidence extractions anyway, so there is
+# no value in spending a scrape_queue row (and the downstream document /
+# candidate / draft writes) on them. The per-source strike counter then
+# auto-disables a source that keeps producing low-confidence output, so we
+# stop paying for LLM calls on a structurally-broken source.
+#
+# Defaults are overridable via env. Strikes are in-memory (per-process);
+# durable persistence is a documented follow-up.
+MIN_CONFIDENCE_TO_QUEUE = 0.20
+LOW_CONFIDENCE_STRIKE_LIMIT = 3
+_low_confidence_strikes: dict[str, int] = {}
+
+
+def _min_confidence_to_queue() -> float:
+    raw = os.getenv("MIN_CONFIDENCE_TO_QUEUE")
+    if raw is not None:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return MIN_CONFIDENCE_TO_QUEUE
+
+
+def _low_confidence_strike_limit() -> int:
+    raw = os.getenv("LOW_CONFIDENCE_STRIKE_LIMIT")
+    if raw is not None:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return LOW_CONFIDENCE_STRIKE_LIMIT
+
+
+def _reset_low_confidence_strikes(source_id: str | None) -> None:
+    if source_id:
+        _low_confidence_strikes.pop(source_id, None)
+
+
+def _record_low_confidence_and_maybe_disable(
+    supabase: Client,
+    *,
+    run_id: str,
+    src: dict[str, Any],
+    source_url: str,
+    confidence: float,
+    data_quality_score: float | None,
+    extracted_data: dict[str, Any],
+) -> None:
+    """Persist a skipped low-confidence extraction and bump the strike count.
+
+    ``low_quality_extractions`` does not exist yet (flagged as a follow-up
+    migration); when the insert fails we fall back to a structured WARNING
+    and still skip the scrape_queue insert. After
+    ``LOW_CONFIDENCE_STRIKE_LIMIT`` consecutive low-confidence runs the
+    source is auto-disabled so future runs don't even claim it (the
+    is_active=False filter excludes it from the next source load).
+    """
+    src_id = src.get("id")
+    row = {
+        "run_id": run_id,
+        "source_id": src_id,
+        "source_url": source_url,
+        "confidence_score": confidence,
+        "data_quality_score": data_quality_score,
+        "extracted_data": extracted_data,
+        "created_at": utc_now_iso(),
+    }
+    try:
+        supabase.table("low_quality_extractions").insert(row).execute()
+    except Exception as exc:  # noqa: BLE001 - table may not exist yet
+        logger.warning(
+            "scrape.low_confidence_skipped run_id=%s source_id=%s url=%s "
+            "confidence=%.2f data_quality=%s reason=below_min_threshold "
+            "low_quality_extractions_unavailable=%s",
+            run_id, src_id, source_url, confidence, data_quality_score, exc,
+        )
+
+    if not src_id:
+        return
+    strikes = _low_confidence_strikes.get(src_id, 0) + 1
+    _low_confidence_strikes[src_id] = strikes
+    if strikes >= _low_confidence_strike_limit():
+        logger.warning(
+            "scrape.source_auto_disabled source_id=%s strikes=%d reason=low_confidence",
+            src_id, strikes,
+        )
+        execute_or_default(
+            "source_registry.auto_disable_low_confidence",
+            lambda: supabase.table("source_registry").update({
+                "is_active": False,
+                "verification_status": "auto_disabled_low_confidence",
+            }).eq("id", src_id).execute(),
+            None,
+        )
+        _low_confidence_strikes.pop(src_id, None)
 
 
 def _classify_exception(exc: BaseException) -> tuple[str, str]:
