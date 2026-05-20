@@ -21,12 +21,14 @@ from __future__ import annotations
 import logging
 import hashlib
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from httpx import ConnectError, RemoteProtocolError
 from pydantic import BaseModel, Field
 
 from app.core.auth import get_current_user, require_permission
@@ -38,6 +40,35 @@ from app.scraping.intelligence import classify_item, duplicate_candidates, BLOCK
 from app.scraping.promotion_gate import HIGH_RISK_FIELDS as _HIGH_RISK_FIELDS_SHARED, evaluate_promotion_gate
 
 logger = logging.getLogger("career_copilot.api.admin_scrape")
+
+
+def _execute_with_retry(query_builder, *, op: str, retries: int = 1):
+    """Execute a PostgREST read builder with one retry on transient
+    Supabase HTTP disconnects.
+
+    Supabase's HTTP/2 pooler occasionally drops a connection mid-request,
+    surfacing as ``httpx.RemoteProtocolError`` / ``httpx.ConnectError``.
+    A single short retry recovers the common case without masking a real
+    outage — after the last attempt the original error re-raises so the
+    500 still surfaces to the caller.
+
+    READ-ONLY: only wrap idempotent GET-equivalent reads. Never wrap
+    INSERT/UPDATE/DELETE builders — a retry there could double-write.
+    """
+    last_err: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            return query_builder.execute()
+        except (RemoteProtocolError, ConnectError) as e:
+            last_err = e
+            logger.warning(
+                "supabase_transient op=%s attempt=%s err=%s", op, attempt, repr(e)
+            )
+            if attempt < retries:
+                time.sleep(0.25)
+                continue
+            raise
+    raise last_err  # unreachable; loop either returns or raises
 
 
 def _require_admin(user: dict = Depends(get_current_user)) -> dict:
@@ -527,15 +558,13 @@ def admin_sources(_admin: dict = Depends(require_permission("sources.manage"))) 
 
 def _list_sources() -> dict[str, Any]:
     supabase = get_supabase_admin()
-    rows = (
+    builder = (
         supabase.table("source_registry")
         .select("*")
         .order("tier")
         .order("source_name")
-        .execute()
-        .data
-        or []
     )
+    rows = _execute_with_retry(builder, op="list_sources").data or []
     return {"items": [_shape_source(r) for r in rows]}
 
 
@@ -595,15 +624,13 @@ def list_scrape_runs(
     _admin: dict = Depends(require_permission("scraper.manage")),
 ) -> dict[str, Any]:
     supabase = get_supabase_admin()
-    rows = (
+    builder = (
         supabase.table("scrape_runs")
         .select("*")
         .order("started_at", desc=True)
         .limit(limit)
-        .execute()
-        .data
-        or []
     )
+    rows = _execute_with_retry(builder, op="list_scrape_runs").data or []
     items = [
         {
             "id": r["id"],

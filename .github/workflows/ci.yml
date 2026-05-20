@@ -35,5 +35,11 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements.txt
       - run: pip install pip-audit
-      - run: pip-audit -r requirements.txt
+      # PYSEC-2025-183 (pyjwt "weak encryption") is disputed by the supplier —
+      # key length is the application's choice, and our only use of PyJWT is
+      # jwt.decode(..., verify_signature=False) for reading unverified claims,
+      # which involves no encryption key. No fixed release exists. Ignored
+      # here with an explicit ID rather than dropping the audit gate; revisit
+      # if upstream ships a fix or our usage changes.
+      - run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2025-183
       - run: pytest -q --cov=app --cov-report=term-missing --cov-fail-under=60
