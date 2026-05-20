@@ -754,6 +754,14 @@ def _load_active_plan(supabase: Any, user_id: str) -> dict[str, Any] | None:
 
 
 def _load_today_tasks(supabase: Any, plan_id: str) -> list[dict[str, Any]]:
+    """Today's tasks for ``plan_id``, shaped for the Mission Control card.
+
+    Includes the planner's full reasoning columns (``priority_score``,
+    ``why_this_task``, ``topic_id``, ``exam_topic_coverage_id``,
+    ``subject_id``) so the UI can surface them inline instead of issuing
+    a second ``/task-reasoning/:id`` round-trip per card. All five live
+    on ``study_tasks`` since migration 034.
+    """
     if not plan_id:
         return []
     rows = _safe(
@@ -762,7 +770,9 @@ def _load_today_tasks(supabase: Any, plan_id: str) -> list[dict[str, Any]]:
             .select(
                 "id, day_label, subject, topic, microtopic, task_type, "
                 "title, duration_mins, planned_minutes, status, "
-                "completed_at, scheduled_date"
+                "completed_at, scheduled_date, "
+                "priority_score, why_this_task, "
+                "topic_id, exam_topic_coverage_id, subject_id"
             )
             .eq("plan_id", plan_id)
             .order("day_label")
@@ -793,7 +803,14 @@ def _load_today_tasks(supabase: Any, plan_id: str) -> list[dict[str, Any]]:
                 "topic": r.get("topic"),
                 "task_type": r.get("task_type"),
                 "planned_minutes": r.get("planned_minutes") or r.get("duration_mins"),
-                "priority_score": None,
+                # Planner reasoning. Pass through the real value — may be
+                # null on legacy rows from before migration 034. Never
+                # hard-code to None.
+                "priority_score": r.get("priority_score"),
+                "why_this_task": r.get("why_this_task"),
+                "topic_id": r.get("topic_id"),
+                "exam_topic_coverage_id": r.get("exam_topic_coverage_id"),
+                "subject_id": r.get("subject_id"),
             }
         )
     return shaped

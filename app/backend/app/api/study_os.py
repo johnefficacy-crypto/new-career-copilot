@@ -772,7 +772,12 @@ async def get_topics(
                     "subject": c.get("subject_name"),
                     "topic_id": tid,
                     "topic": c.get("topic_name"),
-                    "parent_topic_id": None,
+                    # Hierarchy passes through from ``_load_locked_coverage``
+                    # which now selects ``parent_topic_id`` + ``level``.
+                    # Null is legitimate for root topics; null on a non-root
+                    # row would indicate a DB inconsistency, not a bug here.
+                    "parent_topic_id": c.get("parent_topic_id"),
+                    "topic_level": c.get("topic_level"),
                     "mastery_score": mast,
                     "exam_priority_score": c.get("coverage_priority"),
                     "is_high_yield": bool(c.get("is_high_yield")),
