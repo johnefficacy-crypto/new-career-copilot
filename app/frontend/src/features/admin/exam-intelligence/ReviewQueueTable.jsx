@@ -24,6 +24,7 @@ export default function ReviewQueueTable({ items, kind, onReview, busyRowId }) {
 
   const isMention = kind === "syllabus_topic_mention";
   const isTag = kind === "pyq_question_topic_tag";
+  const isOption = kind === "pyq_option";
 
   function toggle(id) {
     setExpanded((prev) => {
@@ -34,7 +35,10 @@ export default function ReviewQueueTable({ items, kind, onReview, busyRowId }) {
     });
   }
 
-  const detailColSpan = 6 + (isMention ? 1 : 0) + (isTag ? 1 : 0);
+  // base = id + status + confidence + actions (4). Each variant adds two
+  // extra columns (mention text/type, tag role/weight, option label/correct).
+  const variantExtra = isMention || isTag || isOption ? 2 : 1;
+  const detailColSpan = 4 + variantExtra;
 
   return (
     <div className="soft-card grain relative overflow-hidden rounded-[18px]">
@@ -54,7 +58,13 @@ export default function ReviewQueueTable({ items, kind, onReview, busyRowId }) {
                 <th className="right">Weight</th>
               </>
             ) : null}
-            {!isMention && !isTag ? <th>Type</th> : null}
+            {isOption ? (
+              <>
+                <th>Option</th>
+                <th>Correct</th>
+              </>
+            ) : null}
+            {!isMention && !isTag && !isOption ? <th>Type</th> : null}
             <th>Status</th>
             <th>Confidence</th>
             <th className="right">Actions</th>
@@ -96,7 +106,18 @@ export default function ReviewQueueTable({ items, kind, onReview, busyRowId }) {
                       <td className="right num-mono">{r.tag_weight ?? "—"}</td>
                     </>
                   ) : null}
-                  {!isMention && !isTag ? (
+                  {isOption ? (
+                    <>
+                      <td className="max-w-md">
+                        <span className="num-mono text-clay-700 mr-1.5">
+                          {r.option_label || "—"}.
+                        </span>
+                        <span className="line-clamp-2 inline">{r.option_text || "—"}</span>
+                      </td>
+                      <td>{r.is_correct ? "Yes" : "No"}</td>
+                    </>
+                  ) : null}
+                  {!isMention && !isTag && !isOption ? (
                     <td>{r.question_type || "—"}</td>
                   ) : null}
                   <td>
@@ -131,7 +152,7 @@ export default function ReviewQueueTable({ items, kind, onReview, busyRowId }) {
                 {isOpen ? (
                   <tr>
                     <td colSpan={detailColSpan} className="bg-[#FBF8F2]">
-                      <ExamEvidenceDrawer row={r} defaultOpen />
+                      <ExamEvidenceDrawer row={r} kind={kind} defaultOpen />
                     </td>
                   </tr>
                 ) : null}

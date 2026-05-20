@@ -14,10 +14,14 @@ import { Eyebrow, Pill, SectionHeader, StatusDot, StudyCard } from "../../../sha
 
 const RISK_STATUS = { low: "ready", medium: "partial", high: "needs_review" };
 
+// Backend at admin_exam_intelligence.py:889 records approval intent only;
+// it does NOT lock the coverage row. Button label reflects that — the
+// previous "Approve for Study OS" copy implied a lock action the API
+// never performed.
 const DECISIONS = [
   { value: "hold", label: "Hold for more evidence" },
   { value: "stage", label: "Stage for rollout" },
-  { value: "approve", label: "Approve for Study OS" },
+  { value: "approve", label: "Record approval intent" },
 ];
 
 function RankList({ title, rows, candidateTopicId, tone = "neutral" }) {
@@ -124,16 +128,16 @@ export default function PlanImpactPreview() {
     setSaveMsg("");
     setError("");
     try {
-      const res = await api.post(
+      await api.post(
         `/api/admin/exam-intelligence/plan-impact/${encodeURIComponent(selectedId)}/decision`,
         { decision, notes: notes || undefined },
       );
-      setSaveMsg(
-        res?.coverage_locked
-          ? "Approved — coverage row locked into the planner."
-          : `Decision saved: ${decision}`,
-      );
+      // Reload first (it clears saveMsg), then set the confirmation so the
+      // message survives. Backend records intent only — it does not lock
+      // the row. The previous ``res?.coverage_locked`` branch was dead
+      // code that implied a lock action the API never performed.
       await loadImpact(selectedId);
+      setSaveMsg(`Decision saved: ${decision} (intent only — row remains unlocked)`);
     } catch (e) {
       setError(e?.message || "Could not save decision");
     } finally {

@@ -39,6 +39,9 @@ const KINDS = [
   { value: "syllabus_topic_mention", label: "Syllabus mentions" },
   { value: "pyq_question_topic_tag", label: "PYQ topic tags" },
   { value: "pyq_question", label: "PYQ questions" },
+  // pyq_option is in the backend ``_REVIEWABLE`` map already — the
+  // queue UI was the only path that couldn't reach it.
+  { value: "pyq_option", label: "PYQ options" },
 ];
 
 const STATUSES = ["pending", "verified", "rejected", "needs_correction", "all"];

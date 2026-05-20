@@ -50,6 +50,35 @@ def test_evidence_returns_row_and_trust_envelope():
     assert body["trust"]["reviewed_at"] == "2026-04-01"
 
 
+def test_evidence_pyq_option_kind_returns_row():
+    """pyq_option is now a registered evidence kind so the review-queue
+    EvidenceDrawer can deep-link to it like every other reviewable kind.
+    """
+    sb = SBStub({
+        "pyq_options": [
+            {
+                "id": "opt-1",
+                "question_id": "q-1",
+                "option_label": "B",
+                "option_text": "1 and 3 only",
+                "is_correct": True,
+                "reviewer_status": "verified",
+                "reviewed_at": "2026-04-02",
+            }
+        ]
+    })
+    r = _client(sb).get("/api/evidence/pyq_option/opt-1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["kind"] == "pyq_option"
+    assert body["id"] == "opt-1"
+    assert body["row"]["option_label"] == "B"
+    assert body["row"]["is_correct"] is True
+    assert body["trust"]["status"] == "verified"
+    # pyq_option carries no confidence column.
+    assert body["trust"]["confidence_score"] is None
+
+
 def test_evidence_400_for_unknown_kind():
     sb = SBStub({})
     r = _client(sb).get("/api/evidence/nonsense_kind/abc")
