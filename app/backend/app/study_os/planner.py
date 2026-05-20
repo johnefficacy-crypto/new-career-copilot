@@ -29,6 +29,7 @@ from app.exam_intelligence.lookup import resolve_exam_by_id, resolve_exam_by_slu
 from app.study_os.competition_context import competition_context
 from app.study_os.plan_preferences import focus_weights, get_plan_preferences
 from app.study_os.update_context import policy_update_context
+from app.utils.safe import safe_required
 
 logger = logging.getLogger("career_copilot.study_os.planner")
 
@@ -531,6 +532,16 @@ def _persist(
     input_context: dict[str, Any],
     event_type: str,
 ) -> dict[str, Any]:
+    """Persist a freshly-computed plan. Fail closed on every critical write.
+
+    Every Supabase write below uses :func:`safe_required`. If any one
+    returns ``None`` the function short-circuits with
+    ``{"generated": False, "reason": "<code>"}`` so ``apply_plan`` never
+    reports success on a partially-written plan. The previous bare
+    ``_safe(...)`` pattern was masking constraint violations (e.g. an
+    ``event_type`` that wasn't in the CHECK list) and letting the API
+    return ``{generated: True}`` while the audit row never wrote.
+    """
     exam_id = exam.get("id")
     today = _today_iso()
 
@@ -538,32 +549,34 @@ def _persist(
     if plan:
         plan_id = plan["id"]
     else:
-        created = _safe(
+        created = safe_required(
             lambda: (
                 supabase.table("study_plans")
                 .insert(
                     {
                         "user_id": user_id,
                         "status": "active",
-                                                "start_date": today,
+                        "start_date": today,
                         "exam_id": exam_id,
                         "active_phase_id": plan_phase_id,
-                        "metadata": {"theme": f"{exam.get('name') or 'Exam'} adaptive plan", "target": "Cover locked high-yield topics"},
+                        "metadata": {
+                            "theme": f"{exam.get('name') or 'Exam'} adaptive plan",
+                            "target": "Cover locked high-yield topics",
+                        },
                         "generation_context": input_context,
                         "updated_at": _now_iso(),
                     }
                 )
                 .execute()
-                .data
             ),
-            default=[],
-        ) or []
-        if not created:
+            op="study_plans.insert",
+        )
+        if created is None:
             return {"generated": False, "reason": "plan_persist_failed"}
         plan_id = created[0]["id"]
 
     version_number = _next_version_number(supabase, plan_id)
-    version = _safe(
+    version = safe_required(
         lambda: (
             supabase.table("study_plan_versions")
             .insert(
@@ -582,15 +595,18 @@ def _persist(
                 }
             )
             .execute()
-            .data
         ),
-        default=[],
-    ) or []
-    plan_version_id = version[0]["id"] if version else None
+        op="study_plan_versions.insert",
+    )
+    if version is None:
+        return {"generated": False, "reason": "version_persist_failed"}
+    plan_version_id = version[0]["id"]
 
     # Idempotent regeneration: clear today's still-planned tasks for this
     # plan, then insert the fresh set. Completed / in-progress tasks stay.
-    _safe(
+    # ``allow_empty=True`` because a fresh plan legitimately deletes zero
+    # rows on the first apply — that is not a failure.
+    cleared = safe_required(
         lambda: (
             supabase.table("study_tasks")
             .delete()
@@ -598,17 +614,26 @@ def _persist(
             .eq("scheduled_date", today)
             .eq("status", "planned")
             .execute()
-        )
+        ),
+        op="study_tasks.delete_today",
+        allow_empty=True,
     )
+    if cleared is None:
+        return {"generated": False, "reason": "task_cleanup_failed"}
 
     task_rows = [
         {**t, "user_id": user_id, "plan_id": plan_id, "plan_version_id": plan_version_id}
         for t in tasks
     ]
     if task_rows:
-        _safe(lambda: supabase.table("study_tasks").insert(task_rows).execute())
+        inserted_tasks = safe_required(
+            lambda: supabase.table("study_tasks").insert(task_rows).execute(),
+            op="study_tasks.insert",
+        )
+        if inserted_tasks is None:
+            return {"generated": False, "reason": "task_persist_failed"}
 
-    _safe(
+    updated_plan = safe_required(
         lambda: (
             supabase.table("study_plans")
             .update(
@@ -620,10 +645,13 @@ def _persist(
             )
             .eq("id", plan_id)
             .execute()
-        )
+        ),
+        op="study_plans.update_active_version",
     )
+    if updated_plan is None:
+        return {"generated": False, "reason": "plan_persist_failed"}
 
-    _safe(
+    audit = safe_required(
         lambda: (
             supabase.table("study_adaptation_events")
             .insert(
@@ -641,8 +669,11 @@ def _persist(
                 }
             )
             .execute()
-        )
+        ),
+        op="study_adaptation_events.insert",
     )
+    if audit is None:
+        return {"generated": False, "reason": "audit_persist_failed"}
 
     return {
         "generated": True,
@@ -944,7 +975,7 @@ def apply_plan(
     user_id: str,
     *,
     reason: str = "manual_apply",
-    event_type: str = "manual_application",
+    event_type: str = "manual_regeneration",
 ) -> dict[str, Any]:
     """Apply today's computed plan. Always persists when ``generated=True``.
 
@@ -952,6 +983,12 @@ def apply_plan(
     planned tasks for that plan, and inserts the fresh set; completed /
     in-progress tasks survive. Creates exactly one ``study_plan_versions``
     row and one ``study_adaptation_events`` row per call.
+
+    ``event_type`` defaults to ``manual_regeneration`` — the value present
+    in the ``study_adaptation_events.event_type`` CHECK constraint
+    (migration 033). The previous default ``manual_application`` was not
+    in the constraint, so every audit insert was being rejected by
+    Postgres and silently swallowed by the old bare ``_safe`` wrapper.
     """
     try:
         before = _active_plan_today_tasks(supabase, user_id)

@@ -162,4 +162,45 @@ __all__ = [
     "SchemaDriftError",
     "detect_schema_drift",
     "safe_call",
+    "safe_required",
 ]
+
+
+def safe_required(
+    call: Callable[[], Any],
+    *,
+    op: str,
+    log: logging.Logger | None = None,
+    allow_empty: bool = False,
+) -> Any | None:
+    """Run a Supabase write/read and return its ``.data`` or ``None`` on failure.
+
+    Use this — never bare ``_safe(...)`` — around any **critical write** whose
+    callers must short-circuit on failure (planner persistence, audit-event
+    inserts, anything that gates further downstream writes). Empty rows are
+    treated as failure by default because supabase-py returns an empty list
+    on a misrouted insert/update; pass ``allow_empty=True`` for legitimate
+    "delete-by-filter, may match zero" cases.
+
+    The contract:
+
+    * Success → returns the response's ``.data`` (the list of rows).
+    * Failure (exception, no ``.data`` attribute, or empty when not allowed) →
+      logs a WARNING tagged with ``op=...`` and returns ``None``. The caller
+      MUST check for ``None`` and short-circuit; this helper never raises.
+    """
+    target_log = log or logger
+    try:
+        res = call()
+    except Exception as exc:  # noqa: BLE001 - the whole point is to surface, not swallow
+        target_log.warning("db_op_failed op=%s err=%r", op, exc)
+        return None
+
+    data = getattr(res, "data", None)
+    if data is None:
+        target_log.warning("db_op_empty op=%s reason=no_data_attr", op)
+        return None
+    if not data and not allow_empty:
+        target_log.warning("db_op_empty op=%s reason=empty_result", op)
+        return None
+    return data
