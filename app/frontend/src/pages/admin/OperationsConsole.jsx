@@ -9,6 +9,7 @@ import DuplicateMergePreview from "../../features/admin/workflow/DuplicateMergeP
 import SelectionContextBanner from "../../features/admin/workflow/SelectionContextBanner";
 import useConflicts from "../../features/admin/workflow/useConflicts";
 import { scoreToPct } from "../../features/admin/workflow/scoreUtils";
+import { useToast } from "../../shared/ui";
 import { Drawer } from "../../shared/ui/studyos";
 
 const VIEWS = [
@@ -76,10 +77,19 @@ export default function OperationsConsole() {
   const [queueFilter, setQueueFilter] = useState(() => searchParams.get("queue_status") || "pending");
   const [workflowOpen, setWorkflowOpen] = useState(false);
   const [leftView, setLeftView] = useState(() => (recruitmentId ? "drafts" : "candidates"));
+  // Heavy per-item detail (extracted_data / raw_extracted_item / raw_html)
+  // is stripped from the lightweight queue list; we hydrate it on demand
+  // when an item is selected so the resolver can auto-detect host
+  // candidates and the field-review panels have data to render.
+  const [queueDetail, setQueueDetail] = useState(null);
+  // Bumped at the end of every loadAll so the detail hydration effect
+  // re-runs after a reload (e.g. post-resolve, post-field-correction).
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   const { conflicts, refetch: refetchConflicts } = useConflicts(queueId);
 
   const { runAction, busyKey, error: actionError } = useAdminAction();
+  const toast = useToast();
 
   const updateParams = useCallback((next) => {
     const merged = new URLSearchParams(searchParams);
@@ -108,10 +118,38 @@ export default function OperationsConsole() {
       setLoadError(e);
     } finally {
       setLoading(false);
+      setReloadNonce((n) => n + 1);
     }
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Detail hydration: fetch the full row for the selected queue item via
+  // the include_detail path and stash the heavy fields. Re-runs when the
+  // selection changes or after any loadAll (reloadNonce). Failure is
+  // non-fatal — the resolver falls back to manual add.
+  const hydrateQueueDetail = useCallback(async (id) => {
+    if (!id) { setQueueDetail(null); return; }
+    try {
+      const r = await api.get(
+        `/api/admin/scrape/queue?status=all&include_detail=true&item_id=${encodeURIComponent(id)}&limit=1`,
+      );
+      const full = (r.items || [])[0] || null;
+      if (full && full.id === id) {
+        setQueueDetail({
+          id: full.id,
+          extracted_data: full.extracted_data ?? null,
+          raw_extracted_item: full.raw_extracted_item ?? full.extracted_data ?? null,
+          raw_html: full.raw_html ?? null,
+          raw_payload: full.raw_payload ?? null,
+        });
+      }
+    } catch {
+      // Keep list-level fields; the resolver shows the manual-add path.
+    }
+  }, []);
+
+  useEffect(() => { hydrateQueueDetail(queueId); }, [queueId, reloadNonce, hydrateQueueDetail]);
 
   // Keep the segmented selector in sync with URL-driven selection. Opening
   // a recruitment via deep link should switch the rail to "drafts"; clearing
@@ -125,10 +163,37 @@ export default function OperationsConsole() {
     () => sources.find((s) => s.id === sourceId) || null,
     [sources, sourceId],
   );
-  const selectedQueueItem = useMemo(
-    () => queue.find((q) => q.id === queueId) || null,
-    [queue, queueId],
-  );
+  const selectedQueueItem = useMemo(() => {
+    const base = queue.find((q) => q.id === queueId) || null;
+    if (!base) return null;
+    if (queueDetail && queueDetail.id === base.id) {
+      // Overlay ONLY the heavy content fields. List-level gate/status
+      // fields (official_source_resolved, unverified_fields, promotable…)
+      // come from the freshest loadAll so a stale detail snapshot can't
+      // revert the gate after a resolve. ``??`` keeps the list value when
+      // present and falls back to the hydrated detail otherwise.
+      return {
+        ...base,
+        extracted_data: base.extracted_data ?? queueDetail.extracted_data,
+        raw_extracted_item: base.raw_extracted_item ?? queueDetail.raw_extracted_item,
+        raw_html: base.raw_html ?? queueDetail.raw_html,
+        raw_payload: base.raw_payload ?? queueDetail.raw_payload,
+      };
+    }
+    return base;
+  }, [queue, queueId, queueDetail]);
+
+  // P0-2 fallback: selection is URL-param driven and survives loadAll by
+  // re-finding the id in the fresh list. If the selected item vanished
+  // (rejected/merged out of view, or dropped past the page limit), clear
+  // the param and tell the admin rather than leaving an empty workspace.
+  useEffect(() => {
+    if (loading) return;
+    if (queueId && !selectedQueueItem) {
+      toast.info("That candidate is no longer in the queue. Selection cleared.");
+      updateParams({ queue_id: null });
+    }
+  }, [loading, queueId, selectedQueueItem, toast, updateParams]);
   const selectedRecruitment = useMemo(
     () => recruitments.find((r) => r.id === recruitmentId) || null,
     [recruitments, recruitmentId],
@@ -158,6 +223,34 @@ export default function OperationsConsole() {
     const setupSteps = new Set(["source_ready", "dry_scrape", "live_scrape"]);
     updateParams({ mode: setupSteps.has(stepId) ? "source" : "queue" });
   }, [updateParams]);
+
+  // CurrentActionCard primary button: focus the matching AdminFixPanel
+  // section and scroll it into view. Setup-phase kinds switch to the
+  // setup view; everything else lives in the queue/review workspace.
+  const onPrimaryAction = useCallback((kind) => {
+    const setupKinds = new Set(["source_ready", "dry_scrape", "live_scrape"]);
+    if (setupKinds.has(kind)) {
+      updateParams({ mode: "source" });
+      return;
+    }
+    if (mode !== "queue") updateParams({ mode: "queue" });
+    const anchorByKind = {
+      attach_official_source: "official-source-quick-resolver",
+      verify_fields: "queue-fix-section",
+      resolve_conflicts: "fix-panel-conflicts",
+      promote_to_draft: "promote-bar",
+    };
+    const testid = anchorByKind[kind] || "ops-workspace";
+    // Defer one frame so a view switch has a chance to render the panel.
+    const scroll = () => {
+      if (typeof document === "undefined") return;
+      const el = document.querySelector(`[data-testid="${testid}"]`)
+        || document.querySelector('[data-testid="ops-workspace"]');
+      el?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(scroll);
+    else scroll();
+  }, [mode, updateParams]);
 
   const queueFieldAction = useCallback(async (id, field, action, correctedValue, scope) => {
     await runAction({
@@ -409,6 +502,7 @@ export default function OperationsConsole() {
             workflowOpen={workflowOpen}
             onOpenWorkflow={() => setWorkflowOpen(true)}
             onCloseWorkflow={() => setWorkflowOpen(false)}
+            onPrimaryAction={onPrimaryAction}
             onClearSource={() => updateParams({ source_id: null })}
             onClearQueue={() => updateParams({ queue_id: null })}
             onClearRecruitment={() => updateParams({ recruitment_id: null })}
@@ -634,7 +728,7 @@ function ReviewAndPublish({
   onSourcesChanged, onConfirmMerge,
   conflicts, conflictTarget, onOpenConflict, onResolveConflict, onRejectConflict, onCloseConflict,
   busy, msg, actionError,
-  leftView, onLeftView, workflowOpen, onOpenWorkflow, onCloseWorkflow,
+  leftView, onLeftView, workflowOpen, onOpenWorkflow, onCloseWorkflow, onPrimaryAction,
 }) {
   const progress = computeProgress(progressState);
   return (
@@ -645,7 +739,7 @@ function ReviewAndPublish({
           <span className="scrn-tag">current action + selection context</span>
         </div>
         <div className="stack">
-          <CurrentActionCard progress={progress} onOpenDetails={onOpenWorkflow} />
+          <CurrentActionCard progress={progress} onOpenDetails={onOpenWorkflow} onPrimaryAction={onPrimaryAction} />
           <SelectionContextBanner
             source={selectedSource}
             queueItem={selectedQueueItem}

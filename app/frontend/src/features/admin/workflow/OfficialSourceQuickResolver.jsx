@@ -1,5 +1,9 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { api } from "../../../lib/api";
+import { useToast } from "../../../shared/ui";
+
+const RESOLVE_SUCCESS_TOAST =
+  "Official proof attached. Next: verify remaining fields / promote to draft.";
 
 // Mirror of backend ``source_drafts._OFFICIAL_URL_FIELDS`` so we can
 // detect the same set of candidate hosts client-side.
@@ -117,6 +121,7 @@ export default function OfficialSourceQuickResolver({
     [sources],
   );
 
+  const toast = useToast();
   const [working, setWorking] = useState(null); // host being processed
   const [info, setInfo] = useState(null);
   const [error, setError] = useState(null);
@@ -140,15 +145,19 @@ export default function OfficialSourceQuickResolver({
         queueId: queueItem.id,
         host, sourceUrl, existingSourceId,
       });
-      if (res.ok) setInfo(res.message);
-      else setError(res.message);
+      if (res.ok) {
+        setInfo(res.message);
+        toast.success(RESOLVE_SUCCESS_TOAST);
+      } else {
+        setError(res.message);
+      }
       await refresh();
     } catch (e) {
       setError(e?.message || `Link failed for ${host}.`);
     } finally {
       setWorking(null);
     }
-  }, [queueItem?.id, refresh]);
+  }, [queueItem?.id, refresh, toast]);
 
   const submitManual = useCallback(async () => {
     setError(null); setInfo(null);
@@ -185,8 +194,12 @@ export default function OfficialSourceQuickResolver({
         queueId: queueItem.id, host, sourceUrl: manualUrl.trim(),
         existingSourceId: newId,
       });
-      if (res.ok) setInfo(res.message);
-      else setError(res.message);
+      if (res.ok) {
+        setInfo(res.message);
+        toast.success(RESOLVE_SUCCESS_TOAST);
+      } else {
+        setError(res.message);
+      }
       setManualName(""); setManualUrl("");
       setShowManual(false);
       await refresh();
@@ -195,7 +208,7 @@ export default function OfficialSourceQuickResolver({
     } finally {
       setWorking(null);
     }
-  }, [manualName, manualUrl, manualType, queueItem?.id, onSourcesChanged, refresh]);
+  }, [manualName, manualUrl, manualType, queueItem?.id, onSourcesChanged, refresh, toast]);
 
   if (!queueItem) return null;
 
