@@ -18,11 +18,17 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 
+from app.utils.safe import safe_required
+
 logger = logging.getLogger("career_copilot.study_os.mocks")
 
 
 # ───────────────────────────── helpers ──────────────────────────────────────
 def _safe(call: Callable[[], Any], default: Any = None) -> Any:
+    # Read-path wrapper: returns default on any failure. For *writes* whose
+    # success the caller relies on, use ``safe_required`` instead so the
+    # failure surfaces with an op tag rather than being mistaken for an
+    # empty result.
     try:
         return call()
     except Exception as exc:  # noqa: BLE001
@@ -250,11 +256,11 @@ def create_mock(
         "notes": payload.get("notes"),
     }
 
-    inserted = _safe(
+    items = safe_required(
         lambda: supabase.table("mock_tests").insert(row).execute(),
-        default=None,
+        op="mock_tests.insert",
+        log=logger,
     )
-    items = getattr(inserted, "data", None) or []
     if not items:
         raise RuntimeError("mock_tests insert returned no row")
     mock = items[0]
@@ -294,7 +300,7 @@ def set_review_state(
 ) -> dict[str, Any]:
     if state not in VALID_REVIEW_STATES:
         raise ValueError(f"invalid review state: {state}")
-    updated = _safe(
+    items = safe_required(
         lambda: (
             supabase.table("mock_tests")
             .update({"review_state": state, "updated_at": _now_iso()})
@@ -302,9 +308,9 @@ def set_review_state(
             .eq("user_id", user_id)
             .execute()
         ),
-        default=None,
+        op="mock_tests.update_review_state",
+        log=logger,
     )
-    items = getattr(updated, "data", None) or []
     if not items:
         raise LookupError("mock not found")
     return _serialise_mock(items[0])
@@ -493,11 +499,11 @@ def apply_correction_task(
             "source_questions": correction.get("source_questions") or [],
         },
     }
-    inserted = _safe(
+    task_items = safe_required(
         lambda: supabase.table("study_tasks").insert(task_payload).execute(),
-        default=None,
+        op="study_tasks.insert_correction",
+        log=logger,
     )
-    task_items = getattr(inserted, "data", None) or []
     if not task_items:
         raise RuntimeError("could not create study task")
     task = task_items[0]

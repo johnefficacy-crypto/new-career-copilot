@@ -15,6 +15,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
+from app.utils.safe import safe_required
+
 logger = logging.getLogger("career_copilot.study_os.mastery")
 
 # error_type values permitted by the migration-033 check constraint.
@@ -85,17 +87,29 @@ def _existing_row(
     return rows[0] if rows else None
 
 
-def _upsert(supabase: Any, table: str, match: dict[str, Any], payload: dict[str, Any]) -> None:
+def _upsert(supabase: Any, table: str, match: dict[str, Any], payload: dict[str, Any]) -> bool:
+    """Update-or-insert one row. Returns True only when the write landed.
+
+    Uses ``safe_required`` so a failed mastery write surfaces (op-tagged)
+    instead of being silently counted as success by the caller.
+    """
     existing = _existing_row(supabase, table, match)
     if existing:
-        _safe(
+        written = safe_required(
             lambda: supabase.table(table)
             .update(payload)
             .eq("id", existing["id"])
-            .execute()
+            .execute(),
+            op=f"{table}.update",
+            log=logger,
         )
     else:
-        _safe(lambda: supabase.table(table).insert({**match, **payload}).execute())
+        written = safe_required(
+            lambda: supabase.table(table).insert({**match, **payload}).execute(),
+            op=f"{table}.insert",
+            log=logger,
+        )
+    return written is not None
 
 
 def _load_user_mock_breakdowns(
@@ -196,7 +210,7 @@ def recompute_topic_mastery(supabase: Any, user_id: str) -> dict[str, Any]:
             "exam_id": exam_id,
             "exam_phase_id": exam_phase_id,
         }
-        _upsert(
+        if _upsert(
             supabase,
             "user_topic_mastery",
             match,
@@ -211,14 +225,16 @@ def recompute_topic_mastery(supabase: Any, user_id: str) -> dict[str, Any]:
                 "evidence_count": g["evidence_count"],
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
-        )
-        mastery_rows += 1
+        ):
+            # Count only writes that actually landed — the returned summary
+            # must not overstate how much mastery was persisted.
+            mastery_rows += 1
 
         for etype in _VALID_ERROR_TYPES:
             freq = g["errors"].get(etype, 0)
             if freq <= 0:
                 continue
-            _upsert(
+            if _upsert(
                 supabase,
                 "user_topic_error_patterns",
                 {
@@ -234,7 +250,7 @@ def recompute_topic_mastery(supabase: Any, user_id: str) -> dict[str, Any]:
                     or datetime.now(timezone.utc).isoformat(),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 },
-            )
-            error_pattern_rows += 1
+            ):
+                error_pattern_rows += 1
 
     return {"mastery_rows": mastery_rows, "error_pattern_rows": error_pattern_rows}
