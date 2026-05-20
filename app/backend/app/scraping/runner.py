@@ -1258,6 +1258,30 @@ def _mark_listing_status(
 # ════════════════════════════════════════════════════════════════════════════
 
 
+# P1-1: source types for which an official-source host is a meaningful proof
+# of resolution. ``api`` sources are intentionally excluded — they may not
+# expose a host the resolver can capture.
+HOST_APPLICABLE_TYPES: frozenset[str] = frozenset({"official_html", "official_pdf", "aggregator"})
+
+
+def _expected_org_types(src: dict[str, Any]) -> set[str] | None:
+    """P1-2 per-source org_type allowlist (fail-open).
+
+    Read from the source's ``expected_org_types`` (top-level array) or
+    ``trust_config.expected_org_types`` JSON list — no schema change needed;
+    admins opt a source in via config. Returns ``None`` when unconfigured, in
+    which case the gate does nothing (a source must explicitly declare its
+    expected org_types to be checked). Values use the extractor's org_type
+    vocabulary: UPSC|SSC|Banking|Railway|State|Insurance|Defence|Other.
+    """
+    raw = src.get("expected_org_types")
+    if raw is None:
+        raw = (src.get("trust_config") or {}).get("expected_org_types")
+    if not raw or not isinstance(raw, (list, tuple, set)):
+        return None
+    return {str(x) for x in raw}
+
+
 def run_scraping_pass(
     supabase: Client,
     *,
@@ -1489,16 +1513,63 @@ def run_scraping_pass(
             official_source_host = None
             evidence_required = bool(src.get("requires_official_confirmation"))
 
+        # P1-1: resolved-without-host gate. A host-applicable source
+        # (official HTML/PDF or aggregator) reporting
+        # ``official_source_resolved=True`` with no host has not actually
+        # proven an official source — the 2026-05 MPSC misconfig
+        # (``requires_official_confirmation=false``) produced exactly this
+        # and the promotion gate would have waved it through. Flip it back
+        # to unresolved so the gate blocks it and the row routes to admin
+        # review. API-type sources are exempt (host may not apply).
+        resolved_without_host = (
+            src.get("source_type") in HOST_APPLICABLE_TYPES
+            and official_source_resolved
+            and not official_source_host
+        )
+        if resolved_without_host:
+            official_source_resolved = False
+            extracted_payload["_meta"]["warnings"] = [
+                *(extracted_payload["_meta"].get("warnings") or []),
+                "resolved_without_host_blocked",
+            ]
+
+        # P1-3: a perfect, contradiction-free ``data_quality_score`` is rare
+        # for genuine scraped notifications. Flag it (non-blocking) so the
+        # ceiling is greppable in logs and visible to reviewers.
+        if normalized.data_quality_score >= 0.999:
+            logger.warning(
+                "scrape.quality_score_ceiling run_id=%s source=%s url=%s",
+                run_id, source_name, item_url,
+            )
+            extracted_payload["_meta"]["quality_ceiling_flag"] = True
+
+        # P1-2: per-source org_type allowlist (fail-open). When a source
+        # declares its expected org_types in config, an extracted org_type
+        # outside that set is a likely mis-classification (the MPSC→Insurance
+        # bug shape) and routes the row to review. Sources that don't opt in
+        # are unaffected.
+        expected_org_types = _expected_org_types(src)
+        org_type_mismatch = bool(
+            expected_org_types and (data.org_type or "") not in expected_org_types
+        )
+        if org_type_mismatch:
+            extracted_payload["_meta"]["warnings"] = [
+                *(extracted_payload["_meta"].get("warnings") or []),
+                f"org_type_mismatch:{data.org_type}_not_in_{sorted(expected_org_types)}",
+            ]
+
         # ``extraction_status`` distinguishes a technically successful
         # model call from one whose output is admin-usable. A collapsed
-        # canonical key (missing org/title/year) or a data_quality_score
-        # below the review threshold means the row needs a human pass
-        # before any downstream consumer treats it as "extraction
-        # completed". This separates transport success from semantic
-        # success in the admin queue and dashboards.
+        # canonical key (missing org/title/year), a data_quality_score
+        # below the review threshold, a resolved-without-host block, or an
+        # org_type that contradicts the source's allowlist means the row
+        # needs a human pass before any downstream consumer treats it as
+        # "extraction completed".
         is_low_quality = normalized.data_quality_score < 0.30
         extraction_status = (
-            "needs_review" if (canonical_collapsed or is_low_quality) else "ok"
+            "needs_review"
+            if (canonical_collapsed or is_low_quality or resolved_without_host or org_type_mismatch)
+            else "ok"
         )
         queue_payload = {
             "source_url": item_url,

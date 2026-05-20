@@ -274,19 +274,25 @@ def _mock_extract(raw_text: str, source_url: str, source_name: str, *, provider:
 
 def _guess_org_type(source_name: str) -> str:
     s = source_name.lower()
-    if "upsc" in s:
+    # Short abbreviations must match as whole words, never as substrings.
+    # The classic bug: ``"lic" in "pubLIC"`` mis-typed every
+    # "Public Service Commission" as Insurance. Tokenise on word boundaries
+    # and test membership for the abbreviations; full words like
+    # "insurance"/"railway"/"bank" stay substring-safe.
+    tokens = set(re.findall(r"[a-z]+", s))
+    if "upsc" in tokens:
         return "UPSC"
-    if "ssc" in s:
+    if "ssc" in tokens:
         return "SSC"
-    if "ibps" in s or "rbi" in s or "sbi" in s or "bank" in s:
+    if tokens & {"ibps", "rbi", "sbi"} or "bank" in s:
         return "Banking"
-    if "rrb" in s or "railway" in s:
+    if "rrb" in tokens or "railway" in s:
         return "Railway"
-    if "lic" in s or "insurance" in s:
+    if "lic" in tokens or "insurance" in s:
         return "Insurance"
-    if "defence" in s or "navy" in s or "army" in s or "air force" in s:
+    if any(w in s for w in ("defence", "navy", "army", "air force")):
         return "Defence"
-    if "psc" in s or "state" in s:
+    if "psc" in tokens or "state" in tokens:
         return "State"
     return "Other"
 
