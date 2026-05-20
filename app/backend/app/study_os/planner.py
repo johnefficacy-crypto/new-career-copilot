@@ -181,7 +181,10 @@ def _load_locked_coverage(supabase: Any, exam_id: str) -> list[dict[str, Any]]:
         _safe(
             lambda: (
                 supabase.table("topics")
-                .select("id, name, slug, subject_id, is_active")
+                # Include ``parent_topic_id`` + ``level`` so callers (e.g.
+                # /api/study/topics) can render the Subject → Topic →
+                # Microtopic → Concept hierarchy without a second round-trip.
+                .select("id, name, slug, subject_id, is_active, parent_topic_id, level")
                 .in_("id", topic_ids)
                 .limit(2000)
                 .execute()
@@ -224,6 +227,11 @@ def _load_locked_coverage(supabase: Any, exam_id: str) -> list[dict[str, Any]]:
                 "coverage_id": r.get("id"),
                 "topic_id": r.get("topic_id"),
                 "topic_name": topic.get("name") or topic.get("slug"),
+                # Hierarchy fields surfaced for /api/study/topics. Null is
+                # legitimate for root-level topics; never coerce to None
+                # for non-root rows.
+                "parent_topic_id": topic.get("parent_topic_id"),
+                "topic_level": topic.get("level"),
                 "subject_id": topic.get("subject_id"),
                 "subject_name": subject.get("name"),
                 "exam_cycle_id": r.get("exam_cycle_id"),
