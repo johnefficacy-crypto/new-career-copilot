@@ -38,7 +38,11 @@ from .extractor import (
     fetch_page_text,
 )
 from .fetcher import FetchResult, fetch, strip_html
-from .dedup import find_duplicate, normalize_url as _norm_url_for_dedup
+from .dedup import (
+    post_extraction_dedup_queue,
+    post_extraction_dedup_recruitments,
+    pre_llm_dedup_check,
+)
 from .normalizer import normalize_recruitment
 from .promotion_gate import evaluate_promotion_gate
 from .resolver import ResolverResult, resolve_with_registry
@@ -1331,45 +1335,10 @@ def run_scraping_pass(
         _finalize_run_failed(supabase, run_id, "source_registry_read_failed", exc)
         raise
 
-    # ── 3. Build dedup index from existing recruitments + open queue ─────
-    try:
-        existing_recs = (
-            execute_or_raise(
-                "recruitments.read_for_dedupe",
-                lambda: supabase.table("recruitments")
-                .select("id, name, year, organizations(name), official_notification_url, official_apply_url, notification_number")
-                .execute(),
-            ).data
-            or []
-        )
-    except Exception as exc:
-        _finalize_run_failed(supabase, run_id, "recruitments_dedupe_read_failed", exc)
-        raise
-
-    try:
-        open_queue = (
-            execute_or_raise(
-                "scrape_queue.read_open_for_dedupe",
-                lambda: supabase.table("scrape_queue")
-                .select("id, extracted_data, status")
-                .not_.in_("status", ["rejected", "duplicate", "dry_run"])
-                .execute(),
-            ).data
-            or []
-        )
-    except Exception as exc:
-        _finalize_run_failed(supabase, run_id, "scrape_queue_dedupe_read_failed", exc)
-        raise
-
-    queued_id_by_key: dict[str, str] = {}
-    for item in open_queue:
-        d = item.get("extracted_data")
-        if isinstance(d, dict) and isinstance(d.get("organization_name"), str):
-            try:
-                key = compute_similarity_key(ExtractedRecruitment(**d))
-            except Exception:
-                continue
-            queued_id_by_key.setdefault(key, item.get("id"))
+    # ── 3. Dedup is per-candidate + targeted (see dedup.py policy) ───────
+    # No full-table preload of recruitments / scrape_queue any more. Each
+    # extraction issues bounded, keyed queries inside ``queue_extraction``
+    # via pre_llm_dedup_check / post_extraction_dedup_*.
 
     # ── 4. Process each source ───────────────────────────────────────────
     total_found = 0
@@ -1390,28 +1359,20 @@ def run_scraping_pass(
         """Run extraction → dedup → queue insert. Returns inserted queue id or None on failure."""
         nonlocal total_found, total_new, total_dup
 
-        # ── Pre-LLM URL dedup ──────────────────────────────────────────────
-        # extract_recruitment_data is an Anthropic call. If we already have
-        # a canonical recruitment with this exact URL there is no value in
-        # spending a model token on it — short-circuit before extraction.
-        # Title/org-similarity dedup still happens post-extraction; this
-        # only catches the URL-exact case, which is the cheapest and most
-        # common false-positive in re-scrape passes.
-        norm_item_url = _norm_url_for_dedup(item_url)
-        if norm_item_url:
-            for r in existing_recs:
-                rec_urls = {
-                    _norm_url_for_dedup(r.get("official_notification_url")),
-                    _norm_url_for_dedup(r.get("official_apply_url")),
-                } - {""}
-                if norm_item_url in rec_urls:
-                    total_found += 1
-                    total_dup += 1
-                    logger.info(
-                        "scrape.pre_llm_duplicate run_id=%s source_id=%s url=%s recruitment_id=%s",
-                        run_id, src.get("id"), item_url, r.get("id"),
-                    )
-                    return None
+        # ── Pre-LLM URL dedup (targeted; see dedup.py) ─────────────────────
+        # extract_recruitment_data is an Anthropic call. If a canonical
+        # recruitment already carries this exact URL there's no value in
+        # spending a model token — short-circuit before extraction. Misses
+        # listing-page URLs by design; post-extraction catches those.
+        pre = pre_llm_dedup_check(supabase, item_url)
+        if pre.status == "duplicate":
+            total_found += 1
+            total_dup += 1
+            logger.info(
+                "scrape.pre_llm_duplicate run_id=%s source_id=%s url=%s recruitment_id=%s",
+                run_id, src.get("id"), item_url, pre.duplicate_of,
+            )
+            return None
 
         extraction = extract_recruitment_data(raw, item_url, source_name, mock=mock)
         if not extraction:
@@ -1461,22 +1422,51 @@ def run_scraping_pass(
         # dash, and wrong segment count, not just the all-empty ``-0-``
         # collapse. An invalid key is excluded from dedup keying below.
         canonical_collapsed = canonical_key_invalid(sim_key)
-        sim_key_for_dedup = sim_key if not canonical_collapsed else f"__incomplete_{uuid.uuid4().hex}"
-        decision = find_duplicate(
-            data.model_dump(),
-            sim_key=sim_key_for_dedup,
-            existing_recruitments=existing_recs,
-            queued=queued_id_by_key,
-        )
+        # Targeted dedup (see dedup.py policy). The dedup functions key on
+        # notification_number / (organization_id, year) / source_url and
+        # never scan the full table. A canonical recruitment match takes
+        # priority over an open-queue match. "needs_review" surfaces as a
+        # review flag (extraction_status) — the queue ``status`` stays
+        # within {pending, duplicate, dry_run}.
+        extracted_dict = data.model_dump()
+        rec_dd = post_extraction_dedup_recruitments(supabase, extracted_dict, sim_key)
+        queue_dd = post_extraction_dedup_queue(supabase, extracted_dict, sim_key)
+        if rec_dd.status == "duplicate":
+            dedup_status = "duplicate"
+            duplicate_recruitment_id = rec_dd.duplicate_of
+            duplicate_queue_id = None
+            dedup_reason = rec_dd.reason
+            dedup_candidate_ids = rec_dd.candidate_ids
+        elif queue_dd.status == "duplicate":
+            dedup_status = "duplicate"
+            duplicate_recruitment_id = None
+            duplicate_queue_id = queue_dd.duplicate_of
+            dedup_reason = queue_dd.reason
+            dedup_candidate_ids = queue_dd.candidate_ids
+        elif "needs_review" in (rec_dd.status, queue_dd.status):
+            dedup_status = "needs_review"
+            duplicate_recruitment_id = None
+            duplicate_queue_id = None
+            dedup_reason = rec_dd.reason if rec_dd.status == "needs_review" else queue_dd.reason
+            dedup_candidate_ids = list(rec_dd.candidate_ids) + list(queue_dd.candidate_ids)
+        else:
+            dedup_status = "unique"
+            duplicate_recruitment_id = None
+            duplicate_queue_id = None
+            dedup_reason = "unique"
+            dedup_candidate_ids = []
+        is_dedup_duplicate = dedup_status == "duplicate"
         normalized = normalize_recruitment(data)
         extracted_payload = to_json_safe(data)
         extracted_payload["_meta"] = {
             "prompt_version": PROMPT_VERSION,
             "warnings": normalized.warnings,
             "normalized_fields": normalized.normalized_fields,
-            "duplicate_reason": decision.reason,
-            "duplicate_score": decision.score,
-            "duplicate_matched_fields": decision.matched_fields,
+            "duplicate_reason": dedup_reason,
+            "duplicate_status": dedup_status,
+            # scrape_queue has no duplicate_candidate_ids column, so the
+            # 2+-match candidate set rides on _meta for the reviewer.
+            "duplicate_candidate_ids": dedup_candidate_ids,
             "source_registry_id": src.get("id"),
             "source_type": src.get("source_type"),
             "aggregator_listing_id": listing_id,
@@ -1579,8 +1569,8 @@ def run_scraping_pass(
             "confidence_score": confidence,
             "data_quality_score": normalized.data_quality_score,
             "scrape_run_id": run_id,
-            "duplicate_of": decision.duplicate_queue_id,
-            "duplicate_recruitment_id": decision.duplicate_recruitment_id,
+            "duplicate_of": duplicate_queue_id,
+            "duplicate_recruitment_id": duplicate_recruitment_id,
             "scraped_at": utc_now_iso(),
             # Never auto-approve — see runner.ts safety hardening note.
             # Dry-run (mock) rows get a terminal ``dry_run`` status so every
@@ -1588,7 +1578,7 @@ def run_scraping_pass(
             # them; ``is_dry_run`` below is the durable flag dedup and the
             # promotion gate key off. Synthetic output must never look like a
             # real, promotable candidate.
-            "status": "dry_run" if mock else ("duplicate" if decision.is_duplicate else "pending"),
+            "status": "dry_run" if mock else ("duplicate" if is_dedup_duplicate else "pending"),
             "is_dry_run": bool(mock),
             "official_source_resolved": official_source_resolved,
             "official_source_host": official_source_host,
@@ -1601,7 +1591,7 @@ def run_scraping_pass(
         logger.info(
             "scrape.queue_insert run_id=%s source_id=%s source_name=%s target_url=%s extraction_status=%s confidence_score=%.2f data_quality_score=%.2f duplicate_status=%s duplicate_reason=%s resolver=%s canonical_key_invalid=%s",
             run_id, src.get("id"), source_name, item_url, extraction_status,
-            confidence, normalized.data_quality_score, queue_payload["status"], decision.reason,
+            confidence, normalized.data_quality_score, queue_payload["status"], dedup_reason,
             resolver_result.reason if resolver_result else None,
             canonical_collapsed,
         )
@@ -1622,7 +1612,7 @@ def run_scraping_pass(
 
             extracted_payload = queue_payload.get("extracted_data") or {}
             host_candidates = extract_candidate_hosts(extracted_payload)
-            if host_candidates and not decision.is_duplicate:
+            if host_candidates and not is_dedup_duplicate:
                 drafts = upsert_draft_sources(
                     supabase,
                     host_candidates,
@@ -1641,16 +1631,14 @@ def run_scraping_pass(
                 run_id, inserted_id, exc,
             )
 
-        if decision.is_duplicate:
+        if is_dedup_duplicate:
             total_dup += 1
         else:
             total_new += 1
-            # Only register a valid canonical key in the run-local map.
-            # Registering a ``-0-`` collapse here would cause every
-            # subsequent incomplete extraction in the same run to
-            # false-dup against this row.
-            if inserted_id and not canonical_collapsed:
-                queued_id_by_key.setdefault(sim_key, inserted_id)
+            # Intra-batch dedup is handled by post_extraction_dedup_queue
+            # querying scrape_queue directly — the row just inserted above is
+            # already visible to the next item's lookup, so no run-local map
+            # is needed.
 
         if canonical_collapsed:
             # Skip the canonical candidate merge entirely. The queue row
@@ -1691,7 +1679,7 @@ def run_scraping_pass(
             confidence_score=confidence,
             payload={
                 "duplicate_status": queue_payload["status"],
-                "duplicate_reason": decision.reason,
+                "duplicate_reason": dedup_reason,
                 "resolver_reason": resolver_result.reason if resolver_result else None,
                 "resolver_host": resolver_result.host if resolver_result else None,
                 "data_quality_score": normalized.data_quality_score,

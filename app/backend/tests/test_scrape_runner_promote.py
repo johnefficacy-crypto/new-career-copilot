@@ -52,6 +52,13 @@ class RunnerQuery:
         self.filters[key] = set(values)
         return self
 
+    def or_(self, filter_string):
+        # Targeted-dedup pre-LLM URL check calls .or_(); record it but apply
+        # nothing (recruitments select below returns the table contents and
+        # dedup.py normalises + compares in Python).
+        self.filters["_or"] = filter_string
+        return self
+
     def is_(self, key, value):
         # supabase-py: ``is_("recruitment_id", "null")`` → IS NULL
         self.filters[f"_is_{key}"] = None if value == "null" else value
@@ -89,6 +96,12 @@ class RunnerQuery:
                 rows = [r for r in rows if r.get("is_active") == self.filters["is_active"]]
             if "id" in self.filters:
                 rows = [r for r in rows if r.get("id") in self.filters["id"]]
+            return E(rows)
+        if self.name == "organizations":
+            # Targeted dedup Path C resolves organization_name → id here.
+            rows = list(self.db.get("organizations", []))
+            if "name" in self.filters:
+                rows = [r for r in rows if r.get("name") == self.filters["name"]]
             return E(rows)
         if self.name == "recruitments":
             return E(list(self.db.get("recruitments", [])))
@@ -427,10 +440,14 @@ def test_duplicate_target_writes_recruitment_id_not_queue_id():
     # builds the similarity key from organization, year, and title.
     from datetime import date
     today = date.today()
+    # Targeted dedup Path C: resolve organization_name → id, then query
+    # recruitments by (organization_id, year) and confirm canonical_key.
+    sb.db["organizations"] = [{"id": "org-fja", "name": "Free Job Alert"}]
     sb.db["recruitments"] = [{
         "id": "rec-existing-1",
         "name": f"Free Job Alert Recruitment {today.year}",
         "year": today.year,
+        "organization_id": "org-fja",
         "organizations": {"name": "Free Job Alert"},
         "official_notification_url": None,
         "official_apply_url": None,
@@ -774,7 +791,12 @@ def test_runner_marks_run_failed_when_source_read_raises(monkeypatch):
     assert finalize["error_log"][0]["error_class"] == "DatabaseError"
 
 
-def test_runner_marks_run_failed_when_recruitments_dedupe_read_raises():
+def test_runner_degrades_gracefully_when_dedup_query_raises():
+    """Targeted dedup replaced the per-run full-table preload (which used to
+    fail the whole run on a read error). A per-candidate dedup query that
+    raises must NOT crash the run: the affected item is skipped (NOT queued,
+    so no duplicate slips through), logged, and the run finalises normally.
+    """
     class _DedupQ:
         def __init__(self, name, db):
             self.name = name
@@ -786,6 +808,7 @@ def test_runner_marks_run_failed_when_recruitments_dedupe_read_raises():
         def select(self, *a, **k): return self
         def eq(self, k, v): self.filters[k] = v; return self
         def in_(self, k, v): return self
+        def or_(self, *a, **k): return self
         def order(self, *a, **k): return self
         def limit(self, *a, **k): return self
         def insert(self, p): self.payload = p; return self
@@ -799,12 +822,15 @@ def test_runner_marks_run_failed_when_recruitments_dedupe_read_raises():
                 self.db.setdefault("scrape_runs_updates", []).append(self.payload)
                 return E([self.payload])
             if self.name == "source_registry":
+                if self.payload:
+                    self.db.setdefault("source_registry_updates", []).append(self.payload)
+                    return E([self.payload])
                 rows = list(self.db.get("source_registry", []))
                 if "id" in self.filters:
                     rows = [r for r in rows if r.get("id") in self.filters["id"]]
                 return E(rows)
             if self.name == "recruitments":
-                raise RuntimeError("read timeout")
+                raise RuntimeError("read timeout")  # the dedup query fails
             return E([])
 
     class _SB:
@@ -813,13 +839,11 @@ def test_runner_marks_run_failed_when_recruitments_dedupe_read_raises():
         def table(self, name): return _DedupQ(name, self.db)
 
     sb = _SB()
-    import pytest
-    with pytest.raises(Exception):
-        run_scraping_pass(sb, source_ids=["src-1"], mock=True)
-    updates = sb.db.get("scrape_runs_updates", [])
-    finalize = updates[-1]
-    assert finalize["status"] == "failed"
-    assert finalize["error_log"][0]["error"] == "recruitments_dedupe_read_failed"
+    # No raise — the run completes despite the dedup query error.
+    out = run_scraping_pass(sb, source_ids=["src-1"], mock=True)
+    assert out["status"] in {"completed", "partial", "failed"}
+    # The item was NOT inserted (skipped on dedup failure) → no duplicate risk.
+    assert sb.db.get("scrape_queue", []) == []
 
 
 def test_runner_mark_success_clears_typed_error_fields():
