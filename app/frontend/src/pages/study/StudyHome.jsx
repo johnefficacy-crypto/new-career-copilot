@@ -360,43 +360,39 @@ export default function StudyHome() {
   useEffect(() => {
     let cancelled = false;
 
-    async function loadPlan() {
+    // Study Home reads from /api/study/mission-control — the strongest
+    // Study OS contract (see AGENTS.md "Study OS frontend contract").
+    // One call hydrates both the active-plan + today-tasks card and the
+    // focus card. The report card stays a separate fetch because MC does
+    // not include it.
+    async function loadMissionControl() {
       setPlan({ data: null, loading: true, error: null });
+      setFocus({ data: null, loading: true, error: null });
       try {
-        const d = await api.get("/api/study/plan");
-        if (!cancelled) {
-          setPlan({
-            data: {
-              plan: d?.plan || null,
-              tasks: Array.isArray(d?.tasks) ? d.tasks : [],
-            },
-            loading: false,
-            error: null,
-          });
-        }
+        const d = await api.get("/api/study/mission-control");
+        if (cancelled) return;
+        setPlan({
+          data: {
+            plan: d?.plan || null,
+            tasks: Array.isArray(d?.today_tasks) ? d.today_tasks : [],
+          },
+          loading: false,
+          error: null,
+        });
+        const focusBlock = d?.focus || {};
+        setFocus({
+          data: {
+            total_hours_7d: focusBlock.total_hours_7d ?? 0,
+            week: Array.isArray(focusBlock.week) ? focusBlock.week : [],
+          },
+          loading: false,
+          error: null,
+        });
       } catch (e) {
         if (!cancelled) {
           setPlan({ data: null, loading: false, error: e });
+          setFocus({ data: null, loading: false, error: e });
         }
-      }
-    }
-
-    async function loadFocus() {
-      setFocus({ data: null, loading: true, error: null });
-      try {
-        const d = await api.get("/api/study/focus/summary");
-        if (!cancelled) {
-          setFocus({
-            data: {
-              total_hours_7d: d?.total_hours_7d ?? 0,
-              week: Array.isArray(d?.week) ? d.week : [],
-            },
-            loading: false,
-            error: null,
-          });
-        }
-      } catch (e) {
-        if (!cancelled) setFocus({ data: null, loading: false, error: e });
       }
     }
 
@@ -428,8 +424,7 @@ export default function StudyHome() {
       }
     }
 
-    loadPlan();
-    loadFocus();
+    loadMissionControl();
     loadReport();
     return () => {
       cancelled = true;
