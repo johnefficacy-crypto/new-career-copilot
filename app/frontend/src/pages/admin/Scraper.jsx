@@ -25,6 +25,9 @@ function selectedSourceIds(mode, selected) {
 }
 
 function reviewState(item) {
+  // Dry-run (mock) output is a pipeline preview only. It never enters the
+  // promotable flow, so it takes precedence over every other state.
+  if (item.status === "dry_run" || item.is_dry_run) return { key: "dry_run", label: "Dry run", reason: "Pipeline preview — not promotable" };
   if (item.status === "rejected") return { key: "rejected", label: "Rejected", reason: "Candidate rejected" };
   if (item.status === "merged") return { key: "merged", label: "Merged", reason: "Merged into existing recruitment" };
   if (item.promoted_recruitment_id) return { key: "promoted", label: "Promoted", reason: "Draft created" };
@@ -324,8 +327,8 @@ export default function AdminScraper() {
     try {
       if (!canRunSelected) throw new Error("Select at least one source or switch to all active sources.");
       const r = await api.post("/api/admin/scrape/run-dry", { source_ids: selectedSourceIds(sourceMode, selectedIds), limit: Number(limit) || 25 });
-      setMsg(`Dry run ${shortId(r.run_id)} ${r.status}: ${r.items_new} new, ${r.items_duplicate} duplicate.`);
-      toast.success("Dry run completed. Review is still required.");
+      setMsg(`Dry run ${shortId(r.run_id)} ${r.status}: ${r.items_new} synthetic rows (pipeline preview). View them under the "Dry run" filter — they are not promotable.`);
+      toast.success("Dry run completed — synthetic preview only, not added to the review queue.");
       await load();
     } catch (e) {
       setMsg(`Dry run failed: ${e.message}`);
@@ -471,6 +474,7 @@ export default function AdminScraper() {
           ["duplicate", "Duplicates"],
           ["merged", "Merged"],
           ["rejected", "Rejected"],
+          ["dry_run", "Dry run"],
           ["all", "All"],
         ].map(([key, label]) => (
           <button key={key} type="button" onClick={() => setQueueFilter(key)} className={`rounded-full border px-3 py-1.5 text-xs ${queueFilter === key ? "border-dusk-700 bg-dusk-700 text-white" : "border-border bg-white/70 text-foreground/75 hover:bg-clay-100"}`}>
@@ -503,11 +507,11 @@ export default function AdminScraper() {
           <div className="flex items-start gap-3">
             <Search className="mt-1 h-5 w-5 text-clay-700" />
             <div>
-              <h2 className="font-semibold">Dry run / discover candidates</h2>
-              <p className="text-sm text-muted-foreground">Run dry scrape first. No publishing occurs; review is still required.</p>
+              <h2 className="font-semibold">Dry run / pipeline check</h2>
+              <p className="text-sm text-muted-foreground">Exercises the scrape pipeline with deterministic synthetic data. Rows are tagged as a dry-run preview and never enter the promotable review queue. Use a live scrape to discover real candidates.</p>
             </div>
           </div>
-          <button disabled={!!running || !canRunSelected || Boolean(sourcesError)} onClick={runDry} className="btn btn-ghost mt-4"><Play className={`h-4 w-4 ${running === "dry" ? "animate-spin" : ""}`} />{running === "dry" ? "Running..." : "Dry run / discover candidates"}</button>
+          <button disabled={!!running || !canRunSelected || Boolean(sourcesError)} onClick={runDry} className="btn btn-ghost mt-4"><Play className={`h-4 w-4 ${running === "dry" ? "animate-spin" : ""}`} />{running === "dry" ? "Running..." : "Dry run / pipeline check"}</button>
         </section>
         <section className="soft-card rounded-2xl p-4">
           <div className="flex items-start gap-3">

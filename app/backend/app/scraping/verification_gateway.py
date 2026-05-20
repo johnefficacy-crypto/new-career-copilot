@@ -228,6 +228,7 @@ def _fetch_peer_queue_items(
         rows = (
             supabase.table("scrape_queue")
             .select("id, source_url, source_name, extracted_data")
+            .eq("is_dry_run", False)
             .limit(200)
             .execute()
             .data
