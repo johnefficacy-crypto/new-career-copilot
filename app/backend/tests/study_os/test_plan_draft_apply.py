@@ -76,7 +76,7 @@ def test_apply_creates_version_and_adaptation_event():
     assert len(sb.db["study_plans"]) == 1
     assert len(sb.db["study_plan_versions"]) == 1
     assert len(sb.db["study_adaptation_events"]) == 1
-    assert sb.db["study_adaptation_events"][0]["event_type"] == "manual_application"
+    assert sb.db["study_adaptation_events"][0]["event_type"] == "manual_regeneration"
     assert out["version_number"] == 1
 
 
@@ -128,4 +128,4 @@ def test_plan_changelog_route_returns_events():
     assert r.status_code == 200
     body = r.json()
     assert body["count"] >= 1
-    assert body["items"][0]["event_type"] == "manual_application"
+    assert body["items"][0]["event_type"] == "manual_regeneration"
