@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.auth import require_permission
 from app.db.supabase_client import get_supabase_admin
@@ -557,13 +557,20 @@ def review_topic_coverage(
 
 # ─── 3d. Topic coverage data-field edit (admin-only) ──────────────────────
 class CoverageEditBody(BaseModel):
+    # The notes column on ``exam_topic_coverage`` is named ``review_notes``
+    # (migration 030, line 117) — code previously drifted to ``reviewer_notes``
+    # and the resulting 42703 was being silently swallowed. ``extra="forbid"``
+    # makes the legacy name return a clean 422 instead of a silent drop so a
+    # future regression surfaces immediately.
+    model_config = ConfigDict(extra="forbid")
+
     coverage_depth: str | None = Field(default=None, max_length=64)
     expected_difficulty: str | None = Field(default=None, max_length=64)
     exam_priority_score: float | None = Field(default=None, ge=0, le=100)
     is_high_yield: bool | None = None
     confidence_score: float | None = Field(default=None, ge=0, le=1)
     source_basis: str | None = Field(default=None, max_length=128)
-    reviewer_notes: str | None = Field(default=None, max_length=500)
+    review_notes: str | None = Field(default=None, max_length=500)
 
 
 @router.patch("/topic-coverage/{row_id}")

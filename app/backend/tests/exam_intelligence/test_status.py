@@ -80,7 +80,7 @@ def _seed_verified():
         "subjects": [
             {"id": "subj-quant", "slug": "quant", "name": "Quant", "is_active": True},
         ],
-        "pyq_papers": [{"id": "paper-1", "exam_id": "exam-1"}],
+        "pyq_papers": [{"id": "paper-1", "exam_id": "exam-1", "trust_status": "verified"}],
         "pyq_questions": [
             {"id": "q1", "pyq_paper_id": "paper-1", "reviewer_status": "verified"},
             {"id": "q2", "pyq_paper_id": "paper-1", "reviewer_status": "verified"},

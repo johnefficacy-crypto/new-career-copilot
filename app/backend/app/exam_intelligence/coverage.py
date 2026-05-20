@@ -156,18 +156,24 @@ def verified_pyq_topic_counts(supabase: Any, exam_id: str) -> dict[str, int]:
     if not exam_id:
         return {}
 
+    # Filter ``trust_status='verified'`` at the paper level. Without this
+    # guard a verified question/tag attached to an unverified paper would
+    # still feed planner counts — the function used to count tags filtered
+    # by question/tag reviewer_status alone, never auditing the parent
+    # paper's trust. Enforce the invariant at the source.
     paper_rows = _safe(
         lambda: (
             supabase.table("pyq_papers")
             .select("id")
             .eq("exam_id", exam_id)
+            .eq("trust_status", "verified")
             .limit(2000)
             .execute()
             .data
         ),
         default=[],
         table="pyq_papers",
-        operation="select_by_exam",
+        operation="select_verified_by_exam",
     ) or []
     paper_ids = [r["id"] for r in paper_rows if r.get("id")]
     if not paper_ids:
