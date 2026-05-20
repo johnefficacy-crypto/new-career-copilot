@@ -48,7 +48,7 @@ httplib2==0.31.2
 httpx==0.28.1
 huggingface_hub==1.12.2
 hyperframe==6.1.0
-idna==3.13
+idna==3.15
 importlib_metadata==8.5.0
 iniconfig==2.3.0
 isort==8.0.1
