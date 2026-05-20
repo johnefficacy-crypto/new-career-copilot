@@ -83,6 +83,18 @@ _KIND_MAP: dict[str, dict[str, Any]] = {
         ),
         "trust": {"status_field": "reviewer_status", "confidence_field": None},
     },
+    # pyq_option is in the admin review queue (admin_exam_intelligence
+    # ``_REVIEWABLE``); add it here so the evidence drawer can deep-link
+    # to it the same way it deep-links every other reviewable kind.
+    "pyq_option": {
+        "table": "pyq_options",
+        "select": (
+            "id, question_id, option_label, option_text, is_correct, "
+            "normalized_value, reviewer_status, reviewed_by, reviewed_at, "
+            "metadata, created_at"
+        ),
+        "trust": {"status_field": "reviewer_status", "confidence_field": None},
+    },
     "exam_competition_metrics": {
         "table": "exam_competition_metrics",
         "select": (
