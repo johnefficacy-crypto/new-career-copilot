@@ -314,8 +314,41 @@ def _resolve_rec_id(supabase: Client, ref: str) -> str:
     raise HTTPException(status_code=404, detail="Recruitment not found")
 
 
+_ALLOWED_SOURCE_TRUST = {"low", "medium", "high", "official"}
+_OFFICIAL_DOMAIN_SUFFIXES = (".gov.in", ".nic.in", ".gov", ".nic")
+
+
+def _normalize_source_trust(raw: Any, fallback: str) -> str:
+    """Coerce stored trust value to the published Literal set.
+
+    Out-of-set values fall back to ``"low"`` and the caller logs a warning
+    once so admin can spot drift. Never expose the raw value to the client.
+    """
+    if isinstance(raw, str) and raw in _ALLOWED_SOURCE_TRUST:
+        return raw
+    if raw not in (None, ""):
+        logger.warning("source_trust out-of-set value coerced to low: %r", raw)
+    return fallback
+
+
+def _derive_source_trust(notification_url: str | None, stored: Any) -> str:
+    if isinstance(stored, str) and stored in _ALLOWED_SOURCE_TRUST:
+        return stored
+    if stored not in (None, ""):
+        logger.warning("source_trust out-of-set value coerced: %r", stored)
+    url = (notification_url or "").lower()
+    if url:
+        for suffix in _OFFICIAL_DOMAIN_SUFFIXES:
+            # Match host suffix only — substring match is enough since the
+            # raw URL is admin-curated; coerce conservatively to "low" when
+            # the suffix isn't present so we never over-trust a scrape.
+            if suffix in url:
+                return "official"
+    return "low"
+
+
 @router_recruitments.get("/{rec_ref}")
-async def get_recruitment(rec_ref: str, user: dict | None = Depends(get_optional_user)):
+async def get_recruitment(rec_ref: str, user: dict = Depends(get_current_user)):
     supabase = get_supabase_admin()
     rec_id = _resolve_rec_id(supabase, rec_ref)
     rows = _safe(
@@ -333,26 +366,27 @@ async def get_recruitment(rec_ref: str, user: dict | None = Depends(get_optional
         default=[],
     ) or []
     if not rows:
+        # 404 over leak: unpublished, draft, and not-found all collapse here.
         raise HTTPException(status_code=404, detail="Recruitment not found")
     row = rows[0]
     saved_ids: set[str] = set()
     elig: dict[str, Any] = {}
-    if user:
-        saved_rows = _safe(
-            lambda: supabase.table("tracked_recruitments")
-            .select("recruitment_id")
-            .eq("user_id", user["id"])
-            .eq("recruitment_id", rec_id)
-            .execute()
-            .data,
-            default=[],
-        ) or []
-        if saved_rows:
-            saved_ids.add(rec_id)
-        elig = _eligibility_summary(supabase, user["id"]).get(rec_id, {})
+    saved_rows = _safe(
+        lambda: supabase.table("tracked_recruitments")
+        .select("recruitment_id")
+        .eq("user_id", user["id"])
+        .eq("recruitment_id", rec_id)
+        .execute()
+        .data,
+        default=[],
+    ) or []
+    if saved_rows:
+        saved_ids.add(rec_id)
+    elig = _eligibility_summary(supabase, user["id"]).get(rec_id, {})
 
     out = _shape_recruitment(row, saved_ids)
-    out["posts"] = row.get("posts") or []
+    posts = row.get("posts") or []
+    out["posts"] = posts
     out["units"] = row.get("recruitment_units") or []
     exam_id = row.get("exam_id")
     exam_slug = None
@@ -383,12 +417,55 @@ async def get_recruitment(rec_ref: str, user: dict | None = Depends(get_optional
             if elig.get("conditional")
             else "pending"
         ),
-        "matched_posts": sum(1 for _ in (row.get("posts") or [])),
-        "total_posts": len(row.get("posts") or []),
+        "matched_posts": sum(1 for _ in posts),
+        "total_posts": len(posts),
         "fail_reasons": elig.get("fail_reasons", []),
         "computed_at": elig.get("computed_at"),
         "source": "deterministic-engine",
     }
+
+    # ── PR2 secure detail overlay (camelCase out, snake_case in DB) ─────
+    state = (
+        "eligible" if elig.get("eligible")
+        else "conditional" if elig.get("conditional")
+        else "not_yet"
+    )
+    out["title"] = row.get("name")
+    out["sourceUrl"] = row.get("official_notification_url")
+    out["sourceTrust"] = _derive_source_trust(
+        row.get("official_notification_url"), row.get("source_trust")
+    )
+    out["posts"] = [
+        {
+            "name": p.get("post_name"),
+            "vacancies": p.get("vacancies"),
+            "payScale": p.get("pay_level") or p.get("pay_scale"),
+        }
+        for p in posts
+    ]
+    out["eligibility"] = {
+        "state": state,
+        "criteria": [],
+        "userMatch": {
+            "eligible": bool(elig.get("eligible")),
+            "conditional": bool(elig.get("conditional")),
+        },
+    }
+    out["missingFields"] = elig.get("fail_reasons", []) or []
+    out["documentsRequired"] = []
+    out["applyWindow"] = {
+        "start": str(row.get("apply_start_date")) if row.get("apply_start_date") else None,
+        "end": str(row.get("apply_end_date")) if row.get("apply_end_date") else None,
+    }
+    out["cta"] = {
+        "url": row.get("official_notification_url"),
+        "label": "Apply on official portal" if row.get("official_notification_url") else None,
+    }
+    # Never expose admin-only fields. The select list above already omits
+    # reviewer_notes / raw_html / extracted_data — these explicit pops are
+    # defensive in case a future select grows.
+    for hidden in ("reviewer_notes", "raw_html", "extracted_data", "raw_snapshot_url", "raw_snapshot_hash", "field_evidence"):
+        out.pop(hidden, None)
     return out
 
 

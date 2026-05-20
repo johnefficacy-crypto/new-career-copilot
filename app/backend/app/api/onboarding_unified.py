@@ -168,6 +168,43 @@ def _build_state(
     return state
 
 
+_MAX_FIELD_HINTS = 10
+
+
+def _filter_field_hints(supabase: Any, raw: str | None) -> list[str]:
+    """Validate the optional ``fields=`` query hint.
+
+    Rules:
+      * comma-list, ``_MAX_FIELD_HINTS`` items max (over-cap drops the tail
+        rather than erroring — this is a non-binding client hint).
+      * each candidate is checked against the canonical
+        ``candidate_field_registry`` allowlist; unknowns drop silently.
+      * if every hint is dropped, the result is an empty list and the
+        resolver falls back to its default selection.
+
+    The hint is **never** used to write a database column or to widen the
+    answer-validation allowlist. It exists so the client can hint
+    "prioritise these fields if possible"; the backend remains the sole
+    authority over which question is asked next.
+    """
+    if not raw:
+        return []
+    raw_items = [item.strip() for item in raw.split(",")]
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+        if len(deduped) >= _MAX_FIELD_HINTS:
+            break
+    if not deduped:
+        return []
+    registry = load_field_registry(supabase)
+    return [k for k in deduped if k in registry]
+
+
 @router.get("/resolve")
 async def resolve(
     mode: str | None = None,
@@ -175,9 +212,17 @@ async def resolve(
     recruitment_slug: str | None = None,
     post_slug: str | None = None,
     anonymous_id: str | None = None,
+    fields: str | None = None,
     user: dict | None = Depends(get_optional_user),
 ) -> dict[str, Any]:
-    """Create or resume a unified onboarding session and return its state."""
+    """Create or resume a unified onboarding session and return its state.
+
+    ``fields`` is an optional client hint listing canonical field_keys
+    the caller would like prioritised. Allowlisted against
+    candidate_field_registry; unknown keys drop silently. The backend
+    still chooses the next valid question — the hint never authorises
+    writing an arbitrary column.
+    """
     supabase = get_supabase_admin()
     user_id = _user_id(user)
 
@@ -186,6 +231,8 @@ async def resolve(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="anonymous_id is required for unauthenticated callers",
         )
+
+    _filter_field_hints(supabase, fields)  # validated but currently advisory.
 
     entry = resolve_entry(
         supabase,

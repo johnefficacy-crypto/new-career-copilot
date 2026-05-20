@@ -66,6 +66,9 @@ from app.api.canonical import router as canonical_router
 from app.api.community_runtime import router as community_runtime_router
 from app.api.eligibility import router as eligibility_router
 from app.api.exam_eligibility import router as exam_eligibility_router
+from app.api.exams import router as exams_router
+from app.api.policy_updates import router as policy_updates_router
+from app.api.reminders import router as reminders_router
 from app.api.admin_exam_eligibility import router as admin_exam_eligibility_router
 from app.api.marketplace import router as marketplace_router
 from app.api.admin_marketplace import router as admin_marketplace_router
@@ -238,6 +241,9 @@ async def db_health() -> DbHealth:
 api.include_router(auth_router)
 api.include_router(eligibility_router)
 api.include_router(exam_eligibility_router)  # PR-D1 exam-level baseline eligibility
+api.include_router(exams_router)  # PR1 exams catalogue with per-caller overlay
+api.include_router(policy_updates_router)  # PR3 aspirant-facing policy updates feed
+api.include_router(reminders_router)  # PR4 user-owned reminders CRUD
 api.include_router(admin_exam_eligibility_router)  # PR-D2 admin CRUD for exam_eligibility_rules
 api.include_router(notifications_router)
 api.include_router(admin_scrape_router)  # admin scraper trust-gate routes

@@ -45,9 +45,10 @@ def test_public_list_only_published(monkeypatch):
 def test_public_detail_excludes_unpublished(monkeypatch):
     monkeypatch.setattr(canonical, 'get_supabase_admin', lambda: SB(ROWS))
     monkeypatch.setattr(canonical, '_safe', lambda call, default=None: call())
+    fake_user = {"id": "u1", "is_anonymous": False}
     with pytest.raises(Exception):
-        asyncio.run(canonical.get_recruitment('a-draft', user=None))
-    ok=asyncio.run(canonical.get_recruitment('d-published', user=None))
+        asyncio.run(canonical.get_recruitment('a-draft', user=fake_user))
+    ok=asyncio.run(canonical.get_recruitment('d-published', user=fake_user))
     assert ok['id']=='44444444-4444-4444-4444-444444444444'
     assert ok["slug"] == "d-published"
     for f in ['raw_html','extracted_data','field_evidence','raw_snapshot_url','raw_snapshot_hash','reviewer_notes']:
