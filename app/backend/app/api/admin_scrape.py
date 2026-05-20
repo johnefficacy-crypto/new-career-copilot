@@ -753,6 +753,38 @@ def get_scrape_run_detail(
     }
 
 
+# Chunk size for PostgREST in.() filters. Keeps the URL well under the
+# ~8KB header limit some proxies enforce: 100 UUIDs = ~3.6KB of filter
+# payload + base URL. Anything over is batched server-side and merged.
+MAX_IN_FILTER_IDS = 100
+
+
+def _chunked_in(ids: list[str], size: int = MAX_IN_FILTER_IDS) -> list[list[str]]:
+    return [ids[i : i + size] for i in range(0, len(ids), size)]
+
+
+def _summarize_extracted(ext: dict[str, Any]) -> dict[str, Any]:
+    """Derive the lightweight summary for the queue table view.
+
+    Stays server-side: the full ``extracted_data`` blob never reaches the
+    list response when ``include_detail=False``, so the table render path
+    can rely on these flat fields without touching the JSON tree.
+    """
+    if not isinstance(ext, dict):
+        ext = {}
+    posts = ext.get("posts") if isinstance(ext.get("posts"), list) else []
+    meta = ext.get("_meta") if isinstance(ext.get("_meta"), dict) else {}
+    return {
+        "title": ext.get("title") or ext.get("name"),
+        "organization_name": ext.get("organization_name") or ext.get("organisation_name"),
+        "apply_start_date": ext.get("apply_start_date"),
+        "apply_end_date": ext.get("apply_end_date"),
+        "posts_count": len(posts),
+        "multiple_posts_detected": bool(posts),
+        "source_type": meta.get("source_type"),
+    }
+
+
 @router.get("/admin/scrape/queue")
 def list_scrape_queue(
     status: str | None = Query(default="pending"),
@@ -768,6 +800,22 @@ def list_scrape_queue(
         default="risky_first",
         description="risky_first | quality_asc | newest | oldest",
     ),
+    include_detail: bool = Query(
+        default=False,
+        description=(
+            "If true, returns the full row (raw_html, raw_payload, extracted_data, "
+            "full evidence payload, duplicate_candidates list). The default is the "
+            "lightweight table view; the drawer should request detail=true."
+        ),
+    ),
+    item_id: str | None = Query(
+        default=None,
+        description=(
+            "If provided, narrow the result to this scrape_queue.id. "
+            "Used by the detail drawer to fetch one full row without "
+            "paying for the rest of the page."
+        ),
+    ),
     _admin: dict = Depends(require_permission("scraper.manage")),
 ) -> dict[str, Any]:
     """List scrape queue items with server-side filter/search/sort.
@@ -781,12 +829,27 @@ def list_scrape_queue(
     ``risk=low_quality`` selects rows with ``data_quality_score < 50`` or null.
     """
     supabase = get_supabase_admin()
-    # Note: the legacy ``field_evidence`` JSON column was dropped from this
-    # SELECT in Sprint 5. The promotion gate and the UI both read the
-    # relational ``extracted_field_evidence`` table; the JSON column was
-    # being shipped to clients but never consumed.
-    selection = "id, source_id, source_url, source_name, raw_html, raw_payload, extracted_data, confidence_score, data_quality_score, status, duplicate_of, promoted_recruitment_id, reviewer_id, reviewer_notes, reviewed_at, official_source_resolved, official_source_host, extraction_status, evidence_required, scraped_at"
+    # Detail toggle. ``include_detail=False`` (the table path) keeps the
+    # heavy fields off the wire — raw_html in particular is the full
+    # scraped HTML and dominates response size at limit=100. We still
+    # SELECT ``extracted_data`` server-side so the lightweight summary
+    # can be derived without a second roundtrip, then strip it from the
+    # response before returning.
+    _BASE_COLUMNS = (
+        "id, source_id, source_url, source_name, "
+        "confidence_score, data_quality_score, status, duplicate_of, "
+        "duplicate_recruitment_id, duplicate_candidates, "
+        "promoted_recruitment_id, reviewer_id, reviewer_notes, reviewed_at, "
+        "official_source_resolved, official_source_host, "
+        "extraction_status, evidence_required, scraped_at"
+    )
+    _DETAIL_COLUMNS = _BASE_COLUMNS + ", raw_html, raw_payload"
+    selection = (
+        (_DETAIL_COLUMNS if include_detail else _BASE_COLUMNS) + ", extracted_data"
+    )
     base = supabase.table("scrape_queue").select(selection, count="exact")
+    if item_id:
+        base = base.eq("id", item_id)
     if status and status != "all":
         base = base.eq("status", status)
     if q:
@@ -832,73 +895,99 @@ def list_scrape_queue(
             type_by_id = {s.get("id"): (s.get("source_type") or "").lower() for s in src_rows}
             rows = [r for r in rows if type_by_id.get(r.get("source_id")) == wanted]
 
-    supabase2 = get_supabase_admin()
-    existing = (supabase2.table("recruitments").select("id,name,year,official_notification_url").limit(400).execute().data or [])
     queue_ids = [r["id"] for r in rows if r.get("id")]
-    # ``evidence_by_queue`` is the legacy flat status map kept for callers
-    # that only need "is the field reviewed?". ``evidence_details_by_queue``
-    # carries the per-evidence-row payload (text snippet, page ref,
-    # entity scope, corrected value, reviewer notes) so the UI can render
-    # evidence inline without a follow-up request.
+
+    # ── Duplicate detection ──────────────────────────────────────────
+    # The detail path keeps the full ``duplicate_candidates`` rebuild so
+    # the drawer's "merge into" picker has every candidate. The table
+    # path skips the 400-recruitment scan entirely and reads the
+    # precomputed ``duplicate_candidates`` JSONB column the runner
+    # populates at scrape time; the row also carries ``duplicate_of``,
+    # which is enough for the boolean indicator the table needs.
+    existing: list[dict[str, Any]] = []
+    if include_detail:
+        supabase2 = get_supabase_admin()
+        existing = (
+            supabase2.table("recruitments")
+            .select("id,name,year,official_notification_url")
+            .limit(400)
+            .execute()
+            .data
+            or []
+        )
+
+    # ── Evidence per queue row ───────────────────────────────────────
     evidence_by_queue: dict[str, dict[str, str]] = {qid: {} for qid in queue_ids}
     evidence_details_by_queue: dict[str, list[dict[str, Any]]] = {qid: [] for qid in queue_ids}
     if queue_ids:
-        try:
-            frows = (
-                supabase.table("extracted_field_evidence")
-                .select("scrape_queue_id, field_name, reviewer_status, entity_type, entity_key, evidence_text, page_number, char_start, char_end, confidence, corrected_value, reviewer_notes, reviewed_at, reviewed_by, source_page, alignment_status, document_id")
-                .in_("scrape_queue_id", queue_ids)
-                .execute()
-                .data
-                or []
+        if include_detail:
+            evidence_columns = (
+                "scrape_queue_id, field_name, reviewer_status, entity_type, "
+                "entity_key, evidence_text, page_number, char_start, char_end, "
+                "confidence, corrected_value, reviewer_notes, reviewed_at, "
+                "reviewed_by, source_page, alignment_status, document_id"
             )
+        else:
+            # Table view only needs the per-field status pill.
+            evidence_columns = "scrape_queue_id, field_name, reviewer_status"
+        try:
+            frows: list[dict[str, Any]] = []
+            for batch in _chunked_in(queue_ids):
+                frows.extend(
+                    supabase.table("extracted_field_evidence")
+                    .select(evidence_columns)
+                    .in_("scrape_queue_id", batch)
+                    .execute()
+                    .data
+                    or []
+                )
             for qid, group in group_by(frows, "scrape_queue_id").items():
                 if qid not in evidence_by_queue:
                     continue
-                # Flat status map keeps the legacy contract; post-scoped
-                # rows collapse into the last-seen status, which is fine
-                # because promotability comes from the gate (not this map).
-                evidence_by_queue[qid] = {fr.get("field_name"): fr.get("reviewer_status") for fr in group}
-                evidence_details_by_queue[qid] = [
-                    {
-                        "field_name": fr.get("field_name"),
-                        "reviewer_status": fr.get("reviewer_status"),
-                        "entity_type": fr.get("entity_type") or "other",
-                        "entity_key": fr.get("entity_key"),
-                        "evidence_text": fr.get("evidence_text"),
-                        "page_number": fr.get("page_number"),
-                        "char_start": fr.get("char_start"),
-                        "char_end": fr.get("char_end"),
-                        "confidence": fr.get("confidence"),
-                        "corrected_value": fr.get("corrected_value"),
-                        "reviewer_notes": fr.get("reviewer_notes"),
-                        "reviewed_at": fr.get("reviewed_at"),
-                        "reviewed_by": fr.get("reviewed_by"),
-                        "source_page": fr.get("source_page"),
-                        "alignment_status": fr.get("alignment_status"),
-                        "document_id": fr.get("document_id"),
-                    }
-                    for fr in group
-                ]
+                evidence_by_queue[qid] = {
+                    fr.get("field_name"): fr.get("reviewer_status") for fr in group
+                }
+                if include_detail:
+                    evidence_details_by_queue[qid] = [
+                        {
+                            "field_name": fr.get("field_name"),
+                            "reviewer_status": fr.get("reviewer_status"),
+                            "entity_type": fr.get("entity_type") or "other",
+                            "entity_key": fr.get("entity_key"),
+                            "evidence_text": fr.get("evidence_text"),
+                            "page_number": fr.get("page_number"),
+                            "char_start": fr.get("char_start"),
+                            "char_end": fr.get("char_end"),
+                            "confidence": fr.get("confidence"),
+                            "corrected_value": fr.get("corrected_value"),
+                            "reviewer_notes": fr.get("reviewer_notes"),
+                            "reviewed_at": fr.get("reviewed_at"),
+                            "reviewed_by": fr.get("reviewed_by"),
+                            "source_page": fr.get("source_page"),
+                            "alignment_status": fr.get("alignment_status"),
+                            "document_id": fr.get("document_id"),
+                        }
+                        for fr in group
+                    ]
         except Exception:
             evidence_by_queue = {qid: {} for qid in queue_ids}
             evidence_details_by_queue = {qid: [] for qid in queue_ids}
 
-    # Open consensus-conflict counts per queue item. Older deploys that
-    # have not run migration 087 surface no rows here, so every count
-    # silently falls back to zero.
+    # ── Conflict counts ─────────────────────────────────────────────
     open_conflicts_by_queue: dict[str, int] = {qid: 0 for qid in queue_ids}
     if queue_ids:
         try:
-            crows = (
-                supabase.table("recruitment_verification_conflicts")
-                .select("queue_id, status")
-                .in_("queue_id", queue_ids)
-                .eq("status", "open")
-                .execute()
-                .data
-                or []
-            )
+            crows: list[dict[str, Any]] = []
+            for batch in _chunked_in(queue_ids):
+                crows.extend(
+                    supabase.table("recruitment_verification_conflicts")
+                    .select("queue_id, status")
+                    .in_("queue_id", batch)
+                    .eq("status", "open")
+                    .execute()
+                    .data
+                    or []
+                )
             for cr in crows:
                 qid = cr.get("queue_id")
                 if qid in open_conflicts_by_queue:
@@ -906,6 +995,7 @@ def list_scrape_queue(
         except Exception:
             open_conflicts_by_queue = {qid: 0 for qid in queue_ids}
 
+    # ── Shape rows ──────────────────────────────────────────────────
     for r in rows:
         cls = classify_item(r)
         r["relevance_category"] = r.get("relevance_category") or cls["relevance_category"]
@@ -915,14 +1005,33 @@ def list_scrape_queue(
         ext = r.get("extracted_data") or {}
         meta = ext.get("_meta") if isinstance(ext, dict) else {}
         r["source_type"] = (meta or {}).get("source_type")
-        dups = duplicate_candidates(ext if isinstance(ext, dict) else {}, existing)
-        r["duplicate_candidates"] = dups
-        r["multiple_posts_detected"] = bool((ext.get("posts") if isinstance(ext, dict) else None))
+        if include_detail:
+            r["duplicate_candidates"] = duplicate_candidates(
+                ext if isinstance(ext, dict) else {}, existing
+            )
+            r["multiple_posts_detected"] = bool(
+                (ext.get("posts") if isinstance(ext, dict) else None)
+            )
+        else:
+            # Lightweight summary keeps the table render path off the JSON tree.
+            r["extracted_summary"] = _summarize_extracted(ext if isinstance(ext, dict) else {})
+            # ``duplicate_candidates`` already carries the precomputed list
+            # for the boolean indicator; coerce to bool, never the full list.
+            precomputed = r.get("duplicate_candidates")
+            has_dups = bool(precomputed) or bool(r.get("duplicate_of")) or bool(
+                r.get("duplicate_recruitment_id")
+            )
+            r["has_duplicate_candidates"] = has_dups
+            r["duplicate_candidates"] = []
+            r["multiple_posts_detected"] = r["extracted_summary"]["multiple_posts_detected"]
+            # Strip the heavy fields now that the summary is built. The
+            # SELECT above already excludes raw_html/raw_payload on this
+            # path, but a defensive pop guarantees the contract regardless
+            # of what the DB layer returns.
+            r.pop("extracted_data", None)
+            r.pop("raw_html", None)
+            r.pop("raw_payload", None)
         r["high_risk_fields"] = sorted(list(_HIGH_RISK_FIELDS))
-        # Flat per-field map is kept for the review UI to show evidence
-        # status at a glance, but it must NOT decide promotability — it
-        # collapses post-scoped fields (a per-post field verified for one
-        # post would look globally verified).
         reviewed = evidence_by_queue.get(r.get("id"), {})
         r["field_evidence_status"] = reviewed
         r["field_evidence_details"] = evidence_details_by_queue.get(r.get("id"), [])

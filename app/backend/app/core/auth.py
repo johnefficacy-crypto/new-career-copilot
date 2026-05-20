@@ -22,6 +22,8 @@ Concurrency notes:
 from __future__ import annotations
 
 import hashlib
+import logging
+import os
 import threading
 from typing import Annotated, Any
 
@@ -31,7 +33,31 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.db.supabase_client import get_supabase_admin
 
+logger = logging.getLogger("career_copilot.auth")
 security = HTTPBearer(auto_error=False)
+
+
+def _auth_debug_enabled() -> bool:
+    """Optional diagnostic logging gated by ``AUTH_DEBUG=1``.
+
+    Default OFF in prod. When enabled, the cache hit/miss path emits
+    DEBUG records keyed by the first 8 chars of the SHA-256 of the
+    token — never the raw token. Useful for confirming the single-flight
+    lock actually collapses a burst within a single worker before
+    chasing a "multi-worker cache fragmentation" hypothesis.
+    """
+    return os.environ.get("AUTH_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _short_token_id(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:8]
+
+
+def _adbg(stage: str, token: str, **extra: Any) -> None:
+    if not _auth_debug_enabled():
+        return
+    extras = " ".join(f"{k}={v}" for k, v in extra.items())
+    logger.debug("auth.%s tok=%s %s", stage, _short_token_id(token), extras)
 
 
 # ── Cross-request token cache ──────────────────────────────────────────
@@ -174,6 +200,7 @@ def get_current_user(
     cached = getattr(request.state, "current_user", None)
     cached_token = getattr(request.state, "current_user_token", None)
     if cached is not None and cached_token == token:
+        _adbg("request_memo_hit", token)
         return cached
 
     # 2. Cross-request TTL cache. Invalid tokens are NEVER cached.
@@ -181,6 +208,7 @@ def get_current_user(
     if cross_request_cached is not None:
         request.state.current_user = cross_request_cached
         request.state.current_user_token = token
+        _adbg("ttl_cache_hit", token)
         return cross_request_cached
 
     # 3. Single-flight: only one thread per token issues the Supabase
@@ -188,7 +216,9 @@ def get_current_user(
     # the per-token lock and pick up the populated cache below.
     cache_key = _token_cache_key(token)
     flight_lock = _flight_lock_for(cache_key)
+    _adbg("flight_lock_wait", token)
     with flight_lock:
+        _adbg("flight_lock_acquired", token)
         # Double-checked locking: by the time we acquired the lock the
         # leader may already have populated the cache.
         cross_request_cached = _cache_get(token)
@@ -196,7 +226,9 @@ def get_current_user(
             request.state.current_user = cross_request_cached
             request.state.current_user_token = token
             _release_flight_lock(cache_key)
+            _adbg("flight_followed_leader", token)
             return cross_request_cached
+        _adbg("flight_leader_round_trip", token)
 
         try:
             admin = get_supabase_admin()
@@ -241,6 +273,16 @@ def get_current_user(
 
 def require_permission(permission: str):
     def _dep(user: dict = Depends(get_current_user)) -> dict:
+        # Anonymous users can never satisfy a permission check — short-
+        # circuit before the perm match so the 403 reason is unambiguous.
+        # Restored alongside ``get_current_user_required_permanent`` —
+        # the same dropped-on-merge that broke reminders.py also lost
+        # this guard.
+        if user.get("is_anonymous"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Anonymous users cannot access this resource",
+            )
         perms = set(user.get("permissions") or [])
         if permission not in perms and user.get("role") not in {"super_admin"}:
             raise HTTPException(
@@ -249,6 +291,31 @@ def require_permission(permission: str):
             )
         return user
     return _dep
+
+
+def get_current_user_required_permanent(
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Like :func:`get_current_user` but rejects anonymous Supabase users.
+
+    Use on endpoints that demand a permanent identity (payments, document
+    upload, anything that mutates persistent state on behalf of a user we
+    expect to come back). Anonymous callers get a 403 so the frontend can
+    prompt them to link a real identity.
+
+    Restored after a merge between
+    ``perf: fix 1 — auth token cache`` (9357403) and
+    ``fix(backend): … auth single-flight …`` (54e8bba) silently dropped
+    the function, leaving ``app/api/reminders.py`` import-broken on
+    ``main``. Without this, server.py and five test modules fail at
+    collection — re-adding it unblocks the rest of the suite.
+    """
+    if user.get("is_anonymous"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Anonymous users cannot access this resource",
+        )
+    return user
 
 
 def get_optional_user(
